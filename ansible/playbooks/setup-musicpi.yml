@@ -8,12 +8,26 @@
     # Install dependancies from apt
     - name: Install dependancies from apt
       become: yes
-      apt: name={{item}} state=latest
+      apt: name={{item}} state=present
       with_items:
         - git
         - python3
         - python3-pip
         - python3-venv
+        - ser2net
+
+    - name: Copy ser2net configuration file
+      become: yes
+      copy:
+        dest: /etc/
+        src: ../../mpdrussoundpi/ser2net/ser2net.yaml
+      notify: Restart ser2net
+
+    - name: Ensure ser2net is running
+      systemd:
+        name: ser2net
+        state: started
+        enabled: yes
 
     - name: Run a module inside a virtual environment
       block:
@@ -32,4 +46,9 @@
         venv_dir: ~/russound-venv
         venv_python: "{{ venv_dir }}/bin/python"
 
+  handlers:
+    - name: Restart ser2net
+      systemd:
+        name: ser2net
+        state: restarted
 
