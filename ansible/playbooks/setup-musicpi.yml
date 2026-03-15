@@ -1,0 +1,15 @@
+---
+- hosts: musicpi
+  tasks:
+    # Run apt-get update and apt-get upgrade 
+    - include_tasks: ../tasks/update.yml
+      tags: update
+
+    # Install dependancies from apt
+    - name: Install dependancies from apt
+      become: yes
+      apt: name={{item}} state=latest
+      with_items:
+        - git-core
+        - python3
+

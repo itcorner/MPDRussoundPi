@@ -1,0 +1,6 @@
+pi:
+  hosts:
+    musicpi:
+      ansible_host: 192.168.1.105
+      ansible_user: musicpi
+
