@@ -16,6 +16,7 @@
         - python3
         - python3-pip
         - python3-venv
+        - python3-mpd
         - ser2net
         - curl
         - build-essential
@@ -47,7 +48,7 @@
             name: psutil
             virtualenv: "{{ venv_dir }}"
             # On Debian-based systems the correct python*-venv package must be installed to use the `venv` module.
-            virtualenv_command: "{{ ansible_python_interpreter }} -m venv"
+            virtualenv_command: "{{ ansible_python_interpreter }} -m venv --system-site-packages"
         - name: Install russound lib and dependencies
           ansible.builtin.pip:
             name: russound
