@@ -18,8 +18,7 @@
         - python3-venv
         - python3-mpd
         - ser2net
-        - curl
-        - build-essential
+        - mpd
       tags:
         - init
 

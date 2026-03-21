@@ -1,7 +1,6 @@
 import readconfig
-import mpdinstance
+from mpdinstance import MPDInstance, config2mpd
 import argparse
-import stream
 import time
 
 LOCKFILE = '/tmp/mpd_control.lock'
@@ -30,24 +29,24 @@ def release_lock():
             if pid == str(os.getpid()):
                 os.remove(LOCKFILE)
 
-def play(mpd_instances):
-    # Example usage: Play all streams
+def play(mpd_instances: list[MPDInstance]):
+    # Play all streams
     for instance in mpd_instances:
         instance.play()
 
-def stop(mpd_instances):
-    # Example usage: Stop all streams
+def stop(mpd_instances: list[MPDInstance]):
+    # Stop all streams
     for instance in mpd_instances:
         instance.stop()
 
-def status(mpd_instances):
-    # Example usage: Get status of all streams
+def status(mpd_instances: list[MPDInstance]):
+    # Print status of all streams
     for instance in mpd_instances:
         s = instance.get_stream_status()
         if s:
             print(f"Stream '{instance.stream.get_name()}' status: {s}")
 
-def auto_control(mpd_instances):
+def auto_control(mpd_instances: list[MPDInstance]):
     from systeminfo import is_system_on
     old_status = None
     try:
@@ -80,37 +79,35 @@ if __name__ == "__main__":
     parser.add_argument('--auto', action='store_true', help='Automatically start streams if system is on')
     parser.add_argument('json', help='Path to JSON configuration file')
     args = parser.parse_args()
+
     config = readconfig.read_and_parse_json(args.json)
     if not config:
         print("Failed to read configuration. Exiting.")
         parser.print_help()
         exit(1)
-    mpd_instances = []
+
+    mpd_instances : list[MPDInstance] = []
     for stream_config in config.get('streams', []):
-        name = stream_config.get('name')
-        bind_addr = stream_config.get('bind_to_addr', '0.0.0.0')
-        port = stream_config.get('port')
-        stream_url = stream_config.get('stream')
-        stream_obj = stream.Stream(stream_url, name)
-        mpd_instance_obj = mpdinstance.mpdinstance(name, bind_addr, port, stream_obj)
-        mpd_instances.append(mpd_instance_obj)
-        print(f"Configured MPD instance: {name} on port {port} with stream URL: {stream_url}")
+        mpd_instance_obj = config2mpd(stream_config, {}, ignore_missing_sinks=True)
+        if mpd_instance_obj:
+            mpd_instances.append(mpd_instance_obj)
+            print(f"Configured MPD instance: {mpd_instance_obj.name} on port {mpd_instance_obj.port} with stream URL: {mpd_instance_obj.stream.get_url()}")
 
     if args.auto:
         # Automatically control streams based on system power state
         acquire_lock()
-        auto_control(mpd_instances=mpd_instances)
+        auto_control(mpd_instances)
         release_lock()
     elif args.start:
         # Start all streams by connecting to MPD and sending play command
         acquire_lock()
-        play(mpd_instances=mpd_instances)
+        play(mpd_instances)
         release_lock()
     elif args.stop:
         # Stop all streams by connecting to MPD and sending stop command
         acquire_lock()
-        stop(mpd_instances=mpd_instances)
+        stop(mpd_instances)
         release_lock()
     elif args.status:
         # Get status of all streams by connecting to MPD and sending status command
-        status(mpd_instances=mpd_instances)
+        status(mpd_instances)
