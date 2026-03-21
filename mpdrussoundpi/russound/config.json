@@ -1,0 +1,68 @@
+{
+  "outputmappers": {
+    "audio_devices": [
+      {
+        "name": "usb-0d8c_USB_Sound_Device-00",
+        "card-profile": "analog-surround-51",
+        "sinks": [
+          {
+            "name": "stereo_front",
+            "master_channel_map": "front-left,front-right",
+            "channel_map": "front-left,front-right",
+            "remix": "no",
+            "channels": 2,
+            "sink_properties": "device.description=StereoFront"
+          },
+          {
+            "name": "stereo_centerlfe",
+            "master_channel_map": "front-center,lfe",
+            "channel_map" : "front-left,front-right",
+            "remix": "no",
+            "channels": 2,
+            "sink_properties": "device.description=StereoCenterLFE"
+          },
+          {
+            "name": "stereo_rear",
+            "master_channel_map": "rear-left,rear-right",
+            "channel_map" : "front-left,front-right",
+            "remix": "no",
+            "channels": 2,
+            "sink_properties": "device.description=StereoRear"
+          }
+        ]
+      }
+    ]
+  },
+  "streams": [
+    {
+        "name": "Radio 88.6",
+        "stream": "https://edge85.streamonkey.net/radio886-onair/stream/mp3?aggregator=886Website",
+        "port": 6601,
+        "bind_to_address": "0.0.0.0",
+        "audio_output": {
+          "type": "pulse",
+          "sink": "stereo_front"
+        }
+    },
+    {
+        "name": "FM4 Radio",
+        "stream": "http://ors-sn10.ors-shoutcast.at/fm4-q2a",
+        "port": 6602,
+        "bind_to_address": "0.0.0.0",
+        "audio_output": {
+          "type": "pulse",
+          "sink": "stereo_centerlfe"
+        }
+    },
+    {
+        "name": "OE3 Radio",
+        "stream": "http://ors-sn07.ors-shoutcast.at/oe3-q2a",
+        "port": 6603,
+        "bind_to_address": "0.0.0.0",
+        "audio_output": {
+          "type": "pulse",
+          "sink": "stereo_rear"
+        }
+    }
+  ]
+}
