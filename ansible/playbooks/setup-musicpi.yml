@@ -3,7 +3,9 @@
   tasks:
     # Run apt-get update and apt-get upgrade 
     - include_tasks: ../tasks/update.yml
-      tags: update
+      tags: 
+        - update
+        - init
 
     # Install dependancies from apt
     - name: Install dependancies from apt
@@ -15,6 +17,11 @@
         - python3-pip
         - python3-venv
         - ser2net
+        - curl
+        - build-essential
+      tags:
+        - init
+
 
     - name: Copy ser2net configuration file
       become: yes
@@ -22,12 +29,16 @@
         dest: /etc/
         src: ../../mpdrussoundpi/ser2net/ser2net.yaml
       notify: Restart ser2net
+      tags:
+        - init
 
     - name: Ensure ser2net is running
       systemd:
         name: ser2net
         state: started
         enabled: yes
+      tags:
+        - init
 
     - name: Run a module inside a virtual environment
       block:
@@ -45,6 +56,16 @@
         ansible_python_interpreter: /usr/bin/python3
         venv_dir: ~/russound-venv
         venv_python: "{{ venv_dir }}/bin/python"
+      tags:
+        - init
+
+    - name: Clone/update MPDRussoundPi Repository
+      ansible.builtin.git:
+        repo: https://github.com/itcorner/MPDRussoundPi.git
+        dest: ~/MPDRussoundPi
+        update: true
+      tags:
+        - new
 
   handlers:
     - name: Restart ser2net
