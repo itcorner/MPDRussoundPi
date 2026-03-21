@@ -1,4 +1,4 @@
-# mpdrussoundpi/russound/stream.py
+# mpdrussoundpi/russound/lib/stream.py
 # This module defines the Stream class, which represents an audio stream with a URL and a name.
 
 class Stream:

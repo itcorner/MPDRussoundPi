@@ -1,5 +1,5 @@
-import readconfig
-from mpdinstance import MPDInstance, config2mpd
+import lib.readconfig as readconfig
+from lib.mpdinstance import MPDInstance, config2mpd
 import argparse
 import time
 

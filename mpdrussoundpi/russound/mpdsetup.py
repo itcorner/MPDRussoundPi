@@ -1,9 +1,10 @@
-import readconfig
-from mpdinstance import MPDInstance, config2mpd
+import lib.readconfig as readconfig
+from lib.mpdinstance import MPDInstance, config2mpd
 import argparse
 import os
 import subprocess
-import sink
+import lib.sink as sink
+import logging
 
 LOCKFILE = '/tmp/mpd_setup.lock'
 
@@ -13,7 +14,8 @@ PULSE_CONFIG = os.path.expanduser('~/.config/pulse/default.pa')
 PIPEWIRE_CONFIG = os.path.expanduser('~/.config/pipewire/pipewire-pulse.conf.d/remapped-sinks.conf')
 WIREPLUMBER_CONFIG = os.path.expanduser('~/.config/pipewire/wireplumber.conf.d/card-modes.conf')
 
-
+logging.basicConfig(filename='russound_debugging.log', level=logging.DEBUG,
+                    format='%(asctime)s:%(name)s:%(levelname)s:%(funcName)s():%(message)s')
 
 def acquire_lock():
     """Acquire a lock to prevent multiple instances of the script from running simultaneously."""
@@ -45,9 +47,10 @@ def create_mpd_config(mpd_instance: MPDInstance, config_filename: str):
         os.makedirs(MPD_CONFIG_DIR)
 
     config_file = os.path.join(MPD_CONFIG_DIR, config_filename)
-    with open(config_filename, 'w') as f:
+    with open(config_file, 'w') as f:
         # Write basic MPD config settings
         f.write(mpd_instance.to_mpd_config())
+        print(mpd_instance.to_mpd_config())
 
         print(f"Created MPD config: {config_file}")
 

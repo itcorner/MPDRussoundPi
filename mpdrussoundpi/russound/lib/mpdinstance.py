@@ -1,5 +1,5 @@
-import stream
-from sink import Sink
+import lib.stream as stream
+from lib.sink import Sink
 import mpd
 import logging
 
