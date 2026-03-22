@@ -1,5 +1,8 @@
 import lib.readconfig as readconfig
 from lib.mpdinstance import MPDInstance, config2mpd
+from lib.systeminfo import is_system_on
+import lib.sink as sink
+
 import argparse
 import time
 
@@ -47,7 +50,7 @@ def status(mpd_instances: list[MPDInstance]):
             print(f"Stream '{instance.stream.get_name()}' status: {s}")
 
 def auto_control(mpd_instances: list[MPDInstance]):
-    from systeminfo import is_system_on
+    
     old_status = None
     try:
 
@@ -86,9 +89,15 @@ if __name__ == "__main__":
         parser.print_help()
         exit(1)
 
+    sink_dict: dict[str, sink.Sink] = {}
+    for audio_device in config.get('outputmappers', {}).get('audio_devices', []):
+        for sink_element in audio_device.get('sinks', []):
+            print(f"Audio Device: {audio_device.get('name')}, Sink: {sink_element.get('name')}")
+            sink_dict[sink_element.get('name')] = sink.config2sink(sink_element)
+        
     mpd_instances : list[MPDInstance] = []
     for stream_config in config.get('streams', []):
-        mpd_instance_obj = config2mpd(stream_config, {}, ignore_missing_sinks=True)
+        mpd_instance_obj = config2mpd(stream_config, sink_dict, ignore_missing_sinks=True)
         if mpd_instance_obj:
             mpd_instances.append(mpd_instance_obj)
             print(f"Configured MPD instance: {mpd_instance_obj.name} on port {mpd_instance_obj.port} with stream URL: {mpd_instance_obj.stream.get_url()}")

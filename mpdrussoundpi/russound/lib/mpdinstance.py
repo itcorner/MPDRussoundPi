@@ -15,15 +15,24 @@ class AudioOutput:
 
     def to_config_dict(self) -> dict[str, str]:
         """Convert AudioOutput to config dict format."""
+        type=self.get_type()
+        name=f"pw_{self.sink_obj.get_name()}"
+        sink=f"sink.{self.sink_obj.get_name()}"
         return {
-            'type': self.type,
-            'sink': self.sink_obj.get_name()
+            'type': type,
+            'sink': sink,
+            'name': name
         }
     
     def to_mpd_config(self) -> str:
         """Convert AudioOutput to MPD config format."""
         # Prepare MPD audio_output config block
-        return f"audio_output {{\n    type \"{self.type}\"\n    name \"{self.sink_obj.get_name()}\"\n    sink \"{self.sink_obj.get_name()}\"\n}}"
+        type=self.get_type()
+        name=f"pw_{self.sink_obj.get_name()}"
+        sink=f"sink.{self.sink_obj.get_name()}"
+        # Use Pulseaudio sink 
+        type="pulse"
+        return f"audio_output {{\n    type \"{type}\"\n    name \"{name}\"\n    sink \"{sink}\"\n}}"
     
 
 
