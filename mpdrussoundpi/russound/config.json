@@ -3,7 +3,7 @@
     "audio_devices": [
       {
         "name": "usb-0d8c_USB_Sound_Device-00",
-        "card-profile": "analog-surround-51",
+        "card-profile": "analog-surround-71",
         "sinks": [
           {
             "name": "stereo_front",

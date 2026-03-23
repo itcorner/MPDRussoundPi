@@ -50,10 +50,6 @@ def config2audiodevice(config):
     """Convert config dict to AudioDevice object."""
     sinks = [config2sink(sink_config) for sink_config in config.get('sinks', [])]
     print(f"Converted {len(sinks)} sinks for audio device '{config.get('name')}'")
-    for sink in sinks:
-        logging.debug(f"Sink '{sink.get_name()}' details: master_channel_map={sink.master_channel_map}, "
-                      f"channel_map={sink.channel_map}, remix={sink.remix}, channels={sink.channels}, "
-                      f"sink_properties={sink.sink_properties}")
     return AudioDevice(
         name=config.get('name'),
         card_profile=config.get('card-profile'),

@@ -7,13 +7,14 @@ def config2sink(config):
         name=config.get('name'),
         master_channel_map=config.get('master_channel_map'),
         master_channel_map_pw=config.get('master_channel_map_pw'),
-        channel_map=config.get('channel_map'),
-        channel_map_pw=config.get('channel_map_pw'),
+        channel_map=config.get('channel_map', 'front-left,front-right'), # Default to stereo if not specified
+        channel_map_pw=config.get('channel_map_pw', '[ FL FR ]'), # Default to stereo if not specified
         remix=config.get('remix'),
         channels=config.get('channels'),
         sink_properties=config.get('sink_properties'),
         sink_description=config.get('sink_description')
     )
+
 
 #use in future to get rid of one channel map in config
 channel_map_dict = {
@@ -28,7 +29,15 @@ channel_map_dict = {
     # Add more mappings as needed
 }
 
+def convert_channel_map(channel_map_pw: str) -> str:
+    """Convert PipeWire channel map to PulseAudio format."""
+    channels = channel_map_pw.strip('[]').split()
+    converted_channels = [channel_map_dict.get(ch, ch) for ch in channels]
+    return ','.join(converted_channels)
 
+def get_numchannels_from_channel_map(channel_map_pw: str) -> int:
+    """Get the number of channels from a channel map string."""
+    return len(channel_map_pw.strip('[]').split())
 
 class Sink:
     def __init__(self, name: str, master_channel_map: str, master_channel_map_pw: str, channel_map: str, channel_map_pw: str, remix: str, channels: int, sink_properties:str, sink_description:str = None):
@@ -51,10 +60,10 @@ class Sink:
         config = f"# Remap sink for {self.name}\n"
         config += "load-module module-remap-sink "
         config += f"master={master_sink} "
-        config += f"sink_name=\"{self.name}\" "
-        config += f"channel_map={self.channel_map} "
-        config += f"master_channel_map={self.master_channel_map} "
-        config += f"channels={self.channels} remix=no "
+        config += f"sink_name=\"sink.{self.name}\" "
+        config += f"channel_map={convert_channel_map(self.channel_map_pw)} "
+        config += f"master_channel_map={convert_channel_map(self.master_channel_map_pw)} "
+        config += f"channels={get_numchannels_from_channel_map(self.channel_map_pw)} remix=no "
         
         if self.sink_properties:
             config += f"sink_properties=\"{self.sink_properties}\" "
@@ -84,9 +93,5 @@ class Sink:
         config += "            }\n"
         config += "        }\n"
         config += "    },\n"
-
-        #args = f"module-remap-sink master={master_sink} sink_name={self.name} channel_map={self.channel_map} master_channel_map='{self.master_channel_map}' channels={self.channels} sink_properties='{self.sink_properties}'"
-        #config = f"# Remap sink for {self.name}\n"
-        #config += f"    {{ cmd = \"load-module\" args = \"{args}\"  }}\n"
 
         return config
