@@ -1,5 +1,9 @@
 ---
 - hosts: musicpi
+  vars:
+    mpd_russoundpi_repo: "https://github.com/itcorner/MPDRussoundPi.git"
+    mpd_russoundpi_dest: "~/MPDRussoundPi"
+    venv_dir: "~/russound-venv"
   tasks:
     # Run apt-get update and apt-get upgrade 
     - include_tasks: ../tasks/update.yml
@@ -56,16 +60,27 @@
             virtualenv: "{{ venv_dir }}"
       vars:
         ansible_python_interpreter: /usr/bin/python3
-        venv_dir: ~/russound-venv
-        venv_python: "{{ venv_dir }}/bin/python"
+        venv_python: "{{ venv_dir }}/bin/python3"
       tags:
         - init
 
     - name: Clone/update MPDRussoundPi Repository
       ansible.builtin.git:
-        repo: https://github.com/itcorner/MPDRussoundPi.git
-        dest: ~/MPDRussoundPi
+        repo: "{{ mpd_russoundpi_repo }}"
+        dest: "{{ mpd_russoundpi_dest }}"
         update: true
+      tags:
+        - new
+
+    - name: Run MPD setup script
+      #setup audio system
+      ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/audiosetup.py --install {{ mpd_russoundpi_dest }}/config.json"
+      #setup MPD services configuration and auto-start and start services
+      ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/mpdsetup.py --install --enable {{ mpd_russoundpi_dest }}/config.json"
+      ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/mpdsetup.py --start {{ mpd_russoundpi_dest }}/config.json"
+      #setup MPD control service and enable it to auto-start and start the service
+      ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/mpdctrl.py --install --enable {{ mpd_russoundpi_dest }}/config.json"
+      ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/mpdctrl.py --start {{ mpd_russoundpi_dest }}/config.json" 
       tags:
         - new
 

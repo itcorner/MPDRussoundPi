@@ -6,12 +6,8 @@ def config2sink(config):
     return Sink(
         name=config.get('name'),
         master_channel_map=config.get('master_channel_map'),
-        master_channel_map_pw=config.get('master_channel_map_pw'),
-        channel_map=config.get('channel_map', 'front-left,front-right'), # Default to stereo if not specified
-        channel_map_pw=config.get('channel_map_pw', '[ FL FR ]'), # Default to stereo if not specified
+        channel_map=config.get('channel_map', '[ FL FR ]'), # Default to stereo if not specified
         remix=config.get('remix'),
-        channels=config.get('channels'),
-        sink_properties=config.get('sink_properties'),
         sink_description=config.get('sink_description')
     )
 
@@ -29,26 +25,22 @@ channel_map_dict = {
     # Add more mappings as needed
 }
 
-def convert_channel_map(channel_map_pw: str) -> str:
+def convert_channel_map(channel_map: str) -> str:
     """Convert PipeWire channel map to PulseAudio format."""
-    channels = channel_map_pw.strip('[]').split()
+    channels = channel_map.strip('[]').split()
     converted_channels = [channel_map_dict.get(ch, ch) for ch in channels]
     return ','.join(converted_channels)
 
-def get_numchannels_from_channel_map(channel_map_pw: str) -> int:
-    """Get the number of channels from a channel map string."""
-    return len(channel_map_pw.strip('[]').split())
+def get_numchannels_from_channel_map(channel_map: str) -> int:
+    """Get the number of channels from a PipeWire channel map string."""
+    return len(channel_map.strip('[]').split())
 
 class Sink:
-    def __init__(self, name: str, master_channel_map: str, master_channel_map_pw: str, channel_map: str, channel_map_pw: str, remix: str, channels: int, sink_properties:str, sink_description:str = None):
+    def __init__(self, name: str, master_channel_map: str, channel_map: str, remix: str, sink_description:str = ""):
         self.name = name
         self.master_channel_map = master_channel_map
-        self.master_channel_map_pw = master_channel_map_pw
         self.channel_map = channel_map
-        self.channel_map_pw = channel_map_pw
         self.remix = remix # Note: not used in current implementation
-        self.channels = channels
-        self.sink_properties = sink_properties
         self.sink_description = sink_description
 
     def get_name(self) -> str:
@@ -61,14 +53,13 @@ class Sink:
         config += "load-module module-remap-sink "
         config += f"master={master_sink} "
         config += f"sink_name=\"sink.{self.name}\" "
-        config += f"channel_map={convert_channel_map(self.channel_map_pw)} "
-        config += f"master_channel_map={convert_channel_map(self.master_channel_map_pw)} "
-        config += f"channels={get_numchannels_from_channel_map(self.channel_map_pw)} remix=no "
+        config += f"channel_map={convert_channel_map(self.channel_map)} "
+        config += f"master_channel_map={convert_channel_map(self.master_channel_map)} "
+        config += f"channels={get_numchannels_from_channel_map(self.channel_map)} remix=no "
         
-        if self.sink_properties:
-            config += f"sink_properties=\"{self.sink_properties}\" "
+        if self.sink_description and self.sink_description.strip() != "":
+            config += f"sink_properties=\"device.description={self.sink_description}\" "
         config += "\n\n"
-        
         return config
     
     def get_pipewire_config(self, master_sink: str) -> str:
@@ -78,20 +69,20 @@ class Sink:
         config += "    {\n"
         config += "        name = libpipewire-module-loopback\n"
         config += "        args = {\n"
-        config += f"            node.description = \"PipeWire {self.sink_description}\"\n"
-        config += f"            audio.position = [ FL FR ]\n"
+        if self.sink_description and self.sink_description.strip() != "":
+            config += f"            node.description = \"PipeWire {self.sink_description}\"\n"
+        config += f"            audio.position = {self.channel_map}\n"
         config += "            capture.props = {\n"
         config += f"                node.name = \"sink.{self.name}\"\n"
         config += "                media.class = \"Audio/Sink\"\n"
         config += "            }\n"
         config += "            playback.props = {\n"
         config += f"                node.name = \"playback.{self.name}\"\n"
-        config += f"                audio.position = {self.master_channel_map_pw}\n"
+        config += f"                audio.position = {self.master_channel_map}\n"
         config += f"                target.object = \"{master_sink}\"\n"
         config += "                stream.dont-remix = true\n"
         config += "                node.passive = true\n"
         config += "            }\n"
         config += "        }\n"
         config += "    },\n"
-
         return config

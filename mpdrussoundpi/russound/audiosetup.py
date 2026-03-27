@@ -156,7 +156,7 @@ def cleanup_configs():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Setup multiple MPD instances')
-    parser.add_argument('--initialize', action='store_true', help='Initialize MPD configuration')
+    parser.add_argument('--install', action='store_true', help='Initialize MPD configuration')
     parser.add_argument('--cleanup', action='store_true', help='Remove all auto-generated config files')
     parser.add_argument('--audio-processor', choices=['pulseaudio', 'pipewire'], help='Override auto-detection of audio processor.')
     parser.add_argument('json', help='Path to JSON configuration file')    
@@ -180,7 +180,7 @@ if __name__ == "__main__":
         audio_processor = args.audio_processor
 
 
-    if args.initialize:
+    if args.install:
         # Create config foles for respective audio processor
         acquire_lock()
 
