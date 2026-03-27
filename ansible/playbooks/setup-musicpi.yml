@@ -76,17 +76,17 @@
       block:
         - name: Setup audio system
           #setup audio system
-          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/audiosetup.py --install {{ mpd_russoundpi_dest }}/config.json"
+          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/mpdrussoundpi/russound/audiosetup.py --install {{ mpd_russoundpi_dest }}/config.json"
         - name: Setup MPD services
           #setup MPD services configuration and auto-start and start services
-          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/mpdsetup.py {{ item }} {{ mpd_russoundpi_dest }}/config.json"
+          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/mpdrussoundpi/russound/mpdsetup.py {{ item }} {{ mpd_russoundpi_dest }}/config.json"
           with_items:
             - "--install"
             - "--enable"
             - "--start"
         - name: Setup MPD control service
           #setup MPD control service and enable it to auto-start and start the service
-          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/russound/mpdctrl.py {{ item }} {{ mpd_russoundpi_dest }}/config.json"
+          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_dest }}/mpdrussoundpi/russound/mpdctrl.py {{ item }} {{ mpd_russoundpi_dest }}/config.json"
           with_items:
             - "--install"
             - "--enable"
