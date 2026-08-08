@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="russound-api-token" content="" />
+    <title>Russound Control</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="panel system-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Multi-room audio</p>
+            <h1>Russound control</h1>
+          </div>
+          <div class="system-actions">
+            <a class="secondary-link" href="/status">Status</a>
+            <button id="systemPower" class="power-button" type="button">All off</button>
+          </div>
+        </div>
+        <p class="panel-copy">Control every zone from one responsive dashboard.</p>
+        <p id="configHint" class="config-hint" hidden></p>
+        <h2 class="section-title">Shortcuts</h2>
+        <div id="shortcuts" class="shortcuts" aria-label="Room shortcuts"></div>
+      </section>
+
+      <section id="zones" class="zones-grid" aria-live="polite"></section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

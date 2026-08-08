@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="russound-api-token" content="" />
+    <title>Russound Status</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell status-shell">
+      <section class="panel system-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">System monitor</p>
+            <h1>Russound status</h1>
+          </div>
+          <div class="system-actions">
+            <a class="secondary-link" href="/">Controller</a>
+          </div>
+        </div>
+        <p class="panel-copy">See connected frontend clients and the most recent frontend-triggered actions.</p>
+      </section>
+
+      <section class="status-grid">
+        <article class="panel status-panel">
+          <div class="status-panel-header">
+            <h2 class="section-title">Connected clients</h2>
+            <span id="clientCount" class="status-count">0</span>
+          </div>
+          <div id="clientsEmpty" class="empty-copy" hidden>No active clients.</div>
+          <div id="clientsList" class="status-list"></div>
+        </article>
+
+        <article class="panel status-panel">
+          <div class="status-panel-header">
+            <h2 class="section-title">Recent frontend events</h2>
+            <span class="status-count">Last 50</span>
+          </div>
+          <div id="eventsEmpty" class="empty-copy" hidden>No events recorded yet.</div>
+          <div class="status-table-wrap">
+            <table class="status-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>IP</th>
+                  <th>Action</th>
+                  <th>Payload</th>
+                </tr>
+              </thead>
+              <tbody id="eventsTableBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="/static/status.js"></script>
+  </body>
+</html>

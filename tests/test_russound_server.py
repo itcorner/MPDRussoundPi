@@ -1,0 +1,135 @@
+import unittest
+from urllib.parse import urlparse
+from queue import Queue
+
+from web.russound_server import RussoundHTTPServer, RussoundRequestHandler
+
+
+class RussoundServerTests(unittest.TestCase):
+    def test_broadcast_state_change_increments_revision_and_notifies_clients(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            _client_id, event_queue = server.register_event_client("127.0.0.1", "test-agent")
+
+            self.assertEqual(server.state_revision, 0)
+
+            server.broadcast_state_change()
+
+            self.assertEqual(server.state_revision, 1)
+            self.assertEqual(event_queue.get_nowait(), '{"revision": 1}')
+        finally:
+            server.server_close()
+
+    def test_authorization_accepts_matching_header_token(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            handler = object.__new__(RussoundRequestHandler)
+            handler.server = server
+            handler.headers = {"X-Russound-Api-Token": server.api_token}
+
+            self.assertTrue(handler._is_authorized(server, urlparse("/api/state")))
+        finally:
+            server.server_close()
+
+    def test_authorization_accepts_matching_query_token(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            handler = object.__new__(RussoundRequestHandler)
+            handler.server = server
+            handler.headers = {}
+
+            self.assertTrue(handler._is_authorized(server, urlparse(f"/api/events?token={server.api_token}")))
+        finally:
+            server.server_close()
+
+    def test_authorization_rejects_missing_token(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            handler = object.__new__(RussoundRequestHandler)
+            handler.server = server
+            handler.headers = {}
+
+            self.assertFalse(handler._is_authorized(server, urlparse("/api/state")))
+        finally:
+            server.server_close()
+
+    def test_state_has_zone_matches_known_zone_id(self):
+        handler = object.__new__(RussoundRequestHandler)
+
+        self.assertTrue(handler._state_has_zone({"zones": [{"id": "living"}]}, "living"))
+        self.assertFalse(handler._state_has_zone({"zones": [{"id": "living"}]}, "kitchen"))
+
+    def test_state_has_zones_requires_all_zone_ids_to_exist(self):
+        handler = object.__new__(RussoundRequestHandler)
+        state = {"zones": [{"id": "living"}, {"id": "kitchen"}]}
+
+        self.assertTrue(handler._state_has_zones(state, ["living", "kitchen"]))
+        self.assertFalse(handler._state_has_zones(state, ["living", "patio"]))
+
+    def test_state_has_input_matches_known_source_id(self):
+        handler = object.__new__(RussoundRequestHandler)
+        state = {"inputs": [{"id": 1}, {"id": 2}]}
+
+        self.assertTrue(handler._state_has_input(state, 1))
+        self.assertFalse(handler._state_has_input(state, 3))
+
+    def test_shortcut_unknown_zone_is_server_configuration_error(self):
+        handler = object.__new__(RussoundRequestHandler)
+        state = {"zones": [{"id": "living"}], "inputs": [{"id": 1}]}
+        shortcut = {"id": "party", "zone_ids": ["living", "patio"], "source": 1}
+
+        self.assertFalse(handler._state_has_zones(state, shortcut["zone_ids"]))
+
+    def test_shortcut_unknown_source_is_server_configuration_error(self):
+        handler = object.__new__(RussoundRequestHandler)
+        state = {"zones": [{"id": "living"}], "inputs": [{"id": 1}]}
+        shortcut = {"id": "party", "zone_ids": ["living"], "source": 2}
+
+        self.assertFalse(handler._state_has_input(state, shortcut["source"]))
+
+    def test_read_bool_field_requires_real_boolean(self):
+        handler = object.__new__(RussoundRequestHandler)
+
+        self.assertTrue(handler._read_bool_field({"power": True}, "power"))
+        self.assertFalse(handler._read_bool_field({"power": False}, "power"))
+        self.assertIsNone(handler._read_bool_field({"power": 1}, "power"))
+        self.assertIsNone(handler._read_bool_field({}, "power"))
+
+    def test_read_int_field_requires_real_integer_but_not_boolean(self):
+        handler = object.__new__(RussoundRequestHandler)
+
+        self.assertEqual(handler._read_int_field({"volume": 10}, "volume"), 10)
+        self.assertIsNone(handler._read_int_field({"volume": True}, "volume"))
+        self.assertIsNone(handler._read_int_field({"volume": "10"}, "volume"))
+        self.assertIsNone(handler._read_int_field({}, "volume"))
+
+    def test_status_payload_lists_connected_clients(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            client_id, _event_queue = server.register_event_client("127.0.0.1", "status-test")
+
+            payload = server.build_status_payload()
+
+            self.assertEqual(len(payload["connected_clients"]), 1)
+            self.assertEqual(payload["connected_clients"][0]["id"], client_id)
+            self.assertEqual(payload["connected_clients"][0]["ip"], "127.0.0.1")
+        finally:
+            server.server_close()
+
+    def test_status_payload_keeps_last_fifty_frontend_events(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            for index in range(55):
+                server.record_frontend_event("127.0.0.1", f"/api/test/{index}", {"index": index})
+
+            payload = server.build_status_payload()
+
+            self.assertEqual(len(payload["recent_events"]), 50)
+            self.assertEqual(payload["recent_events"][0]["payload"], {"index": 54})
+            self.assertEqual(payload["recent_events"][-1]["payload"], {"index": 5})
+        finally:
+            server.server_close()
+
+
+if __name__ == "__main__":
+    unittest.main()

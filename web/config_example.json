@@ -1,0 +1,69 @@
+{
+  "controllers": [
+    {
+      "id": 1,
+      "zone_count": 6
+    },
+    {
+      "id": 2,
+      "zone_count": 6
+    }
+  ],
+  "zones": [
+    {
+      "id": "living",
+      "name": "Living Room",
+      "controller": 1,
+      "zone": 1,
+      "input_ids": [1, 2]
+    },
+    {
+      "id": "kitchen",
+      "name": "Kitchen",
+      "controller": 1,
+      "zone": 2,
+      "input_ids": [1, 3]
+    },
+    {
+      "id": "patio",
+      "name": "Patio",
+      "controller": 2,
+      "zone": 1,
+      "input_ids": [2, 3]
+    }
+  ],
+  "inputs": [
+    {
+      "id": 1,
+      "name": "Radio"
+    },
+    {
+      "id": 2,
+      "name": "TV"
+    },
+    {
+      "id": 3,
+      "name": "Bluetooth"
+    }
+  ],
+  "shortcuts": [
+    {
+      "id": "morning",
+      "name": "Morning",
+      "zone_ids": ["living", "kitchen"],
+      "source": 1
+    },
+    {
+      "id": "movie",
+      "name": "Movie",
+      "zone_ids": ["living", "patio"],
+      "source": 2
+    }
+  ],
+  "notes": [
+    "inputs.id values are numeric and start at 1.",
+    "zones[].controller and zones[].zone describe the Russound hardware mapping.",
+    "zones[].input_ids is optional and can describe which inputs are valid for a zone.",
+    "shortcuts[].source is an input id, not an index."
+  ]
+}
