@@ -13,20 +13,17 @@
     {
       "name": "Living Room",
       "controller": 1,
-      "zone": 1,
-      "input_ids": [1, 2]
+      "zone": 1
     },
     {
       "name": "Kitchen",
       "controller": 1,
-      "zone": 2,
-      "input_ids": [1, 3]
+      "zone": 2
     },
     {
       "name": "Patio",
       "controller": 2,
-      "zone": 1,
-      "input_ids": [2, 3]
+      "zone": 1
     }
   ],
   "inputs": [
@@ -66,7 +63,6 @@
   "notes": [
     "inputs.id values are numeric and start at 1.",
     "zones[].controller and zones[].zone describe the Russound hardware mapping.",
-    "zones[].input_ids is optional and can describe which inputs are valid for a zone.",
     "shortcuts[].zone_addresses uses physical controller/zone addresses.",
     "shortcuts[].source is an input id, not an index."
   ]
