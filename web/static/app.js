@@ -75,7 +75,7 @@ function render() {
     systemButton.textContent = "Config required";
     systemButton.classList.add("is-off");
     systemButton.disabled = true;
-    shortcutsContainer.innerHTML = "";
+    shortcutsContainer.replaceChildren(systemButton);
     zonesContainer.innerHTML = `
       <article class="empty-state">
         <p class="empty-state-eyebrow">Configuration required</p>
@@ -107,37 +107,34 @@ function render() {
     button.dataset.shortcutId = shortcut.id;
     shortcutsContainer.appendChild(button);
   }
+  shortcutsContainer.appendChild(systemButton);
 
   zonesContainer.innerHTML = "";
   for (const zone of state.zones) {
+    const zoneDomId = `${zone.controller}-${zone.zone}`;
     const card = document.createElement("article");
     card.className = "zone-card";
     card.innerHTML = `
       <div class="zone-header">
         <div>
           <h2 class="zone-name">${zone.name}</h2>
-          <div class="zone-state">${zone.power ? "On" : "Off"} • ${zone.muted ? "Muted" : "Listening"}</div>
+          <div class="zone-state">${zone.power ? "On" : "Off"}</div>
         </div>
-        <button class="zone-toggle ${zone.power ? "" : "is-off"}" type="button" data-action="power" data-zone-id="${zone.id}">
+        <button class="zone-toggle ${zone.power ? "" : "is-off"}" type="button" data-action="power" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
           ${zone.power ? "On" : "Off"}
         </button>
       </div>
       <div class="zone-controls">
         <div class="control-row">
-          <label for="source-${zone.id}">Source</label>
-          <select id="source-${zone.id}" data-action="source" data-zone-id="${zone.id}">
+          <label for="source-${zoneDomId}">Source</label>
+          <select id="source-${zoneDomId}" data-action="source" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
             ${state.inputs.map((input) => `<option value="${input.id}" ${input.id === zone.source ? "selected" : ""}>${input.name}</option>`).join("")}
           </select>
         </div>
         <div class="control-row">
-          <label for="volume-${zone.id}">Volume</label>
-          <input id="volume-${zone.id}" type="range" min="0" max="100" step="1" value="${zone.volume}" data-action="volume" data-zone-id="${zone.id}" />
+          <label for="volume-${zoneDomId}">Volume</label>
+          <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="1" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
           <div class="volume-value">${zone.volume}%</div>
-        </div>
-        <div class="control-row">
-          <button class="mute-toggle ${zone.muted ? "" : "is-off"}" type="button" data-action="mute" data-zone-id="${zone.id}">
-            ${zone.muted ? "Unmute" : "Mute"}
-          </button>
         </div>
       </div>
     `;
@@ -145,8 +142,8 @@ function render() {
   }
 }
 
-async function updateZone(zoneId, action, value) {
-  const response = await authorizedFetch(`/api/zones/${zoneId}/${action}`, {
+async function updateZone(controllerId, zoneNumber, action, value) {
+  const response = await authorizedFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ [action]: value }),
@@ -201,18 +198,13 @@ zonesContainer.addEventListener("click", (event) => {
   if (!button) {
     return;
   }
-  const zoneId = button.dataset.zoneId;
+  const controllerId = Number(button.dataset.controllerId);
+  const zoneNumber = Number(button.dataset.zoneNumber);
   const action = button.dataset.action;
   if (action === "power") {
-    const zone = state.zones.find((candidate) => candidate.id === zoneId);
+    const zone = state.zones.find((candidate) => candidate.controller === controllerId && candidate.zone === zoneNumber);
     if (zone) {
-      updateZone(zoneId, "power", !zone.power);
-    }
-  }
-  if (action === "mute") {
-    const zone = state.zones.find((candidate) => candidate.id === zoneId);
-    if (zone) {
-      updateZone(zoneId, "mute", !zone.muted);
+      updateZone(controllerId, zoneNumber, "power", !zone.power);
     }
   }
 });
@@ -222,7 +214,6 @@ zonesContainer.addEventListener("input", (event) => {
   if (!control) {
     return;
   }
-  const zoneId = control.dataset.zoneId;
   const action = control.dataset.action;
   if (action === "volume") {
     const value = Number(control.value);
@@ -239,14 +230,15 @@ zonesContainer.addEventListener("change", (event) => {
   if (!control) {
     return;
   }
-  const zoneId = control.dataset.zoneId;
+  const controllerId = Number(control.dataset.controllerId);
+  const zoneNumber = Number(control.dataset.zoneNumber);
   const action = control.dataset.action;
   if (action === "source") {
-    updateZone(zoneId, "source", Number(event.target.value));
+    updateZone(controllerId, zoneNumber, "source", Number(event.target.value));
     return;
   }
   if (action === "volume") {
-    updateZone(zoneId, "volume", Number(event.target.value));
+    updateZone(controllerId, zoneNumber, "volume", Number(event.target.value));
   }
 });
 

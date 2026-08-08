@@ -20,10 +20,10 @@ Examples:
 - Successful JSON API requests return status `200`.
 - Malformed request bodies return `400` with an error describing the expected field type.
 - Unknown routes return `404` with `{ "error": "Not found" }`.
-- Zone-specific routes return `404` with `{ "error": "Zone not found" }` when the zone id in the URL does not exist.
+- Zone-specific routes return `404` with `{ "error": "Zone not found" }` when the controller/zone address in the URL does not exist.
 - Source-changing routes return `404` with `{ "error": "Source not found" }` when the requested source id does not exist.
 - Shortcut activation returns `404` with `{ "error": "Shortcut not found" }` when the shortcut id does not exist.
-- Shortcut activation returns `500` when a configured shortcut references an unknown zone or source, because that indicates a server-side configuration error.
+- Shortcut activation returns `500` when a configured shortcut references an unknown controller/zone address or source, because that indicates a server-side configuration error.
 - API routes require a per-process token issued by the server to the served frontend.
 - Unauthorized API requests return `401` with `{ "error": "Unauthorized" }`.
 
@@ -45,7 +45,6 @@ Exceptions:
 The server currently expects these request body field types:
 
 - `power`: boolean
-- `mute`: boolean
 - `source`: integer
 - `volume`: integer
 
@@ -90,7 +89,6 @@ Most endpoints return the same payload shape:
     ],
     "zones": [
       {
-        "id": "living",
         "name": "Living Room",
         "controller": 1,
         "zone": 1
@@ -101,7 +99,9 @@ Most endpoints return the same payload shape:
         "id": "party",
         "name": "Party",
         "source": 1,
-        "zone_ids": ["living"]
+        "zone_addresses": [
+          { "controller": 1, "zone": 1 }
+        ]
       }
     ]
   },
@@ -114,12 +114,10 @@ Most endpoints return the same payload shape:
     ],
     "zones": [
       {
-        "id": "living",
         "name": "Living Room",
         "power": false,
         "source": 1,
         "volume": 20,
-        "muted": false,
         "controller": 1,
         "zone": 1
       }
@@ -190,7 +188,7 @@ Response shape:
     {
       "timestamp": "2026-08-08T14:56:03+00:00",
       "ip": "127.0.0.1",
-      "path": "/api/zones/living/volume",
+      "path": "/api/controller/1/zone/1/volume",
       "payload": {"volume": 32}
     }
   ]
@@ -198,6 +196,38 @@ Response shape:
 ```
 
 `connected_clients` reflects active SSE connections. `recent_events` is an in-memory rolling history capped at 50 entries.
+
+### GET /api/config
+
+Returns the editable zone-configuration payload used by the configuration page.
+
+- Requires API token authentication.
+- Response type: JSON.
+
+Response shape:
+
+```json
+{
+  "config": {
+    "controllers": [{"id": 1, "zone_count": 6}],
+    "zones": [{"name": "Living Room", "controller": 1, "zone": 1, "visible": true}],
+    "inputs": [{"id": 1, "name": "Radio"}],
+    "shortcuts": []
+  },
+  "config_required": false,
+  "zone_slots": [
+    {"controller": 1, "zone": 1, "enabled": true, "visible": true, "name": "Living Room"},
+    {"controller": 1, "zone": 2, "enabled": false, "visible": true, "name": "Controller 1 Zone 2"}
+  ],
+  "source_slots": [
+    {"id": 1, "name": "Radio"},
+    {"id": 2, "name": "TV"}
+  ]
+}
+```
+
+`zone_slots` is derived from `controllers[].zone_count`, so the editor only exposes valid hardware slots.
+`source_slots` is derived from `inputs` and allows renaming source display names without changing source ids.
 
 ### POST /api/system/power
 
@@ -236,7 +266,47 @@ Activates a shortcut from `config.shortcuts` by id.
 - No request body is required.
 - If the shortcut id is unknown, state is unchanged and the current view payload is still returned.
 
-### POST /api/zones/{zoneId}/power
+Shortcut targets now use physical Russound addresses:
+
+```json
+{
+  "id": "party",
+  "name": "Party",
+  "zone_addresses": [
+    { "controller": 1, "zone": 1 },
+    { "controller": 2, "zone": 1 }
+  ],
+  "source": 1
+}
+```
+
+### POST /api/config
+
+Updates the zone configuration used by the frontend overview and persists it to the config file.
+
+- Requires API token authentication.
+- Returns the updated config-editor payload.
+- Rejects invalid controller/zone slots with `400 Bad Request`.
+- Only slots within each controller's configured `zone_count` can be enabled, so the frontend cannot create more zones than the controller supports.
+
+Request body:
+
+```json
+{
+  "zone_slots": [
+    {"controller": 1, "zone": 1, "enabled": true, "visible": true, "name": "Living Room"},
+    {"controller": 1, "zone": 2, "enabled": false, "visible": true, "name": "Controller 1 Zone 2"}
+  ],
+  "source_slots": [
+    {"id": 1, "name": "Radio"},
+    {"id": 2, "name": "Television"}
+  ]
+}
+```
+
+`source_slots` is optional; if provided, each entry must reference an existing numeric source id.
+
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/power
 
 Sets power for a single zone.
 
@@ -249,7 +319,9 @@ Request body:
 { "power": true }
 ```
 
-### POST /api/zones/{zoneId}/source
+`controllerId` and `zoneNumber` identify the physical Russound zone address.
+
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/source
 
 Sets source for a single zone.
 
@@ -264,7 +336,7 @@ Request body:
 
 `source` must be a numeric input id present in `state.inputs`.
 
-### POST /api/zones/{zoneId}/volume
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/volume
 
 Sets volume for a single zone.
 
@@ -279,22 +351,10 @@ Request body:
 
 Volume is clamped to the range `0..100`.
 
-### POST /api/zones/{zoneId}/mute
-
-Sets explicit mute state for a zone.
-
-- Requires API token authentication.
-- Returns the updated main view payload.
-
-Request body:
-
-```json
-{ "mute": true }
-```
-
 ## Pages and static files
 
 - `GET /` and `GET /index.html` serve the dashboard page.
+- `GET /config` serves the configuration editor.
 - `GET /status` serves the status dashboard.
 - `GET /static/*` serves frontend assets (JS/CSS).
 

@@ -39,13 +39,56 @@ class RussoundBackendTests(unittest.TestCase):
 
     def test_write_methods_accept_zone_objects_without_config(self):
         backend = RussoundBackend()
-        zone = Zone(id="living", name="Living Room", controller=2, zone_number=3)
+        zone = Zone(name="Living Room", controller=2, zone_number=3)
 
         with patch.object(backend, "_connect", return_value=object()):
             self.assertFalse(backend.set_zone_power(zone, True))
             self.assertFalse(backend.set_zone_volume(zone, 50))
-            self.assertFalse(backend.set_zone_mute(zone, True))
-            self.assertFalse(backend.set_zone_mute(zone, False))
+
+    def test_set_all_power_uses_explicit_client_all_off_for_power_down(self):
+        class DummyClient:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def all_on_off(self, power):
+                self.calls.append(("all_on_off", power))
+
+            def set_power(self, controller, zone, power):
+                self.calls.append(("set_power", controller, zone, power))
+
+        backend = RussoundBackend(controller=2)
+        client = DummyClient()
+
+        with patch.object(backend, "_connect", return_value=client):
+            self.assertTrue(backend.set_all_power(False, 6))
+
+        self.assertEqual(client.calls, [("all_on_off", 0)])
+
+    def test_set_all_power_keeps_zonewise_power_on(self):
+        class DummyClient:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def all_on_off(self, power):
+                self.calls.append(("all_on_off", power))
+
+            def set_power(self, controller, zone, power):
+                self.calls.append(("set_power", controller, zone, power))
+
+        backend = RussoundBackend(controller=2)
+        client = DummyClient()
+
+        with patch.object(backend, "_connect", return_value=client):
+            self.assertTrue(backend.set_all_power(True, 3))
+
+        self.assertEqual(
+            client.calls,
+            [
+                ("set_power", 2, 1, 1),
+                ("set_power", 2, 2, 1),
+                ("set_power", 2, 3, 1),
+            ],
+        )
 
 
 if __name__ == "__main__":

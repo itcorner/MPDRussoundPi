@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="russound-api-token" content="" />
+    <title>Russound Configuration</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell status-shell">
+      <section class="panel system-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Configuration</p>
+            <h1>Russound zone setup</h1>
+          </div>
+        </div>
+        <nav class="page-menu" aria-label="Page navigation">
+          <a class="page-menu-link" href="/">Controller</a>
+          <a class="page-menu-link is-active" href="/config" aria-current="page">Configuration</a>
+          <a class="page-menu-link" href="/status">Status</a>
+        </nav>
+        <p class="panel-copy">Set zone names, rename sources, choose which zones appear in the overview, and enable only valid controller slots.</p>
+        <p id="configEditorMessage" class="config-hint" hidden></p>
+        <div class="header-actions-bottom">
+          <button id="saveConfigButton" class="power-button" type="button">Save configuration</button>
+        </div>
+      </section>
+
+      <details id="sourceConfigPanel" class="panel status-panel collapsible-panel" open>
+        <summary class="collapsible-summary">
+          <span class="section-title">Inputs</span>
+          <span id="sourceCountBadge" class="status-count">0 available</span>
+        </summary>
+        <div class="collapsible-body">
+          <div id="configSources" class="config-source-list"></div>
+        </div>
+      </details>
+
+      <section id="configEmptyState" class="panel status-panel" hidden>
+        <article class="empty-state">
+          <p class="empty-state-eyebrow">Configuration required</p>
+          <h2>No editable config file available</h2>
+          <p id="configEmptyMessage"></p>
+        </article>
+      </section>
+
+      <section id="controllerZones" class="status-grid"></section>
+    </main>
+
+    <script src="/static/config.js"></script>
+  </body>
+</html>

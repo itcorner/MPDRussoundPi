@@ -53,18 +53,25 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             server.server_close()
 
-    def test_state_has_zone_matches_known_zone_id(self):
+    def test_state_has_zone_address_matches_known_controller_and_zone(self):
         handler = object.__new__(RussoundRequestHandler)
 
-        self.assertTrue(handler._state_has_zone({"zones": [{"id": "living"}]}, "living"))
-        self.assertFalse(handler._state_has_zone({"zones": [{"id": "living"}]}, "kitchen"))
+        state = {"zones": [{"controller": 1, "zone": 1}, {"controller": 2, "zone": 3}]}
+        self.assertTrue(handler._state_has_zone_address(state, 1, 1))
+        self.assertFalse(handler._state_has_zone_address(state, 1, 3))
 
-    def test_state_has_zones_requires_all_zone_ids_to_exist(self):
+    def test_match_controller_zone_route_parses_expected_shape(self):
         handler = object.__new__(RussoundRequestHandler)
-        state = {"zones": [{"id": "living"}, {"id": "kitchen"}]}
 
-        self.assertTrue(handler._state_has_zones(state, ["living", "kitchen"]))
-        self.assertFalse(handler._state_has_zones(state, ["living", "patio"]))
+        self.assertEqual(handler._match_controller_zone_route("/api/controller/1/zone/3/power"), (1, 3, "power"))
+        self.assertIsNone(handler._match_controller_zone_route("/api/zones/living/power"))
+
+    def test_state_has_zone_addresses_requires_all_addresses_to_exist(self):
+        handler = object.__new__(RussoundRequestHandler)
+        state = {"zones": [{"controller": 1, "zone": 1}, {"controller": 1, "zone": 2}]}
+
+        self.assertTrue(handler._state_has_zone_addresses(state, [(1, 1), (1, 2)]))
+        self.assertFalse(handler._state_has_zone_addresses(state, [(1, 1), (2, 1)]))
 
     def test_state_has_input_matches_known_source_id(self):
         handler = object.__new__(RussoundRequestHandler)
@@ -75,10 +82,10 @@ class RussoundServerTests(unittest.TestCase):
 
     def test_shortcut_unknown_zone_is_server_configuration_error(self):
         handler = object.__new__(RussoundRequestHandler)
-        state = {"zones": [{"id": "living"}], "inputs": [{"id": 1}]}
-        shortcut = {"id": "party", "zone_ids": ["living", "patio"], "source": 1}
+        state = {"zones": [{"controller": 1, "zone": 1}], "inputs": [{"id": 1}]}
+        shortcut_zone_addresses = [(1, 1), (2, 1)]
 
-        self.assertFalse(handler._state_has_zones(state, shortcut["zone_ids"]))
+        self.assertFalse(handler._state_has_zone_addresses(state, shortcut_zone_addresses))
 
     def test_shortcut_unknown_source_is_server_configuration_error(self):
         handler = object.__new__(RussoundRequestHandler)

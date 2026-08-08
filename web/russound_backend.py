@@ -94,7 +94,7 @@ class RussoundBackend:
         return controller, zone_number
 
     def read_zone(self, zone: dict[str, Any] | Zone, inputs: list[dict[str, Any]], config: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Read the current power, source, volume, and mute state for one room.
+        """Read the current power, source, and volume state for one room.
 
         Args:
             zone: Zone definition with controller and zone mapping.
@@ -116,7 +116,6 @@ class RussoundBackend:
                 "power": bool(power),
                 "source": source_id or (inputs[0].get("id") if inputs else ""),
                 "volume": int(volume or 0),
-                "muted": False,
             }
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
             logging.debug("Unable to read Russound zone %s: %s", zone_number, exc)
@@ -180,33 +179,6 @@ class RussoundBackend:
             logging.debug("Unable to set Russound volume for zone %s: %s", zone_number, exc)
             return False
 
-    def set_zone_mute(
-        self,
-        zone: dict[str, Any] | Zone,
-        muted: bool,
-        current_muted: bool | None = None,
-    ) -> bool:
-        """Set the mute state for a mapped room.
-
-        Args:
-            zone: Zone definition that resolves to the target controller and zone.
-            muted: Desired mute state.
-            current_muted: Optional prior mute state used to avoid unnecessary toggles.
-        """
-        client = self._connect()
-        if client is None:
-            return False
-        controller, zone_number = self._resolve_zone_address(zone)
-        desired_muted = bool(muted)
-        if current_muted is not None and bool(current_muted) == desired_muted:
-            return True
-        try:
-            client.toggle_mute(controller, zone_number)
-            return True
-        except Exception as exc:  # pragma: no cover - runtime dependency may be absent
-            logging.debug("Unable to set Russound mute for zone %s: %s", zone_number, exc)
-            return False
-
     def set_all_power(self, power: bool, zone_count: int) -> bool:
         """Turn every zone on or off for the default controller.
 
@@ -218,8 +190,11 @@ class RussoundBackend:
         if client is None:
             return False
         try:
+            if not power:
+                client.all_on_off(0)
+                return True
             for zone in range(1, zone_count + 1):
-                client.set_power(self.controller, zone, 1 if power else 0)
+                client.set_power(self.controller, zone, 1)
             return True
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
             logging.debug("Unable to set Russound system power: %s", exc)
