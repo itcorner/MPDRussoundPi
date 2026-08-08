@@ -28,8 +28,8 @@ class RussoundControllerTests(unittest.TestCase):
                 json.dumps(
                     {
                         "zones": [
-                            {"id": "living", "name": "Living Room", "input_ids": ["radio", "tv"]},
-                            {"id": "patio", "name": "Patio", "input_ids": ["radio", "bluetooth"]},
+                            {"id": "living", "name": "Living Room"},
+                            {"id": "patio", "name": "Patio"},
                         ],
                         "inputs": [
                             {"id": 1, "name": "Radio"},
@@ -206,7 +206,7 @@ class RussoundControllerTests(unittest.TestCase):
             config_path.write_text(
                 json.dumps(
                     {
-                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1, "input_ids": ["radio", "tv"]}],
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
                         "inputs": [{"id": 1, "name": "Radio"}, {"id": 2, "name": "TV"}],
                     }
                 ),
