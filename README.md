@@ -1,12 +1,13 @@
 # MPDRussoundPi
 
-MPDRussoundPi is a Python-based control stack for Russound multi-room audio systems. It combines service setup automation, runtime control scripts, and a modern browser UI for day-to-day operation.
+MPDRussoundPi is a Python-based control stack for Russound multi-room audio systems. It combines service setup automation, runtime control scripts, and a browser UI for day-to-day operation.
 
 The repository currently includes:
 
 - Russound + MPD setup automation for target hosts (Ansible playbooks).
 - Runtime scripts for audio setup and MPD orchestration.
 - A token-protected web control server with live synchronization.
+- A controller dashboard with flip-card advanced sound controls and a visible hardware warning banner.
 - A configuration editor for zones and sources.
 - A status monitor for connected clients and recent frontend actions.
 
@@ -28,6 +29,8 @@ The repository currently includes:
 
 - Multi-zone Russound control (power, source, volume).
 - Physical zone addressing via controller/zone mapping.
+- Advanced sound controls for bass, treble, balance, and loudness.
+- A prominent hardware connectivity warning banner when the backend cannot reach Russound hardware.
 - Global system power-off action.
 - Shortcut presets targeting multiple zones.
 - Config-driven UI visibility and naming.
@@ -64,7 +67,7 @@ The repository currently includes:
 ### Frontend
 
 - `web/static/index.html` + `web/static/app.js`
-  - Main control dashboard.
+  - Main control dashboard with the flip-card advanced audio controls and backend warning banner.
 - `web/static/config.html` + `web/static/config.js`
   - Configuration editor for zones and input names.
 - `web/static/status.html` + `web/static/status.js`
@@ -134,6 +137,10 @@ Common endpoints:
 - `POST /api/controller/{controllerId}/zone/{zoneNumber}/power`
 - `POST /api/controller/{controllerId}/zone/{zoneNumber}/source`
 - `POST /api/controller/{controllerId}/zone/{zoneNumber}/volume`
+- `POST /api/controller/{controllerId}/zone/{zoneNumber}/bass`
+- `POST /api/controller/{controllerId}/zone/{zoneNumber}/treble`
+- `POST /api/controller/{controllerId}/zone/{zoneNumber}/loudness`
+- `POST /api/controller/{controllerId}/zone/{zoneNumber}/balance`
 
 ## Testing
 

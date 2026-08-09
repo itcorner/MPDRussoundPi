@@ -32,10 +32,10 @@ Examples:
 The server exposes three response types:
 
 - JSON API responses from `/api/*`
-- HTML pages from `/`, `/index.html`, and `/status`
+- HTML pages from `/`, `/index.html`, `/config`, and `/status`
 - Server-Sent Events from `/api/events`
 
-Most mutating API routes return the latest full view payload after the change is applied.
+Most mutating API routes return the latest full view payload after the change is applied, including the latest backend connectivity banner state.
 
 Exceptions:
 
@@ -51,6 +51,8 @@ The server currently expects these request body field types:
 - `treble`: integer
 - `loudness`: boolean
 - `balance`: integer
+
+The dashboard also exposes `backend_status` in the main view payload so the frontend can display a warning banner whenever hardware communication is unavailable.
 
 ## API authorization
 
