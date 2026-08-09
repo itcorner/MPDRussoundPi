@@ -2,6 +2,7 @@ const state = {
   config: null,
   configRequired: false,
   configMessage: "",
+  backendStatus: { connected: true, message: "" },
   zones: [],
   systemPower: false,
   inputs: [],
@@ -12,6 +13,7 @@ const zonesContainer = document.getElementById("zones");
 const systemButton = document.getElementById("systemPower");
 const shortcutsContainer = document.getElementById("shortcuts");
 const configHint = document.getElementById("configHint");
+const appShell = document.querySelector("main.app-shell");
 const apiToken = document.querySelector('meta[name="russound-api-token"]')?.content || "";
 let eventSource = null;
 let stateFetchInFlight = false;
@@ -93,6 +95,7 @@ function applyPayload(payload) {
   state.config = payload.config || null;
   state.configRequired = Boolean(payload.config_required);
   state.configMessage = payload.message || "";
+  state.backendStatus = payload.backend_status || { connected: true, message: "" };
   state.zones = payload.state?.zones || [];
   state.systemPower = Boolean(payload.state?.system_power);
   state.inputs = state.config?.inputs || payload.state?.inputs || [];
@@ -135,6 +138,20 @@ function startStateSync() {
 }
 
 function render() {
+  if (appShell) {
+    let banner = appShell.querySelector(".backend-warning-banner");
+    if (!state.backendStatus.connected) {
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.className = "backend-warning-banner";
+        appShell.insertBefore(banner, appShell.firstChild);
+      }
+      banner.innerHTML = `<strong>Hardware communication unavailable</strong><span>${state.backendStatus.message || "Communication with Russound hardware is currently unavailable."}</span>`;
+    } else if (banner) {
+      banner.remove();
+    }
+  }
+
   if (state.configRequired) {
     systemButton.textContent = "Config required";
     systemButton.classList.add("is-off");

@@ -556,6 +556,27 @@ h1 {
   padding: 1.1rem;
 }
 
+.backend-warning-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 180, 60, 0.35);
+  background: rgba(244, 180, 60, 0.12);
+  color: #ffd791;
+}
+
+.backend-warning-banner strong {
+  font-size: 0.95rem;
+}
+
+.backend-warning-banner span {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+
 .empty-state {
   padding: 1.5rem;
   border-radius: 20px;

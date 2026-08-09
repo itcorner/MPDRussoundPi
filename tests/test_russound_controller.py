@@ -175,6 +175,33 @@ class RussoundControllerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             state.update_zone_setting(1, 1, "volume", 42, backend=backend)
 
+    def test_update_zone_setting_keeps_advanced_settings_local_when_backend_is_unavailable(self):
+        state = RussoundState(zones=[Zone(name="Living Room", controller=1, zone_number=1)], inputs=[{"id": 1, "name": "Radio"}])
+
+        state.update_zone_setting(1, 1, "treble", 4, backend=None)
+
+        self.assertEqual(state.zones[0].treble, 4)
+
+    def test_build_view_payload_reports_backend_status(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(RussoundBackend, "_connect", return_value=None):
+                payload = build_view_payload(config_path, state_path, refresh_backend=False)
+
+            self.assertFalse(payload["backend_status"]["connected"])
+            self.assertIn("currently unavailable", payload["backend_status"]["message"])
+
     def test_build_view_payload_requires_a_config_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             state_path = Path(tmp_dir) / "state.json"
@@ -433,7 +460,7 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertTrue(state["zones"][1].loudness)
             self.assertEqual(state["zones"][1].balance, -4)
 
-    def test_zone_sound_parameter_update_raises_when_hardware_write_fails(self):
+    def test_zone_sound_parameter_update_keeps_local_state_when_hardware_write_fails(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.json"
             state_path = Path(tmp_dir) / "state.json"
@@ -448,11 +475,10 @@ class RussoundControllerTests(unittest.TestCase):
             )
 
             state = load_state(config_path, state_path)
-            with patch.object(Zone, "set_bass", return_value=False):
-                with self.assertRaisesRegex(RuntimeError, "Unable to update Russound hardware"):
-                    update_zone_setting(state, 1, 1, "bass", 7)
+            with patch.object(RussoundBackend, "set_zone_bass", return_value=False):
+                payload = update_zone_setting(state, 1, 1, "bass", 7)
 
-            self.assertEqual(state["zones"][0].bass, 0)
+            self.assertEqual(payload.zones[0].bass, 7)
 
     def test_zone_source_updates_only_the_target_zone(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

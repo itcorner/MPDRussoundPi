@@ -386,6 +386,25 @@ class RussoundController:
             return None
         return backend
 
+    def _backend_status(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
+        resolved_config = config if isinstance(config, dict) else self.load_config()
+        if not isinstance(resolved_config, dict):
+            return {
+                "connected": False,
+                "message": "Communication with Russound hardware is currently unavailable.",
+            }
+
+        backend = RussoundBackend(config=resolved_config)
+        try:
+            connected = backend._connect() is not None
+        except Exception:
+            connected = False
+
+        return {
+            "connected": connected,
+            "message": "" if connected else "Communication with Russound hardware is currently unavailable.",
+        }
+
     def update_system_power(self, power: bool, state: RussoundState | None = None) -> RussoundState:
         current_state = state if state is not None else self.load_state(refresh_backend=False)
         config = self.load_config()
@@ -522,17 +541,20 @@ class RussoundController:
             self.state_path = _resolve_state_path(state_path)
         config = self.load_config()
         state = self.load_state(refresh_backend=refresh_backend)
+        backend_status = self._backend_status(config)
         if config is None:
             return {
                 "config": None,
                 "config_required": True,
                 "message": "A Russound config file is required. Copy web/config_example.json and start the server with --config.",
+                "backend_status": backend_status,
                 "state": state.to_payload(),
             }
         visible_zone_addresses = _visible_zone_addresses(config)
         return {
             "config": _filter_config_for_overview(config),
             "config_required": False,
+            "backend_status": backend_status,
             "state": _filter_state_for_overview(state, visible_zone_addresses),
         }
 
