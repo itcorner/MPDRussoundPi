@@ -553,7 +553,44 @@ h1 {
 }
 
 .zone-card {
+  position: relative;
   padding: 1.1rem;
+  perspective: 1400px;
+  min-height: 340px;
+  overflow: hidden;
+}
+
+.zone-card-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+  padding: 1rem 1rem 1.15rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(145deg, rgba(7, 19, 31, 0.9), rgba(24, 54, 83, 0.95));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backface-visibility: hidden;
+  transition: transform 650ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-style: preserve-3d;
+}
+
+.zone-card-front {
+  justify-content: space-between;
+  transform: rotateY(0deg);
+}
+
+.zone-card-back {
+  transform: rotateY(180deg);
+}
+
+.zone-card.is-flipped .zone-card-front {
+  transform: rotateY(180deg);
+}
+
+.zone-card.is-flipped .zone-card-back {
+  transform: rotateY(0deg);
 }
 
 .backend-warning-banner {
@@ -625,30 +662,57 @@ h1 {
   margin-top: 1rem;
 }
 
+.zone-card-front .zone-controls {
+  flex: 1;
+}
+
+.zone-card-back-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.zone-card-back-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
 .control-row {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
 }
 
-.zone-advanced-controls {
-  margin-top: 0.15rem;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(7, 19, 31, 0.35);
+.zone-advanced-toggle {
+  width: fit-content;
+  margin-top: 0.25rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid rgba(91, 185, 255, 0.32);
+  border-radius: 999px;
+  background: rgba(91, 185, 255, 0.12);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
 }
 
-.zone-advanced-summary {
-  cursor: pointer;
-  padding: 0.8rem 0.95rem;
-  color: var(--accent);
-  font-weight: 600;
+.zone-advanced-toggle:hover {
+  transform: translateY(-1px);
+  background: rgba(91, 185, 255, 0.18);
+  border-color: rgba(91, 185, 255, 0.48);
+}
+
+.zone-advanced-toggle--back {
+  margin-top: 0;
 }
 
 .zone-advanced-grid {
   display: grid;
   gap: 0.85rem;
-  padding: 0 0.95rem 0.95rem;
+  flex: 1;
+  align-content: start;
 }
 
 .advanced-check {
