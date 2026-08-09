@@ -93,9 +93,9 @@ function applyPayload(payload) {
   state.config = payload.config || null;
   state.configRequired = Boolean(payload.config_required);
   state.configMessage = payload.message || "";
-  state.zones = payload.state.zones || [];
-  state.systemPower = payload.state.system_power;
-  state.inputs = payload.state.inputs || [];
+  state.zones = payload.state?.zones || [];
+  state.systemPower = Boolean(payload.state?.system_power);
+  state.inputs = state.config?.inputs || payload.state?.inputs || [];
   state.shortcuts = state.config?.shortcuts || [];
   render();
 }
