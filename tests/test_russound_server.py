@@ -141,6 +141,52 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             server.server_close()
 
+    def test_status_client_payload_deduplicates_clients_from_same_session(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            server.register_event_client("127.0.0.1", "status-test", "session-123")
+            server.register_event_client("127.0.0.1", "status-test", "session-123")
+
+            payload = server.build_client_status_payload()
+
+            self.assertEqual(len(payload["connected_clients"]), 1)
+            self.assertEqual(payload["connected_clients"][0]["ip"], "127.0.0.1")
+        finally:
+            server.server_close()
+
+    def test_reconnecting_same_session_keeps_only_latest_active_client(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            first_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-123")
+            second_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-123")
+
+            self.assertEqual(first_client_id, second_client_id)
+
+            payload = server.build_client_status_payload()
+            self.assertEqual(len(payload["connected_clients"]), 1)
+            self.assertEqual(payload["connected_clients"][0]["id"], second_client_id)
+
+            server.unregister_event_client(second_client_id)
+            payload = server.build_client_status_payload()
+            self.assertEqual(payload["connected_clients"], [])
+        finally:
+            server.server_close()
+
+    def test_reconnecting_after_disconnect_reuses_existing_session_entry(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            first_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-456")
+            server.unregister_event_client(first_client_id)
+
+            second_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-456")
+
+            self.assertEqual(first_client_id, second_client_id)
+            payload = server.build_client_status_payload()
+            self.assertEqual(len(payload["connected_clients"]), 1)
+            self.assertEqual(payload["connected_clients"][0]["id"], second_client_id)
+        finally:
+            server.server_close()
+
     def test_status_history_payload_keeps_last_fifty_frontend_events(self):
         server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
         try:

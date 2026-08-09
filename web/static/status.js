@@ -9,6 +9,23 @@ let eventSource = null;
 let statusFetchInFlight = false;
 let statusFetchQueued = false;
 const expandedPayloadRows = new Set();
+const sessionStorageKey = "russound-session-id";
+
+function getSessionId() {
+  try {
+    const existing = window.sessionStorage.getItem(sessionStorageKey);
+    if (existing) {
+      return existing;
+    }
+    const generated = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    window.sessionStorage.setItem(sessionStorageKey, generated);
+    return generated;
+  } catch {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+const clientSessionId = getSessionId();
 
 function formatTimestampLines(rawTimestamp) {
   const fallback = String(rawTimestamp || "");
@@ -45,6 +62,9 @@ function authorizedFetch(path, options = {}) {
   if (apiToken) {
     headers.set("X-Russound-Api-Token", apiToken);
   }
+  if (clientSessionId) {
+    headers.set("X-Russound-Session-Id", clientSessionId);
+  }
   return fetch(path, { ...options, headers });
 }
 
@@ -59,12 +79,14 @@ function renderStatus(payload, historyPayload) {
   for (const client of clients) {
     const item = document.createElement("article");
     item.className = "status-list-item";
+    const sessionValue = client.session_id || "—";
     item.innerHTML = `
       <div class="status-item-row">
         <strong>${client.ip}</strong>
         <span class="status-pill">Client ${client.id}</span>
       </div>
       <div class="status-meta">Connected: ${client.connected_at}</div>
+      <div class="status-meta">Session: ${sessionValue}</div>
       <div class="status-meta">User-Agent: ${client.user_agent || "Unknown"}</div>
     `;
     clientsList.appendChild(item);
@@ -176,8 +198,15 @@ function startStatusSync() {
   if (!window.EventSource || eventSource) {
     return;
   }
-  const tokenQuery = apiToken ? `?token=${encodeURIComponent(apiToken)}` : "";
-  eventSource = new EventSource(`/api/events${tokenQuery}`);
+  const params = new URLSearchParams();
+  if (apiToken) {
+    params.set("token", apiToken);
+  }
+  if (clientSessionId) {
+    params.set("sessionId", clientSessionId);
+  }
+  const query = params.toString();
+  eventSource = new EventSource(`/api/events${query ? `?${query}` : ""}`);
   eventSource.addEventListener("state-change", () => {
     fetchStatus();
   });

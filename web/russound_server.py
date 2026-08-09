@@ -294,9 +294,17 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _serve_events(self, server: "RussoundHTTPServer") -> None:
+        parsed = urlparse(self.path)
+        query_params = parse_qs(parsed.query)
+        session_id = query_params.get("sessionId", [None])[0] or query_params.get("session_id", [None])[0]
+        if not session_id:
+            session_id = self.headers.get("X-Russound-Session-Id") or self.headers.get("X-Session-Id")
+        if not session_id:
+            session_id = self.headers.get("Cookie", "")
         client_id, event_queue = server.register_event_client(
             self.client_address[0],
             self.headers.get("User-Agent"),
+            session_id,
         )
         try:
             self.send_response(HTTPStatus.OK)
@@ -358,15 +366,36 @@ class RussoundHTTPServer(ThreadingHTTPServer):
         self.state_revision = 0
         self.state_lock = threading.Lock()
         self._event_clients: dict[int, dict[str, Any]] = {}
+        self._event_client_index: dict[tuple[str, str], int] = {}
         self.controller = get_controller(config_path, state_path)
         self._event_clients_lock = threading.Lock()
         self._event_client_id = 0
         self._event_history: deque[dict[str, Any]] = deque(maxlen=50)
         self._event_history_lock = threading.Lock()
 
-    def register_event_client(self, ip_address: str, user_agent: str | None) -> tuple[int, Queue[str]]:
+    def register_event_client(
+        self,
+        ip_address: str,
+        user_agent: str | None,
+        session_id: str | None = None,
+    ) -> tuple[int, Queue[str]]:
         event_queue: Queue[str] = Queue()
         with self._event_clients_lock:
+            normalized_session_id = session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+            client_key = (ip_address, normalized_session_id) if normalized_session_id is not None else None
+            if client_key is not None:
+                existing_client_id = self._event_client_index.get(client_key)
+                existing_entry = self._event_clients.get(existing_client_id) if existing_client_id is not None else None
+                if existing_entry is not None:
+                    existing_entry["active"] = True
+                    existing_entry["queue"] = event_queue
+                    existing_entry["ip"] = ip_address
+                    existing_entry["user_agent"] = user_agent or existing_entry.get("user_agent", "")
+                    existing_entry["connected_at"] = self._timestamp()
+                    existing_entry["session_id"] = normalized_session_id
+                    self._event_client_index[client_key] = existing_client_id
+                    return existing_client_id, event_queue
+
             self._event_client_id += 1
             client_id = self._event_client_id
             self._event_clients[client_id] = {
@@ -375,19 +404,27 @@ class RussoundHTTPServer(ThreadingHTTPServer):
                 "user_agent": user_agent or "",
                 "connected_at": self._timestamp(),
                 "queue": event_queue,
+                "session_id": normalized_session_id,
+                "active": True,
             }
+            if client_key is not None:
+                self._event_client_index[client_key] = client_id
         return client_id, event_queue
 
     def unregister_event_client(self, client_id: int) -> None:
         with self._event_clients_lock:
-            self._event_clients.pop(client_id, None)
+            client_entry = self._event_clients.get(client_id)
+            if client_entry is None:
+                return
+            client_entry["active"] = False
 
     def broadcast_state_change(self) -> None:
         with self._event_clients_lock:
             self.state_revision += 1
             event_text = json.dumps({"revision": self.state_revision})
             for client in list(self._event_clients.values()):
-                client["queue"].put(event_text)
+                if client.get("active", True):
+                    client["queue"].put(event_text)
 
     def record_frontend_event(self, ip_address: str, path: str, payload: dict[str, Any]) -> None:
         entry: dict[str, Any] = {
@@ -407,15 +444,19 @@ class RussoundHTTPServer(ThreadingHTTPServer):
 
     def build_client_status_payload(self) -> dict[str, Any]:
         with self._event_clients_lock:
-            clients = [
-                {
-                    "id": client["id"],
-                    "ip": client["ip"],
-                    "connected_at": client["connected_at"],
-                    "user_agent": client["user_agent"],
-                }
-                for client in self._event_clients.values()
-            ]
+            clients: list[dict[str, Any]] = []
+            for client in self._event_clients.values():
+                if not client.get("active", True):
+                    continue
+                clients.append(
+                    {
+                        "id": client["id"],
+                        "ip": client["ip"],
+                        "connected_at": client["connected_at"],
+                        "user_agent": client["user_agent"],
+                        "session_id": client["session_id"],
+                    }
+                )
         return {"connected_clients": clients}
 
     def build_history_status_payload(self) -> dict[str, Any]:
