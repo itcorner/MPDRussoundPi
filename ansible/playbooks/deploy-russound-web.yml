@@ -1,0 +1,100 @@
+---
+- name: Deploy Russound web server
+  hosts: musicpi
+  become: true
+  vars:
+    app_dir: "{{ ansible_env.HOME | default('/home/musicpi') }}/MPDRussoundPi"
+    venv_dir: "{{ ansible_env.HOME | default('/home/musicpi') }}/russound-venv"
+    russound_host: "0.0.0.0"
+    russound_port: 8000
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Install base OS packages
+      apt:
+        name:
+          - git
+          - python3
+          - python3-pip
+          - python3-venv
+          - python3-dev
+          - build-essential
+          - ser2net
+        state: present
+        update_cache: true
+
+    - name: Ensure target deployment directory exists
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user | default('musicpi') }}"
+        group: "{{ ansible_user | default('musicpi') }}"
+        mode: "0755"
+
+    - name: Clone or update repository
+      git:
+        repo: https://github.com/itcorner/MPDRussoundPi.git
+        dest: "{{ app_dir }}"
+        version: main
+        force: true
+        update: true
+
+    - name: Create Python virtual environment
+      command: "{{ ansible_python_interpreter }} -m venv {{ venv_dir }}"
+      args:
+        creates: "{{ venv_dir }}/bin/python"
+
+    - name: Install Python dependencies
+      pip:
+        requirements: "{{ app_dir }}/requirements.txt"
+        virtualenv: "{{ venv_dir }}"
+      when: lookup('ansible.builtin.fileglob', '{{ app_dir }}/requirements.txt', wantlist=True) | length > 0
+
+    - name: Install Python runtime dependencies fallback
+      pip:
+        name:
+          - russound
+          - psutil
+        virtualenv: "{{ venv_dir }}"
+      when: lookup('ansible.builtin.fileglob', '{{ app_dir }}/requirements.txt', wantlist=True) | length == 0
+
+    - name: Copy web config example if config missing
+      copy:
+        src: "{{ app_dir }}/web/config_example.json"
+        dest: "{{ app_dir }}/web/russound_config.json"
+        remote_src: true
+        force: false
+
+    - name: Ensure temporary state directory exists
+      file:
+        path: /tmp
+        state: directory
+        mode: "1777"
+
+    - name: Copy ser2net configuration file
+      copy:
+        src: "{{ app_dir }}/mpdrussoundpi/ser2net/ser2net.yaml"
+        dest: /etc/ser2net.yaml
+        remote_src: true
+        mode: "0644"
+
+    - name: Install systemd service file
+      template:
+        src: ../templates/russound-web.service.j2
+        dest: /etc/systemd/system/russound-web.service
+        mode: "0644"
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: true
+
+    - name: Enable and start ser2net
+      systemd:
+        name: ser2net
+        enabled: true
+        state: restarted
+
+    - name: Enable and start russound web service
+      systemd:
+        name: russound-web
+        enabled: true
+        state: restarted

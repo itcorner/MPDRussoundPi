@@ -1,0 +1,17 @@
+[Unit]
+Description=Russound Web Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ app_dir }}
+ExecStart={{ venv_dir }}/bin/python {{ app_dir }}/web/russound_server.py --config {{ app_dir }}/web/russound_config.json --state /tmp/russound_state.json --host {{ russound_host }} --port {{ russound_port }}
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+User={{ ansible_user }}
+Group={{ ansible_user }}
+
+[Install]
+WantedBy=multi-user.target
