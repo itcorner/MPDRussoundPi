@@ -2,15 +2,19 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from web.russound_controller import (
     apply_shortcut,
     build_config_editor_payload,
     build_view_payload,
+    get_controller,
+    handle_zone_setting_change,
     load_state,
     persist_state,
     RussoundBackend,
+    RussoundController,
+    RussoundState,
     set_shared_source,
     update_config_zones,
     update_system_power,
@@ -20,6 +24,31 @@ from web.russound_controller import (
 
 
 class RussoundControllerTests(unittest.TestCase):
+    def test_controller_is_a_singleton_and_loads_state_as_russoundstate(self):
+        controller = get_controller()
+
+        self.assertIsInstance(controller, RussoundController)
+        self.assertIs(controller, get_controller())
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = controller.load_state(config_path, state_path, refresh_backend=False)
+
+            self.assertIsInstance(state, RussoundState)
+            self.assertEqual(state.zones[0].name, "Living Room")
+            self.assertEqual(state.inputs[0]["name"], "Radio")
+
     def test_initial_state_uses_configured_zones_and_inputs(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.json"
@@ -44,10 +73,107 @@ class RussoundControllerTests(unittest.TestCase):
             state = load_state(config_path, state_path)
 
             self.assertFalse(state["system_power"])
-            self.assertEqual(state["zones"][0]["name"], "Living Room")
-            self.assertEqual(state["zones"][0]["source"], 1)
-            self.assertEqual(state["zones"][0]["volume"], 20)
+            self.assertEqual(state["zones"][0].name, "Living Room")
+            self.assertEqual(state["zones"][0].source, 1)
+            self.assertEqual(state["zones"][0].volume, 20)
+            self.assertEqual(state["zones"][0].bass, 0)
+            self.assertEqual(state["zones"][0].treble, 0)
+            self.assertFalse(state["zones"][0].loudness)
+            self.assertEqual(state["zones"][0].balance, 0)
             self.assertEqual(state["inputs"][0]["name"], "Radio")
+
+    def test_load_state_preserves_values_from_legacy_dict_based_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}, {"id": 2, "name": "TV"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "system_power": True,
+                        "zones": [
+                            {
+                                "name": "Living Room",
+                                "power": True,
+                                "source": 2,
+                                "volume": 33,
+                                "bass": 5,
+                                "treble": -3,
+                                "loudness": True,
+                                "balance": 2,
+                                "controller": 1,
+                                "zone": 1,
+                            }
+                        ],
+                        "inputs": [{"id": 1, "name": "Radio"}, {"id": 2, "name": "TV"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = load_state(config_path, state_path, refresh_backend=False)
+
+            self.assertTrue(state["system_power"])
+            self.assertTrue(state["zones"][0].power)
+            self.assertEqual(state["zones"][0].source, 2)
+            self.assertEqual(state["zones"][0].volume, 33)
+            self.assertEqual(state["zones"][0].bass, 5)
+            self.assertEqual(state["zones"][0].treble, -3)
+            self.assertTrue(state["zones"][0].loudness)
+            self.assertEqual(state["zones"][0].balance, 2)
+
+    def test_handle_zone_setting_change_persists_updated_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = handle_zone_setting_change(config_path, state_path, controller_id=1, zone_number=1, setting="volume", value=42)
+
+            self.assertEqual(payload["state"]["zones"][0]["volume"], 42)
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["zones"][0]["volume"], 42)
+            self.assertNotIn("inputs", persisted)
+
+    def test_update_zone_setting_raises_when_power_update_fails(self):
+        state = RussoundState(zones=[Zone(name="Living Room", controller=1, zone_number=1)], inputs=[{"id": 1, "name": "Radio"}])
+        backend = Mock()
+        backend.set_zone_power.return_value = False
+
+        with self.assertRaises(RuntimeError):
+            state.update_zone_setting(1, 1, "power", True, backend=backend)
+
+    def test_update_zone_setting_raises_when_source_update_fails(self):
+        state = RussoundState(zones=[Zone(name="Living Room", controller=1, zone_number=1)], inputs=[{"id": 1, "name": "Radio"}])
+        backend = Mock()
+        backend.set_zone_source.return_value = False
+
+        with self.assertRaises(RuntimeError):
+            state.update_zone_setting(1, 1, "source", 1, backend=backend)
+
+    def test_update_zone_setting_raises_when_volume_update_fails(self):
+        state = RussoundState(zones=[Zone(name="Living Room", controller=1, zone_number=1)], inputs=[{"id": 1, "name": "Radio"}])
+        backend = Mock()
+        backend.set_zone_volume.return_value = False
+
+        with self.assertRaises(RuntimeError):
+            state.update_zone_setting(1, 1, "volume", 42, backend=backend)
 
     def test_build_view_payload_requires_a_config_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -58,7 +184,7 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertTrue(payload["config_required"])
             self.assertIsNone(payload["config"])
             self.assertIn("config file is required", payload["message"])
-            self.assertEqual(payload["state"], {"system_power": False, "zones": [], "inputs": []})
+            self.assertEqual(payload["state"], {"system_power": False, "zones": []})
 
     def test_build_view_payload_hides_zones_excluded_from_overview(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -82,6 +208,35 @@ class RussoundControllerTests(unittest.TestCase):
 
             self.assertEqual([(zone["controller"], zone["zone"]) for zone in payload["config"]["zones"]], [(1, 1)])
             self.assertEqual([(zone["controller"], zone["zone"]) for zone in payload["state"]["zones"]], [(1, 1)])
+
+    def test_build_view_payload_keeps_metadata_in_config_and_frontend_zone_payloads_include_name(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "controllers": [{"id": 1, "zone_count": 1}],
+                        "zones": [
+                            {"id": "living", "name": "Living Room", "controller": 1, "zone": 1, "visible": True, "enabled": True},
+                        ],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = build_view_payload(config_path, state_path, refresh_backend=False)
+            state_zone = payload["state"]["zones"][0]
+
+            self.assertEqual(payload["config"]["zones"][0]["name"], "Living Room")
+            self.assertTrue(payload["config"]["zones"][0]["visible"])
+            self.assertTrue(payload["config"]["zones"][0]["enabled"])
+            self.assertEqual(state_zone["controller"], 1)
+            self.assertEqual(state_zone["zone"], 1)
+            self.assertEqual(state_zone["name"], "Living Room")
+            self.assertNotIn("visible", state_zone)
+            self.assertNotIn("enabled", state_zone)
 
     def test_update_config_zones_rebuilds_slots_and_prunes_removed_zones_from_shortcuts(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -186,15 +341,26 @@ class RussoundControllerTests(unittest.TestCase):
         zone.power = True
         zone.source = 1
         zone.volume = 45
+        zone.bass = -4
+        zone.treble = 3
+        zone.loudness = True
+        zone.balance = -2
 
         self.assertTrue(zone.power)
         self.assertEqual(zone.source, 1)
         self.assertEqual(zone.volume, 45)
-        self.assertEqual(zone.to_dict(), {
-            "name": "Living Room",
+        self.assertEqual(zone.bass, -4)
+        self.assertEqual(zone.treble, 3)
+        self.assertTrue(zone.loudness)
+        self.assertEqual(zone.balance, -2)
+        self.assertEqual(zone.to_state_payload(), {
             "power": True,
             "source": 1,
             "volume": 45,
+            "bass": -4,
+            "treble": 3,
+            "loudness": True,
+            "balance": -2,
             "controller": 2,
             "zone": 3,
         })
@@ -217,6 +383,11 @@ class RussoundControllerTests(unittest.TestCase):
             update_zone_setting(state, 1, 1, "power", True)
             set_shared_source(state, 1)
             update_zone_setting(state, 1, 1, "volume", 45)
+            with patch.object(RussoundBackend, "set_zone_bass", return_value=True), patch.object(RussoundBackend, "set_zone_treble", return_value=True), patch.object(RussoundBackend, "set_zone_loudness", return_value=True), patch.object(RussoundBackend, "set_zone_balance", return_value=True):
+                update_zone_setting(state, 1, 1, "bass", -5)
+                update_zone_setting(state, 1, 1, "treble", 4)
+                update_zone_setting(state, 1, 1, "loudness", True)
+                update_zone_setting(state, 1, 1, "balance", -3)
             persist_state(state_path, state)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -224,6 +395,64 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertTrue(persisted["zones"][0]["power"])
             self.assertEqual(persisted["zones"][0]["source"], 1)
             self.assertEqual(persisted["zones"][0]["volume"], 45)
+            self.assertEqual(persisted["zones"][0]["bass"], -5)
+            self.assertEqual(persisted["zones"][0]["treble"], 4)
+            self.assertTrue(persisted["zones"][0]["loudness"])
+            self.assertEqual(persisted["zones"][0]["balance"], -3)
+
+    def test_zone_sound_parameter_updates_only_the_target_zone(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "zones": [
+                            {"name": "Living Room", "controller": 1, "zone": 1},
+                            {"name": "Kitchen", "controller": 1, "zone": 2},
+                        ],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = load_state(config_path, state_path)
+            with patch.object(RussoundBackend, "set_zone_bass", return_value=True), patch.object(RussoundBackend, "set_zone_treble", return_value=True), patch.object(RussoundBackend, "set_zone_loudness", return_value=True), patch.object(RussoundBackend, "set_zone_balance", return_value=True):
+                update_zone_setting(state, 1, 2, "bass", 6)
+                update_zone_setting(state, 1, 2, "treble", 5)
+                update_zone_setting(state, 1, 2, "loudness", True)
+                update_zone_setting(state, 1, 2, "balance", -4)
+
+            self.assertEqual(state["zones"][0].bass, 0)
+            self.assertEqual(state["zones"][0].treble, 0)
+            self.assertFalse(state["zones"][0].loudness)
+            self.assertEqual(state["zones"][0].balance, 0)
+            self.assertEqual(state["zones"][1].bass, 6)
+            self.assertEqual(state["zones"][1].treble, 5)
+            self.assertTrue(state["zones"][1].loudness)
+            self.assertEqual(state["zones"][1].balance, -4)
+
+    def test_zone_sound_parameter_update_raises_when_hardware_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = load_state(config_path, state_path)
+            with patch.object(Zone, "set_bass", return_value=False):
+                with self.assertRaisesRegex(RuntimeError, "Unable to update Russound hardware"):
+                    update_zone_setting(state, 1, 1, "bass", 7)
+
+            self.assertEqual(state["zones"][0].bass, 0)
 
     def test_zone_source_updates_only_the_target_zone(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -245,9 +474,9 @@ class RussoundControllerTests(unittest.TestCase):
 
             state = load_state(config_path, state_path)
             update_zone_setting(state, 1, 1, "source", 2)
-            self.assertEqual(state["zones"][0]["source"], 2)
-            self.assertEqual(state["zones"][1]["source"], 1)
-            self.assertEqual(state["zones"][2]["source"], 1)
+            self.assertEqual(state["zones"][0].source, 2)
+            self.assertEqual(state["zones"][1].source, 1)
+            self.assertEqual(state["zones"][2].source, 1)
 
     def test_zone_source_changes_are_forwarded_to_russound_backend(self):
         class DummyClient:
@@ -338,7 +567,7 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertTrue(state["system_power"])
             update_system_power(state, False)
             self.assertFalse(state["system_power"])
-            self.assertFalse(state["zones"][0]["power"])
+            self.assertFalse(state["zones"][0].power)
 
     def test_shortcut_applies_selected_zones_and_source(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -349,10 +578,10 @@ class RussoundControllerTests(unittest.TestCase):
             shortcut = {"zone_addresses": [{"controller": 1, "zone": 1}, {"controller": 1, "zone": 2}], "source": 2}
             apply_shortcut(state, shortcut)
             self.assertTrue(state["system_power"])
-            self.assertTrue(state["zones"][0]["power"])
-            self.assertTrue(state["zones"][1]["power"])
-            self.assertEqual(state["zones"][0]["source"], 2)
-            self.assertEqual(state["zones"][1]["source"], 2)
+            self.assertTrue(state["zones"][0].power)
+            self.assertTrue(state["zones"][1].power)
+            self.assertEqual(state["zones"][0].source, 2)
+            self.assertEqual(state["zones"][1].source, 2)
 
 
 if __name__ == "__main__":

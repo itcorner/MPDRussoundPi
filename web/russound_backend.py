@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import logging
 import time
-from typing import Any
+from typing import Any, Callable, cast
 
 try:
     from russound.russound import Russound
@@ -15,21 +16,37 @@ else:
 from .zone import Zone
 
 
+_ZONE_INFO_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00"
+_ZONE_INFO_RESPONSE_SIGNATURE = "04 02 00 @zz 07"
+_ZONE_USER_PARAMETER_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 05 02 00 @zz 00 @pp 00 00"
+_ZONE_USER_PARAMETER_RESPONSE_SIGNATURE = "05 02 00 @zz 00 @pp"
+_ZONE_USER_PARAMETER_SET_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 00 05 02 00 @zz 00 @pp 00 00 00 01 00 01 00 @pr"
+_ZONE_USER_PARAMETER_PATHS = {
+    "bass": 0x00,
+    "treble": 0x01,
+    "loudness": 0x02,
+    "balance": 0x03,
+    "turn_on_volume": 0x04,
+}
+
+
 class RussoundBackend:
     _next_connect_attempt_at = 0.0
     _connect_backoff_seconds = 2.0
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 6666, controller: int = 1) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = 6666, controller: int = 1, config: dict[str, Any] | None = None) -> None:
         """Create a backend wrapper for a Russound controller connection.
 
         Args:
             host: TCP host name or IP address of the Russound gateway.
             port: TCP port exposed by the gateway.
             controller: Default controller id used when a zone mapping is missing.
+            config: Optional controller and zone-count configuration used to scope address resolution.
         """
         self.host = host
         self.port = int(port)
         self.controller = int(controller)
+        self.config = config
 
     def _connect(self):
         """Open a new Russound client connection when the backend library is available."""
@@ -52,48 +69,147 @@ class RussoundBackend:
             logging.debug("Unable to connect to Russound backend: %s", exc)
             return None
 
-    def _source_index(self, source_id: int | None, inputs: list[dict[str, Any]]) -> int | None:
+    def _source_index(self, source_id: int, inputs: list[dict[str, Any]]) -> int:
         """Resolve a configured input id to the zero-based index expected by the Russound API.
 
         Args:
             source_id: Explicit input id to resolve.
             inputs: List of configured input definitions used for lookup.
         """
-        if not isinstance(source_id, int):
-            return None
-        for index, input_item in enumerate(inputs):
+        for _, input_item in enumerate(inputs):
             if input_item.get("id") == source_id:
-                return index
-        return None
+                return source_id - 1
+        raise ValueError(f"Source {source_id} is not configured")
 
-    def _resolve_zone_address(self, zone: dict[str, Any] | Zone, config: dict[str, Any] | None = None) -> tuple[int, int]:
-        """Translate a logical room mapping to a concrete controller and zone number.
+    def _client_lock_context(self, client: Any):
+        lock = getattr(client, "lock", None)
+        return lock if lock is not None else nullcontext()
 
-        Args:
-            zone: Zone definition containing controller and zone values.
-            config: Full configuration containing controller zone-count limits.
-        """
-        if isinstance(zone, Zone):
-            controller = zone.controller
-            zone_number = zone.zone_number
-        else:
-            controller = int(zone.get("controller", 1))
-            zone_number = int(zone.get("zone", 1))
-        if isinstance(config, dict):
-            controller_limits = {}
-            for controller_config in config.get("controllers", []):
-                if not isinstance(controller_config, dict):
-                    continue
-                controller_id = int(controller_config.get("id", 1))
-                if 1 <= controller_id <= 4:
-                    controller_limits[controller_id] = int(controller_config.get("zone_count", 8))
-            if controller_limits:
-                controller = controller if controller in controller_limits else 1
-                zone_limit = controller_limits.get(controller, 8)
-                zone_number = max(1, min(zone_number, zone_limit))
-        return controller, zone_number
+    def _request_zone_info_message(self, client: Any, controller: int, zone_number: int) -> Any | None:
+        create_signature = getattr(client, "_Russound__create_response_signature", None)
+        create_message = getattr(client, "_Russound__create_send_message", None)
+        send_data = getattr(client, "_Russound__send_data", None)
+        get_response = getattr(client, "_Russound__get_response_message", None)
+        if not all(callable(method) for method in (create_signature, create_message, send_data, get_response)):
+            return None
 
-    def read_zone(self, zone: dict[str, Any] | Zone, inputs: list[dict[str, Any]], config: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        create_signature = cast(Callable[[str, int], Any], create_signature)
+        create_message = cast(Callable[[str, int, int], Any], create_message)
+        send_data = cast(Callable[[Any], None], send_data)
+        get_response = cast(Callable[[Any], Any], get_response)
+
+        response_signature = create_signature(_ZONE_INFO_RESPONSE_SIGNATURE, zone_number)
+        send_msg = create_message(_ZONE_INFO_REQUEST_TEMPLATE, controller, zone_number)
+        with self._client_lock_context(client):
+            send_data(send_msg)
+            return get_response(response_signature)
+
+    def _request_zone_user_parameter_message(self, client: Any, controller: int, zone_number: int, parameter: str) -> Any | None:
+        parameter_path = _ZONE_USER_PARAMETER_PATHS.get(parameter)
+        if parameter_path is None:
+            raise ValueError(f"Unsupported zone parameter: {parameter}")
+
+        create_signature = getattr(client, "_Russound__create_response_signature", None)
+        create_message = getattr(client, "_Russound__create_send_message", None)
+        send_data = getattr(client, "_Russound__send_data", None)
+        get_response = getattr(client, "_Russound__get_response_message", None)
+        if not all(callable(method) for method in (create_signature, create_message, send_data, get_response)):
+            return None
+
+        create_signature = cast(Callable[[str, int], Any], create_signature)
+        create_message = cast(Callable[[str, int, int], Any], create_message)
+        send_data = cast(Callable[[Any], None], send_data)
+        get_response = cast(Callable[[Any], Any], get_response)
+
+        parameter_hex = f"{parameter_path:02X}"
+        response_signature = create_signature(_ZONE_USER_PARAMETER_RESPONSE_SIGNATURE.replace("@pp", parameter_hex), zone_number)
+        send_msg = create_message(_ZONE_USER_PARAMETER_REQUEST_TEMPLATE.replace("@pp", parameter_hex), controller, zone_number)
+        with self._client_lock_context(client):
+            send_data(send_msg)
+            return get_response(response_signature)
+
+    def _parse_zone_info_message(self, message: Any) -> dict[str, Any] | None:
+        if message is None or len(message) < 22:
+            return None
+        return {
+            "power": bool(message[11]),
+            "source_index": int(message[12]),
+            "volume": int(message[13]) * 2,
+            "bass": int(message[14]) - 10,
+            "treble": int(message[15]) - 10,
+            "loudness": bool(message[16]),
+            "balance": int(message[17]) - 10,
+            "system_power": bool(message[18]),
+            "shared_source": bool(message[19]),
+        }
+
+    def _parse_zone_user_parameter_value(self, parameter: str, message: Any) -> Any | None:
+        if message is None or len(message) < 13:
+            return None
+        raw_value = int(message[12])
+        if parameter in {"bass", "treble", "balance"}:
+            return raw_value - 10
+        if parameter == "turn_on_volume":
+            return raw_value * 2
+        if parameter == "loudness":
+            return bool(raw_value)
+        return raw_value
+
+    def _normalize_zone_user_parameter_value(self, parameter: str, value: Any) -> int:
+        if parameter in {"bass", "treble", "balance"}:
+            return max(-10, min(10, int(value))) + 10
+        if parameter == "turn_on_volume":
+            return max(0, min(100, int(value))) // 2
+        if parameter == "loudness":
+            return 1 if bool(value) else 0
+        raise ValueError(f"Unsupported zone parameter: {parameter}")
+
+    def _controller_zone_limits(self) -> dict[int, int]:
+        if not isinstance(self.config, dict):
+            return {}
+        controller_zone_limits: dict[int, int] = {}
+        for controller_config in self.config.get("controllers", []):
+            if not isinstance(controller_config, dict):
+                continue
+            controller_id = int(controller_config.get("id", 1))
+            zone_count = int(controller_config.get("zone_count", 6))
+            if 1 <= controller_id <= 6:
+                controller_zone_limits[controller_id] = min(6, max(1, zone_count))
+        return controller_zone_limits
+
+    def _validate_zone_address(self, controller: int, zone_number: int, controller_zone_limits: dict[int, int]) -> tuple[int, int]:
+        controller_id = int(controller)
+        zone_number_value = int(zone_number)
+        if not 1 <= controller_id <= 6:
+            raise ValueError(f"Unsupported controller id: {controller_id}")
+        if not controller_zone_limits:
+            if not 1 <= zone_number_value <= 6:
+                raise ValueError(f"Unsupported zone number: {zone_number_value}")
+            return controller_id, zone_number_value
+        if controller_id not in controller_zone_limits:
+            raise ValueError(f"Controller {controller_id} is not configured in the backend scope")
+        zone_limit = controller_zone_limits[controller_id]
+        if not 1 <= zone_number_value <= zone_limit:
+            raise ValueError(f"Zone number {zone_number_value} is out of scope for controller {controller_id}")
+        return controller_id, zone_number_value
+
+    def is_address_in_scope(self, address: tuple[int, int] | None = None) -> bool:
+        """Return True when a controller/zone tuple is within the configured scope."""
+        if not isinstance(address, tuple) or len(address) != 2:
+            return False
+        controller, zone_number = address
+        try:
+            self._validate_zone_address(controller, zone_number, self._controller_zone_limits())
+        except ValueError:
+            return False
+        return True
+
+    def _resolve_zone_address(self, zone: Zone) -> tuple[int, int]:
+        """Translate a logical room mapping to a concrete controller and zone number."""
+        controller, zone_number = zone.address
+        return self._validate_zone_address(controller, zone_number, self._controller_zone_limits())
+
+    def read_zone(self, zone: Zone, inputs: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Read the current power, source, and volume state for one room.
 
         Args:
@@ -104,24 +220,112 @@ class RussoundBackend:
         client = self._connect()
         if client is None:
             return None
-        controller, zone_number = self._resolve_zone_address(zone, config)
+        controller, zone_number = self._resolve_zone_address(zone)
+        zone_info = self._parse_zone_info_message(self._request_zone_info_message(client, controller, zone_number))
+        if zone_info is not None:
+            source_index = zone_info.get("source_index")
+            source_id = None
+            if isinstance(source_index, int) and 0 <= source_index < len(inputs):
+                source_id = inputs[source_index].get("id")
+            return {
+                "power": bool(zone_info.get("power", False)),
+                "source": source_id or (inputs[0].get("id") if inputs else ""),
+                "volume": int(zone_info.get("volume", 0)),
+                "bass": int(zone_info.get("bass", 0)),
+                "treble": int(zone_info.get("treble", 0)),
+                "loudness": bool(zone_info.get("loudness", False)),
+                "balance": int(zone_info.get("balance", 0)),
+            }
         try:
             power = client.get_power(controller, zone_number)
             source_index = client.get_source(controller, zone_number)
             volume = client.get_volume(controller, zone_number)
             source_id = None
-            if source_index is not None and 0 <= source_index < len(inputs):
+            if isinstance(source_index, int) and 0 <= source_index < len(inputs):
                 source_id = inputs[source_index].get("id")
             return {
                 "power": bool(power),
                 "source": source_id or (inputs[0].get("id") if inputs else ""),
                 "volume": int(volume or 0),
+                "bass": 0,
+                "treble": 0,
+                "loudness": False,
+                "balance": 0,
             }
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
             logging.debug("Unable to read Russound zone %s: %s", zone_number, exc)
             return None
 
-    def set_zone_power(self, zone: dict[str, Any] | Zone, power: bool) -> bool:
+    def read_zone_parameters(self, zone: Zone) -> dict[str, Any] | None:
+        """Read extended CAA66 zone parameters such as bass, treble, and balance.
+
+        Returns normalized values where applicable:
+        - `power`, `volume`: the current zone power and volume state
+        - `bass`, `treble`, `balance`: `-10..10`
+        - `turn_on_volume`: `0..100`
+        - `loudness`: booleans
+        """
+        client = self._connect()
+        if client is None:
+            return None
+        controller, zone_number = self._resolve_zone_address(zone)
+
+        zone_info = self._parse_zone_info_message(self._request_zone_info_message(client, controller, zone_number))
+        if zone_info is None:
+            return None
+
+        zone_info["power"] = bool(zone_info.get("power", False))
+        zone_info["volume"] = max(0, min(100, int(zone_info.get("volume", 0))))
+
+        discrete_parameters = {
+            "turn_on_volume",
+        }
+        for parameter in discrete_parameters:
+            value = self._parse_zone_user_parameter_value(
+                parameter,
+                self._request_zone_user_parameter_message(client, controller, zone_number, parameter),
+            )
+            if value is None:
+                return None
+            zone_info[parameter] = value
+
+        return zone_info
+
+    def read_zone_user_parameter(self, zone: Zone, parameter: str) -> Any | None:
+        """Read one extended CAA66 zone parameter by name."""
+        if parameter not in _ZONE_USER_PARAMETER_PATHS and parameter not in {"power", "volume", "bass", "treble", "loudness", "balance", "system_power", "shared_source"}:
+            return None
+
+        controller, zone_number = self._resolve_zone_address(zone)
+
+        if parameter in {"power", "volume", "bass", "treble", "loudness", "balance", "system_power", "shared_source"}:
+            zone_info = self.read_zone_parameters(zone)
+            return None if zone_info is None else zone_info.get(parameter)
+
+        client = self._connect()
+        if client is None:
+            return None
+        return self._parse_zone_user_parameter_value(
+            parameter,
+            self._request_zone_user_parameter_message(client, controller, zone_number, parameter),
+        )
+
+    def read_zone_bass(self, zone: Zone) -> int | None:
+        return self.read_zone_user_parameter(zone, "bass")
+
+    def read_zone_treble(self, zone: Zone) -> int | None:
+        return self.read_zone_user_parameter(zone, "treble")
+
+    def read_zone_balance(self, zone: Zone) -> int | None:
+        return self.read_zone_user_parameter(zone, "balance")
+
+    def read_zone_loudness(self, zone: Zone) -> bool | None:
+        return self.read_zone_user_parameter(zone, "loudness")
+
+    def read_zone_turn_on_volume(self, zone: Zone) -> int | None:
+        return self.read_zone_user_parameter(zone, "turn_on_volume")
+
+    def set_zone_power(self, zone: Zone, power: bool) -> bool:
         """Switch the given room on or off in the Russound system.
 
         Args:
@@ -136,10 +340,10 @@ class RussoundBackend:
             client.set_power(controller, zone_number, 1 if power else 0)
             return True
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
-            logging.debug("Unable to set Russound power for zone %s: %s", zone_number, exc)
+            logging.debug("Unable to set power for Russound controller %d - zone %d: %s", controller, zone_number, exc)
             return False
 
-    def set_zone_source(self, zone: dict[str, Any] | Zone, source_id: int | None, inputs: list[dict[str, Any]]) -> bool:
+    def set_zone_source(self, zone: Zone, source_id: int, inputs: list[dict[str, Any]]) -> bool:
         """Set the input source for a single room.
 
         Args:
@@ -151,17 +355,18 @@ class RussoundBackend:
         if client is None:
             return False
         controller, zone_number = self._resolve_zone_address(zone)
-        source_index = self._source_index(source_id, inputs)
-        if source_index is None:
+        try:
+            source_index = self._source_index(source_id, inputs)
+        except ValueError:
             return False
         try:
             client.set_source(controller, zone_number, source_index)
             return True
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
-            logging.debug("Unable to set Russound source for zone %s: %s", zone_number, exc)
+            logging.debug("Unable to set source for Russound controller %d - zone %d: %s", controller, zone_number, exc)
             return False
 
-    def set_zone_volume(self, zone: dict[str, Any] | Zone, volume: int) -> bool:
+    def set_zone_volume(self, zone: Zone, volume: int) -> bool:
         """Set the volume of one room to a value between 0 and 100.
 
         Args:
@@ -176,26 +381,76 @@ class RussoundBackend:
             client.set_volume(controller, zone_number, max(0, min(100, volume)))
             return True
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
-            logging.debug("Unable to set Russound volume for zone %s: %s", zone_number, exc)
+            logging.debug("Unable to set volume for Russound controller %d - zone %d: %s", controller, zone_number, exc)
             return False
 
-    def set_all_power(self, power: bool, zone_count: int) -> bool:
-        """Turn every zone on or off for the default controller.
+    def set_zone_user_parameter(self, zone: Zone, parameter: str, value: Any) -> bool:
+        """Set one CAA66 zone user parameter using the direct data-message form."""
+        client = self._connect()
+        if client is None:
+            return False
+        controller, zone_number = self._resolve_zone_address(zone)
+        parameter_path = _ZONE_USER_PARAMETER_PATHS.get(parameter)
+        if parameter_path is None:
+            return False
+        create_message = getattr(client, "_Russound__create_send_message", None)
+        send_data = getattr(client, "_Russound__send_data", None)
+        get_response = getattr(client, "_Russound__get_response_message", None)
+        if not all(callable(method) for method in (create_message, send_data, get_response)):
+            return False
 
-        Args:
-            power: True to enable all zones, False to disable them.
-            zone_count: Number of zones to update on the controller.
-        """
+        create_message = cast(Callable[[str, int, int, int], Any], create_message)
+        send_data = cast(Callable[[Any], None], send_data)
+        get_response = cast(Callable[[], Any], get_response)
+        normalized_value = self._normalize_zone_user_parameter_value(parameter, value)
+        template = _ZONE_USER_PARAMETER_SET_TEMPLATE.replace("@pp", f"{parameter_path:02X}")
+        send_msg = create_message(template, controller, zone_number, normalized_value)
+        try:
+            with self._client_lock_context(client):
+                send_data(send_msg)
+                get_response()
+            return True
+        except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            logging.debug("Unable to set %s for Russound controller %d - zone %d: %s", parameter, controller, zone_number, exc)
+            return False
+
+    def set_zone_treble(self, zone: Zone, treble: int) -> bool:
+        return self.set_zone_user_parameter(zone, "treble", treble)
+
+    def set_zone_bass(self, zone: Zone, bass: int) -> bool:
+        return self.set_zone_user_parameter(zone, "bass", bass)
+
+    def set_zone_loudness(self, zone: Zone, loudness: bool) -> bool:
+        return self.set_zone_user_parameter(zone, "loudness", loudness)
+
+    def set_zone_balance(self, zone: Zone, balance: int) -> bool:
+        return self.set_zone_user_parameter(zone, "balance", balance)
+
+    def turn_all_zones_off(self) -> bool:
+        """Turn every zone off for the default controller."""
         client = self._connect()
         if client is None:
             return False
         try:
-            if not power:
-                client.all_on_off(0)
-                return True
-            for zone in range(1, zone_count + 1):
-                client.set_power(self.controller, zone, 1)
+            client.all_on_off(0)
             return True
         except Exception as exc:  # pragma: no cover - runtime dependency may be absent
-            logging.debug("Unable to set Russound system power: %s", exc)
+            logging.debug("Unable to turn Russound zones off: %s", exc)
+            return False
+
+    def turn_all_zones_on(self, zones: list[Zone] | None = None) -> bool:
+        """Turn on only the provided enabled zones for the default controller."""
+        client = self._connect()
+        if client is None:
+            return False
+        try:
+            if not zones:
+                return True
+            for zone_data in zones:
+                if not isinstance(zone_data, Zone):
+                    continue
+                client.set_power(zone_data.controller, zone_data.zone_number, 1)
+            return True
+        except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            logging.debug("Unable to turn Russound zones on: %s", exc)
             return False

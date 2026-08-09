@@ -48,9 +48,9 @@ function authorizedFetch(path, options = {}) {
   return fetch(path, { ...options, headers });
 }
 
-function renderStatus(payload) {
+function renderStatus(payload, historyPayload) {
   const clients = payload.connected_clients || [];
-  const events = payload.recent_events || [];
+  const events = historyPayload.recent_events || [];
 
   clientCount.textContent = String(clients.length);
   clientsEmpty.hidden = clients.length !== 0;
@@ -153,12 +153,16 @@ async function fetchStatus() {
   }
   statusFetchInFlight = true;
   try {
-    const response = await authorizedFetch("/api/status");
-    if (!response.ok) {
+    const [clientsResponse, historyResponse] = await Promise.all([
+      authorizedFetch("/api/status/clients"),
+      authorizedFetch("/api/status/history"),
+    ]);
+    if (!clientsResponse.ok || !historyResponse.ok) {
       return;
     }
-    const payload = await response.json();
-    renderStatus(payload);
+    const clientPayload = await clientsResponse.json();
+    const historyPayload = await historyResponse.json();
+    renderStatus(clientPayload, historyPayload);
   } finally {
     statusFetchInFlight = false;
     if (statusFetchQueued) {

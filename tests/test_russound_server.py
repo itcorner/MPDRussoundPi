@@ -1,8 +1,11 @@
+import logging
+import sys
 import unittest
-from urllib.parse import urlparse
 from queue import Queue
+from unittest.mock import patch
+from urllib.parse import urlparse
 
-from web.russound_server import RussoundHTTPServer, RussoundRequestHandler
+from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging
 
 
 class RussoundServerTests(unittest.TestCase):
@@ -64,6 +67,8 @@ class RussoundServerTests(unittest.TestCase):
         handler = object.__new__(RussoundRequestHandler)
 
         self.assertEqual(handler._match_controller_zone_route("/api/controller/1/zone/3/power"), (1, 3, "power"))
+        self.assertEqual(handler._match_controller_zone_route("/api/controller/1/zone/3/bass"), (1, 3, "bass"))
+        self.assertEqual(handler._match_controller_zone_route("/api/controller/1/zone/3/treble"), (1, 3, "treble"))
         self.assertIsNone(handler._match_controller_zone_route("/api/zones/living/power"))
 
     def test_state_has_zone_addresses_requires_all_addresses_to_exist(self):
@@ -123,19 +128,42 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             server.server_close()
 
-    def test_status_payload_keeps_last_fifty_frontend_events(self):
+    def test_status_client_payload_lists_connected_clients(self):
+        server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
+        try:
+            client_id, _event_queue = server.register_event_client("127.0.0.1", "status-test")
+
+            payload = server.build_client_status_payload()
+
+            self.assertEqual(len(payload["connected_clients"]), 1)
+            self.assertEqual(payload["connected_clients"][0]["id"], client_id)
+            self.assertEqual(payload["connected_clients"][0]["ip"], "127.0.0.1")
+        finally:
+            server.server_close()
+
+    def test_status_history_payload_keeps_last_fifty_frontend_events(self):
         server = RussoundHTTPServer(("127.0.0.1", 0), RussoundRequestHandler, None, None)
         try:
             for index in range(55):
                 server.record_frontend_event("127.0.0.1", f"/api/test/{index}", {"index": index})
 
-            payload = server.build_status_payload()
+            payload = server.build_history_status_payload()
 
             self.assertEqual(len(payload["recent_events"]), 50)
             self.assertEqual(payload["recent_events"][0]["payload"], {"index": 54})
             self.assertEqual(payload["recent_events"][-1]["payload"], {"index": 5})
         finally:
             server.server_close()
+
+    def test_configure_logging_enables_debug_output(self):
+        with patch("web.russound_server.logging.basicConfig") as basic_config, patch("web.russound_server.logging.getLogger") as get_logger:
+            _configure_logging(True)
+
+        basic_config.assert_called_once()
+        self.assertEqual(basic_config.call_args.kwargs["level"], logging.DEBUG)
+        self.assertEqual(basic_config.call_args.kwargs["stream"], sys.stdout)
+        self.assertGreater(get_logger.call_count, 1)
+        self.assertEqual(get_logger.return_value.setLevel.call_args_list[0].args[0], logging.DEBUG)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,70 @@ const apiToken = document.querySelector('meta[name="russound-api-token"]')?.cont
 let eventSource = null;
 let stateFetchInFlight = false;
 let stateFetchQueued = false;
+const advancedStateStorageKey = "russound-advanced-open-zones-v1";
+const advancedOpenZones = loadAdvancedOpenZones();
+
+function zoneAddressKey(controllerId, zoneNumber) {
+  return `${controllerId}-${zoneNumber}`;
+}
+
+function loadAdvancedOpenZones() {
+  try {
+    const savedState = window.localStorage.getItem(advancedStateStorageKey);
+    if (!savedState) {
+      return new Set();
+    }
+    const parsed = JSON.parse(savedState);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((entry) => typeof entry === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveAdvancedOpenZones() {
+  try {
+    window.localStorage.setItem(advancedStateStorageKey, JSON.stringify(Array.from(advancedOpenZones)));
+  } catch {
+    // Ignore storage errors so UI interactions still work in restricted environments.
+  }
+}
+
+function syncAdvancedPanelState(detailsElement) {
+  if (!(detailsElement instanceof HTMLDetailsElement) || !detailsElement.classList.contains("zone-advanced-controls")) {
+    return;
+  }
+  const zoneKey = detailsElement.dataset.zoneKey;
+  if (!zoneKey) {
+    return;
+  }
+  if (detailsElement.open) {
+    advancedOpenZones.add(zoneKey);
+  } else {
+    advancedOpenZones.delete(zoneKey);
+  }
+  saveAdvancedOpenZones();
+}
+
+function formatSignedValue(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue === 0) {
+    return "0";
+  }
+  return numericValue > 0 ? `+${numericValue}` : String(numericValue);
+}
+
+function formatControlValue(action, value) {
+  if (action === "volume") {
+    return `${value}%`;
+  }
+  if (action === "bass" || action === "treble" || action === "balance") {
+    return formatSignedValue(value);
+  }
+  return String(value);
+}
 
 function authorizedFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -111,7 +175,12 @@ function render() {
 
   zonesContainer.innerHTML = "";
   for (const zone of state.zones) {
-    const zoneDomId = `${zone.controller}-${zone.zone}`;
+    const zoneDomId = zoneAddressKey(zone.controller, zone.zone);
+    const isAdvancedOpen = advancedOpenZones.has(zoneDomId);
+    const bass = Number(zone.bass ?? 0);
+    const treble = Number(zone.treble ?? 0);
+    const balance = Number(zone.balance ?? 0);
+    const loudness = Boolean(zone.loudness);
     const card = document.createElement("article");
     card.className = "zone-card";
     card.innerHTML = `
@@ -132,12 +201,52 @@ function render() {
           </select>
         </div>
         <div class="control-row">
-          <label for="volume-${zoneDomId}">Volume</label>
+          <label for="volume-${zoneDomId}">Volume: <span class="label-value" data-value-output="volume">${zone.volume}%</span></label>
           <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="1" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-          <div class="volume-value">${zone.volume}%</div>
         </div>
+        <details class="zone-advanced-controls" data-zone-key="${zoneDomId}" ${isAdvancedOpen ? "open" : ""}>
+          <summary class="zone-advanced-summary">Advanced sound</summary>
+          <div class="zone-advanced-grid">
+            <div class="control-row">
+              <label for="bass-${zoneDomId}">Bass: <span class="label-value" data-value-output="bass">${formatSignedValue(bass)}</span></label>
+              <input id="bass-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${bass}" data-action="bass" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+              <div class="range-endpoints" aria-hidden="true">
+                <span>-10</span>
+                <span>+10</span>
+              </div>
+            </div>
+            <div class="control-row">
+              <label for="treble-${zoneDomId}">Treble: <span class="label-value" data-value-output="treble">${formatSignedValue(treble)}</span></label>
+              <input id="treble-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${treble}" data-action="treble" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+              <div class="range-endpoints" aria-hidden="true">
+                <span>-10</span>
+                <span>+10</span>
+              </div>
+            </div>
+            <div class="control-row">
+              <label for="balance-${zoneDomId}">Balance: <span class="label-value" data-value-output="balance">${formatSignedValue(balance)}</span></label>
+              <input id="balance-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${balance}" data-action="balance" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+              <div class="range-endpoints" aria-hidden="true">
+                <span>Left</span>
+                <span>Right</span>
+              </div>
+            </div>
+            <label class="advanced-check" for="loudness-${zoneDomId}">
+              <input id="loudness-${zoneDomId}" type="checkbox" data-action="loudness" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" ${loudness ? "checked" : ""} />
+              <span>Loudness</span>
+            </label>
+          </div>
+        </details>
       </div>
     `;
+
+    const advancedDetails = card.querySelector("details.zone-advanced-controls");
+    if (advancedDetails instanceof HTMLDetailsElement) {
+      advancedDetails.addEventListener("toggle", () => {
+        syncAdvancedPanelState(advancedDetails);
+      });
+    }
+
     zonesContainer.appendChild(card);
   }
 }
@@ -215,12 +324,12 @@ zonesContainer.addEventListener("input", (event) => {
     return;
   }
   const action = control.dataset.action;
-  if (action === "volume") {
+  if (action === "volume" || action === "bass" || action === "treble" || action === "balance") {
     const value = Number(control.value);
     const row = control.closest(".control-row");
-    const valueElement = row?.querySelector(".volume-value");
+    const valueElement = row?.querySelector("[data-value-output]");
     if (valueElement) {
-      valueElement.textContent = `${value}%`;
+      valueElement.textContent = formatControlValue(action, value);
     }
   }
 });
@@ -239,6 +348,22 @@ zonesContainer.addEventListener("change", (event) => {
   }
   if (action === "volume") {
     updateZone(controllerId, zoneNumber, "volume", Number(event.target.value));
+    return;
+  }
+  if (action === "bass") {
+    updateZone(controllerId, zoneNumber, "bass", Number(event.target.value));
+    return;
+  }
+  if (action === "treble") {
+    updateZone(controllerId, zoneNumber, "treble", Number(event.target.value));
+    return;
+  }
+  if (action === "balance") {
+    updateZone(controllerId, zoneNumber, "balance", Number(event.target.value));
+    return;
+  }
+  if (action === "loudness") {
+    updateZone(controllerId, zoneNumber, "loudness", Boolean(event.target.checked));
   }
 });
 

@@ -47,6 +47,10 @@ The server currently expects these request body field types:
 - `power`: boolean
 - `source`: integer
 - `volume`: integer
+- `bass`: integer
+- `treble`: integer
+- `loudness`: boolean
+- `balance`: integer
 
 ## API authorization
 
@@ -118,6 +122,10 @@ Most endpoints return the same payload shape:
         "power": false,
         "source": 1,
         "volume": 20,
+        "bass": 0,
+        "treble": 0,
+        "loudness": false,
+        "balance": 0,
         "controller": 1,
         "zone": 1
       }
@@ -167,7 +175,7 @@ The server also sends keepalive comments (`: ping`) periodically.
 
 ### GET /api/status
 
-Returns the currently connected frontend clients and the last 50 frontend-triggered actions.
+Returns the combined status payload for backwards compatibility.
 
 - Requires API token authentication.
 - Response type: JSON.
@@ -184,6 +192,50 @@ Response shape:
       "user_agent": "Mozilla/5.0"
     }
   ],
+  "recent_events": [
+    {
+      "timestamp": "2026-08-08T14:56:03+00:00",
+      "ip": "127.0.0.1",
+      "path": "/api/controller/1/zone/1/volume",
+      "payload": {"volume": 32}
+    }
+  ]
+}
+```
+
+### GET /api/status/clients
+
+Returns the currently connected frontend clients.
+
+- Requires API token authentication.
+- Response type: JSON.
+
+Response shape:
+
+```json
+{
+  "connected_clients": [
+    {
+      "id": 1,
+      "ip": "127.0.0.1",
+      "connected_at": "2026-08-08T14:55:12+00:00",
+      "user_agent": "Mozilla/5.0"
+    }
+  ]
+}
+```
+
+### GET /api/status/history
+
+Returns the last 50 frontend-triggered actions.
+
+- Requires API token authentication.
+- Response type: JSON.
+
+Response shape:
+
+```json
+{
   "recent_events": [
     {
       "timestamp": "2026-08-08T14:56:03+00:00",
@@ -350,6 +402,64 @@ Request body:
 ```
 
 Volume is clamped to the range `0..100`.
+
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/bass
+
+Sets bass for a single zone.
+
+- Requires API token authentication.
+- Returns the updated main view payload.
+
+Request body:
+
+```json
+{ "bass": -2 }
+```
+
+Bass is normalized to the range `-10..10`.
+
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/treble
+
+Sets treble for a single zone.
+
+- Requires API token authentication.
+- Returns the updated main view payload.
+
+Request body:
+
+```json
+{ "treble": 3 }
+```
+
+Treble is normalized to the range `-10..10`.
+
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/loudness
+
+Sets loudness for a single zone.
+
+- Requires API token authentication.
+- Returns the updated main view payload.
+
+Request body:
+
+```json
+{ "loudness": true }
+```
+
+### POST /api/controller/{controllerId}/zone/{zoneNumber}/balance
+
+Sets balance for a single zone.
+
+- Requires API token authentication.
+- Returns the updated main view payload.
+
+Request body:
+
+```json
+{ "balance": -2 }
+```
+
+Balance is normalized to the range `-10..10`.
 
 ## Pages and static files
 

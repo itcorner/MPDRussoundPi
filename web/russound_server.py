@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import argparse
 from collections import deque
 from datetime import datetime, timezone
 import html
 import json
+import logging
+import os
 import secrets
 import sys
 import threading
@@ -18,18 +22,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from web.russound_controller import (
-    apply_shortcut,
-    build_config_editor_payload,
-    build_view_payload,
-    load_config,
-    load_state,
-    persist_state,
-    set_shared_source,
-    shortcut_zone_addresses,
-    update_config_zones,
-    update_system_power,
-    update_zone_setting,
+    get_controller,
 )
+from web.russound_state import RussoundState
 
 WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"
@@ -62,7 +57,7 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             with server.state_lock:
-                payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
+                payload = server.controller.build_view_payload(refresh_backend=False)
             self._send_json(payload)
             return
         if parsed.path == "/api/config":
@@ -70,7 +65,7 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             with server.state_lock:
-                payload = build_config_editor_payload(server.config_path, server.state_path)
+                payload = server.controller.build_config_editor_payload()
             self._send_json(payload)
             return
         if parsed.path == "/api/status":
@@ -78,6 +73,18 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             self._send_json(server.build_status_payload())
+            return
+        if parsed.path == "/api/status/clients":
+            if not self._is_authorized(server, parsed):
+                self._send_json({"error": "Unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_json(server.build_client_status_payload())
+            return
+        if parsed.path == "/api/status/history":
+            if not self._is_authorized(server, parsed):
+                self._send_json({"error": "Unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_json(server.build_history_status_payload())
             return
         if parsed.path == "/api/events":
             if not self._is_authorized(server, parsed):
@@ -102,7 +109,7 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json_body()
             try:
                 with server.state_lock:
-                    response_payload = update_config_zones(server.config_path, server.state_path, payload)
+                    response_payload = server.controller.update_config_zones(payload=payload)
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
@@ -117,10 +124,7 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid request body: 'power' must be a boolean"}, status=HTTPStatus.BAD_REQUEST)
                 return
             with server.state_lock:
-                state = load_state(server.config_path, server.state_path, refresh_backend=False)
-                update_system_power(state, power)
-                persist_state(server.state_path, state)
-                response_payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
+                response_payload = server.controller.handle_system_power_change(power=power)
             server.record_frontend_event(self.client_address[0], parsed.path, payload)
             server.broadcast_state_change()
             self._send_json(response_payload)
@@ -133,13 +137,11 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Invalid request body: 'source' must be an integer"}, status=HTTPStatus.BAD_REQUEST)
                 return
             with server.state_lock:
-                state = load_state(server.config_path, server.state_path, refresh_backend=False)
-                if not self._state_has_input(state, source_value):
+                try:
+                    response_payload = server.controller.handle_source_change(source=source_value)
+                except LookupError:
                     self._send_json({"error": "Source not found"}, status=HTTPStatus.NOT_FOUND)
                     return
-                set_shared_source(state, source_value)
-                persist_state(server.state_path, state)
-                response_payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
             server.record_frontend_event(self.client_address[0], parsed.path, payload)
             server.broadcast_state_change()
             self._send_json(response_payload)
@@ -149,98 +151,46 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
             shortcut_id = parsed.path.split("/")[3]
             payload = {"shortcut_id": shortcut_id}
             with server.state_lock:
-                state = load_state(server.config_path, server.state_path, refresh_backend=False)
-                config = load_config(server.config_path)
-                shortcut_applied = False
-                shortcut = None
-                if config is not None:
-                    shortcut = next((item for item in config.get("shortcuts", []) if item.get("id") == shortcut_id), None)
-                if shortcut is None:
-                    self._send_json({"error": "Shortcut not found"}, status=HTTPStatus.NOT_FOUND)
+                try:
+                    response_payload = server.controller.handle_shortcut_activation(shortcut_id=shortcut_id)
+                except LookupError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
                     return
-                resolved_zone_addresses = shortcut_zone_addresses(shortcut, config)
-                if not self._state_has_zone_addresses(state, resolved_zone_addresses):
-                    self._send_json({"error": "Shortcut configuration error: shortcut references unknown zone"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                except RuntimeError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                     return
-                shortcut_source = shortcut.get("source")
-                if shortcut_source is not None and not self._state_has_input(state, shortcut_source):
-                    self._send_json({"error": "Shortcut configuration error: shortcut references unknown source"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-                    return
-                shortcut = dict(shortcut)
-                shortcut["zone_addresses"] = [
-                    {"controller": controller_id, "zone": zone_number}
-                    for controller_id, zone_number in resolved_zone_addresses
-                ]
-                apply_shortcut(state, shortcut)
-                persist_state(server.state_path, state)
-                shortcut_applied = True
-                response_payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
-            if shortcut_applied:
-                server.record_frontend_event(self.client_address[0], parsed.path, payload)
-                server.broadcast_state_change()
+            server.record_frontend_event(self.client_address[0], parsed.path, payload)
+            server.broadcast_state_change()
             self._send_json(response_payload)
             return
 
         route_match = self._match_controller_zone_route(parsed.path)
-        if route_match is not None and route_match[2] == "power":
-            controller_id, zone_number, _action = route_match
+        if route_match is not None:
+            controller_id, zone_number, action = route_match
             payload = self._read_json_body()
-            power = self._read_bool_field(payload, "power")
-            if power is None:
-                self._send_json({"error": "Invalid request body: 'power' must be a boolean"}, status=HTTPStatus.BAD_REQUEST)
+            server.record_frontend_event(self.client_address[0], parsed.path, payload)
+            value = self._read_zone_setting_value(payload, action)
+            if value is None:
+                expected_type = "boolean" if action in {"power", "loudness"} else "integer"
+                self._send_json(
+                    {"error": f"Invalid request body: '{action}' must be a {expected_type}"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
                 return
             with server.state_lock:
-                state = load_state(server.config_path, server.state_path, refresh_backend=False)
-                if not self._state_has_zone_address(state, controller_id, zone_number):
+                try:
+                    response_payload = server.controller.handle_zone_setting_change(
+                        controller_id=controller_id,
+                        zone_number=zone_number,
+                        setting=action,
+                        value=value,
+                    )
+                except LookupError:
                     self._send_json({"error": "Zone not found"}, status=HTTPStatus.NOT_FOUND)
                     return
-                update_zone_setting(state, controller_id, zone_number, "power", power)
-                persist_state(server.state_path, state)
-                response_payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
-            server.record_frontend_event(self.client_address[0], parsed.path, payload)
-            server.broadcast_state_change()
-            self._send_json(response_payload)
-            return
-
-        if route_match is not None and route_match[2] == "source":
-            controller_id, zone_number, _action = route_match
-            payload = self._read_json_body()
-            source_value = self._read_int_field(payload, "source")
-            if source_value is None:
-                self._send_json({"error": "Invalid request body: 'source' must be an integer"}, status=HTTPStatus.BAD_REQUEST)
-                return
-            with server.state_lock:
-                state = load_state(server.config_path, server.state_path, refresh_backend=False)
-                if not self._state_has_zone_address(state, controller_id, zone_number):
-                    self._send_json({"error": "Zone not found"}, status=HTTPStatus.NOT_FOUND)
+                except RuntimeError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_GATEWAY)
                     return
-                if not self._state_has_input(state, source_value):
-                    self._send_json({"error": "Source not found"}, status=HTTPStatus.NOT_FOUND)
-                    return
-                update_zone_setting(state, controller_id, zone_number, "source", source_value)
-                persist_state(server.state_path, state)
-                response_payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
-            server.record_frontend_event(self.client_address[0], parsed.path, payload)
-            server.broadcast_state_change()
-            self._send_json(response_payload)
-            return
-
-        if route_match is not None and route_match[2] == "volume":
-            controller_id, zone_number, _action = route_match
-            payload = self._read_json_body()
-            volume = self._read_int_field(payload, "volume")
-            if volume is None:
-                self._send_json({"error": "Invalid request body: 'volume' must be an integer"}, status=HTTPStatus.BAD_REQUEST)
-                return
-            with server.state_lock:
-                state = load_state(server.config_path, server.state_path, refresh_backend=False)
-                if not self._state_has_zone_address(state, controller_id, zone_number):
-                    self._send_json({"error": "Zone not found"}, status=HTTPStatus.NOT_FOUND)
-                    return
-                update_zone_setting(state, controller_id, zone_number, "volume", volume)
-                persist_state(server.state_path, state)
-                response_payload = build_view_payload(server.config_path, server.state_path, refresh_backend=False)
-            server.record_frontend_event(self.client_address[0], parsed.path, payload)
             server.broadcast_state_change()
             self._send_json(response_payload)
             return
@@ -274,6 +224,13 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
             return value
         return None
 
+    def _read_zone_setting_value(self, payload: dict[str, Any], action: str) -> Any | None:
+        if action in {"power", "loudness"}:
+            return self._read_bool_field(payload, action)
+        if action in {"source", "volume", "bass", "treble", "balance"}:
+            return self._read_int_field(payload, action)
+        return None
+
     def _send_json(self, payload: dict[str, Any], status: int = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -282,20 +239,26 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _state_has_zone_address(self, state: dict[str, Any], controller_id: int, zone_number: int) -> bool:
+    def _state_has_zone_address(self, state: dict[str, Any] | RussoundState, controller_id: int, zone_number: int) -> bool:
+        if isinstance(state, RussoundState):
+            return state.has_zone_address(controller_id, zone_number)
         return any(
             int(zone.get("controller", 0)) == controller_id and int(zone.get("zone", 0)) == zone_number
             for zone in state.get("zones", [])
         )
 
-    def _state_has_zone_addresses(self, state: dict[str, Any], zone_addresses: list[tuple[int, int]]) -> bool:
+    def _state_has_zone_addresses(self, state: dict[str, Any] | RussoundState, zone_addresses: list[tuple[int, int]]) -> bool:
+        if isinstance(state, RussoundState):
+            return state.has_zone_addresses(zone_addresses)
         known_zone_addresses = {
             (int(zone.get("controller", 0)), int(zone.get("zone", 0)))
             for zone in state.get("zones", [])
         }
         return all(zone_address in known_zone_addresses for zone_address in zone_addresses)
 
-    def _state_has_input(self, state: dict[str, Any], source_id: Any) -> bool:
+    def _state_has_input(self, state: dict[str, Any] | RussoundState, source_id: Any) -> bool:
+        if isinstance(state, RussoundState):
+            return state.has_input(source_id)
         return any(input_item.get("id") == source_id for input_item in state.get("inputs", []))
 
     def _match_controller_zone_route(self, path: str) -> tuple[int, int, str] | None:
@@ -308,7 +271,7 @@ class RussoundRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             return None
         action = parts[5]
-        if action not in {"power", "source", "volume"}:
+        if action not in {"power", "source", "volume", "bass", "treble", "loudness", "balance"}:
             return None
         return controller_id, zone_number, action
 
@@ -395,6 +358,7 @@ class RussoundHTTPServer(ThreadingHTTPServer):
         self.state_revision = 0
         self.state_lock = threading.Lock()
         self._event_clients: dict[int, dict[str, Any]] = {}
+        self.controller = get_controller(config_path, state_path)
         self._event_clients_lock = threading.Lock()
         self._event_client_id = 0
         self._event_history: deque[dict[str, Any]] = deque(maxlen=50)
@@ -426,7 +390,7 @@ class RussoundHTTPServer(ThreadingHTTPServer):
                 client["queue"].put(event_text)
 
     def record_frontend_event(self, ip_address: str, path: str, payload: dict[str, Any]) -> None:
-        entry = {
+        entry: dict[str, Any] = {
             "timestamp": self._timestamp(),
             "ip": ip_address,
             "path": path,
@@ -436,6 +400,12 @@ class RussoundHTTPServer(ThreadingHTTPServer):
             self._event_history.appendleft(entry)
 
     def build_status_payload(self) -> dict[str, Any]:
+        return {
+            "connected_clients": self.build_client_status_payload()["connected_clients"],
+            "recent_events": self.build_history_status_payload()["recent_events"],
+        }
+
+    def build_client_status_payload(self) -> dict[str, Any]:
         with self._event_clients_lock:
             clients = [
                 {
@@ -446,15 +416,56 @@ class RussoundHTTPServer(ThreadingHTTPServer):
                 }
                 for client in self._event_clients.values()
             ]
+        return {"connected_clients": clients}
+
+    def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:
             events = list(self._event_history)
-        return {
-            "connected_clients": clients,
-            "recent_events": events,
-        }
+        return {"recent_events": events}
 
     def _timestamp(self) -> str:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _configure_logging(debug: bool) -> None:
+    """Configure logging so debug output is emitted to stdout when requested."""
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        stream=sys.stdout,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
+    for logger_name in ("web", "web.russound_backend", "web.russound_controller", "web.russound_state", "web.zone", "web.russound_server"):
+        logging.getLogger(logger_name).setLevel(level)
+    logging.getLogger("russound.russound").setLevel(logging.DEBUG if debug else logging.CRITICAL)
+
+
+def _daemonize_process() -> None:
+    """Detach this process from the controlling terminal using double-fork."""
+    if os.name != "posix":
+        raise RuntimeError("--daemon is only supported on POSIX systems")
+
+    first_pid = os.fork()
+    if first_pid > 0:
+        print(f"Started Russound daemon (pid {first_pid})")
+        os._exit(0)
+
+    os.setsid()
+
+    second_pid = os.fork()
+    if second_pid > 0:
+        os._exit(0)
+
+    os.chdir("/")
+    os.umask(0o027)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    with open(os.devnull, "r", encoding="utf-8") as devnull_in, open(os.devnull, "a", encoding="utf-8") as devnull_out:
+        os.dup2(devnull_in.fileno(), sys.stdin.fileno())
+        os.dup2(devnull_out.fileno(), sys.stdout.fileno())
+        os.dup2(devnull_out.fileno(), sys.stderr.fileno())
 
 
 def main() -> None:
@@ -463,11 +474,24 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--config")
     parser.add_argument("--state", default=str(WEB_ROOT / "russound_state.json"))
+    parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging to the terminal")
     args = parser.parse_args()
 
+    if args.daemon:
+        _daemonize_process()
+    _configure_logging(args.debug)
+
     server = RussoundHTTPServer((args.host, args.port), RussoundRequestHandler, args.config, args.state)
-    print(f"Listening on http://{args.host}:{args.port}")
-    server.serve_forever()
+    if not args.daemon:
+        print(f"Listening on http://{args.host}:{args.port}")
+        print("Press Ctrl+C to stop the server.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down Russound server...")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":
