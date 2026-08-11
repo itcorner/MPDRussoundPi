@@ -1,1 +1,11 @@
+web/russound_state.json
+web/russound_config.json
+*.log
+
 __pycache__/
+.pytest_cache/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
