@@ -277,7 +277,7 @@ class RussoundHTTPServer:
 
         return app
 
-    def run(self, host: str, port: int, debug: bool = False) -> None:
+    def run(self, host: str, port: int, debug: bool = False, waitress_threads: int = 16) -> None:
         if debug:
             self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
             return
@@ -288,7 +288,7 @@ class RussoundHTTPServer:
             raise RuntimeError("waitress is required when debug mode is disabled. Install it with 'pip install waitress'.") from exc
 
         serve = getattr(waitress_module, "serve")
-        serve(self.app, host=host, port=port)
+        serve(self.app, host=host, port=port, threads=max(4, waitress_threads))
 
     def _read_json_body(self) -> dict[str, Any]:
         payload = request.get_json(silent=True)
@@ -545,6 +545,7 @@ def main() -> None:
     parser.add_argument("--state", default=str(WEB_ROOT / "russound_state.json"))
     parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to the terminal")
+    parser.add_argument("--waitress-threads", type=int, default=16, help="Worker thread count for Waitress when not in debug mode (min 4, default 16)")
     args = parser.parse_args()
 
     if args.daemon:
@@ -556,7 +557,7 @@ def main() -> None:
         print(f"Listening on http://{args.host}:{args.port}")
         print("Press Ctrl+C to stop the server.")
     try:
-        server.run(host=args.host, port=args.port, debug=args.debug)
+        server.run(host=args.host, port=args.port, debug=args.debug, waitress_threads=args.waitress_threads)
     except KeyboardInterrupt:
         print("\nShutting down Russound server...")
 
