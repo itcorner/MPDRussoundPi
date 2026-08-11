@@ -20,23 +20,6 @@ let stateFetchInFlight = false;
 let stateFetchQueued = false;
 const advancedStateStorageKey = "russound-advanced-open-zones-v1";
 const advancedOpenZones = loadAdvancedOpenZones();
-const sessionStorageKey = "russound-session-id";
-
-function getSessionId() {
-  try {
-    const existing = window.sessionStorage.getItem(sessionStorageKey);
-    if (existing) {
-      return existing;
-    }
-    const generated = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    window.sessionStorage.setItem(sessionStorageKey, generated);
-    return generated;
-  } catch {
-    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  }
-}
-
-const clientSessionId = getSessionId();
 
 function zoneAddressKey(controllerId, zoneNumber) {
   return `${controllerId}-${zoneNumber}`;
@@ -101,10 +84,7 @@ function authorizedFetch(path, options = {}) {
   if (apiToken) {
     headers.set("X-Russound-Api-Token", apiToken);
   }
-  if (clientSessionId) {
-    headers.set("X-Russound-Session-Id", clientSessionId);
-  }
-  return fetch(path, { ...options, headers });
+  return fetch(path, { ...options, headers, credentials: "same-origin" });
 }
 
 function applyPayload(payload) {
@@ -148,9 +128,6 @@ function startStateSync() {
   const params = new URLSearchParams();
   if (apiToken) {
     params.set("token", apiToken);
-  }
-  if (clientSessionId) {
-    params.set("sessionId", clientSessionId);
   }
   const query = params.toString();
   eventSource = new EventSource(`/api/events${query ? `?${query}` : ""}`);

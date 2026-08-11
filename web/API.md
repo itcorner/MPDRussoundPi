@@ -64,6 +64,14 @@ The backend now protects `/api/*` routes with a server-generated token.
 - The token is tied to the currently running server process, not to a specific host name or IP.
 - If the server is restarted, a new token is generated and the old token becomes invalid.
 
+## Session tracking
+
+The backend tracks frontend sessions using an HTTP cookie (`russound_session_id`).
+
+- The cookie is set by the server on normal page/API responses.
+- SSE client deduplication for status monitoring uses this cookie session id.
+- Frontend code does not need to generate or send custom session headers.
+
 Examples:
 
 ```http
@@ -250,6 +258,7 @@ Response shape:
 ```
 
 `connected_clients` reflects active SSE connections. `recent_events` is an in-memory rolling history capped at 50 entries.
+When available, each connected client includes its cookie-based `session_id` value.
 
 ### GET /api/config
 

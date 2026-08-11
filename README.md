@@ -6,7 +6,7 @@ The repository currently includes:
 
 - Russound + MPD setup automation for target hosts (Ansible playbooks).
 - Runtime scripts for audio setup and MPD orchestration.
-- A token-protected web control server with live synchronization.
+- A Flask-based, token-protected web control server with live synchronization.
 - A controller dashboard with flip-card advanced sound controls and a visible hardware warning banner.
 - A configuration editor for zones and sources.
 - A status monitor for connected clients and recent frontend actions.
@@ -51,7 +51,7 @@ The repository currently includes:
 ### Backend
 
 - `web/russound_server.py`
-  - HTTP server (`ThreadingHTTPServer` + handler).
+  - Flask HTTP server.
   - Serves UI pages and static assets.
   - Exposes `/api/*` endpoints and `/api/events` SSE stream.
   - Enforces API token authentication.
@@ -96,7 +96,7 @@ git clone <your-fork-or-origin-url>
 cd MPDRussoundPi
 python3 -m venv .venv
 source .venv/bin/activate
-pip install russound
+pip install russound flask
 python web/russound_server.py --config web/russound_config.json --state web/russound_state.json --port 8000
 ```
 

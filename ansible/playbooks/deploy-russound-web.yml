@@ -53,7 +53,9 @@
       pip:
         name:
           - russound
+          - flask
           - psutil
+          - waitress
         virtualenv: "{{ venv_dir }}"
       when: lookup('ansible.builtin.fileglob', '{{ app_dir }}/requirements.txt', wantlist=True) | length == 0
 
