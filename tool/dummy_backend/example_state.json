@@ -4,7 +4,7 @@
       "1": {
         "power": false,
         "source": 1,
-        "volume": 54,
+        "volume": 90,
         "bass": 0,
         "treble": 0,
         "loudness": false,
@@ -34,7 +34,7 @@
       "1": {
         "power": true,
         "source": 1,
-        "volume": 33,
+        "volume": 34,
         "bass": 2,
         "treble": -2,
         "loudness": true,

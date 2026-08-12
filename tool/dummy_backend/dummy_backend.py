@@ -48,6 +48,16 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, int(value)))
 
 
+def _clamp_even(value: int, minimum: int, maximum: int) -> int:
+    clamped_value = _clamp(value, minimum, maximum)
+    if clamped_value % 2 != 0:
+        if clamped_value >= maximum:
+            clamped_value -= 1
+        else:
+            clamped_value += 1
+    return _clamp(clamped_value, minimum, maximum)
+
+
 class TuiLogBuffer:
     def __init__(self, max_lines: int = 500) -> None:
         self._lines: deque[str] = deque(maxlen=max_lines)
@@ -96,12 +106,12 @@ class ZoneState:
         return cls(
             power=bool(data.get("power", False)),
             source=int(data.get("source", 1) or 1),
-            volume=int(data.get("volume", 20) or 20),
+            volume=_clamp_even(int(data.get("volume", 20) or 20), 0, 100),
             bass=int(data.get("bass", 0) or 0),
             treble=int(data.get("treble", 0) or 0),
             loudness=bool(data.get("loudness", False)),
             balance=int(data.get("balance", 0) or 0),
-            turn_on_volume=int(data.get("turn_on_volume", 20) or 20),
+            turn_on_volume=_clamp_even(int(data.get("turn_on_volume", 20) or 20), 0, 100),
             background_color=int(data.get("background_color", 0) or 0),
             do_not_disturb=bool(data.get("do_not_disturb", False)),
             party_mode=int(data.get("party_mode", 0) or 0),
@@ -174,7 +184,7 @@ class ZoneState:
         self.power = True
 
     def apply_volume_value(self, volume_value: int) -> None:
-        self.volume = _clamp(int(volume_value) * 2, 0, 100)
+        self.volume = _clamp_even(int(volume_value) * 2, 0, 100)
 
     def as_dict(self) -> dict[str, int | bool]:
         return {
@@ -201,7 +211,7 @@ class ZoneState:
             self.source = _clamp(self.source + delta, 1, 8)
             return
         if field_name == "volume":
-            self.volume = _clamp(self.volume + delta, 0, 100)
+            self.volume = _clamp_even(self.volume + (delta * 2), 0, 100)
             return
         if field_name == "bass":
             self.bass = _clamp(self.bass + delta, -10, 10)
@@ -217,7 +227,7 @@ class ZoneState:
             self.balance = _clamp(self.balance + delta, -10, 10)
             return
         if field_name == "turn_on_volume":
-            self.turn_on_volume = _clamp(self.turn_on_volume + delta, 0, 100)
+            self.turn_on_volume = _clamp_even(self.turn_on_volume + (delta * 2), 0, 100)
             return
         if field_name == "background_color":
             self.background_color = _clamp(self.background_color + delta, 0, 15)

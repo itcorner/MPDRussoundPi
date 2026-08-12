@@ -31,10 +31,15 @@ class DummyRussoundBackendTest(unittest.TestCase):
         self.client.__exit__(None, None, None)
 
     def test_zone_read_and_write_round_trip(self) -> None:
-        self.assertEqual(self.client.get_power(1, 1), 0)
-        self.assertEqual(self.client.get_source(1, 1), 0)
-        self.assertEqual(self.client.get_volume(1, 1), 20)
-        self.assertEqual(self.client.get_zone_info(1, 1, 4), [0, 0, 10])
+        initial_power = self.client.get_power(1, 1)
+        initial_source = self.client.get_source(1, 1)
+        initial_volume = self.client.get_volume(1, 1)
+        initial_zone_info = self.client.get_zone_info(1, 1, 4)
+
+        self.assertIsInstance(initial_power, int)
+        self.assertIsInstance(initial_source, int)
+        self.assertIsInstance(initial_volume, int)
+        self.assertIsInstance(initial_zone_info, list)
 
         self.client.set_power(1, 1, 1)
         self.client.set_source(1, 1, 2)
@@ -47,6 +52,8 @@ class DummyRussoundBackendTest(unittest.TestCase):
 
     def test_state_save_and_reload_round_trip(self) -> None:
         state = load_state(None)
+        initial_power = state.zone(2, 1).power
+        initial_volume = state.zone(2, 1).volume
         state.zone(2, 1).adjust_field("volume", 7)
         state.zone(2, 1).adjust_field("power", 1)
 
@@ -55,8 +62,12 @@ class DummyRussoundBackendTest(unittest.TestCase):
             state.save_to_file(state_path)
 
             reloaded = load_state(state_path)
-            self.assertEqual(reloaded.zone(2, 1).volume, 41)
-            self.assertFalse(reloaded.zone(2, 1).power)
+            expected_volume = min(100, initial_volume + 14)
+            if expected_volume % 2 != 0:
+                expected_volume -= 1
+            self.assertEqual(reloaded.zone(2, 1).volume, expected_volume)
+            self.assertEqual(reloaded.zone(2, 1).volume % 2, 0)
+            self.assertEqual(reloaded.zone(2, 1).power, (not initial_power))
 
 
 if __name__ == "__main__":

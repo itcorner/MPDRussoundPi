@@ -323,13 +323,16 @@ class RussoundHTTPServer:
 
     def _backend_change_watcher_loop(self) -> None:
         while True:
+            iteration_started_at = time.monotonic()
             try:
                 if self._has_active_event_clients() and self._sync_backend_state_if_changed():
                     logging.debug("Detected out-of-band hardware state change; broadcasting SSE update")
                     self.broadcast_state_change()
             except Exception as exc:
                 logging.debug("Backend change watcher iteration failed: %s", exc)
-            time.sleep(self._backend_poll_interval_seconds)
+            elapsed_seconds = time.monotonic() - iteration_started_at
+            sleep_seconds = max(0.0, self._backend_poll_interval_seconds - elapsed_seconds)
+            time.sleep(sleep_seconds)
 
     def _sync_backend_state_if_changed(self) -> bool:
         with self.state_lock:
