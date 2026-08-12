@@ -368,7 +368,7 @@ class RussoundBackend:
                     "balance": 0,
                 }
             except Exception as exc:  # pragma: no cover - runtime dependency may be absent
-                logging.debug("Unable to read Russound zone %s: %s", zone_number, exc)
+                logging.debug("Unable to read Russound controller %s - zone %s: %s", controller, zone_number, exc)
                 return None
         finally:
             if self.client is not client:
