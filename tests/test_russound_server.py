@@ -2,7 +2,7 @@ import logging
 import sys
 import unittest
 from queue import Queue
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import urlparse
 
 from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging
@@ -15,6 +15,61 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_backend_poll_interval_is_loaded_from_config(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            controller = Mock()
+            controller.load_config.return_value = {"backend": {"poll_interval_seconds": 4.5}}
+            server.controller = controller
+
+            self.assertEqual(server._resolve_backend_poll_interval_seconds(), 4.5)
+        finally:
+            _close_server(server)
+
+    def test_backend_poll_interval_is_clamped_to_minimum(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            controller = Mock()
+            controller.load_config.return_value = {"backend": {"poll_interval_seconds": 0.25}}
+            server.controller = controller
+
+            self.assertEqual(server._resolve_backend_poll_interval_seconds(), 1.0)
+        finally:
+            _close_server(server)
+
+    def test_sync_backend_state_if_changed_returns_false_when_payload_same(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            same_state = Mock()
+            same_state.to_payload.return_value = {"system_power": False, "zones": []}
+            controller = Mock()
+            controller.load_state.side_effect = [same_state, same_state]
+            server.controller = controller
+
+            self.assertFalse(server._sync_backend_state_if_changed())
+            controller.persist_state.assert_not_called()
+        finally:
+            _close_server(server)
+
+    def test_sync_backend_state_if_changed_persists_when_payload_differs(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            current_state = Mock()
+            refreshed_state = Mock()
+            current_state.to_payload.return_value = {"system_power": False, "zones": []}
+            refreshed_state.to_payload.return_value = {
+                "system_power": True,
+                "zones": [{"controller": 1, "zone": 1, "power": True}],
+            }
+            controller = Mock()
+            controller.load_state.side_effect = [current_state, refreshed_state]
+            server.controller = controller
+
+            self.assertTrue(server._sync_backend_state_if_changed())
+            controller.persist_state.assert_called_once_with(refreshed_state)
+        finally:
+            _close_server(server)
+
     def test_root_response_sets_session_cookie(self):
         server = RussoundHTTPServer(None, None)
         try:

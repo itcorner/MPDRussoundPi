@@ -1,4 +1,9 @@
 {
+  "backend": {
+    "host": "127.0.0.1",
+    "port": 6666,
+    "poll_interval_seconds": 2.0
+  },
   "controllers": [
     {
       "id": 1,
@@ -61,6 +66,8 @@
     }
   ],
   "notes": [
+    "backend.host and backend.port configure the Russound hardware connection endpoint.",
+    "backend.poll_interval_seconds configures how often backend state changes are polled while SSE clients are connected (minimum 1.0).",
     "inputs.id values are numeric and start at 1.",
     "zones[].controller and zones[].zone describe the Russound hardware mapping.",
     "shortcuts[].zone_addresses uses physical controller/zone addresses.",

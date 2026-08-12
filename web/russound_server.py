@@ -13,6 +13,7 @@ from queue import Empty, Queue
 import secrets
 import sys
 import threading
+import time
 from typing import Any, cast
 from urllib.parse import parse_qs
 
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from web.config_types import coerce_russound_config, resolve_backend_poll_interval_seconds
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
 
@@ -30,6 +32,7 @@ WEB_STATIC = WEB_ROOT / "static"
 
 SESSION_COOKIE_NAME = "russound_session_id"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+BACKEND_CHANGE_POLL_INTERVAL_SECONDS = 2.0
 
 
 class RussoundRequestHandler:
@@ -129,6 +132,9 @@ class RussoundHTTPServer:
         self._event_client_id = 0
         self._event_history: deque[dict[str, Any]] = deque(maxlen=50)
         self._event_history_lock = threading.Lock()
+        self._backend_watcher_lock = threading.Lock()
+        self._backend_watcher_started = False
+        self._backend_poll_interval_seconds = BACKEND_CHANGE_POLL_INTERVAL_SECONDS
         self._helpers = RussoundRequestHandler()
         self.app = self._build_flask_app()
 
@@ -277,7 +283,15 @@ class RussoundHTTPServer:
 
         return app
 
-    def run(self, host: str, port: int, debug: bool = False, waitress_threads: int = 16) -> None:
+    def run(
+        self,
+        host: str,
+        port: int,
+        debug: bool = False,
+        waitress_threads: int = 16,
+    ) -> None:
+        self._backend_poll_interval_seconds = self._resolve_backend_poll_interval_seconds()
+        self._start_backend_change_watcher()
         if debug:
             self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
             return
@@ -289,6 +303,42 @@ class RussoundHTTPServer:
 
         serve = getattr(waitress_module, "serve")
         serve(self.app, host=host, port=port, threads=max(4, waitress_threads))
+
+    def _start_backend_change_watcher(self) -> None:
+        with self._backend_watcher_lock:
+            if self._backend_watcher_started:
+                return
+            watcher = threading.Thread(target=self._backend_change_watcher_loop, daemon=True, name="backend-change-watcher")
+            watcher.start()
+            self._backend_watcher_started = True
+
+    def _resolve_backend_poll_interval_seconds(self) -> float:
+        config = coerce_russound_config(self.controller.load_config())
+        poll_interval_seconds = resolve_backend_poll_interval_seconds(config, BACKEND_CHANGE_POLL_INTERVAL_SECONDS)
+        return max(1.0, float(poll_interval_seconds))
+
+    def _has_active_event_clients(self) -> bool:
+        with self._event_clients_lock:
+            return any(client.get("active", True) for client in self._event_clients.values())
+
+    def _backend_change_watcher_loop(self) -> None:
+        while True:
+            try:
+                if self._has_active_event_clients() and self._sync_backend_state_if_changed():
+                    logging.debug("Detected out-of-band hardware state change; broadcasting SSE update")
+                    self.broadcast_state_change()
+            except Exception as exc:
+                logging.debug("Backend change watcher iteration failed: %s", exc)
+            time.sleep(self._backend_poll_interval_seconds)
+
+    def _sync_backend_state_if_changed(self) -> bool:
+        with self.state_lock:
+            current_state = self.controller.load_state(refresh_backend=False)
+            refreshed_state = self.controller.load_state(refresh_backend=True)
+            if current_state.to_payload() == refreshed_state.to_payload():
+                return False
+            self.controller.persist_state(refreshed_state)
+            return True
 
     def _read_json_body(self) -> dict[str, Any]:
         payload = request.get_json(silent=True)
@@ -557,7 +607,12 @@ def main() -> None:
         print(f"Listening on http://{args.host}:{args.port}")
         print("Press Ctrl+C to stop the server.")
     try:
-        server.run(host=args.host, port=args.port, debug=args.debug, waitress_threads=args.waitress_threads)
+        server.run(
+            host=args.host,
+            port=args.port,
+            debug=args.debug,
+            waitress_threads=args.waitress_threads,
+        )
     except KeyboardInterrupt:
         print("\nShutting down Russound server...")
 

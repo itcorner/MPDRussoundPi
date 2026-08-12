@@ -48,13 +48,10 @@ class RussoundController:
 
         zone_lookup = {
             (int(zone.get("controller", 1)), int(zone.get("zone", 1))): zone
-            for zone in config.get("zones", [])
-            if isinstance(zone, dict)
+            for zone in _config_dict_list(config, "zones")
         }
         zone_slots: list[dict[str, Any]] = []
-        for controller in sorted(config.get("controllers", []), key=lambda item: int(item.get("id", 1))):
-            if not isinstance(controller, dict):
-                continue
+        for controller in sorted(_config_dict_list(config, "controllers"), key=lambda item: int(item.get("id", 1))):
             controller_id = int(controller.get("id", 1))
             zone_count = int(controller.get("zone_count", 0))
             for zone_number in range(1, zone_count + 1):
@@ -70,9 +67,7 @@ class RussoundController:
                 )
 
         source_slots: list[dict[str, Any]] = []
-        for input_item in sorted(config.get("inputs", []), key=lambda item: int(item.get("id", 0))):
-            if not isinstance(input_item, dict):
-                continue
+        for input_item in sorted(_config_dict_list(config, "inputs"), key=lambda item: int(item.get("id", 0))):
             source_id = int(input_item.get("id", 0))
             source_slots.append(
                 {
@@ -115,22 +110,17 @@ class RussoundController:
             raise ValueError("Invalid request body: 'source_slots' must be a list")
 
         controller_limits: dict[int, int] = {}
-        for controller in config.get("controllers", []):
-            if not isinstance(controller, dict):
-                continue
+        for controller in _config_dict_list(config, "controllers"):
             controller_limits[int(controller.get("id", 1))] = int(controller.get("zone_count", 0))
 
         existing_zone_lookup = {
             (int(zone.get("controller", 1)), int(zone.get("zone", 1))): zone
-            for zone in config.get("zones", [])
-            if isinstance(zone, dict)
+            for zone in _config_dict_list(config, "zones")
         }
         seen_addresses: set[tuple[int, int]] = set()
         new_zones: list[dict[str, Any]] = []
 
-        for raw_slot in zone_slots:
-            if not isinstance(raw_slot, dict):
-                raise ValueError("Invalid request body: each zone slot must be an object")
+        for raw_slot in _dict_list(zone_slots):
             controller_id = raw_slot.get("controller")
             zone_number = raw_slot.get("zone")
             enabled = raw_slot.get("enabled")
@@ -178,9 +168,7 @@ class RussoundController:
         valid_zone_addresses = {_zone_address(zone) for zone in new_zones}
 
         updated_shortcuts: list[dict[str, Any]] = []
-        for shortcut in config.get("shortcuts", []):
-            if not isinstance(shortcut, dict):
-                continue
+        for shortcut in _config_dict_list(config, "shortcuts"):
             updated_shortcut = dict(shortcut)
             updated_shortcut["zone_addresses"] = [
                 {"controller": controller_id, "zone": zone_number}
@@ -195,9 +183,7 @@ class RussoundController:
 
         existing_inputs: list[dict[str, Any]] = []
         input_lookup: dict[int, dict[str, Any]] = {}
-        for input_item in config.get("inputs", []):
-            if not isinstance(input_item, dict):
-                continue
+        for input_item in _config_dict_list(config, "inputs"):
             source_id = int(input_item.get("id", 0))
             normalized_input = dict(input_item)
             normalized_input.setdefault("name", _default_source_name(source_id))
@@ -206,9 +192,7 @@ class RussoundController:
 
         if source_slots:
             seen_source_ids: set[int] = set()
-            for raw_source in source_slots:
-                if not isinstance(raw_source, dict):
-                    raise ValueError("Invalid request body: each source slot must be an object")
+            for raw_source in _dict_list(source_slots):
                 source_id = raw_source.get("id")
                 source_name = raw_source.get("name")
 
@@ -238,7 +222,8 @@ class RussoundController:
         backend = RussoundBackend(config=config)
         inputs = [
             {"id": input_item["id"], "name": input_item["name"]}
-            for input_item in config.get("inputs", [])
+            for input_item in _config_dict_list(config, "inputs")
+            if "id" in input_item and "name" in input_item
         ]
         zone_items = list(state.zones)
         for zone_index, zone_item in enumerate(zone_items):
@@ -258,7 +243,6 @@ class RussoundController:
                     "controller": zone.controller,
                     "zone": zone.zone_number,
                 },
-                default_source=inputs[0].get("id") if inputs else None,
             )
             zone_items[zone_index] = zone
         state.zones = zone_items
@@ -294,12 +278,11 @@ class RussoundController:
 
         inputs: list[dict[str, Any]] = [
             {"id": input_item["id"], "name": input_item["name"]}
-            for input_item in config.get("inputs", [])
+            for input_item in _config_dict_list(config, "inputs")
+            if "id" in input_item and "name" in input_item
         ]
         state = RussoundState(system_power=False, zones=[], inputs=inputs)
-        for zone_config in config.get("zones", []):
-            if not isinstance(zone_config, dict):
-                continue
+        for zone_config in _config_dict_list(config, "zones"):
             controller_id, zone_number = _zone_address(zone_config)
             default_source = inputs[0]["id"] if inputs else None
             state.zones.append(
@@ -331,13 +314,13 @@ class RussoundController:
             state = RussoundState.from_payload(state)
         state.inputs = [
             {"id": input_item["id"], "name": input_item["name"]}
-            for input_item in config.get("inputs", [])
+            for input_item in _config_dict_list(config, "inputs")
+            if "id" in input_item and "name" in input_item
         ]
 
         zone_lookup = {
             _zone_address(zone): zone
-            for zone in config.get("zones", [])
-            if isinstance(zone, dict)
+            for zone in _config_dict_list(config, "zones")
         }
         existing_zone_lookup = {
             _zone_address(zone): _coerce_zone(zone, default_source=state.inputs[0]["id"] if state.inputs else None)
@@ -364,7 +347,7 @@ class RussoundController:
                 visible=bool(zone_config.get("visible", getattr(existing_zone, "visible", True) if isinstance(existing_zone, Zone) else True)),
             )
             if merged_zone.source not in {input_item["id"] for input_item in state.inputs}:
-                merged_zone.source = default_source
+                merged_zone.source = default_source if isinstance(default_source, int) else 0
             merged_zones.append(merged_zone)
 
         state.zones = merged_zones
@@ -380,8 +363,9 @@ class RussoundController:
         resolved_config = config if isinstance(config, dict) else self.load_config()
         backend = RussoundBackend(config=resolved_config)
         try:
-            if backend._connect() is None:
+            if not backend.connect():
                 return None
+            backend.close()
         except Exception:
             return None
         return backend
@@ -396,9 +380,11 @@ class RussoundController:
 
         backend = RussoundBackend(config=resolved_config)
         try:
-            connected = backend._connect() is not None
+            connected = backend.connect()
         except Exception:
             connected = False
+        finally:
+            backend.close()
 
         return {
             "connected": connected,
@@ -484,7 +470,7 @@ class RussoundController:
         config = self.load_config()
         if config is None:
             raise RuntimeError("A config file is required before shortcuts can be activated")
-        shortcut = next((item for item in config.get("shortcuts", []) if item.get("id") == shortcut_id), None)
+        shortcut = next((item for item in _config_dict_list(config, "shortcuts") if item.get("id") == shortcut_id), None)
         if shortcut is None:
             raise LookupError("Shortcut not found")
         resolved_zone_addresses = shortcut_zone_addresses(shortcut, config)
@@ -593,26 +579,33 @@ def _coerce_zone(zone_data: Zone | dict[str, Any] | None, default_source: int | 
     return Zone(name="", source=default_source)
 
 
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items = cast(list[object], value)
+    return [cast(dict[str, Any], item) for item in items if isinstance(item, dict)]
+
+
+def _config_dict_list(config: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    return _dict_list(config.get(key, []))
+
+
 def shortcut_zone_addresses(shortcut: dict[str, Any], config: dict[str, Any]) -> list[tuple[int, int]]:
     raw_addresses = shortcut.get("zone_addresses")
-    if isinstance(raw_addresses, list):
-        normalized_addresses: list[tuple[int, int]] = []
-        for raw_address in raw_addresses:
-            if not isinstance(raw_address, dict):
-                continue
-            controller_id = raw_address.get("controller")
-            zone_number = raw_address.get("zone")
-            if isinstance(controller_id, int) and isinstance(zone_number, int):
-                normalized_addresses.append((controller_id, zone_number))
-        return normalized_addresses
-    return []
+    normalized_addresses: list[tuple[int, int]] = []
+    for raw_address in _dict_list(raw_addresses):
+        controller_id = raw_address.get("controller")
+        zone_number = raw_address.get("zone")
+        if isinstance(controller_id, int) and isinstance(zone_number, int):
+            normalized_addresses.append((controller_id, zone_number))
+    return normalized_addresses
 
 
 def _visible_zone_addresses(config: dict[str, Any]) -> set[tuple[int, int]]:
     return {
         _zone_address(zone)
-        for zone in config.get("zones", [])
-        if isinstance(zone, dict) and bool(zone.get("visible", True))
+        for zone in _config_dict_list(config, "zones")
+        if bool(zone.get("visible", True))
     }
 
 
@@ -620,8 +613,8 @@ def _filter_config_for_overview(config: dict[str, Any]) -> dict[str, Any]:
     visible_zone_addresses = _visible_zone_addresses(config)
     filtered_config = dict(config)
     filtered_config["zones"] = [
-        zone for zone in config.get("zones", [])
-        if isinstance(zone, dict) and _zone_address(zone) in visible_zone_addresses
+        zone for zone in _config_dict_list(config, "zones")
+        if _zone_address(zone) in visible_zone_addresses
     ]
     return filtered_config
 
@@ -664,9 +657,11 @@ def _prepare_state_payload_for_persistence(payload: RussoundState | dict[str, An
 def _prepare_config_payload_for_persistence(config: dict[str, Any]) -> dict[str, Any]:
     prepared_config = dict(config)
     if "zones" in prepared_config:
+        raw_zones = prepared_config.get("zones", [])
         prepared_config["zones"] = [
             zone.to_config_payload() if isinstance(zone, Zone) else zone
-            for zone in prepared_config.get("zones", [])
+            for zone in raw_zones
+            if isinstance(zone, (Zone, dict))
         ]
     return prepared_config
 

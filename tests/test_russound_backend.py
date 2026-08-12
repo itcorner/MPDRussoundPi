@@ -7,6 +7,120 @@ from web.zone import Zone
 
 
 class RussoundBackendTests(unittest.TestCase):
+    def test_close_client_falls_back_to_socket_close_when_disconnect_missing(self):
+        class DummySocket:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        class DummyRussoundClient:
+            def __init__(self) -> None:
+                self.sock = DummySocket()
+
+            def connect(self):
+                return True
+
+            def is_connected(self):
+                return True
+
+        backend = RussoundBackend()
+        client = DummyRussoundClient()
+        backend.client = client
+
+        backend.close()
+
+        self.assertTrue(client.sock.closed)
+        self.assertIsNone(backend.client)
+
+    def test_backend_connect_stores_reusable_client_member(self):
+        class DummyRussoundClient:
+            def __init__(self, host, port):
+                self.host = host
+                self.port = port
+                self.connected = True
+
+            def connect(self):
+                return True
+
+            def is_connected(self):
+                return self.connected
+
+            def disconnect(self):
+                self.connected = False
+
+        backend = RussoundBackend()
+        with patch("web.russound_backend.Russound", DummyRussoundClient):
+            self.assertFalse(backend.is_connected())
+            first_client = backend._connect()
+            second_client = backend._connect()
+
+        self.assertIsNotNone(first_client)
+        self.assertIs(first_client, second_client)
+        self.assertIs(backend.client, first_client)
+        self.assertTrue(backend.is_connected())
+
+    def test_backend_connect_sets_client_none_when_unavailable(self):
+        class DummyFailingRussoundClient:
+            def __init__(self, host, port):
+                self.host = host
+                self.port = port
+
+            def connect(self):
+                return False
+
+            def is_connected(self):
+                return False
+
+            def disconnect(self):
+                return None
+
+        backend = RussoundBackend()
+        with patch("web.russound_backend.Russound", DummyFailingRussoundClient):
+            self.assertIsNone(backend._connect())
+
+        self.assertIsNone(backend.client)
+        self.assertFalse(backend.is_connected())
+
+    def test_repeated_failed_connect_attempts_log_once_per_failure_state(self):
+        class DummyFailingRussoundClient:
+            def __init__(self, host, port):
+                self.host = host
+                self.port = port
+
+            def connect(self):
+                return False
+
+            def is_connected(self):
+                return False
+
+            @property
+            def sock(self):
+                return None
+
+        backend = RussoundBackend()
+        backend._connect_backoff_seconds = 0.0
+
+        with patch("web.russound_backend.Russound", DummyFailingRussoundClient), patch("web.russound_backend.logging.debug") as debug_log:
+            self.assertIsNone(backend._connect())
+            self.assertIsNone(backend._connect())
+
+        matching_calls = [call for call in debug_log.call_args_list if call.args and isinstance(call.args[0], str) and "Russound backend unavailable at %s:%d; retrying in %.1fs" in call.args[0]]
+        self.assertEqual(len(matching_calls), 1)
+
+    def test_backend_endpoint_is_loaded_from_config(self):
+        backend = RussoundBackend(config={"backend": {"host": "192.168.1.50", "port": 6100}})
+
+        self.assertEqual(backend.host, "192.168.1.50")
+        self.assertEqual(backend.port, 6100)
+
+    def test_backend_endpoint_defaults_when_config_missing(self):
+        backend = RussoundBackend(config={"controllers": [{"id": 1, "zone_count": 6}]})
+
+        self.assertEqual(backend.host, "127.0.0.1")
+        self.assertEqual(backend.port, 6666)
+
     def test_read_zone_parameters_parses_cav_zone_info_and_discrete_parameters(self):
         class DummyClient:
             def __init__(self) -> None:
@@ -180,7 +294,7 @@ class RussoundBackendTests(unittest.TestCase):
             def set_power(self, controller, zone, power):
                 self.calls.append(("set_power", controller, zone, power))
 
-        backend = RussoundBackend(controller=2)
+        backend = RussoundBackend()
         client = DummyClient()
 
         with patch.object(backend, "_connect", return_value=client):
@@ -199,7 +313,7 @@ class RussoundBackendTests(unittest.TestCase):
             def set_power(self, controller, zone, power):
                 self.calls.append(("set_power", controller, zone, power))
 
-        backend = RussoundBackend(controller=2)
+        backend = RussoundBackend()
         client = DummyClient()
         zones = [Zone(name="Zone 1", controller=2, zone_number=1), Zone(name="Zone 3", controller=2, zone_number=3)]
 
