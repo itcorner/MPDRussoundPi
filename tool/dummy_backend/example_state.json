@@ -1,0 +1,50 @@
+{
+  "controllers": {
+    "1": {
+      "1": {
+        "power": false,
+        "source": 1,
+        "volume": 54,
+        "bass": 0,
+        "treble": 0,
+        "loudness": false,
+        "balance": 0,
+        "turn_on_volume": 20,
+        "background_color": 0,
+        "do_not_disturb": false,
+        "party_mode": 0,
+        "shared_source": false
+      },
+      "2": {
+        "power": false,
+        "source": 1,
+        "volume": 20,
+        "bass": 0,
+        "treble": 0,
+        "loudness": false,
+        "balance": 0,
+        "turn_on_volume": 20,
+        "background_color": 0,
+        "do_not_disturb": false,
+        "party_mode": 0,
+        "shared_source": false
+      }
+    },
+    "2": {
+      "1": {
+        "power": true,
+        "source": 1,
+        "volume": 33,
+        "bass": 2,
+        "treble": -2,
+        "loudness": true,
+        "balance": -2,
+        "turn_on_volume": 28,
+        "background_color": 1,
+        "do_not_disturb": false,
+        "party_mode": 1,
+        "shared_source": false
+      }
+    }
+  }
+}
