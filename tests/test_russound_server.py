@@ -1,4 +1,5 @@
 import logging
+import json
 import sys
 import unittest
 from queue import Queue
@@ -104,7 +105,9 @@ class RussoundServerTests(unittest.TestCase):
             server.broadcast_state_change()
 
             self.assertEqual(server.state_revision, 1)
-            self.assertEqual(event_queue.get_nowait(), '{"revision": 1}')
+            event_payload = json.loads(event_queue.get_nowait())
+            self.assertEqual(event_payload.get("revision"), 1)
+            self.assertIsInstance(event_payload.get("payload"), dict)
         finally:
             _close_server(server)
 

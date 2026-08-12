@@ -131,7 +131,16 @@ function startStateSync() {
   }
   const query = params.toString();
   eventSource = new EventSource(`/api/events${query ? `?${query}` : ""}`);
-  eventSource.addEventListener("state-change", () => {
+  eventSource.addEventListener("state-change", (event) => {
+    try {
+      const data = JSON.parse(event.data || "{}");
+      if (data && typeof data === "object" && data.payload && typeof data.payload === "object") {
+        applyPayload(data.payload);
+        return;
+      }
+    } catch {
+      // Fall back to explicit state fetch when event payload cannot be parsed.
+    }
     fetchState();
   });
   eventSource.onerror = () => {};

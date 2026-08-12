@@ -2,7 +2,7 @@
   "backend": {
     "host": "127.0.0.1",
     "port": 6666,
-    "poll_interval_seconds": 2.0
+    "poll_interval_seconds": 1.0
   },
   "controllers": [
     {

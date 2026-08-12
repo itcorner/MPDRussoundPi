@@ -500,12 +500,23 @@ class RussoundHTTPServer:
             )
 
     def broadcast_state_change(self) -> None:
+        state_payload = self._build_state_payload_for_event()
         with self._event_clients_lock:
             self.state_revision += 1
-            event_text = json.dumps({"revision": self.state_revision})
+            event_text = json.dumps(
+                {
+                    "revision": self.state_revision,
+                    "payload": state_payload,
+                }
+            )
             for client in list(self._event_clients.values()):
                 if client.get("active", True):
                     client["queue"].put(event_text)
+
+    def _build_state_payload_for_event(self) -> dict[str, Any]:
+        with self.state_lock:
+            payload = self.controller.build_view_payload(refresh_backend=False)
+        return payload
 
     def record_frontend_event(self, ip_address: str, path: str, payload: dict[str, Any]) -> None:
         entry: dict[str, Any] = {
