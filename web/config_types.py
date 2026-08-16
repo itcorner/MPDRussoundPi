@@ -8,6 +8,7 @@ class BackendConfig(TypedDict, total=False):
     host: str
     port: int
     poll_interval_seconds: float
+    protocol_audit_log_file: str
 
 
 class ControllerConfig(TypedDict, total=False):
@@ -19,6 +20,7 @@ class ZoneConfig(TypedDict, total=False):
     name: str
     controller: int
     zone: int
+    keypad_id: int
     enabled: bool
     visible: bool
 
@@ -105,3 +107,17 @@ def resolve_backend_poll_interval_seconds(config: RussoundConfig | None, default
     if isinstance(poll_interval_seconds, (int, float)) and not isinstance(poll_interval_seconds, bool):
         return float(poll_interval_seconds)
     return default_seconds
+
+
+def resolve_backend_protocol_audit_log_file(config: RussoundConfig | None) -> str | None:
+    if config is None:
+        return None
+
+    backend_config = config.get("backend")
+    if backend_config is None:
+        return None
+
+    log_file = backend_config.get("protocol_audit_log_file")
+    if isinstance(log_file, str) and log_file.strip():
+        return log_file.strip()
+    return None

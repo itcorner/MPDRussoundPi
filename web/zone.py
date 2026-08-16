@@ -25,6 +25,7 @@ class Zone:
         balance: int = 0,
         controller: int = 1,
         zone_number: int = 1,
+        keypad_id: int = 1,
         enabled: bool = True,
         visible: bool = True,
     ) -> None:
@@ -38,6 +39,7 @@ class Zone:
         self.balance = max(-10, min(10, int(balance)))
         self.controller = int(controller)
         self.zone_number = int(zone_number)
+        self.keypad_id = max(1, min(6, int(keypad_id)))
         self.enabled = bool(enabled)
         self.visible = bool(visible)
 
@@ -60,6 +62,7 @@ class Zone:
             balance=0,
             controller=int(data.get("controller", 1)),
             zone_number=int(data.get("zone", data.get("zone_number", 1))),
+            keypad_id=int(data.get("keypad_id", 1)),
             enabled=bool(data.get("enabled", True)),
             visible=bool(data.get("visible", True)),
         )
@@ -79,6 +82,7 @@ class Zone:
             balance=int(data.get("balance", 0)),
             controller=int(data.get("controller", 1)),
             zone_number=int(data.get("zone", data.get("zone_number", 1))),
+            keypad_id=int(data.get("keypad_id", 1)),
             enabled=bool(data.get("enabled", True)),
             visible=bool(data.get("visible", True)),
         )
@@ -96,6 +100,7 @@ class Zone:
             "name": self.name,
             "controller": self.controller,
             "zone": self.zone_number,
+            "keypad_id": self.keypad_id,
             "enabled": self.enabled,
             "visible": self.visible,
         }

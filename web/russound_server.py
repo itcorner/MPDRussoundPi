@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from web.config_types import coerce_russound_config, resolve_backend_poll_interval_seconds
+from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
 
@@ -134,6 +135,8 @@ class RussoundHTTPServer:
         self._event_history_lock = threading.Lock()
         self._backend_watcher_lock = threading.Lock()
         self._backend_watcher_started = False
+        self._event_backend: RussoundBackend | None = None
+        self._event_backend_lock = threading.Lock()
         self._backend_poll_interval_seconds = BACKEND_CHANGE_POLL_INTERVAL_SECONDS
         self._helpers = RussoundRequestHandler()
         self.app = self._build_flask_app()
@@ -308,9 +311,56 @@ class RussoundHTTPServer:
         with self._backend_watcher_lock:
             if self._backend_watcher_started:
                 return
+            self._start_unsolicited_update_listener()
             watcher = threading.Thread(target=self._backend_change_watcher_loop, daemon=True, name="backend-change-watcher")
             watcher.start()
             self._backend_watcher_started = True
+
+    def _start_unsolicited_update_listener(self) -> None:
+        config = self.controller.load_config()
+        if not isinstance(config, dict):
+            return
+        backend = RussoundBackend(config=config)
+        if not backend.start_update_listener(self._handle_unsolicited_zone_update):
+            backend.close()
+            return
+        with self._event_backend_lock:
+            self._event_backend = backend
+
+    def _handle_unsolicited_zone_update(self, update: dict[str, Any]) -> None:
+        controller_id = update.get("controller")
+        zone_number = update.get("zone")
+        setting = update.get("setting")
+        if not all(isinstance(value, int) for value in (controller_id, zone_number)) or not isinstance(setting, str):
+            return
+        with self.state_lock:
+            state = self.controller.load_state(refresh_backend=False)
+            changed = False
+            for zone in state.zones:
+                if zone.controller != controller_id or zone.zone_number != zone_number:
+                    continue
+                value = update.get("value")
+                if setting == "power":
+                    normalized_value = bool(value)
+                elif setting == "volume" and isinstance(value, int):
+                    normalized_value = max(0, min(100, value))
+                else:
+                    return
+                if getattr(zone, setting) != normalized_value:
+                    setattr(zone, setting, normalized_value)
+                    changed = True
+                break
+            if not changed:
+                return
+            state.sync_system_power()
+            self.controller.persist_state(state)
+        logging.debug(
+            "Applied unsolicited Russound %s update for controller %s zone %s",
+            setting,
+            controller_id,
+            zone_number,
+        )
+        self.broadcast_state_change()
 
     def _resolve_backend_poll_interval_seconds(self) -> float:
         config = coerce_russound_config(self.controller.load_config())
@@ -415,7 +465,7 @@ class RussoundHTTPServer:
                     except Empty:
                         yield ": ping\n\n"
                         continue
-                    yield f"event: state-change\\ndata: {event_text}\\n\\n"
+                    yield f"event: state-change\ndata: {event_text}\n\n"
             except GeneratorExit:
                 return
             finally:

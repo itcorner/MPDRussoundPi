@@ -1,29 +1,21 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 import logging
 import time
-from typing import Any, Callable, Protocol, cast
+from typing import Any, Callable
 
-try:
-    from russound.russound import Russound as _RussoundRuntime  # pyright: ignore[reportMissingTypeStubs]
-except Exception as exc:  # pragma: no cover - defensive import fallback
-    _RussoundRuntime = None
-    _russound_import_error = exc
-else:
-    _russound_import_error = None
+from .russound_connector import Russound
 
-Russound = _RussoundRuntime
-
-from .config_types import RussoundConfig, coerce_russound_config, resolve_backend_endpoint, resolve_controller_zone_limits
+from .config_types import (
+    RussoundConfig,
+    coerce_russound_config,
+    resolve_backend_endpoint,
+    resolve_backend_protocol_audit_log_file,
+    resolve_controller_zone_limits,
+)
 from .zone import Zone
 
 
-_ZONE_INFO_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00"
-_ZONE_INFO_RESPONSE_SIGNATURE = "04 02 00 @zz 07"
-_ZONE_USER_PARAMETER_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 05 02 00 @zz 00 @pp 00 00"
-_ZONE_USER_PARAMETER_RESPONSE_SIGNATURE = "05 02 00 @zz 00 @pp"
-_ZONE_USER_PARAMETER_SET_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 00 05 02 00 @zz 00 @pp 00 00 00 01 00 01 00 @pr"
 _ZONE_USER_PARAMETER_PATHS = {
     "bass": 0x00,
     "treble": 0x01,
@@ -33,32 +25,13 @@ _ZONE_USER_PARAMETER_PATHS = {
 }
 
 
-class RussoundClientProtocol(Protocol):
-    lock: Any
-    sock: Any | None
-
-    def connect(self) -> bool: ...
-    def is_connected(self) -> bool: ...
-    def get_power(self, controller: int, zone_number: int) -> object: ...
-    def get_source(self, controller: int, zone_number: int) -> object: ...
-    def get_volume(self, controller: int, zone_number: int) -> object: ...
-    def set_power(self, controller: int, zone_number: int, power: int) -> None: ...
-    def set_source(self, controller: int, zone_number: int, source_index: int) -> None: ...
-    def set_volume(self, controller: int, zone_number: int, volume: int) -> None: ...
-    def all_on_off(self, power: int) -> None: ...
-    def _Russound__create_response_signature(self, template: str, zone_number: int) -> Any: ...
-    def _Russound__create_send_message(self, template: str, controller: int, zone_number: int | None = None, parameter: int | None = None) -> Any: ...
-    def _Russound__send_data(self, send_msg: Any) -> None: ...
-    def _Russound__get_response_message(self, signature: Any = ...) -> Any: ...
-
-
 class RussoundBackend:
     _next_connect_attempt_at = 0.0
     _connect_backoff_seconds = 2.0
     _default_host = "127.0.0.1"
     _default_port = 6666
 
-    def __init__(self, config: object | None = None) -> None:
+    def __init__(self, config: object | None = None, protocol_audit_log_file: str | None = None) -> None:
         """Create a backend wrapper for a Russound controller connection.
 
         Args:
@@ -68,7 +41,8 @@ class RussoundBackend:
         endpoint = resolve_backend_endpoint(self.config)
         self.host = endpoint.host
         self.port = endpoint.port
-        self.client: RussoundClientProtocol | None = None
+        self.protocol_audit_log_file = protocol_audit_log_file or resolve_backend_protocol_audit_log_file(self.config)
+        self.client: Russound | None = None
         self._connectivity_state = "idle"
         self._last_connectivity_detail: str | None = None
 
@@ -82,8 +56,8 @@ class RussoundBackend:
         self._connectivity_state = state
         self._last_connectivity_detail = detail
 
-    def _connect(self) -> RussoundClientProtocol | None:
-        """Open a new Russound client connection when the backend library is available."""
+    def _connect(self) -> Russound | None:
+        """Open a new Russound client connection."""
         if self.client is not None:
             try:
                 if self.client.is_connected():
@@ -94,25 +68,13 @@ class RussoundBackend:
                 pass
             self._close_client(self.client)
 
-        if Russound is None:
-            error_detail = str(_russound_import_error)
-            self._log_connectivity_state(
-                "library-missing",
-                "Russound backend library is not available: %s",
-                error_detail,
-                detail=error_detail,
-            )
-            self.client = None
-            return None
-
         now = time.monotonic()
         if now < self._next_connect_attempt_at:
             self.client = None
             return None
 
         try:
-            client = cast(RussoundClientProtocol, Russound(self.host, self.port))
-            logging.getLogger("russound.russound").setLevel(logging.CRITICAL)
+            client = Russound(self.host, self.port, self.protocol_audit_log_file)
             connected = client.connect()
             if not connected or not client.is_connected():
                 self._next_connect_attempt_at = time.monotonic() + self._connect_backoff_seconds
@@ -136,7 +98,7 @@ class RussoundBackend:
                 self.port,
             )
             return client
-        except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+        except Exception as exc:  # pragma: no cover - connection failures are environment-dependent
             self._next_connect_attempt_at = time.monotonic() + self._connect_backoff_seconds
             self.client = None
             error_detail = str(exc)
@@ -163,10 +125,6 @@ class RussoundBackend:
                 return source_id - 1
         raise ValueError(f"Source {source_id} is not configured")
 
-    def _client_lock_context(self, client: RussoundClientProtocol):
-        lock = getattr(client, "lock", None)
-        return lock if lock is not None else nullcontext()
-
     def is_connected(self) -> bool:
         return self.client is not None
 
@@ -176,7 +134,14 @@ class RussoundBackend:
     def close(self) -> None:
         self._close_client()
 
-    def _close_client(self, client: RussoundClientProtocol | None = None) -> None:
+    def start_update_listener(self, callback: Callable[[dict[str, Any]], None]) -> bool:
+        client = self._connect()
+        if client is None:
+            return False
+        client.start_update_listener(callback)
+        return True
+
+    def _close_client(self, client: Russound | None = None) -> None:
         client_to_close = self.client if client is None else client
         if client_to_close is None:
             self.client = None
@@ -207,85 +172,6 @@ class RussoundBackend:
     def _disconnect(self) -> None:
         self._close_client()
 
-
-    def _request_zone_info_message(self, client: Any, controller: int, zone_number: int) -> Any | None:
-        create_signature = getattr(client, "_Russound__create_response_signature", None)
-        create_message = getattr(client, "_Russound__create_send_message", None)
-        send_data = getattr(client, "_Russound__send_data", None)
-        get_response = getattr(client, "_Russound__get_response_message", None)
-        if not all(callable(method) for method in (create_signature, create_message, send_data, get_response)):
-            return None
-
-        create_signature = cast(Callable[[str, int], Any], create_signature)
-        create_message = cast(Callable[[str, int, int], Any], create_message)
-        send_data = cast(Callable[[Any], None], send_data)
-        get_response = cast(Callable[[Any], Any], get_response)
-
-        response_signature = create_signature(_ZONE_INFO_RESPONSE_SIGNATURE, zone_number)
-        send_msg = create_message(_ZONE_INFO_REQUEST_TEMPLATE, controller, zone_number)
-        with self._client_lock_context(client):
-            send_data(send_msg)
-            return get_response(response_signature)
-
-    def _request_zone_user_parameter_message(self, client: Any, controller: int, zone_number: int, parameter: str) -> Any | None:
-        parameter_path = _ZONE_USER_PARAMETER_PATHS.get(parameter)
-        if parameter_path is None:
-            raise ValueError(f"Unsupported zone parameter: {parameter}")
-
-        create_signature = getattr(client, "_Russound__create_response_signature", None)
-        create_message = getattr(client, "_Russound__create_send_message", None)
-        send_data = getattr(client, "_Russound__send_data", None)
-        get_response = getattr(client, "_Russound__get_response_message", None)
-        if not all(callable(method) for method in (create_signature, create_message, send_data, get_response)):
-            return None
-
-        create_signature = cast(Callable[[str, int], Any], create_signature)
-        create_message = cast(Callable[[str, int, int], Any], create_message)
-        send_data = cast(Callable[[Any], None], send_data)
-        get_response = cast(Callable[[Any], Any], get_response)
-
-        parameter_hex = f"{parameter_path:02X}"
-        response_signature = create_signature(_ZONE_USER_PARAMETER_RESPONSE_SIGNATURE.replace("@pp", parameter_hex), zone_number)
-        send_msg = create_message(_ZONE_USER_PARAMETER_REQUEST_TEMPLATE.replace("@pp", parameter_hex), controller, zone_number)
-        with self._client_lock_context(client):
-            send_data(send_msg)
-            return get_response(response_signature)
-
-    def _parse_zone_info_message(self, message: Any) -> dict[str, Any] | None:
-        if message is None or len(message) < 22:
-            return None
-        return {
-            "power": bool(message[11]),
-            "source_index": int(message[12]),
-            "volume": int(message[13]) * 2,
-            "bass": int(message[14]) - 10,
-            "treble": int(message[15]) - 10,
-            "loudness": bool(message[16]),
-            "balance": int(message[17]) - 10,
-            "system_power": bool(message[18]),
-            "shared_source": bool(message[19]),
-        }
-
-    def _parse_zone_user_parameter_value(self, parameter: str, message: Any) -> Any | None:
-        if message is None or len(message) < 13:
-            return None
-        raw_value = int(message[12])
-        if parameter in {"bass", "treble", "balance"}:
-            return raw_value - 10
-        if parameter == "turn_on_volume":
-            return raw_value * 2
-        if parameter == "loudness":
-            return bool(raw_value)
-        return raw_value
-
-    def _normalize_zone_user_parameter_value(self, parameter: str, value: Any) -> int:
-        if parameter in {"bass", "treble", "balance"}:
-            return max(-10, min(10, int(value))) + 10
-        if parameter == "turn_on_volume":
-            return max(0, min(100, int(value))) // 2
-        if parameter == "loudness":
-            return 1 if bool(value) else 0
-        raise ValueError(f"Unsupported zone parameter: {parameter}")
 
     def _controller_zone_limits(self) -> dict[int, int]:
         return resolve_controller_zone_limits(self.config)
@@ -335,7 +221,7 @@ class RussoundBackend:
             return None
         try:
             controller, zone_number = self._resolve_zone_address(zone)
-            zone_info = self._parse_zone_info_message(self._request_zone_info_message(client, controller, zone_number))
+            zone_info = client.get_zone_extended_info(controller, zone_number)
             if zone_info is not None:
                 source_index = zone_info.get("source_index")
                 source_id = None
@@ -367,7 +253,7 @@ class RussoundBackend:
                     "loudness": False,
                     "balance": 0,
                 }
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to read Russound controller %s - zone %s: %s", controller, zone_number, exc)
                 return None
         finally:
@@ -389,24 +275,12 @@ class RussoundBackend:
         try:
             controller, zone_number = self._resolve_zone_address(zone)
 
-            zone_info = self._parse_zone_info_message(self._request_zone_info_message(client, controller, zone_number))
+            zone_info = client.get_zone_extended_info(controller, zone_number)
             if zone_info is None:
                 return None
 
             zone_info["power"] = bool(zone_info.get("power", False))
             zone_info["volume"] = max(0, min(100, int(zone_info.get("volume", 0))))
-
-            discrete_parameters = {
-                "turn_on_volume",
-            }
-            for parameter in discrete_parameters:
-                value = self._parse_zone_user_parameter_value(
-                    parameter,
-                    self._request_zone_user_parameter_message(client, controller, zone_number, parameter),
-                )
-                if value is None:
-                    return None
-                zone_info[parameter] = value
 
             return zone_info
         finally:
@@ -428,10 +302,7 @@ class RussoundBackend:
         if client is None:
             return None
         try:
-            return self._parse_zone_user_parameter_value(
-                parameter,
-                self._request_zone_user_parameter_message(client, controller, zone_number, parameter),
-            )
+            return client.get_zone_user_parameter(controller, zone_number, parameter)
         finally:
             if self.client is not client:
                 self._close_client(client)
@@ -466,7 +337,7 @@ class RussoundBackend:
             try:
                 client.set_power(controller, zone_number, 1 if power else 0)
                 return True
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to set power for Russound controller %d - zone %d: %s", controller, zone_number, exc)
                 return False
         finally:
@@ -493,7 +364,7 @@ class RussoundBackend:
             try:
                 client.set_source(controller, zone_number, source_index)
                 return True
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to set source for Russound controller %d - zone %d: %s", controller, zone_number, exc)
                 return False
         finally:
@@ -515,7 +386,7 @@ class RussoundBackend:
             try:
                 client.set_volume(controller, zone_number, max(0, min(100, volume)))
                 return True
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to set volume for Russound controller %d - zone %d: %s", controller, zone_number, exc)
                 return False
         finally:
@@ -529,27 +400,11 @@ class RussoundBackend:
             return False
         try:
             controller, zone_number = self._resolve_zone_address(zone)
-            parameter_path = _ZONE_USER_PARAMETER_PATHS.get(parameter)
-            if parameter_path is None:
+            if parameter not in _ZONE_USER_PARAMETER_PATHS:
                 return False
-            create_message = getattr(client, "_Russound__create_send_message", None)
-            send_data = getattr(client, "_Russound__send_data", None)
-            get_response = getattr(client, "_Russound__get_response_message", None)
-            if not all(callable(method) for method in (create_message, send_data, get_response)):
-                return False
-
-            create_message = cast(Callable[[str, int, int, int], Any], create_message)
-            send_data = cast(Callable[[Any], None], send_data)
-            get_response = cast(Callable[[], Any], get_response)
-            normalized_value = self._normalize_zone_user_parameter_value(parameter, value)
-            template = _ZONE_USER_PARAMETER_SET_TEMPLATE.replace("@pp", f"{parameter_path:02X}")
-            send_msg = create_message(template, controller, zone_number, normalized_value)
             try:
-                with self._client_lock_context(client):
-                    send_data(send_msg)
-                    get_response()
-                return True
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+                return bool(client.set_zone_user_parameter(controller, zone_number, parameter, value))
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to set %s for Russound controller %d - zone %d: %s", parameter, controller, zone_number, exc)
                 return False
         finally:
@@ -568,6 +423,73 @@ class RussoundBackend:
     def set_zone_balance(self, zone: Zone, balance: int) -> bool:
         return self.set_zone_user_parameter(zone, "balance", balance)
 
+    def display_on_all_keypads(self, message: str, alignment: int = 0, flash_time: int = 0) -> bool:
+        """Display an ASCII message on all connected keypads.
+
+        The CAS44/CAA66 display payload holds up to 12 characters plus a
+        terminating NUL. Flash time is measured in 10 ms increments.
+        """
+        client = self._connect()
+        if client is None:
+            return False
+        try:
+            return bool(client.display_on_all_keypads(message, alignment=alignment, flash_time=flash_time))
+        except Exception as exc:  # pragma: no cover - hardware I/O failure
+            logging.debug("Unable to display a message on Russound keypads: %s", exc)
+            return False
+        finally:
+            if self.client is not client:
+                self._close_client(client)
+
+    def display_on_keypad(
+        self,
+        controller: int,
+        zone_number: int,
+        keypad_number: int,
+        message: str,
+        alignment: int = 0,
+        flash_time: int = 0,
+    ) -> bool:
+        """Display an ASCII message on one specific keypad.
+
+        Args:
+            controller: 1-based controller id.
+            zone_number: 1-based zone id.
+            keypad_number: 1-based keypad id on the zone (1..6).
+            message: Up to 12 ASCII characters.
+            alignment: 0=centered, 1=left.
+            flash_time: Duration in 10 ms units (0..65535).
+        """
+        try:
+            controller_value, zone_value = self._validate_zone_address(
+                controller,
+                zone_number,
+                self._controller_zone_limits(),
+            )
+        except ValueError:
+            return False
+
+        client = self._connect()
+        if client is None:
+            return False
+        try:
+            return bool(
+                client.display_on_keypad(
+                    controller_value,
+                    zone_value,
+                    keypad_number,
+                    message,
+                    alignment=alignment,
+                    flash_time=flash_time,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - hardware I/O failure
+            logging.debug("Unable to display a message on Russound keypad c%d z%d k%d: %s", controller_value, zone_value, keypad_number, exc)
+            return False
+        finally:
+            if self.client is not client:
+                self._close_client(client)
+
     def turn_all_zones_off(self) -> bool:
         """Turn every zone off for the default controller."""
         client = self._connect()
@@ -577,26 +499,26 @@ class RussoundBackend:
             try:
                 client.all_on_off(0)
                 return True
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to turn Russound zones off: %s", exc)
                 return False
         finally:
             if self.client is not client:
                 self._close_client(client)
 
-    def turn_all_zones_on(self, zones: list[Zone] | None = None) -> bool:
-        """Turn on only the provided enabled zones for the default controller."""
+    def turn_all_zones_on(self, enabled_zones: list[Zone] | None = None) -> bool:
+        """Turn on only the provided enabled zones."""
         client = self._connect()
         if client is None:
             return False
         try:
             try:
-                if not zones:
+                if not enabled_zones:
                     return True
-                for zone_data in zones:
-                    client.set_power(zone_data.controller, zone_data.zone_number, 1)
+                for zone in enabled_zones:
+                    client.set_power(zone.controller, zone.zone_number, 1)
                 return True
-            except Exception as exc:  # pragma: no cover - runtime dependency may be absent
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to turn Russound zones on: %s", exc)
                 return False
         finally:

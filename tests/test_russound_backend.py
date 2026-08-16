@@ -7,6 +7,32 @@ from web.zone import Zone
 
 
 class RussoundBackendTests(unittest.TestCase):
+    def test_backend_connect_forwards_protocol_audit_log_file(self):
+        class DummyRussoundClient:
+            def __init__(self, host, port, protocol_audit_log_file=None):
+                self.host = host
+                self.port = port
+                self.protocol_audit_log_file = protocol_audit_log_file
+                self.connected = True
+
+            def connect(self):
+                return True
+
+            def is_connected(self):
+                return self.connected
+
+            def disconnect(self):
+                self.connected = False
+
+        backend = RussoundBackend(
+            config={"backend": {"host": "127.0.0.1", "port": 6666, "protocol_audit_log_file": "/tmp/rnet.log"}}
+        )
+        with patch("web.russound_backend.Russound", DummyRussoundClient):
+            client = backend._connect()
+
+        self.assertIsNotNone(client)
+        self.assertEqual(client.protocol_audit_log_file, "/tmp/rnet.log")
+
     def test_close_client_falls_back_to_socket_close_when_disconnect_missing(self):
         class DummySocket:
             def __init__(self) -> None:
@@ -36,9 +62,10 @@ class RussoundBackendTests(unittest.TestCase):
 
     def test_backend_connect_stores_reusable_client_member(self):
         class DummyRussoundClient:
-            def __init__(self, host, port):
+            def __init__(self, host, port, protocol_audit_log_file=None):
                 self.host = host
                 self.port = port
+                self.protocol_audit_log_file = protocol_audit_log_file
                 self.connected = True
 
             def connect(self):
@@ -63,9 +90,10 @@ class RussoundBackendTests(unittest.TestCase):
 
     def test_backend_connect_sets_client_none_when_unavailable(self):
         class DummyFailingRussoundClient:
-            def __init__(self, host, port):
+            def __init__(self, host, port, protocol_audit_log_file=None):
                 self.host = host
                 self.port = port
+                self.protocol_audit_log_file = protocol_audit_log_file
 
             def connect(self):
                 return False
@@ -85,9 +113,10 @@ class RussoundBackendTests(unittest.TestCase):
 
     def test_repeated_failed_connect_attempts_log_once_per_failure_state(self):
         class DummyFailingRussoundClient:
-            def __init__(self, host, port):
+            def __init__(self, host, port, protocol_audit_log_file=None):
                 self.host = host
                 self.port = port
+                self.protocol_audit_log_file = protocol_audit_log_file
 
             def connect(self):
                 return False
@@ -124,34 +153,22 @@ class RussoundBackendTests(unittest.TestCase):
     def test_read_zone_parameters_parses_cav_zone_info_and_discrete_parameters(self):
         class DummyClient:
             def __init__(self) -> None:
-                self.lock = nullcontext()
                 self.requests = []
 
-            def _Russound__create_response_signature(self, template, zone):
-                signature = template.replace("@zz", f"{zone - 1:02X}")
-                self.requests.append(("signature", signature))
-                return signature
-
-            def _Russound__create_send_message(self, template, controller, zone=None, parameter=None):
-                self.requests.append(("send_message", template, controller, zone, parameter))
-                return [template]
-
-            def _Russound__send_data(self, send_msg):
-                self.requests.append(("send", send_msg))
-
-            def _Russound__get_response_message(self, signature):
-                if signature.endswith("07"):
-                    message = bytearray(24)
-                    message[11:22] = bytearray([1, 2, 15, 12, 9, 1, 13, 1, 0, 2, 1])
-                    return message
-                message = bytearray(14)
-                if signature.endswith("04"):
-                    message[12] = 18
-                elif signature.endswith("05"):
-                    message[12] = 2
-                elif signature.endswith("08"):
-                    message[12] = 1
-                return message
+            def get_zone_extended_info(self, controller, zone):
+                self.requests.append(("get_zone_extended_info", controller, zone))
+                return {
+                    "power": True,
+                    "source_index": 2,
+                    "volume": 30,
+                    "bass": 2,
+                    "treble": -1,
+                    "loudness": True,
+                    "balance": 3,
+                    "system_power": True,
+                    "shared_source": False,
+                    "turn_on_volume": 36,
+                }
 
         backend = RussoundBackend()
         client = DummyClient()
@@ -187,10 +204,16 @@ class RussoundBackendTests(unittest.TestCase):
             self.assertEqual(backend.read_zone_balance(Zone(name="Zone 1", controller=1, zone_number=1)), 1)
             self.assertTrue(backend.read_zone_loudness(Zone(name="Zone 1", controller=1, zone_number=1)))
 
-    def test_read_discrete_zone_parameter_accessors_use_protocol_value_parsing(self):
+    def test_read_discrete_zone_parameter_accessors_use_connector_parameter_read(self):
         backend = RussoundBackend()
 
-        with patch.object(backend, "_connect", return_value=object()), patch.object(backend, "_request_zone_user_parameter_message", return_value=bytearray([0] * 12 + [19, 0])), patch.object(backend, "_resolve_zone_address", return_value=(1, 1)):
+        class DummyClient:
+            def get_zone_user_parameter(self, controller, zone, parameter):
+                if parameter == "turn_on_volume":
+                    return 38
+                return None
+
+        with patch.object(backend, "_connect", return_value=DummyClient()), patch.object(backend, "_resolve_zone_address", return_value=(1, 1)):
             self.assertEqual(backend.read_zone_turn_on_volume(Zone(name="Zone 1", controller=1, zone_number=1)), 38)
 
         self.assertIsNone(backend.read_zone_user_parameter({"controller": 1, "zone": 1}, "background_color"))
@@ -198,21 +221,14 @@ class RussoundBackendTests(unittest.TestCase):
         self.assertIsNone(backend.read_zone_user_parameter({"controller": 1, "zone": 1}, "party_mode"))
         self.assertIsNone(backend.read_zone_user_parameter({"controller": 1, "zone": 1}, "front_av_enable"))
 
-    def test_set_zone_user_parameter_normalizes_bass_treble_balance_and_loudness(self):
+    def test_set_zone_user_parameter_delegates_to_connector(self):
         class DummyClient:
             def __init__(self) -> None:
-                self.lock = nullcontext()
                 self.calls = []
 
-            def _Russound__create_send_message(self, template, controller, zone=None, parameter=None):
-                self.calls.append((template, controller, zone, parameter))
-                return [template]
-
-            def _Russound__send_data(self, send_msg):
-                self.calls.append(("send", send_msg))
-
-            def _Russound__get_response_message(self):
-                self.calls.append(("response",))
+            def set_zone_user_parameter(self, controller, zone, parameter, value):
+                self.calls.append((controller, zone, parameter, value))
+                return True
 
         backend = RussoundBackend()
         client = DummyClient()
@@ -223,10 +239,10 @@ class RussoundBackendTests(unittest.TestCase):
             self.assertTrue(backend.set_zone_loudness(Zone(name="Zone 1", controller=1, zone_number=1), True))
             self.assertTrue(backend.set_zone_balance(Zone(name="Zone 1", controller=1, zone_number=1), 3))
 
-        self.assertEqual(client.calls[0][3], 6)
-        self.assertEqual(client.calls[3][3], 6)
-        self.assertEqual(client.calls[6][3], 1)
-        self.assertEqual(client.calls[9][3], 13)
+        self.assertEqual(client.calls[0], (1, 1, "bass", -4))
+        self.assertEqual(client.calls[1], (1, 1, "treble", -4))
+        self.assertEqual(client.calls[2], (1, 1, "loudness", True))
+        self.assertEqual(client.calls[3], (1, 1, "balance", 3))
 
     def test_zone_address_uses_controller_limits_when_configured(self):
         backend = RussoundBackend(config={"controllers": [{"id": 2, "zone_count": 4}]})
@@ -327,6 +343,85 @@ class RussoundBackendTests(unittest.TestCase):
                 ("set_power", 2, 3, 1),
             ],
         )
+
+    def test_display_on_all_keypads_sends_padded_ascii_broadcast_message(self):
+        class DummyClient:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def display_on_all_keypads(self, message, alignment=0, flash_time=0):
+                self.calls.append((message, alignment, flash_time))
+                return True
+
+        backend = RussoundBackend()
+        client = DummyClient()
+
+        with patch.object(backend, "_connect", return_value=client):
+            self.assertTrue(backend.display_on_all_keypads("Hello", alignment=1, flash_time=25))
+
+        self.assertEqual(client.calls[0], ("Hello", 1, 25))
+
+    def test_display_on_all_keypads_rejects_non_ascii_or_long_messages(self):
+        backend = RussoundBackend()
+
+        class DummyClient:
+            def display_on_all_keypads(self, message, alignment=0, flash_time=0):
+                if len(message) > 12:
+                    return False
+                try:
+                    message.encode("ascii")
+                except UnicodeEncodeError:
+                    return False
+                return True
+
+        with patch.object(backend, "_connect") as connect:
+            connect.return_value = DummyClient()
+            self.assertFalse(backend.display_on_all_keypads("x" * 13))
+            self.assertFalse(backend.display_on_all_keypads("café"))
+
+        connect.assert_called()
+
+    def test_display_on_keypad_sends_padded_ascii_message_to_target_keypad(self):
+        class DummyClient:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def display_on_keypad(self, controller, zone, keypad_number, message, alignment=0, flash_time=0):
+                self.calls.append((controller, zone, keypad_number, message, alignment, flash_time))
+                return True
+
+        backend = RussoundBackend()
+        client = DummyClient()
+
+        with patch.object(backend, "_connect", return_value=client):
+            self.assertTrue(backend.display_on_keypad(2, 3, 1, "Hi", alignment=1, flash_time=40))
+
+        self.assertEqual(client.calls[0], (2, 3, 1, "Hi", 1, 40))
+
+    def test_display_on_keypad_rejects_invalid_inputs(self):
+        backend = RussoundBackend(config={"controllers": [{"id": 1, "zone_count": 6}]})
+
+        class DummyClient:
+            def display_on_keypad(self, controller, zone, keypad_number, message, alignment=0, flash_time=0):
+                if not 1 <= int(keypad_number) <= 6:
+                    return False
+                if len(message) > 12:
+                    return False
+                try:
+                    message.encode("ascii")
+                except UnicodeEncodeError:
+                    return False
+                return True
+
+        with patch.object(backend, "_connect") as connect:
+            connect.return_value = DummyClient()
+            self.assertFalse(backend.display_on_keypad(1, 1, 0, "Hi"))
+            self.assertFalse(backend.display_on_keypad(1, 1, 7, "Hi"))
+            self.assertFalse(backend.display_on_keypad(1, 1, 1, "x" * 13))
+            self.assertFalse(backend.display_on_keypad(1, 1, 1, "café"))
+            self.assertFalse(backend.display_on_keypad(1, 7, 1, "Hi"))
+
+        connect.assert_called()
 
 
 if __name__ == "__main__":

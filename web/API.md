@@ -273,14 +273,14 @@ Response shape:
 {
   "config": {
     "controllers": [{"id": 1, "zone_count": 6}],
-    "zones": [{"name": "Living Room", "controller": 1, "zone": 1, "visible": true}],
+    "zones": [{"name": "Living Room", "controller": 1, "zone": 1, "keypad_id": 1, "visible": true}],
     "inputs": [{"id": 1, "name": "Radio"}],
     "shortcuts": []
   },
   "config_required": false,
   "zone_slots": [
-    {"controller": 1, "zone": 1, "enabled": true, "visible": true, "name": "Living Room"},
-    {"controller": 1, "zone": 2, "enabled": false, "visible": true, "name": "Controller 1 Zone 2"}
+    {"controller": 1, "zone": 1, "keypad_id": 1, "enabled": true, "visible": true, "name": "Living Room"},
+    {"controller": 1, "zone": 2, "keypad_id": 1, "enabled": false, "visible": true, "name": "Controller 1 Zone 2"}
   ],
   "source_slots": [
     {"id": 1, "name": "Radio"},
@@ -290,6 +290,7 @@ Response shape:
 ```
 
 `zone_slots` is derived from `controllers[].zone_count`, so the editor only exposes valid hardware slots.
+`keypad_id` identifies the zone keypad (`1..6`) and defaults to `1` when omitted.
 `source_slots` is derived from `inputs` and allows renaming source display names without changing source ids.
 
 ### POST /api/system/power

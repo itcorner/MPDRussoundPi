@@ -60,6 +60,7 @@ class RussoundController:
                     {
                         "controller": controller_id,
                         "zone": zone_number,
+                        "keypad_id": _keypad_id(existing_zone.get("keypad_id")) if existing_zone else 1,
                         "enabled": existing_zone is not None,
                         "visible": bool(existing_zone.get("visible", True)) if existing_zone else True,
                         "name": existing_zone.get("name", _default_zone_name(controller_id, zone_number)) if existing_zone else _default_zone_name(controller_id, zone_number),
@@ -126,6 +127,7 @@ class RussoundController:
             enabled = raw_slot.get("enabled")
             visible = raw_slot.get("visible")
             name = raw_slot.get("name")
+            keypad_id = raw_slot.get("keypad_id", 1)
 
             if not isinstance(controller_id, int) or isinstance(controller_id, bool):
                 raise ValueError("Invalid request body: slot controller must be an integer")
@@ -137,6 +139,8 @@ class RussoundController:
                 raise ValueError("Invalid request body: slot visible must be a boolean")
             if not isinstance(name, str):
                 raise ValueError("Invalid request body: slot name must be a string")
+            if not isinstance(keypad_id, int) or isinstance(keypad_id, bool) or not 1 <= keypad_id <= 6:
+                raise ValueError("Invalid request body: slot keypad_id must be an integer from 1 to 6")
             if controller_id not in controller_limits:
                 raise ValueError(f"Invalid request body: unknown controller {controller_id}")
             if zone_number < 1 or zone_number > controller_limits[controller_id]:
@@ -159,6 +163,7 @@ class RussoundController:
                     "name": name.strip() or _default_zone_name(controller_id, zone_number),
                     "controller": controller_id,
                     "zone": zone_number,
+                    "keypad_id": keypad_id,
                     "visible": visible,
                 }
             )
@@ -297,6 +302,7 @@ class RussoundController:
                     balance=0,
                     controller=controller_id,
                     zone_number=zone_number,
+                    keypad_id=_keypad_id(zone_config.get("keypad_id")),
                     enabled=bool(zone_config.get("enabled", True)),
                     visible=bool(zone_config.get("visible", True)),
                 )
@@ -343,6 +349,7 @@ class RussoundController:
                 balance=int(existing_zone.balance if isinstance(existing_zone, Zone) else 0),
                 controller=int(existing_zone.controller if isinstance(existing_zone, Zone) else controller_id),
                 zone_number=int(existing_zone.zone_number if isinstance(existing_zone, Zone) else zone_number),
+                keypad_id=_keypad_id(zone_config.get("keypad_id")),
                 enabled=bool(zone_config.get("enabled", getattr(existing_zone, "enabled", True) if isinstance(existing_zone, Zone) else True)),
                 visible=bool(zone_config.get("visible", getattr(existing_zone, "visible", True) if isinstance(existing_zone, Zone) else True)),
             )
@@ -563,6 +570,10 @@ def _default_zone_name(controller_id: int, zone_number: int) -> str:
 
 def _default_source_name(source_id: int) -> str:
     return f"Source {source_id}"
+
+
+def _keypad_id(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 6 else 1
 
 
 def _zone_address(zone: Zone | dict[str, Any]) -> tuple[int, int]:

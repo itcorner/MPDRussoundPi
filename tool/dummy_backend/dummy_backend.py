@@ -5,15 +5,17 @@ import curses
 from collections import deque
 import json
 import logging
+import socket
 import threading
 import socketserver
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 
 LOG = logging.getLogger("tool.dummy_backend")
 DEFAULT_STATE_PATH = Path(__file__).with_name("example_state.json")
+DEFAULT_KEYPAD_ID = 1
 ZONE_INFO_RESPONSE_SIGNATURE = ["04", "02", "00"]
 USER_PARAMETER_RESPONSE_SIGNATURE = ["05", "02", "00"]
 ZONE_FIELD_DEFS: tuple[tuple[str, str, str, int | None, int | None], ...] = (
@@ -245,8 +247,41 @@ class ZoneState:
 
 
 @dataclass
+class KeypadDisplayState:
+    message: str = ""
+    alignment: int = 0
+    flash_time: int = 0
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "KeypadDisplayState":
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            message=str(data.get("message", "")),
+            alignment=_clamp(int(data.get("alignment", 0) or 0), 0, 1),
+            flash_time=_clamp(int(data.get("flash_time", 0) or 0), 0, 0xFFFF),
+        )
+
+    def as_dict(self) -> dict[str, int | str]:
+        return {
+            "message": self.message,
+            "alignment": self.alignment,
+            "flash_time": self.flash_time,
+        }
+
+
+@dataclass
 class DummyRussoundState:
     controllers: dict[int, dict[int, ZoneState]] = field(default_factory=lambda: {})
+    keypad_overrides: dict[int, dict[int, dict[int, KeypadDisplayState]]] = field(default_factory=lambda: {})
+    zone_update_callback: Callable[[int, int], None] | None = field(default=None, repr=False, compare=False)
+
+    def set_zone_update_callback(self, callback: Callable[[int, int], None] | None) -> None:
+        self.zone_update_callback = callback
+
+    def notify_zone_update(self, controller_id: int, zone_number: int) -> None:
+        if self.zone_update_callback is not None:
+            self.zone_update_callback(controller_id, zone_number)
 
     @classmethod
     def from_file(cls, state_path: Path | None) -> "DummyRussoundState":
@@ -271,7 +306,37 @@ class DummyRussoundState:
                 except (TypeError, ValueError):
                     continue
                 controllers[controller_id][zone_number] = ZoneState.from_dict(zone_data)
-        return cls(controllers=controllers)
+
+        keypad_overrides: dict[int, dict[int, dict[int, KeypadDisplayState]]] = {}
+        raw_keypad_overrides = cast(dict[str, Any], data.get("keypad_overrides") or {})
+        for controller_key, zone_map in raw_keypad_overrides.items():
+            if not isinstance(zone_map, dict):
+                continue
+            try:
+                controller_id = int(controller_key)
+            except (TypeError, ValueError):
+                continue
+            keypad_overrides[controller_id] = {}
+            raw_zone_map = cast(dict[str, Any], zone_map)
+            for zone_key, keypad_map in raw_zone_map.items():
+                if not isinstance(keypad_map, dict):
+                    continue
+                try:
+                    zone_number = int(zone_key)
+                except (TypeError, ValueError):
+                    continue
+                keypad_overrides[controller_id][zone_number] = {}
+                raw_keypad_map = cast(dict[str, Any], keypad_map)
+                display_state = raw_keypad_map.get(str(DEFAULT_KEYPAD_ID))
+                if isinstance(display_state, dict):
+                    keypad_overrides[controller_id][zone_number][DEFAULT_KEYPAD_ID] = KeypadDisplayState.from_dict(
+                        cast(dict[str, Any], display_state)
+                    )
+
+        return cls(
+            controllers=controllers,
+            keypad_overrides=keypad_overrides,
+        )
 
     def zone(self, controller_id: int, zone_number: int) -> ZoneState:
         controller = self.controllers.setdefault(controller_id, {})
@@ -294,8 +359,27 @@ class DummyRussoundState:
                     for zone_number, zone_state in sorted(zone_map.items())
                 }
                 for controller_id, zone_map in sorted(self.controllers.items())
-            }
+            },
+            "keypad_overrides": {
+                str(controller_id): {
+                    str(zone_number): {
+                        str(keypad_number): display_state.as_dict()
+                        for keypad_number, display_state in sorted(keypad_map.items())
+                    }
+                    for zone_number, keypad_map in sorted(zone_map.items())
+                }
+                for controller_id, zone_map in sorted(self.keypad_overrides.items())
+            },
         }
+
+    def keypad_display(self, controller_id: int, zone_number: int, keypad_number: int) -> KeypadDisplayState:
+        if keypad_number != DEFAULT_KEYPAD_ID:
+            raise ValueError(f"Dummy backend only simulates keypad {DEFAULT_KEYPAD_ID}")
+        controller = self.keypad_overrides.setdefault(controller_id, {})
+        zone_map = controller.setdefault(zone_number, {})
+        if keypad_number not in zone_map:
+            zone_map[keypad_number] = KeypadDisplayState()
+        return zone_map[keypad_number]
 
     def save_to_file(self, state_path: Path) -> None:
         state_path.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
@@ -330,6 +414,9 @@ class DummyRussoundState:
             "F7",
         ]
         return response
+
+    def build_zone_info_response(self, controller_id: int, zone_number: int) -> list[str]:
+        return self._build_zone_info_response(controller_id, zone_number)
 
     def _build_discrete_get_response(self, controller_id: int, zone_number: int, parameter_id: int) -> list[str]:
         zone = self.zone(controller_id, zone_number)
@@ -366,6 +453,14 @@ class DummyRussoundState:
         if len(payload) < 2:
             return None
 
+        if self._is_all_keypads_display_frame(payload):
+            self._apply_all_keypads_display_frame(payload)
+            return None
+
+        if self._is_specific_keypad_display_frame(payload):
+            self._apply_specific_keypad_display_frame(payload)
+            return None
+
         if self._is_zone_info_request(payload):
             controller_id, zone_number = self._extract_controller_zone(payload, zone_index=11)
             if controller_id is None or zone_number is None:
@@ -382,15 +477,33 @@ class DummyRussoundState:
             return self._build_discrete_get_response(controller_id, zone_number, parameter_id)
 
         self._apply_set_frame(payload)
+        if self._is_all_power_set_frame(payload):
+            power_value = self._extract_hex(payload, 15)
+            if power_value is not None:
+                for controller_id, zone_number in self.zone_addresses():
+                    self.notify_zone_update(controller_id, zone_number)
+        elif self._is_power_set_frame(payload) or self._is_volume_set_frame(payload):
+            controller_id, zone_number = self.request_target(payload)
+            if controller_id is not None and zone_number is not None:
+                self.notify_zone_update(controller_id, zone_number)
         return None
 
     def request_label(self, payload: list[str]) -> str | None:
+        if self._is_all_keypads_display_frame(payload):
+            return "display on all keypads"
+
+        if self._is_specific_keypad_display_frame(payload):
+            return "display on keypad"
+
         if self._is_zone_info_request(payload):
             return "get zone info"
 
         if self._is_user_parameter_get_request(payload):
             parameter_id = self._extract_hex(payload, 13)
             return self._parameter_name(parameter_id, "get")
+
+        if self._is_all_power_set_frame(payload):
+            return "set system power"
 
         if self._is_power_set_frame(payload):
             return "set power"
@@ -410,6 +523,15 @@ class DummyRussoundState:
     def request_target(self, payload: list[str]) -> tuple[int | None, int | None]:
         if self._is_zone_info_request(payload) or self._is_user_parameter_get_request(payload):
             return self._extract_controller_zone(payload, zone_index=11)
+
+        if self._is_all_keypads_display_frame(payload):
+            return None, None
+
+        if self._is_all_power_set_frame(payload):
+            return None, None
+
+        if self._is_specific_keypad_display_frame(payload):
+            return self._extract_controller_zone(payload, zone_index=2)
 
         if self._is_power_set_frame(payload) or self._is_volume_set_frame(payload):
             controller_id = self._extract_hex(payload, 1)
@@ -450,6 +572,14 @@ class DummyRussoundState:
         return f"{action} {parameter_label}"
 
     def _apply_set_frame(self, payload: list[str]) -> None:
+        if self._is_all_power_set_frame(payload):
+            power_value = self._extract_hex(payload, 15)
+            if power_value is None:
+                return
+            for controller_id, zone_number in self.zone_addresses():
+                self.zone(controller_id, zone_number).apply_power_value(power_value)
+            return
+
         if self._is_power_set_frame(payload):
             controller_id = self._extract_hex(payload, 1)
             zone_number = self._extract_hex(payload, 17)
@@ -486,6 +616,39 @@ class DummyRussoundState:
                 return
             self.zone(controller_id + 1, zone_number + 1).apply_parameter_value(parameter_id, value)
 
+    def _apply_all_keypads_display_frame(self, payload: list[str]) -> None:
+        display_state = self._decode_display_payload(payload)
+
+        for controller_id, zone_number in self.zone_addresses():
+            keypad_state = self.keypad_display(controller_id, zone_number, DEFAULT_KEYPAD_ID)
+            keypad_state.message = display_state.message
+            keypad_state.alignment = display_state.alignment
+            keypad_state.flash_time = display_state.flash_time
+
+    def _apply_specific_keypad_display_frame(self, payload: list[str]) -> None:
+        controller_id = self._extract_hex(payload, 1)
+        zone_number = self._extract_hex(payload, 2)
+        keypad_number = self._extract_hex(payload, 3)
+        if controller_id is None or zone_number is None or keypad_number is None:
+            return
+        if keypad_number + 1 != DEFAULT_KEYPAD_ID:
+            return
+
+        display_state = self._decode_display_payload(payload)
+        keypad_state = self.keypad_display(controller_id + 1, zone_number + 1, DEFAULT_KEYPAD_ID)
+        keypad_state.message = display_state.message
+        keypad_state.alignment = display_state.alignment
+        keypad_state.flash_time = display_state.flash_time
+
+    def _decode_display_payload(self, payload: list[str]) -> KeypadDisplayState:
+        alignment = self._extract_hex(payload, 18) or 0
+        flash_low = self._extract_hex(payload, 19) or 0
+        flash_high = self._extract_hex(payload, 20) or 0
+        flash_time = flash_low | (flash_high << 8)
+        text_bytes = bytes(self._extract_hex(payload, index) or 0 for index in range(21, 34))
+        message = text_bytes.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+        return KeypadDisplayState(message=message, alignment=alignment, flash_time=flash_time)
+
     def _extract_hex(self, payload: list[str], index: int) -> int | None:
         if index >= len(payload):
             return None
@@ -510,6 +673,9 @@ class DummyRussoundState:
     def _is_power_set_frame(self, payload: list[str]) -> bool:
         return len(payload) >= 22 and payload[0:20] == ["F0", payload[1], "00", "7F", "00", "00", "70", "05", "02", "02", "00", "00", "F1", "23", "00", payload[15], "00", payload[17], "00", "01"]
 
+    def _is_all_power_set_frame(self, payload: list[str]) -> bool:
+        return len(payload) >= 21 and payload[0:20] == ["F0", "7E", "00", "7F", "00", "00", "70", "05", "02", "02", "00", "00", "F1", "22", "00", payload[15], "00", "00", "00", "01"]
+
     def _is_source_set_frame(self, payload: list[str]) -> bool:
         return len(payload) >= 22 and payload[0:20] == ["F0", payload[1], "00", "7F", "00", payload[5], "70", "05", "02", "00", "00", "00", "F1", "3E", "00", "00", "00", payload[17], "00", "01"]
 
@@ -519,52 +685,94 @@ class DummyRussoundState:
     def _is_user_parameter_set_frame(self, payload: list[str]) -> bool:
         return len(payload) >= 24 and payload[0:22] == ["F0", payload[1], "00", "7F", "00", "00", "70", "00", "05", "02", "00", payload[11], "00", payload[13], "00", "00", "00", "01", "00", "01", "00", payload[21]]
 
+    def _is_all_keypads_display_frame(self, payload: list[str]) -> bool:
+        return len(payload) >= 36 and payload[0:18] == [
+            "F0",
+            "7F",
+            "00",
+            "00",
+            "00",
+            "00",
+            "70",
+            "00",
+            "02",
+            "01",
+            "01",
+            "00",
+            "00",
+            "00",
+            "01",
+            "00",
+            "10",
+            "00",
+        ]
+
+    def _is_specific_keypad_display_frame(self, payload: list[str]) -> bool:
+        return len(payload) >= 36 and payload[0] == "F0" and payload[1] != "7F" and payload[4:18] == [
+            "00",
+            "00",
+            "70",
+            "00",
+            "02",
+            "01",
+            "01",
+            "00",
+            "00",
+            "00",
+            "01",
+            "00",
+            "10",
+            "00",
+        ]
+
 
 class DummyRussoundRequestHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         server = cast(Any, self.server)
         state = cast(DummyRussoundState, server.state)
+        server.register_client(self.request)
         buffer = bytearray()
-        self.request.settimeout(0.5)
         LOG.debug("client connected from %s", self.client_address)
 
-        while True:
-            try:
-                chunk = self.request.recv(4096)
-                if not chunk:
-                    break
-                buffer.extend(chunk)
-            except TimeoutError:
-                break
-            except OSError:
-                break
-
+        try:
             while True:
                 try:
-                    end_index = buffer.index(0xF7)
-                except ValueError:
+                    chunk = self.request.recv(4096)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                except TimeoutError:
+                    continue
+                except OSError:
                     break
 
-                raw_message = bytes(buffer[: end_index + 1])
-                del buffer[: end_index + 1]
-                payload = _to_hex_bytes(raw_message)
-                if len(payload) < 14 or payload[0] != "F0":
-                    continue
+                while True:
+                    try:
+                        end_index = buffer.index(0xF7)
+                    except ValueError:
+                        break
 
-                LOG.debug("received frame from %s: %s", self.client_address, " ".join(payload))
-                request_label = state.request_label(payload)
-                if request_label is not None:
-                    controller_id, zone_number = state.request_target(payload)
-                    if controller_id is None or zone_number is None:
-                        LOG.info("%s from %s", request_label, self.client_address)
-                    else:
-                        LOG.info("%s c%d z%d from %s", request_label, controller_id, zone_number, self.client_address)
-                response = state.handle_frame(payload)
-                if response is not None:
-                    LOG.debug("sending response to %s: %s", self.client_address, " ".join(response))
-                    self.request.sendall(_from_hex_bytes(response))
+                    raw_message = bytes(buffer[: end_index + 1])
+                    del buffer[: end_index + 1]
+                    payload = _to_hex_bytes(raw_message)
+                    if len(payload) < 14 or payload[0] != "F0":
+                        continue
 
-        LOG.debug("client disconnected from %s", self.client_address)
+                    LOG.debug("received frame from %s: %s", self.client_address, " ".join(payload))
+                    request_label = state.request_label(payload)
+                    if request_label is not None:
+                        controller_id, zone_number = state.request_target(payload)
+                        if controller_id is None or zone_number is None:
+                            LOG.info("%s from %s", request_label, self.client_address)
+                        else:
+                            LOG.info("%s c%d z%d from %s", request_label, controller_id, zone_number, self.client_address)
+                    response = state.handle_frame(payload)
+                    if response is not None:
+                        LOG.debug("sending response to %s: %s", self.client_address, " ".join(response))
+                        self.request.sendall(_from_hex_bytes(response))
+        finally:
+            server.unregister_client(self.request)
+            LOG.debug("client disconnected from %s", self.client_address)
 
 
 class ThreadedDummyRussoundServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -573,7 +781,41 @@ class ThreadedDummyRussoundServer(socketserver.ThreadingMixIn, socketserver.TCPS
 
     def __init__(self, server_address: tuple[str, int], handler_class: type[socketserver.BaseRequestHandler], state: DummyRussoundState):
         self.state = state
+        self._client_sockets: set[socket.socket] = set()
+        self._client_sockets_lock = threading.Lock()
         super().__init__(server_address, handler_class)
+
+    def register_client(self, client_socket: socket.socket) -> None:
+        with self._client_sockets_lock:
+            self._client_sockets.add(client_socket)
+
+    def unregister_client(self, client_socket: socket.socket) -> None:
+        with self._client_sockets_lock:
+            self._client_sockets.discard(client_socket)
+
+    def broadcast_zone_info(self, controller_id: int, zone_number: int) -> None:
+        fields = self.state.build_zone_info_response(controller_id, zone_number)
+        frame = [
+            "F0",
+            f"{controller_id - 1:02X}",
+            "00",
+            "70",
+            "00",
+            "00",
+            "7F",
+            "00",
+            "00",
+            *fields,
+        ]
+        frame[-2] = f"{(len(frame) - 2 + sum(int(value, 16) for value in frame[:-2])) & 0x7F:02X}"
+        frame_bytes = _from_hex_bytes(frame)
+        with self._client_sockets_lock:
+            clients = list(self._client_sockets)
+        for client_socket in clients:
+            try:
+                client_socket.sendall(frame_bytes)
+            except OSError:
+                self.unregister_client(client_socket)
 
 
 def load_state(path: str | Path | None) -> DummyRussoundState:
@@ -666,6 +908,15 @@ def _run_tui(stdscr: curses.window, state: DummyRussoundState, state_path: Path 
             zone = state.zone(controller_id, zone_number)
             stdscr.addnstr(4, left_width + 1, f"Zone C{controller_id} Z{zone_number}", right_width - 1, curses.A_UNDERLINE)
             stdscr.addnstr(5, left_width + 1, f"Power: {'On' if zone.power else 'Off'}", right_width - 1)
+            zone_keypad_display = state.keypad_display(controller_id, zone_number, 1)
+            zone_display_text = zone_keypad_display.message if zone_keypad_display.message else "<none>"
+            stdscr.addnstr(6, left_width + 1, f"Display (k1): {zone_display_text}", right_width - 1)
+            stdscr.addnstr(
+                7,
+                left_width + 1,
+                f"Display Align/Flash: {zone_keypad_display.alignment}/{zone_keypad_display.flash_time}",
+                right_width - 1,
+            )
             for row, (field_name, field_label, field_kind, minimum, maximum) in enumerate(ZONE_FIELD_DEFS):
                 value = getattr(zone, field_name)
                 if field_kind == "bool":
@@ -676,9 +927,10 @@ def _run_tui(stdscr: curses.window, state: DummyRussoundState, state_path: Path 
                         display_value = f"{display_value} [{minimum}..{maximum}]"
                 attribute = curses.A_REVERSE if row == selected_field_index and focus == "fields" else curses.A_NORMAL
                 line = f"{field_label:<18} {display_value}"
-                if 6 + row >= editor_height - 1:
+                field_row = 8 + row
+                if field_row >= editor_height - 1:
                     break
-                stdscr.addnstr(6 + row, left_width + 1, line.ljust(right_width - 1), right_width - 1, attribute)
+                stdscr.addnstr(field_row, left_width + 1, line.ljust(right_width - 1), right_width - 1, attribute)
 
         if log_buffer is not None and editor_height < height:
             stdscr.hline(log_top, 0, curses.ACS_HLINE, width)
@@ -747,6 +999,8 @@ def _run_tui(stdscr: curses.window, state: DummyRussoundState, state_path: Path 
             if field_kind == "bool" and key == ord(" "):
                 delta = 1
             zone.adjust_field(field_name, delta)
+            if field_name in {"power", "volume"}:
+                state.notify_zone_update(controller_id, zone_number)
             persist(f"Updated C{controller_id} Z{zone_number} {field_name}.")
 
 
@@ -767,6 +1021,7 @@ def main() -> None:
 
     if args.tui and args.serve:
         with ThreadedDummyRussoundServer((args.host, args.port), DummyRussoundRequestHandler, state) as server:
+            state.set_zone_update_callback(server.broadcast_zone_info)
             server_thread: threading.Thread = threading.Thread(target=server.serve_forever, daemon=True)
             server_thread.start()
             LOG.info("Dummy Russound backend listening on %s:%d", args.host, args.port)

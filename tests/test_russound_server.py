@@ -7,6 +7,8 @@ from unittest.mock import Mock, patch
 from urllib.parse import urlparse
 
 from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging
+from web.russound_state import RussoundState
+from web.zone import Zone
 
 
 def _close_server(server: RussoundHTTPServer) -> None:
@@ -16,6 +18,26 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_unsolicited_zone_update_persists_and_broadcasts_power_and_volume(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            state = RussoundState(zones=[Zone(name="Living Room", controller=1, zone_number=1)])
+            controller = Mock()
+            controller.load_state.return_value = state
+            controller.build_view_payload.return_value = {"state": {"zones": [{"volume": 46}]}}
+            server.controller = controller
+            _client_id, event_queue = server.register_event_client("127.0.0.1", "test-agent")
+
+            server._handle_unsolicited_zone_update({"controller": 1, "zone": 1, "setting": "power", "value": True})
+            server._handle_unsolicited_zone_update({"controller": 1, "zone": 1, "setting": "volume", "value": 46})
+
+            self.assertTrue(state.zones[0].power)
+            self.assertEqual(state.zones[0].volume, 46)
+            self.assertEqual(controller.persist_state.call_count, 2)
+            self.assertEqual(json.loads(event_queue.get_nowait())["payload"]["state"]["zones"][0]["volume"], 46)
+        finally:
+            _close_server(server)
+
     def test_backend_poll_interval_is_loaded_from_config(self):
         server = RussoundHTTPServer(None, None)
         try:
@@ -109,6 +131,25 @@ class RussoundServerTests(unittest.TestCase):
             self.assertEqual(event_payload.get("revision"), 1)
             self.assertIsInstance(event_payload.get("payload"), dict)
         finally:
+            _close_server(server)
+
+    def test_events_stream_uses_real_sse_line_delimiters(self):
+        server = RussoundHTTPServer(None, None)
+        response = None
+        try:
+            client = server.app.test_client()
+            response = client.get(f"/api/events?token={server.api_token}", buffered=False)
+            stream = iter(response.response)
+            self.assertEqual(next(stream), b": connected\n\n")
+
+            server.broadcast_state_change()
+
+            event_chunk = next(stream)
+            self.assertIn(b"event: state-change\ndata: ", event_chunk)
+            self.assertTrue(event_chunk.endswith(b"\n\n"))
+        finally:
+            if response is not None:
+                response.close()
             _close_server(server)
 
     def test_authorization_accepts_matching_header_token(self):

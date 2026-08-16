@@ -2,7 +2,8 @@
   "backend": {
     "host": "127.0.0.1",
     "port": 6666,
-    "poll_interval_seconds": 1.0
+    "poll_interval_seconds": 1.0,
+    "protocol_audit_log_file": "./protocol-audit.log"
   },
   "controllers": [
     {
@@ -18,17 +19,20 @@
     {
       "name": "Living Room",
       "controller": 1,
-      "zone": 1
+      "zone": 1,
+      "keypad_id": 1
     },
     {
       "name": "Kitchen",
       "controller": 1,
-      "zone": 2
+      "zone": 2,
+      "keypad_id": 1
     },
     {
       "name": "Patio",
       "controller": 2,
-      "zone": 1
+      "zone": 1,
+      "keypad_id": 1
     }
   ],
   "inputs": [
@@ -68,8 +72,9 @@
   "notes": [
     "backend.host and backend.port configure the Russound hardware connection endpoint.",
     "backend.poll_interval_seconds configures how often backend state changes are polled while SSE clients are connected (minimum 1.0).",
+    "backend.protocol_audit_log_file optionally enables protocol-audit logging of all TX/RX RNET frames.",
     "inputs.id values are numeric and start at 1.",
-    "zones[].controller and zones[].zone describe the Russound hardware mapping.",
+    "zones[].controller, zones[].zone, and zones[].keypad_id describe the Russound hardware mapping; keypad_id defaults to 1.",
     "shortcuts[].zone_addresses uses physical controller/zone addresses.",
     "shortcuts[].source is an input id, not an index."
   ]

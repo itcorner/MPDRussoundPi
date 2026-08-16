@@ -288,8 +288,8 @@ class RussoundControllerTests(unittest.TestCase):
                 state_path,
                 {
                     "zone_slots": [
-                        {"controller": 1, "zone": 1, "enabled": True, "visible": True, "name": "Lounge"},
-                        {"controller": 1, "zone": 2, "enabled": True, "visible": False, "name": "Patio"},
+                        {"controller": 1, "zone": 1, "keypad_id": 2, "enabled": True, "visible": True, "name": "Lounge"},
+                        {"controller": 1, "zone": 2, "keypad_id": 1, "enabled": True, "visible": False, "name": "Patio"},
                     ],
                     "source_slots": [
                         {"id": 1, "name": "Tuner"},
@@ -299,6 +299,7 @@ class RussoundControllerTests(unittest.TestCase):
 
             persisted_config = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual([zone["name"] for zone in persisted_config["zones"]], ["Lounge", "Patio"])
+            self.assertEqual([zone["keypad_id"] for zone in persisted_config["zones"]], [2, 1])
             self.assertEqual(persisted_config["zones"][1]["visible"], False)
             self.assertEqual(response["zone_slots"][1]["enabled"], True)
             self.assertEqual(
@@ -327,6 +328,7 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertEqual(len(payload["zone_slots"]), 3)
             self.assertTrue(payload["zone_slots"][0]["enabled"])
             self.assertFalse(payload["zone_slots"][1]["enabled"])
+            self.assertEqual([slot["keypad_id"] for slot in payload["zone_slots"]], [1, 1, 1])
             self.assertEqual(payload["source_slots"], [{"id": 1, "name": "Radio"}])
 
     def test_update_config_zones_rejects_unknown_source_slot(self):

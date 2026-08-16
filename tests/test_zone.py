@@ -98,7 +98,7 @@ class ZoneTests(unittest.TestCase):
         self.assertEqual(zone.address, (2, 6))
 
     def test_zone_serializes_config_and_state_payloads_separately(self):
-        zone = Zone(name="Patio", power=True, source=2, volume=44, bass=-2, treble=1, loudness=True, balance=-1, controller=3, zone_number=4, enabled=False, visible=True)
+        zone = Zone(name="Patio", power=True, source=2, volume=44, bass=-2, treble=1, loudness=True, balance=-1, controller=3, zone_number=4, keypad_id=2, enabled=False, visible=True)
 
         self.assertEqual(
             zone.to_config_payload(),
@@ -106,6 +106,7 @@ class ZoneTests(unittest.TestCase):
                 "name": "Patio",
                 "controller": 3,
                 "zone": 4,
+                "keypad_id": 2,
                 "enabled": False,
                 "visible": True,
             },
