@@ -1,3 +1,5 @@
+# UNTESTED: this stack has not been started against real Russound hardware yet.
+# Serial device passthrough and the RUSSOUND_SERIAL_GID default are unverified.
 services:
   russound-web:
     build: .

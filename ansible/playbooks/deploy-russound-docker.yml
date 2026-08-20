@@ -1,4 +1,5 @@
 ---
+# UNTESTED: this playbook has not been run against a real Raspberry Pi yet.
 - name: Set up a Raspberry Pi to run the Russound web interface in Docker
   hosts: musicpi
   become: true

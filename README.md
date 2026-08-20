@@ -160,6 +160,8 @@ See [the module-by-module coverage review](docs/test-coverage.md) for requiremen
 
 ## Docker
 
+> **⚠️ Untested.** The container setup, the bundled ser2net gateway, and the `deploy-russound-docker.yml` playbook have not yet been run against real hardware. The image has never been built and serial device passthrough is unverified. Treat this as a starting point and validate before relying on it.
+
 The web application is containerized in `Dockerfile` and `docker-compose.yml`.
 
 ```bash

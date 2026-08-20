@@ -1,4 +1,5 @@
 #!/bin/sh
+# UNTESTED: ser2net startup inside the container has not been verified on real hardware.
 set -e
 
 if [ "${RUSSOUND_SER2NET_ENABLED:-true}" = "true" ]; then

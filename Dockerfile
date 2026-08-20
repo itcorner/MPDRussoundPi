@@ -1,3 +1,4 @@
+# UNTESTED: this image has not been built or run against real Russound hardware yet.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
