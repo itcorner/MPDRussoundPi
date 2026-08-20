@@ -1,0 +1,190 @@
+---
+- name: Set up a Raspberry Pi to run the Russound web interface in Docker
+  hosts: musicpi
+  become: true
+  vars:
+    deploy_user: "{{ ansible_user | default('musicpi') }}"
+    app_dir: "/home/{{ ansible_user | default('musicpi') }}/MPDRussoundPi"
+    repo_url: https://github.com/itcorner/MPDRussoundPi.git
+    repo_version: main
+    russound_publish_port: 8000
+    russound_serial_device: /dev/ttyUSB0
+    russound_serial_options: 19200n81
+    russound_ser2net_enabled: true
+    russound_ser2net_port: 6666
+    # Defaults to the ser2net instance inside the container; override when using an external gateway.
+    russound_backend_host: 127.0.0.1
+    russound_backend_port: "{{ russound_ser2net_port }}"
+    russound_debug: false
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+        state: present
+        update_cache: true
+
+    - name: Ensure apt keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Docker GPG key
+      ansible.builtin.get_url:
+        url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Detect dpkg architecture
+      ansible.builtin.command: dpkg --print-architecture
+      register: dpkg_architecture
+      changed_when: false
+
+    - name: Add Docker apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: >-
+          deb [arch={{ dpkg_architecture.stdout }} signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/{{ ansible_distribution | lower }}
+          {{ ansible_distribution_release }} stable
+
+        mode: "0644"
+
+    - name: Install Docker Engine and the Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add the deployment user to the docker group
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        groups: docker
+        append: true
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    # ser2net now runs inside the container and would otherwise hold the serial port and TCP port.
+    - name: Disable the host ser2net service
+      ansible.builtin.systemd:
+        name: ser2net
+        enabled: false
+        state: stopped
+      when: "'ser2net.service' in ansible_facts.services"
+
+    - name: Disable the non-container russound-web service
+      ansible.builtin.systemd:
+        name: russound-web
+        enabled: false
+        state: stopped
+      when: "'russound-web.service' in ansible_facts.services"
+
+    - name: Clone or update the repository
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_version }}"
+        force: true
+        update: true
+
+    - name: Ensure the repository is owned by the deployment user
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        recurse: true
+
+    - name: Ensure the bind-mounted directories exist
+      ansible.builtin.file:
+        path: "{{ app_dir }}/docker/{{ item }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0755"
+      loop:
+        - config
+        - data
+
+    - name: Seed the configuration file when it does not exist yet
+      ansible.builtin.copy:
+        src: "{{ app_dir }}/web/config_example.json"
+        dest: "{{ app_dir }}/docker/config/russound_config.json"
+        remote_src: true
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0644"
+        force: false
+
+    - name: Look up the deployment user account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ deploy_user }}"
+
+    - name: Look up the dialout group
+      ansible.builtin.getent:
+        database: group
+        key: dialout
+
+    - name: Check whether the serial device is present
+      ansible.builtin.stat:
+        path: "{{ russound_serial_device }}"
+      register: serial_device
+
+    - name: Resolve container user and serial device ids
+      ansible.builtin.set_fact:
+        russound_uid: "{{ ansible_facts.getent_passwd[deploy_user][1] }}"
+        russound_gid: "{{ ansible_facts.getent_passwd[deploy_user][2] }}"
+        russound_serial_gid: "{{ serial_device.stat.gid if serial_device.stat.exists else ansible_facts.getent_group['dialout'][1] }}"
+
+    - name: Warn when the serial device is missing
+      ansible.builtin.debug:
+        msg: >-
+          {{ russound_serial_device }} was not found. Attach the USB serial adapter and re-run,
+          or set russound_ser2net_enabled=false to use an external gateway.
+      when: not serial_device.stat.exists
+
+    - name: Write the compose environment file
+      ansible.builtin.template:
+        src: ../templates/russound-docker.env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0640"
+
+    - name: Build and start the container
+      ansible.builtin.command:
+        cmd: docker compose up -d --build
+        chdir: "{{ app_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Recreated' in compose_up.stderr"
+
+    - name: Wait for the web interface to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ russound_publish_port }}/"
+        status_code: 200
+      register: web_check
+      retries: 30
+      delay: 2
+      until: web_check.status == 200
+
+    - name: Report the service address
+      ansible.builtin.debug:
+        msg: "Russound web interface is available on http://{{ ansible_host | default(inventory_hostname) }}:{{ russound_publish_port }}/"
