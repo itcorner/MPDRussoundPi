@@ -1,0 +1,27 @@
+services:
+  russound-web:
+    build: .
+    image: mpdrussoundpi-web
+    container_name: russound-web
+    restart: unless-stopped
+    # On Linux hosts set RUSSOUND_UID/RUSSOUND_GID to `id -u`/`id -g` so the
+    # container can write the bind-mounted config and state directories.
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
+    ports:
+      - "${RUSSOUND_PUBLISH_PORT:-8000}:8000"
+    environment:
+      RUSSOUND_WEB_HOST: "0.0.0.0"
+      RUSSOUND_WEB_PORT: "8000"
+      # Hardware backend (ser2net gateway). Overrides the "backend" block in the config file.
+      RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-host.docker.internal}"
+      RUSSOUND_BACKEND_PORT: "${RUSSOUND_BACKEND_PORT:-6666}"
+      RUSSOUND_CONFIG: "/config/russound_config.json"
+      RUSSOUND_STATE: "/data/russound_state.json"
+      RUSSOUND_DEBUG: "${RUSSOUND_DEBUG:-false}"
+    volumes:
+      # Directories, not single files: config and state are written atomically
+      # through a temporary file in the same directory.
+      - ./docker/config:/config
+      - ./docker/data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

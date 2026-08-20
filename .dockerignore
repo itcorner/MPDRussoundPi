@@ -1,0 +1,22 @@
+.git/
+.github/
+.venv/
+.vscode/
+**/__pycache__/
+**/*.pyc
+
+ansible/
+docs/
+mpdrussoundpi/
+tests/
+tool/
+
+# Never bake local runtime data or secrets into the image.
+web/russound_config.json
+web/russound_state.json
+**/*.log
+
+docker-compose.yml
+Dockerfile
+.dockerignore
+.env

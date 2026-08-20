@@ -156,6 +156,49 @@ Or run focused modules:
 python -m unittest tests.test_zone tests.test_russound_backend tests.test_russound_controller tests.test_russound_server -q
 ```
 
+## Docker
+
+The web application is containerized in `Dockerfile` and `docker-compose.yml`.
+
+```bash
+cp web/config_example.json docker/config/russound_config.json
+docker compose up -d
+```
+
+The UI is then available on `http://<host>:8000/`.
+
+### Volumes
+
+Both mounts must be **directories**, because config and state are written atomically through a temporary file in the same directory.
+
+- `/config`: holds `russound_config.json` (writable so the configuration editor can save).
+- `/data`: holds `russound_state.json` and optional protocol audit logs.
+
+### Endpoint configuration
+
+Host and port are configurable through environment variables, which take precedence over the `backend` block of the config file.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `RUSSOUND_WEB_HOST` | Web server bind address | `0.0.0.0` |
+| `RUSSOUND_WEB_PORT` | Web server port | `8000` |
+| `RUSSOUND_BACKEND_HOST` | Russound/ser2net gateway host | `127.0.0.1` |
+| `RUSSOUND_BACKEND_PORT` | Russound/ser2net gateway port | `6666` |
+| `RUSSOUND_CONFIG` | Config file path | `/config/russound_config.json` |
+| `RUSSOUND_STATE` | State file path | `/data/russound_state.json` |
+| `RUSSOUND_DEBUG` | Enable debug logging | `false` |
+| `RUSSOUND_WAITRESS_THREADS` | Waitress worker threads | `16` |
+
+Every variable has an equivalent command-line flag (`--host`, `--port`, `--config`, `--state`, `--debug`), and the flag wins when both are provided.
+
+Because the Russound gateway usually runs on the Docker host, the compose file maps `host.docker.internal`. Point `RUSSOUND_BACKEND_HOST` at a different address when the gateway lives elsewhere:
+
+```bash
+RUSSOUND_BACKEND_HOST=192.168.1.50 RUSSOUND_BACKEND_PORT=6666 docker compose up -d
+```
+
+On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the container may write the bind-mounted directories.
+
 ## Deployment Notes
 
 - API access is token-protected, but this is a same-origin request token model, not full user authentication.

@@ -13,6 +13,8 @@ from typing import Any, Callable, Iterable
 LOGGER = logging.getLogger(__name__)
 # Recommended command spacing when using source keypad id 0x70.
 COMMAND_DELAY = 0.1
+# Bounds the initial TCP connect so an unreachable gateway cannot stall startup.
+CONNECT_TIMEOUT_SECONDS = 5.0
 KEYPAD_CODE = "70"
 ZONE_INFO_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00"
 ZONE_INFO_RESPONSE_SIGNATURE = "04 02 00 @zz 07"
@@ -69,7 +71,9 @@ class Russound:
                     except OSError:
                         pass
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.settimeout(CONNECT_TIMEOUT_SECONDS)
                 self.sock.connect((self._host, self._port))
+                self.sock.settimeout(None)
                 LOGGER.info("Successfully connected to Russound on %s:%s", self._host, self._port)
                 return True
             except OSError as exc:

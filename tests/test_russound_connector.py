@@ -13,6 +13,7 @@ class _FakeSocket:
         self.sent = bytearray()
         self.recv_queue: list[bytes] = []
         self.closed = False
+        self.timeout: float | None = None
 
     def connect(self, address) -> None:
         _ = address
@@ -27,6 +28,9 @@ class _FakeSocket:
 
     def setblocking(self, _flag: bool) -> None:
         return
+
+    def settimeout(self, timeout: float | None) -> None:
+        self.timeout = timeout
 
     def getpeername(self):
         return ("127.0.0.1", 6666)

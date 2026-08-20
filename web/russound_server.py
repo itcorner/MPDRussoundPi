@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from web.config_types import coerce_russound_config, resolve_backend_poll_interval_seconds
+from web.config_types import coerce_russound_config, env_port, env_str, resolve_backend_poll_interval_seconds
 from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
@@ -651,15 +651,33 @@ def _daemonize_process() -> None:
         os.dup2(devnull_out.fileno(), sys.stderr.fileno())
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = env_str(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = env_str(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logging.getLogger(__name__).warning("Ignoring %s=%r because it is not an integer", name, value)
+        return default
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the Russound web controller")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--config")
-    parser.add_argument("--state", default=str(WEB_ROOT / "russound_state.json"))
+    parser.add_argument("--host", default=env_str("RUSSOUND_WEB_HOST") or "0.0.0.0")
+    parser.add_argument("--port", type=int, default=env_port("RUSSOUND_WEB_PORT") or 8000)
+    parser.add_argument("--config", default=env_str("RUSSOUND_CONFIG"))
+    parser.add_argument("--state", default=env_str("RUSSOUND_STATE") or str(WEB_ROOT / "russound_state.json"))
     parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging to the terminal")
-    parser.add_argument("--waitress-threads", type=int, default=16, help="Worker thread count for Waitress when not in debug mode (min 4, default 16)")
+    parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging to the terminal")
+    parser.add_argument("--waitress-threads", type=int, default=_env_int("RUSSOUND_WAITRESS_THREADS", 16), help="Worker thread count for Waitress when not in debug mode (min 4, default 16)")
     args = parser.parse_args()
 
     if args.daemon:

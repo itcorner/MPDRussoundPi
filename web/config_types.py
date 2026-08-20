@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from typing import TypedDict, cast
+
+BACKEND_HOST_ENV_VAR = "RUSSOUND_BACKEND_HOST"
+BACKEND_PORT_ENV_VAR = "RUSSOUND_BACKEND_PORT"
+
+LOGGER = logging.getLogger(__name__)
 
 
 class BackendConfig(TypedDict, total=False):
@@ -63,7 +70,32 @@ def coerce_russound_config(raw_config: object) -> RussoundConfig | None:
     return cast(RussoundConfig, raw_config)
 
 
-def resolve_backend_endpoint(config: RussoundConfig | None) -> BackendEndpoint:
+def env_str(name: str) -> str | None:
+    """Return a non-empty, stripped environment value, or None when unset."""
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    stripped_value = value.strip()
+    return stripped_value or None
+
+
+def env_port(name: str) -> int | None:
+    """Return a valid TCP port from the environment, ignoring malformed values."""
+    raw_value = env_str(name)
+    if raw_value is None:
+        return None
+    try:
+        port = int(raw_value)
+    except ValueError:
+        LOGGER.warning("Ignoring %s=%r because it is not an integer", name, raw_value)
+        return None
+    if not 1 <= port <= 65535:
+        LOGGER.warning("Ignoring %s=%d because it is outside 1-65535", name, port)
+        return None
+    return port
+
+
+def _backend_endpoint_from_config(config: RussoundConfig | None) -> BackendEndpoint:
     if config is None:
         return BackendEndpoint()
 
@@ -76,6 +108,22 @@ def resolve_backend_endpoint(config: RussoundConfig | None) -> BackendEndpoint:
     if isinstance(host, str) and host.strip() and isinstance(port, int) and not isinstance(port, bool):
         return BackendEndpoint(host=host.strip(), port=port, loaded_from_config=True)
     return BackendEndpoint()
+
+
+def resolve_backend_endpoint(config: RussoundConfig | None) -> BackendEndpoint:
+    """Resolve the hardware endpoint, letting environment variables override the config file."""
+    endpoint = _backend_endpoint_from_config(config)
+
+    host_override = env_str(BACKEND_HOST_ENV_VAR)
+    port_override = env_port(BACKEND_PORT_ENV_VAR)
+    if host_override is None and port_override is None:
+        return endpoint
+
+    return BackendEndpoint(
+        host=host_override or endpoint.host,
+        port=port_override or endpoint.port,
+        loaded_from_config=True,
+    )
 
 
 def resolve_controller_zone_limits(config: RussoundConfig | None) -> dict[int, int]:
