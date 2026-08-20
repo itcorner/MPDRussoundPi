@@ -147,7 +147,7 @@ Common endpoints:
 Run the test suite with:
 
 ```bash
-python -m unittest -q
+python3 -m unittest discover -s tests -p 'test_*.py' -q
 ```
 
 Or run focused modules:
@@ -155,6 +155,8 @@ Or run focused modules:
 ```bash
 python -m unittest tests.test_zone tests.test_russound_backend tests.test_russound_controller tests.test_russound_server -q
 ```
+
+See [the module-by-module coverage review](docs/test-coverage.md) for requirements, test links, and known blind spots.
 
 ## Docker
 
