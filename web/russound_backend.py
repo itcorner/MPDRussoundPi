@@ -240,6 +240,9 @@ class RussoundBackend:
                 power = client.get_power(controller, zone_number)
                 source_index = client.get_source(controller, zone_number)
                 volume = client.get_volume(controller, zone_number)
+                if power is None and source_index is None and volume is None:
+                    logging.debug("Russound controller %s - zone %s did not answer any read", controller, zone_number)
+                    return None
                 source_id = None
                 volume_value = int(volume) if isinstance(volume, int) else 0
                 if isinstance(source_index, int) and 0 <= source_index < len(inputs):

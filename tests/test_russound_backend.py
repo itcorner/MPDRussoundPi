@@ -150,6 +150,50 @@ class RussoundBackendTests(unittest.TestCase):
         self.assertEqual(backend.host, "127.0.0.1")
         self.assertEqual(backend.port, 6666)
 
+    def test_read_zone_returns_none_when_the_hardware_answers_nothing(self):
+        class SilentClient:
+            def get_zone_extended_info(self, controller, zone):
+                return None
+
+            def get_power(self, controller, zone):
+                return None
+
+            def get_source(self, controller, zone):
+                return None
+
+            def get_volume(self, controller, zone):
+                return None
+
+        backend = RussoundBackend()
+
+        with patch.object(backend, "_connect", return_value=SilentClient()):
+            zone_state = backend.read_zone(Zone(name="Zone 1", controller=1, zone_number=1), [{"id": 1, "name": "Radio"}])
+
+        self.assertIsNone(zone_state)
+
+    def test_read_zone_falls_back_to_discrete_reads_when_extended_info_is_missing(self):
+        class PartialClient:
+            def get_zone_extended_info(self, controller, zone):
+                return None
+
+            def get_power(self, controller, zone):
+                return 1
+
+            def get_source(self, controller, zone):
+                return 0
+
+            def get_volume(self, controller, zone):
+                return 40
+
+        backend = RussoundBackend()
+
+        with patch.object(backend, "_connect", return_value=PartialClient()):
+            zone_state = backend.read_zone(Zone(name="Zone 1", controller=1, zone_number=1), [{"id": 1, "name": "Radio"}])
+
+        self.assertIsNotNone(zone_state)
+        self.assertTrue(zone_state["power"])
+        self.assertEqual(zone_state["volume"], 40)
+
     def test_read_zone_parameters_parses_cav_zone_info_and_discrete_parameters(self):
         class DummyClient:
             def __init__(self) -> None:

@@ -9,6 +9,9 @@ from .russound_backend import RussoundBackend
 from .russound_state import RussoundState
 from .zone import Zone
 
+_BACKEND_UNAVAILABLE_MESSAGE = "Communication with Russound hardware is currently unavailable."
+_BACKEND_SILENT_MESSAGE = "The Russound gateway is reachable, but the hardware is not responding."
+
 
 class RussoundController:
     """Singleton-style controller that owns config, state, and persistence behavior."""
@@ -16,6 +19,7 @@ class RussoundController:
     def __init__(self, config_path: str | Path | None = None, state_path: str | Path | None = None) -> None:
         self.config_path = _resolve_config_path(config_path)
         self.state_path = _resolve_state_path(state_path)
+        self._backend_health: dict[str, Any] | None = None
 
     def load_config(self) -> dict[str, Any] | None:
         resolved = _resolve_config_path(self.config_path)
@@ -231,11 +235,18 @@ class RussoundController:
             if "id" in input_item and "name" in input_item
         ]
         zone_items = list(state.zones)
+        reachable = False
+        answered = False
+        try:
+            reachable = backend.connect()
+        except Exception:
+            reachable = False
         for zone_index, zone_item in enumerate(zone_items):
             zone = _coerce_zone(zone_item, default_source=inputs[0].get("id") if inputs else None)
             zone_state = backend.read_zone(zone, inputs)
             if zone_state is None:
                 continue
+            answered = True
             zone.update_from_state(
                 {
                     "power": zone_state.get("power", zone.power),
@@ -250,8 +261,20 @@ class RussoundController:
                 },
             )
             zone_items[zone_index] = zone
+        self._record_backend_health(reachable=reachable, answered=answered, polled_zone_count=len(zone_items))
         state.zones = zone_items
         return self._sync_system_power(state)
+
+    def _record_backend_health(self, reachable: bool, answered: bool, polled_zone_count: int) -> None:
+        """Derive hardware health from the zone reads that just ran."""
+        if answered:
+            self._backend_health = {"connected": True, "message": ""}
+        elif not reachable:
+            self._backend_health = {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
+        elif polled_zone_count == 0:
+            self._backend_health = {"connected": True, "message": ""}
+        else:
+            self._backend_health = {"connected": False, "message": _BACKEND_SILENT_MESSAGE}
 
     def load_state(
         self,
@@ -380,22 +403,24 @@ class RussoundController:
     def _backend_status(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
         resolved_config = config if isinstance(config, dict) else self.load_config()
         if not isinstance(resolved_config, dict):
-            return {
-                "connected": False,
-                "message": "Communication with Russound hardware is currently unavailable.",
-            }
+            return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
 
+        recorded_health = self._backend_health
+        if recorded_health is not None:
+            return dict(recorded_health)
+
+        # Nothing polled yet: fall back to reachability without issuing a hardware request.
         backend = RussoundBackend(config=resolved_config)
         try:
-            connected = backend.connect()
+            reachable = backend.connect()
         except Exception:
-            connected = False
+            reachable = False
         finally:
             backend.close()
 
         return {
-            "connected": connected,
-            "message": "" if connected else "Communication with Russound hardware is currently unavailable.",
+            "connected": reachable,
+            "message": "" if reachable else _BACKEND_UNAVAILABLE_MESSAGE,
         }
 
     def update_system_power(self, power: bool, state: RussoundState | None = None) -> RussoundState:

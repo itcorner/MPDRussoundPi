@@ -202,6 +202,83 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertFalse(payload["backend_status"]["connected"])
             self.assertIn("currently unavailable", payload["backend_status"]["message"])
 
+    def test_backend_status_flags_a_reachable_gateway_with_unresponsive_hardware(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "backend": {"host": "127.0.0.1", "port": 6666},
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            controller = RussoundController(config_path=config_path, state_path=state_path)
+
+            # The zone poll connects but the hardware never answers.
+            with patch.object(RussoundBackend, "connect", return_value=True), patch.object(
+                RussoundBackend, "read_zone", return_value=None
+            ):
+                controller.load_state(refresh_backend=True)
+                status = controller._backend_status()
+
+            self.assertFalse(status["connected"])
+            self.assertIn("not responding", status["message"])
+
+    def test_backend_status_is_connected_when_a_zone_poll_answers(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "backend": {"host": "127.0.0.1", "port": 6666},
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            controller = RussoundController(config_path=config_path, state_path=state_path)
+            zone_reply = {"power": True, "source": 1, "volume": 30, "bass": 0, "treble": 0, "loudness": False, "balance": 0}
+
+            with patch.object(RussoundBackend, "connect", return_value=True), patch.object(
+                RussoundBackend, "read_zone", return_value=zone_reply
+            ):
+                controller.load_state(refresh_backend=True)
+                status = controller._backend_status()
+
+            self.assertTrue(status["connected"])
+            self.assertEqual(status["message"], "")
+
+    def test_backend_status_reports_unavailable_when_the_gateway_cannot_be_reached(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "backend": {"host": "127.0.0.1", "port": 6666},
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            controller = RussoundController(config_path=config_path, state_path=state_path)
+
+            with patch.object(RussoundBackend, "connect", return_value=False), patch.object(
+                RussoundBackend, "read_zone", return_value=None
+            ):
+                controller.load_state(refresh_backend=True)
+                status = controller._backend_status()
+
+            self.assertFalse(status["connected"])
+            self.assertIn("currently unavailable", status["message"])
+
     def test_build_view_payload_requires_a_config_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             state_path = Path(tmp_dir) / "state.json"
