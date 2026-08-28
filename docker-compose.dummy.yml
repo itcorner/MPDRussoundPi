@@ -1,0 +1,51 @@
+# UNTESTED: this stack has not been started yet.
+# Hardware-free test stack: the web UI talks to the dummy Russound backend
+# container instead of ser2net/RS-232.
+services:
+  russound-dummy:
+    build:
+      context: .
+      dockerfile: Dockerfile.dummy
+    image: mpdrussoundpi-dummy
+    container_name: russound-dummy
+    restart: unless-stopped
+    init: true
+    # The curses TUI needs a tty allocated for the tmux server.
+    tty: true
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
+    ports:
+      - "${RUSSOUND_DUMMY_PUBLISH_PORT:-6666}:6666"
+    environment:
+      RUSSOUND_DUMMY_HOST: "0.0.0.0"
+      RUSSOUND_DUMMY_PORT: "6666"
+      RUSSOUND_DUMMY_STATE: "/data/dummy_state.json"
+      RUSSOUND_DUMMY_TUI: "${RUSSOUND_DUMMY_TUI:-true}"
+      RUSSOUND_DUMMY_TMUX_SESSION: "${RUSSOUND_DUMMY_TMUX_SESSION:-dummy}"
+      RUSSOUND_DUMMY_DEBUG: "${RUSSOUND_DUMMY_DEBUG:-false}"
+    volumes:
+      - ./docker/dummy-data:/data
+
+  russound-web:
+    build: .
+    image: mpdrussoundpi-web
+    container_name: russound-web-dummy
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - russound-dummy
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
+    ports:
+      - "${RUSSOUND_PUBLISH_PORT:-8000}:8000"
+    environment:
+      RUSSOUND_WEB_HOST: "0.0.0.0"
+      RUSSOUND_WEB_PORT: "8000"
+      # No serial hardware in this stack.
+      RUSSOUND_SER2NET_ENABLED: "false"
+      RUSSOUND_BACKEND_HOST: "russound-dummy"
+      RUSSOUND_BACKEND_PORT: "6666"
+      RUSSOUND_CONFIG: "/config/russound_config.json"
+      RUSSOUND_STATE: "/data/russound_state.json"
+      RUSSOUND_DEBUG: "${RUSSOUND_DEBUG:-false}"
+    volumes:
+      - ./docker/config:/config
+      - ./docker/data:/data

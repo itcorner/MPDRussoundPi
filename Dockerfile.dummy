@@ -1,0 +1,41 @@
+# UNTESTED: this image has not been built or run yet.
+# Dummy Russound backend container: same web stack payload as Dockerfile, but the
+# serial bridge (ser2net) is replaced by the in-repo TCP dummy backend.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# tmux keeps the curses TUI attached to a pty so it can be reached with `docker exec`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY tool/ /app/tool/
+COPY docker/entrypoint-dummy.sh /usr/local/bin/entrypoint-dummy.sh
+
+# /data holds the mutable state file; it must stay writable for atomic JSON writes.
+RUN chmod +x /usr/local/bin/entrypoint-dummy.sh \
+    && useradd --system --uid 10001 russound \
+    && mkdir -p /data \
+    && chown -R russound:russound /app /data
+
+USER russound
+
+ENV RUSSOUND_DUMMY_HOST=0.0.0.0 \
+    RUSSOUND_DUMMY_PORT=6666 \
+    RUSSOUND_DUMMY_STATE=/data/dummy_state.json \
+    RUSSOUND_DUMMY_TUI=true \
+    RUSSOUND_DUMMY_TMUX_SESSION=dummy \
+    TERM=xterm-256color
+
+EXPOSE 6666
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import os,socket,sys; s=socket.create_connection(('127.0.0.1', int(os.environ.get('RUSSOUND_DUMMY_PORT','6666'))), 3); s.close()"
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-dummy.sh"]
+CMD ["python", "-m", "tool.dummy_backend.dummy_backend", "--serve"]

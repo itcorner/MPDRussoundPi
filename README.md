@@ -191,6 +191,23 @@ To keep using a ser2net instance on the host or another machine instead, disable
 RUSSOUND_SER2NET_ENABLED=false RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d
 ```
 
+### Dummy backend container (no hardware)
+
+`Dockerfile.dummy` packages the [dummy backend](tool/dummy_backend/README.md) instead of `ser2net`. `docker-compose.dummy.yml` starts it together with the web container, which is pointed at `russound-dummy:6666`:
+
+```bash
+cp web/config_example.json docker/config/russound_config.json
+docker compose -f docker-compose.dummy.yml up -d
+```
+
+The curses TUI runs inside a `tmux` session in the container and can be attached to at any time:
+
+```bash
+docker exec -it russound-dummy tmux attach -t dummy
+```
+
+Detach again with `Ctrl-b d`; pressing `Q` in the TUI quits the backend and stops the container. `S` saves the state to `docker/dummy-data/dummy_state.json`, which is seeded from `tool/dummy_backend/example_state.json` on first start. Set `RUSSOUND_DUMMY_TUI=false` to run the TCP server only.
+
 ### Volumes
 
 Both mounts must be **directories**, because config and state are written atomically through a temporary file in the same directory.
