@@ -3,8 +3,9 @@
   hosts: musicpi
   become: true
   vars:
-    app_dir: "{{ ansible_env.HOME | default('/home/musicpi') }}/MPDRussoundPi"
-    venv_dir: "{{ ansible_env.HOME | default('/home/musicpi') }}/russound-venv"
+    deploy_user: "{{ ansible_user | default('musicpi') }}"
+    app_dir: "/home/{{ deploy_user }}/MPDRussoundPi"
+    venv_dir: "/home/{{ deploy_user }}/russound-venv"
     russound_host: "0.0.0.0"
     russound_port: 8000
     ansible_python_interpreter: /usr/bin/python3
@@ -26,8 +27,8 @@
       file:
         path: "{{ app_dir }}"
         state: directory
-        owner: "{{ ansible_user | default('musicpi') }}"
-        group: "{{ ansible_user | default('musicpi') }}"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
         mode: "0755"
 
     - name: Clone or update repository
@@ -38,6 +39,14 @@
         force: true
         update: true
 
+    - name: Ensure the application files are owned by the deployment user
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        recurse: true
+
     - name: Create Python virtual environment
       command: "{{ ansible_python_interpreter }} -m venv {{ venv_dir }}"
       args:
@@ -45,19 +54,8 @@
 
     - name: Install Python dependencies
       pip:
-        requirements: "{{ app_dir }}/requirements.txt"
+        requirements: "{{ app_dir }}/web/requirements.txt"
         virtualenv: "{{ venv_dir }}"
-      when: lookup('ansible.builtin.fileglob', '{{ app_dir }}/requirements.txt', wantlist=True) | length > 0
-
-    - name: Install Python runtime dependencies fallback
-      pip:
-        name:
-          - russound
-          - flask
-          - psutil
-          - waitress
-        virtualenv: "{{ venv_dir }}"
-      when: lookup('ansible.builtin.fileglob', '{{ app_dir }}/requirements.txt', wantlist=True) | length == 0
 
     - name: Copy web config example if config missing
       copy:
@@ -65,6 +63,9 @@
         dest: "{{ app_dir }}/web/russound_config.json"
         remote_src: true
         force: false
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0644"
 
     - name: Ensure temporary state directory exists
       file:

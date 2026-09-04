@@ -15,7 +15,7 @@
 
     # Install dependencies from apt
     - name: Install dependencies from apt
-      become: yes
+      become: true
       apt: name={{item}} state=present
       with_items:
         - git
@@ -32,7 +32,7 @@
 
 
     - name: Copy ser2net configuration file
-      become: yes
+      become: true
       copy:
         dest: /etc/
         src: ../../mpdrussoundpi/ser2net/ser2net.yaml
@@ -58,7 +58,9 @@
             virtualenv_command: "{{ ansible_python_interpreter }} -m venv --system-site-packages"
         - name: Install russound lib and dependencies
           ansible.builtin.pip:
-            name: russound
+            name:
+              - russound
+              - flask
             virtualenv: "{{ venv_dir }}"
       vars:
         ansible_python_interpreter: /usr/bin/python3
