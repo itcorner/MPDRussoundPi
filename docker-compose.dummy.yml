@@ -30,7 +30,6 @@ services:
     image: mpdrussoundpi-web
     container_name: russound-web-dummy
     restart: unless-stopped
-    init: true
     depends_on:
       - russound-dummy
     user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
@@ -39,8 +38,6 @@ services:
     environment:
       RUSSOUND_WEB_HOST: "0.0.0.0"
       RUSSOUND_WEB_PORT: "8000"
-      # No serial hardware in this stack.
-      RUSSOUND_SER2NET_ENABLED: "false"
       RUSSOUND_BACKEND_HOST: "russound-dummy"
       RUSSOUND_BACKEND_PORT: "6666"
       RUSSOUND_CONFIG: "/config/russound_config.json"

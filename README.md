@@ -160,9 +160,17 @@ See [the module-by-module coverage review](docs/test-coverage.md) for requiremen
 
 ## Docker
 
-> **⚠️ Untested.** The container setup, the bundled ser2net gateway, and the `deploy-russound-docker.yml` playbook have not yet been run against real hardware. The image has never been built and serial device passthrough is unverified. Treat this as a starting point and validate before relying on it.
+> **⚠️ Untested.** The container setup, the ser2net gateway container, and the `deploy-russound-docker.yml` playbook have not yet been run against real hardware. The images have never been built and serial device passthrough is unverified. Treat this as a starting point and validate before relying on it.
 
-The web application is containerized in `Dockerfile` and `docker-compose.yml`.
+Each part runs in its own container:
+
+| Image | Dockerfile | Purpose |
+| --- | --- | --- |
+| `mpdrussoundpi-web` | `Dockerfile` | Web application |
+| `mpdrussoundpi-ser2net` | `Dockerfile.ser2net` | Serial gateway (RS-232 to TCP) |
+| `mpdrussoundpi-dummy` | `Dockerfile.dummy` | Hardware-free [dummy backend](tool/dummy_backend/README.md) |
+
+Two stacks combine them: `docker-compose.yml` runs the web application with the ser2net gateway (hardware), `docker-compose.dummy.yml` runs it with the dummy backend (no hardware).
 
 ```bash
 cp web/config_example.json docker/config/russound_config.json
@@ -171,9 +179,9 @@ docker compose up -d
 
 The UI is then available on `http://<host>:8000/`.
 
-### Serial gateway (ser2net)
+### Serial gateway container (ser2net)
 
-The image also runs `ser2net`, which bridges the USB serial cable to TCP, so no gateway is needed on the host. The web application connects to it on `127.0.0.1:6666` inside the container.
+The `russound-ser2net` container bridges the USB serial cable to TCP, so no gateway is needed on the host. The web container connects to it on `russound-ser2net:6666` over the compose network.
 
 The USB device is changeable without rebuilding the image:
 
@@ -185,15 +193,15 @@ The same variable also controls the `devices:` passthrough, so the device is map
 
 Set `RUSSOUND_SERIAL_GID` to the group owning the device on the host (`stat -c '%g' /dev/ttyUSB0`, usually `dialout`) so the non-root container user may open it.
 
-To keep using a ser2net instance on the host or another machine instead, disable the bundled one:
+To use a ser2net instance on the host or another machine instead, point the web container elsewhere and skip the gateway service:
 
 ```bash
-RUSSOUND_SER2NET_ENABLED=false RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d
+RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d russound-web
 ```
 
 ### Dummy backend container (no hardware)
 
-`Dockerfile.dummy` packages the [dummy backend](tool/dummy_backend/README.md) instead of `ser2net`. `docker-compose.dummy.yml` starts it together with the web container, which is pointed at `russound-dummy:6666`:
+`docker-compose.dummy.yml` starts the dummy backend together with the web container, which is pointed at `russound-dummy:6666`:
 
 ```bash
 cp web/config_example.json docker/config/russound_config.json
@@ -210,7 +218,7 @@ Detach again with `Ctrl-b d`; pressing `Q` in the TUI quits the backend and stop
 
 ### Volumes
 
-Both mounts must be **directories**, because config and state are written atomically through a temporary file in the same directory.
+Both mounts must be **directories**, because config and state are written atomically through a temporary file in the same directory. They belong to the web container.
 
 - `/config`: holds `russound_config.json` (writable so the configuration editor can save).
 - `/data`: holds `russound_state.json` and optional protocol audit logs.
@@ -223,12 +231,11 @@ Host and port are configurable through environment variables, which take precede
 | --- | --- | --- |
 | `RUSSOUND_WEB_HOST` | Web server bind address | `0.0.0.0` |
 | `RUSSOUND_WEB_PORT` | Web server port | `8000` |
-| `RUSSOUND_BACKEND_HOST` | Russound/ser2net gateway host | `127.0.0.1` |
+| `RUSSOUND_BACKEND_HOST` | Russound/ser2net gateway host | `russound-ser2net` |
 | `RUSSOUND_BACKEND_PORT` | Russound/ser2net gateway port | `6666` |
-| `RUSSOUND_SER2NET_ENABLED` | Run ser2net inside the container | `true` |
-| `RUSSOUND_SERIAL_DEVICE` | USB serial device path | `/dev/ttyUSB0` |
-| `RUSSOUND_SERIAL_OPTIONS` | Serial line settings | `19200n81` |
-| `RUSSOUND_SER2NET_BIND` | ser2net bind address | `localhost` |
+| `RUSSOUND_SERIAL_DEVICE` | USB serial device path (ser2net container) | `/dev/ttyUSB0` |
+| `RUSSOUND_SERIAL_OPTIONS` | Serial line settings (ser2net container) | `19200n81` |
+| `RUSSOUND_SER2NET_BIND` | ser2net bind address | `0.0.0.0` |
 | `RUSSOUND_SER2NET_PORT` | ser2net listening port | `6666` |
 | `RUSSOUND_SERIAL_GID` | Host GID owning the serial device | `20` |
 | `RUSSOUND_CONFIG` | Config file path | `/config/russound_config.json` |
@@ -242,7 +249,7 @@ On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the
 
 ### Raspberry Pi provisioning
 
-`ansible/playbooks/deploy-russound-docker.yml` prepares a Pi for the container deployment: it installs Docker Engine and the Compose plugin, clones the repository, seeds `docker/config/russound_config.json`, writes a `.env` file, and starts the stack.
+`ansible/playbooks/deploy-russound-docker.yml` prepares a Pi for the container deployment: it installs Docker Engine and the Compose plugin, clones the repository, seeds `docker/config/russound_config.json`, writes a `.env` file, and starts the `docker-compose.yml` stack (web application plus ser2net gateway).
 
 ```bash
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml

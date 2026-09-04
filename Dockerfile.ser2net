@@ -1,0 +1,27 @@
+# UNTESTED: this image has not been built or run against real Russound hardware yet.
+# Serial gateway container: bridges the USB serial cable to TCP for the web container.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ser2net netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/entrypoint-ser2net.sh /usr/local/bin/entrypoint-ser2net.sh
+
+RUN chmod +x /usr/local/bin/entrypoint-ser2net.sh \
+    && useradd --system --uid 10001 russound \
+    && chown russound:russound /run/lock
+
+USER russound
+
+ENV RUSSOUND_SER2NET_BIND=0.0.0.0 \
+    RUSSOUND_SER2NET_PORT=6666 \
+    RUSSOUND_SERIAL_DEVICE=/dev/ttyUSB0 \
+    RUSSOUND_SERIAL_OPTIONS=19200n81
+
+EXPOSE 6666
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD nc -z 127.0.0.1 "${RUSSOUND_SER2NET_PORT:-6666}"
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-ser2net.sh"]

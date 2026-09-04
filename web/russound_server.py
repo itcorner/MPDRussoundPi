@@ -387,9 +387,12 @@ class RussoundHTTPServer:
     def _sync_backend_state_if_changed(self) -> bool:
         with self.state_lock:
             current_state = self.controller.load_state(refresh_backend=False)
+            health_before = self.controller.backend_health_snapshot()
             refreshed_state = self.controller.load_state(refresh_backend=True)
+            # Silent hardware keeps its last known zone values, so health has to be compared as well.
+            health_changed = self.controller.backend_health_snapshot() != health_before
             if current_state.to_payload() == refreshed_state.to_payload():
-                return False
+                return health_changed
             self.controller.persist_state(refreshed_state)
             return True
 

@@ -274,6 +274,8 @@ class KeypadDisplayState:
 class DummyRussoundState:
     controllers: dict[int, dict[int, ZoneState]] = field(default_factory=lambda: {})
     keypad_overrides: dict[int, dict[int, dict[int, KeypadDisplayState]]] = field(default_factory=lambda: {})
+    # Runtime-only toggle; when off the backend stays silent to simulate unresponsive hardware.
+    responses_enabled: bool = field(default=True, compare=False)
     zone_update_callback: Callable[[int, int], None] | None = field(default=None, repr=False, compare=False)
 
     def set_zone_update_callback(self, callback: Callable[[int, int], None] | None) -> None:
@@ -768,6 +770,9 @@ class DummyRussoundRequestHandler(socketserver.BaseRequestHandler):
                             LOG.info("%s c%d z%d from %s", request_label, controller_id, zone_number, self.client_address)
                     response = state.handle_frame(payload)
                     if response is not None:
+                        if not state.responses_enabled:
+                            LOG.debug("responses disabled, dropping response to %s", self.client_address)
+                            continue
                         LOG.debug("sending response to %s: %s", self.client_address, " ".join(response))
                         self.request.sendall(_from_hex_bytes(response))
         finally:
@@ -794,6 +799,8 @@ class ThreadedDummyRussoundServer(socketserver.ThreadingMixIn, socketserver.TCPS
             self._client_sockets.discard(client_socket)
 
     def broadcast_zone_info(self, controller_id: int, zone_number: int) -> None:
+        if not self.state.responses_enabled:
+            return
         fields = self.state.build_zone_info_response(controller_id, zone_number)
         frame = [
             "F0",
@@ -865,7 +872,7 @@ def _run_tui(stdscr: curses.window, state: DummyRussoundState, state_path: Path 
     selected_field_index = 0
     focus = "zones"
     log_scroll = 0
-    status_message = "Tab switches panes. Arrows navigate. +/- adjust. PgUp/PgDn scroll logs. S saves. Q quits."
+    status_message = "Tab switches panes. Arrows navigate. +/- adjust. PgUp/PgDn scroll logs. R toggles responses. S saves. Q quits."
 
     def persist(message: str | None = None) -> None:
         nonlocal status_message
@@ -893,7 +900,10 @@ def _run_tui(stdscr: curses.window, state: DummyRussoundState, state_path: Path 
 
         stdscr.addnstr(0, 0, "Dummy Russound Backend TUI", width - 1, curses.A_BOLD)
         stdscr.addnstr(1, 0, status_message, width - 1)
-        stdscr.addnstr(2, 0, f"Focus: {focus}", width - 1)
+        responses_label = "Responses: ON" if state.responses_enabled else "Responses: OFF (unresponsive hardware)"
+        responses_attribute = curses.A_NORMAL if state.responses_enabled else curses.A_BOLD | curses.A_REVERSE
+        stdscr.addnstr(2, 0, f"Focus: {focus}", max(0, min(width - 1, left_width)))
+        stdscr.addnstr(2, left_width + 1, responses_label, max(0, width - left_width - 2), responses_attribute)
 
         stdscr.addnstr(4, 0, "Zones", left_width - 1, curses.A_UNDERLINE)
         for row, (controller_id, zone_number) in enumerate(zones[: max(0, editor_height - 7)]):
@@ -958,6 +968,13 @@ def _run_tui(stdscr: curses.window, state: DummyRussoundState, state_path: Path 
             break
         if key == ord("s") or key == ord("S"):
             persist()
+            continue
+        if key in (ord("r"), ord("R")):
+            state.responses_enabled = not state.responses_enabled
+            status_message = (
+                "Responses enabled." if state.responses_enabled else "Responses disabled: backend stays silent."
+            )
+            LOG.info("responses %s", "enabled" if state.responses_enabled else "disabled")
             continue
         if key == 9:  # Tab
             focus = "fields" if focus == "zones" else "zones"

@@ -11,9 +11,8 @@ mpdrussoundpi/
 tests/
 tool/
 
-# Runtime mount points; docker/entrypoint.sh must stay in the build context.
-docker/config/
-docker/data/
+# Runtime mount points.
+docker/
 
 # Never bake local runtime data or secrets into the image.
 web/russound_config.json

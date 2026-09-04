@@ -245,6 +245,9 @@ class RussoundController:
             zone = _coerce_zone(zone_item, default_source=inputs[0].get("id") if inputs else None)
             zone_state = backend.read_zone(zone, inputs)
             if zone_state is None:
+                if not answered:
+                    # Silent hardware: stop here so detection does not cost one read timeout per zone.
+                    break
                 continue
             answered = True
             zone.update_from_state(
@@ -275,6 +278,10 @@ class RussoundController:
             self._backend_health = {"connected": True, "message": ""}
         else:
             self._backend_health = {"connected": False, "message": _BACKEND_SILENT_MESSAGE}
+
+    def backend_health_snapshot(self) -> dict[str, Any] | None:
+        """Health recorded by the last backend refresh, or None when nothing has been polled yet."""
+        return dict(self._backend_health) if self._backend_health is not None else None
 
     def load_state(
         self,

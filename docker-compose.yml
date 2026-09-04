@@ -1,34 +1,45 @@
 # UNTESTED: this stack has not been started against real Russound hardware yet.
 # Serial device passthrough and the RUSSOUND_SERIAL_GID default are unverified.
+# Hardware stack: web application + ser2net serial gateway, one container each.
 services:
-  russound-web:
-    build: .
-    image: mpdrussoundpi-web
-    container_name: russound-web
+  russound-ser2net:
+    build:
+      context: .
+      dockerfile: Dockerfile.ser2net
+    image: mpdrussoundpi-ser2net
+    container_name: russound-ser2net
     restart: unless-stopped
-    # Reaps the background ser2net process started by the entrypoint.
-    init: true
-    # On Linux hosts set RUSSOUND_UID/RUSSOUND_GID to `id -u`/`id -g` so the
-    # container can write the bind-mounted config and state directories.
     user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
     # GID owning the serial device on the host (`stat -c '%g' /dev/ttyUSB0`, usually dialout).
     group_add:
       - "${RUSSOUND_SERIAL_GID:-20}"
     devices:
       - "${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}:${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}"
+    environment:
+      RUSSOUND_SERIAL_DEVICE: "${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}"
+      RUSSOUND_SERIAL_OPTIONS: "${RUSSOUND_SERIAL_OPTIONS:-19200n81}"
+      # Must stay reachable from the web container, so it binds all interfaces.
+      RUSSOUND_SER2NET_BIND: "${RUSSOUND_SER2NET_BIND:-0.0.0.0}"
+      RUSSOUND_SER2NET_PORT: "6666"
+
+  russound-web:
+    build: .
+    image: mpdrussoundpi-web
+    container_name: russound-web
+    restart: unless-stopped
+    depends_on:
+      - russound-ser2net
+    # On Linux hosts set RUSSOUND_UID/RUSSOUND_GID to `id -u`/`id -g` so the
+    # container can write the bind-mounted config and state directories.
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
     ports:
       - "${RUSSOUND_PUBLISH_PORT:-8000}:8000"
     environment:
       RUSSOUND_WEB_HOST: "0.0.0.0"
       RUSSOUND_WEB_PORT: "8000"
-      # ser2net runs inside this container and bridges the USB serial port to TCP.
-      RUSSOUND_SER2NET_ENABLED: "${RUSSOUND_SER2NET_ENABLED:-true}"
-      RUSSOUND_SERIAL_DEVICE: "${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}"
-      RUSSOUND_SERIAL_OPTIONS: "${RUSSOUND_SERIAL_OPTIONS:-19200n81}"
-      RUSSOUND_SER2NET_BIND: "${RUSSOUND_SER2NET_BIND:-localhost}"
-      RUSSOUND_SER2NET_PORT: "${RUSSOUND_SER2NET_PORT:-6666}"
-      # Hardware backend endpoint. Overrides the "backend" block of the config file.
-      RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-127.0.0.1}"
+      # Gateway endpoint. Overrides the "backend" block of the config file.
+      # Point this at host.docker.internal to use a ser2net instance on the host.
+      RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-russound-ser2net}"
       RUSSOUND_BACKEND_PORT: "${RUSSOUND_BACKEND_PORT:-6666}"
       RUSSOUND_CONFIG: "/config/russound_config.json"
       RUSSOUND_STATE: "/data/russound_state.json"

@@ -1,0 +1,26 @@
+# Build context for Dockerfile.dummy: only the dummy backend and its entrypoint.
+.git/
+.github/
+.venv/
+.vscode/
+**/__pycache__/
+**/*.pyc
+
+ansible/
+docs/
+mpdrussoundpi/
+tests/
+web/
+
+# Runtime mount points; docker/entrypoint-dummy.sh must stay in the build context.
+docker/config/
+docker/data/
+docker/dummy-data/
+
+# Never bake local runtime data or secrets into the image.
+**/*.log
+
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+.env
