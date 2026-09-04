@@ -55,6 +55,60 @@
           </div>
         </article>
       </section>
+
+      <details class="panel status-panel collapsible-panel license-panel">
+        <summary class="collapsible-summary">
+          <span class="section-title">License notices</span>
+          <span class="status-count">6 components</span>
+        </summary>
+        <div class="collapsible-body">
+          <p class="license-intro">Direct open-source dependencies used by the application and its supplied deployment options.</p>
+          <div class="license-table-wrap">
+            <table class="license-table">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Used by</th>
+                  <th>License</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>MPDRussoundPi</td>
+                  <td>Application</td>
+                  <td><a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache-2.0</a></td>
+                </tr>
+                <tr>
+                  <td>Flask</td>
+                  <td>Web application</td>
+                  <td><a href="https://github.com/pallets/flask/blob/main/LICENSE.txt" target="_blank" rel="noopener noreferrer">BSD-3-Clause</a></td>
+                </tr>
+                <tr>
+                  <td>Waitress</td>
+                  <td>Production WSGI server</td>
+                  <td><a href="https://github.com/Pylons/waitress/blob/main/LICENSE.txt" target="_blank" rel="noopener noreferrer">ZPL-2.1</a></td>
+                </tr>
+                <tr>
+                  <td>russound</td>
+                  <td>Legacy MPD control setup</td>
+                  <td><a href="https://pypi.org/project/russound/0.2.0/" target="_blank" rel="noopener noreferrer">GPL-3.0</a></td>
+                </tr>
+                <tr>
+                  <td>ser2net</td>
+                  <td>Bare-metal and hardware Docker gateway</td>
+                  <td><a href="https://github.com/ser2net/ser2net/blob/master/COPYING" target="_blank" rel="noopener noreferrer">GPL-2.0</a></td>
+                </tr>
+                <tr>
+                  <td>tmux</td>
+                  <td>Dummy backend Docker image</td>
+                  <td><a href="https://github.com/tmux/tmux/blob/master/COPYING" target="_blank" rel="noopener noreferrer">ISC</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="license-note">Python and Debian base images include additional transitive packages. Their complete notices are available in the installed distributions and image package metadata.</p>
+        </div>
+      </details>
     </main>
 
     <script src="/static/status.js"></script>

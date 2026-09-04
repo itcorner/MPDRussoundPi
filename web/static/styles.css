@@ -558,6 +558,45 @@ h1 {
   word-break: break-word;
 }
 
+.license-panel .section-title {
+  margin: 0;
+}
+
+.license-intro,
+.license-note {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.license-table-wrap {
+  margin-top: 0.9rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.license-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.license-table th,
+.license-table td {
+  padding: 0.75rem 0.65rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.license-table th {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.license-table a {
+  color: var(--accent);
+}
+
 .zone-card {
   position: relative;
   padding: 1.1rem;
