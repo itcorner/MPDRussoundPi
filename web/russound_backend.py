@@ -225,8 +225,8 @@ class RussoundBackend:
             if zone_info is not None:
                 source_index = zone_info.get("source_index")
                 source_id = None
-                if isinstance(source_index, int) and 0 <= source_index < len(inputs):
-                    source_id = inputs[source_index].get("id")
+                if isinstance(source_index, int):
+                    source_id = next((input_item.get("id") for input_item in inputs if input_item.get("id") == source_index + 1), None)
                 return {
                     "power": bool(zone_info.get("power", False)),
                     "source": source_id or (inputs[0].get("id") if inputs else ""),
@@ -245,8 +245,8 @@ class RussoundBackend:
                     return None
                 source_id = None
                 volume_value = int(volume) if isinstance(volume, int) else 0
-                if isinstance(source_index, int) and 0 <= source_index < len(inputs):
-                    source_id = inputs[source_index].get("id")
+                if isinstance(source_index, int):
+                    source_id = next((input_item.get("id") for input_item in inputs if input_item.get("id") == source_index + 1), None)
                 return {
                     "power": bool(power),
                     "source": source_id or (inputs[0].get("id") if inputs else ""),

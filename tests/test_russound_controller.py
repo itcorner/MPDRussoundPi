@@ -369,7 +369,7 @@ class RussoundControllerTests(unittest.TestCase):
                         {"controller": 1, "zone": 2, "keypad_id": 1, "enabled": True, "visible": False, "name": "Patio"},
                     ],
                     "source_slots": [
-                        {"id": 1, "name": "Tuner"},
+                        {"id": 1, "name": "Tuner", "enabled": False},
                     ],
                 },
             )
@@ -384,7 +384,7 @@ class RussoundControllerTests(unittest.TestCase):
                 [{"controller": 1, "zone": 1}],
             )
             self.assertNotIn("zone_ids", persisted_config["shortcuts"][0])
-            self.assertEqual(persisted_config["inputs"][0]["name"], "Tuner")
+            self.assertEqual(persisted_config["inputs"], [])
 
     def test_build_config_editor_payload_returns_slots_per_controller_limit(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -406,7 +406,69 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertTrue(payload["zone_slots"][0]["enabled"])
             self.assertFalse(payload["zone_slots"][1]["enabled"])
             self.assertEqual([slot["keypad_id"] for slot in payload["zone_slots"]], [1, 1, 1])
-            self.assertEqual(payload["source_slots"], [{"id": 1, "name": "Radio"}])
+            self.assertEqual(
+                payload["source_slots"],
+                [
+                    {"id": 1, "name": "Radio", "enabled": True},
+                    {"id": 2, "name": "Source 2", "enabled": False},
+                    {"id": 3, "name": "Source 3", "enabled": False},
+                    {"id": 4, "name": "Source 4", "enabled": False},
+                    {"id": 5, "name": "Source 5", "enabled": False},
+                    {"id": 6, "name": "Source 6", "enabled": False},
+                ],
+            )
+
+    def test_disabled_sources_remain_editable_but_are_excluded_from_runtime_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "controllers": [{"id": 1, "zone_count": 1}],
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [
+                            {"id": 1, "name": "Radio", "enabled": True},
+                            {"id": 2, "name": "TV", "enabled": False},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            editor_payload = build_config_editor_payload(config_path)
+            state = load_state(config_path, refresh_backend=False)
+
+            self.assertEqual(editor_payload["source_slots"][1], {"id": 2, "name": "TV", "enabled": False})
+            self.assertEqual(state.inputs, [{"id": 1, "name": "Radio"}])
+
+    def test_enabling_an_unconfigured_source_creates_its_config_entry(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "controllers": [{"id": 1, "zone_count": 1}],
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            update_config_zones(
+                config_path,
+                None,
+                {
+                    "zone_slots": [{"controller": 1, "zone": 1, "enabled": True, "visible": True, "name": "Living Room"}],
+                    "source_slots": [
+                        {"id": 1, "name": "Radio", "enabled": True},
+                        {"id": 4, "name": "Game Console", "enabled": True},
+                    ],
+                },
+            )
+
+            persisted_config = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted_config["inputs"], [{"id": 1, "name": "Radio"}, {"id": 4, "name": "Game Console"}])
 
     def test_update_config_zones_rejects_unknown_source_slot(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -423,7 +485,7 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ValueError, "unknown source 2"):
+            with self.assertRaisesRegex(ValueError, "source id must be from 1 to 6"):
                 update_config_zones(
                     config_path,
                     state_path,
@@ -432,7 +494,7 @@ class RussoundControllerTests(unittest.TestCase):
                             {"controller": 1, "zone": 1, "enabled": True, "visible": True, "name": "Living Room"},
                         ],
                         "source_slots": [
-                            {"id": 2, "name": "TV"},
+                            {"id": 7, "name": "TV", "enabled": True},
                         ],
                     },
                 )

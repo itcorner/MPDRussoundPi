@@ -94,7 +94,8 @@ function applyPayload(payload) {
   state.backendStatus = payload.backend_status || { connected: true, message: "" };
   state.zones = payload.state?.zones || [];
   state.systemPower = Boolean(payload.state?.system_power);
-  state.inputs = state.config?.inputs || payload.state?.inputs || [];
+  const configuredInputs = state.config?.inputs || payload.state?.inputs || [];
+  state.inputs = configuredInputs.filter((input) => input.enabled !== false);
   state.shortcuts = state.config?.shortcuts || [];
   render();
 }

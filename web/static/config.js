@@ -73,6 +73,7 @@ function normalizeSourceSlots(sourceSlots) {
     .map((slot) => ({
       id: Number(slot.id),
       name: String(slot.name ?? ""),
+      enabled: Boolean(slot.enabled),
     }))
     .sort((a, b) => a.id - b.id);
 }
@@ -125,7 +126,8 @@ function renderEditor(payload) {
   updateSaveButtonState();
 
   const sourceSlots = payload.source_slots || [];
-  sourceCountBadge.textContent = `${sourceSlots.length} available`;
+  const enabledSources = sourceSlots.filter((slot) => slot.enabled).length;
+  sourceCountBadge.textContent = `${enabledSources}/${sourceSlots.length} enabled`;
   for (const sourceSlot of sourceSlots) {
     const row = document.createElement("div");
     row.className = "config-source-row";
@@ -134,9 +136,12 @@ function renderEditor(payload) {
       <div class="config-slot-meta">
         <strong>Source ${sourceSlot.id}</strong>
       </div>
+      <label class="config-check">
+        <input type="checkbox" data-field="source-enabled" ${sourceSlot.enabled ? "checked" : ""} />
+        <span>Enable</span>
+      </label>
       <label class="field config-name-field">
-        <span>Name</span>
-        <input type="text" data-field="source-name" value="${sourceSlot.name}" />
+        <input type="text" data-field="source-name" value="${sourceSlot.name}" aria-label="Source ${sourceSlot.id} name" />
       </label>
     `;
     configSources.appendChild(row);
@@ -151,7 +156,7 @@ function renderEditor(payload) {
 
     const card = document.createElement("details");
     card.className = "panel status-panel collapsible-panel controller-panel";
-    card.open = true;
+    card.open = false;
     card.innerHTML = `
       <summary class="collapsible-summary">
         <span class="section-title">Controller ${controller.id}</span>
@@ -180,8 +185,7 @@ function renderEditor(payload) {
           <span>Show in overview</span>
         </label>
         <label class="field config-name-field">
-          <span>Name</span>
-          <input type="text" data-field="name" value="${slot.name}" />
+          <input type="text" data-field="name" value="${slot.name}" aria-label="Controller ${slot.controller} zone ${slot.zone} name" />
         </label>
       `;
       slotList.appendChild(row);
@@ -204,6 +208,7 @@ function collectSourceSlots() {
   return Array.from(document.querySelectorAll(".config-source-row")).map((row) => ({
     id: Number(row.dataset.sourceId),
     name: row.querySelector('[data-field="source-name"]').value,
+    enabled: row.querySelector('[data-field="source-enabled"]').checked,
   }));
 }
 

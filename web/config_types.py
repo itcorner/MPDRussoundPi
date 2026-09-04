@@ -35,6 +35,7 @@ class ZoneConfig(TypedDict, total=False):
 class InputConfig(TypedDict, total=False):
     id: int
     name: str
+    enabled: bool
 
 
 class ShortcutZoneAddressConfig(TypedDict, total=False):

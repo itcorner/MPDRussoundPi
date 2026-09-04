@@ -194,6 +194,21 @@ class RussoundBackendTests(unittest.TestCase):
         self.assertTrue(zone_state["power"])
         self.assertEqual(zone_state["volume"], 40)
 
+    def test_read_zone_keeps_hardware_source_indexes_stable_when_a_source_is_disabled(self):
+        class ExtendedInfoClient:
+            def get_zone_extended_info(self, controller, zone):
+                return {"power": True, "source_index": 2, "volume": 40, "bass": 0, "treble": 0, "loudness": False, "balance": 0}
+
+        backend = RussoundBackend()
+
+        with patch.object(backend, "_connect", return_value=ExtendedInfoClient()):
+            zone_state = backend.read_zone(
+                Zone(name="Zone 1", controller=1, zone_number=1),
+                [{"id": 1, "name": "Radio"}, {"id": 3, "name": "Bluetooth"}],
+            )
+
+        self.assertEqual(zone_state["source"], 3)
+
     def test_read_zone_parameters_parses_cav_zone_info_and_discrete_parameters(self):
         class DummyClient:
             def __init__(self) -> None:

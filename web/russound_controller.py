@@ -11,6 +11,7 @@ from .zone import Zone
 
 _BACKEND_UNAVAILABLE_MESSAGE = "Communication with Russound hardware is currently unavailable."
 _BACKEND_SILENT_MESSAGE = "The Russound gateway is reachable, but the hardware is not responding."
+_SOURCE_SLOT_COUNT = 6
 
 
 class RussoundController:
@@ -71,13 +72,19 @@ class RussoundController:
                     }
                 )
 
+        input_lookup = {
+            int(input_item["id"]): input_item
+            for input_item in _config_dict_list(config, "inputs")
+            if isinstance(input_item.get("id"), int) and not isinstance(input_item.get("id"), bool)
+        }
         source_slots: list[dict[str, Any]] = []
-        for input_item in sorted(_config_dict_list(config, "inputs"), key=lambda item: int(item.get("id", 0))):
-            source_id = int(input_item.get("id", 0))
+        for source_id in range(1, _SOURCE_SLOT_COUNT + 1):
+            input_item = input_lookup.get(source_id)
             source_slots.append(
                 {
                     "id": source_id,
-                    "name": input_item.get("name", _default_source_name(source_id)),
+                    "name": input_item.get("name", _default_source_name(source_id)) if input_item else _default_source_name(source_id),
+                    "enabled": bool(input_item.get("enabled", True)) if input_item else False,
                 }
             )
 
@@ -194,6 +201,8 @@ class RussoundController:
         input_lookup: dict[int, dict[str, Any]] = {}
         for input_item in _config_dict_list(config, "inputs"):
             source_id = int(input_item.get("id", 0))
+            if not 1 <= source_id <= _SOURCE_SLOT_COUNT:
+                continue
             normalized_input = dict(input_item)
             normalized_input.setdefault("name", _default_source_name(source_id))
             existing_inputs.append(normalized_input)
@@ -204,20 +213,37 @@ class RussoundController:
             for raw_source in _dict_list(source_slots):
                 source_id = raw_source.get("id")
                 source_name = raw_source.get("name")
+                source_enabled = raw_source.get("enabled")
 
                 if not isinstance(source_id, int) or isinstance(source_id, bool):
                     raise ValueError("Invalid request body: source id must be an integer")
                 if not isinstance(source_name, str):
                     raise ValueError("Invalid request body: source name must be a string")
-                if source_id not in input_lookup:
-                    raise ValueError(f"Invalid request body: unknown source {source_id}")
+                if not isinstance(source_enabled, bool):
+                    raise ValueError("Invalid request body: source enabled must be a boolean")
+                if not 1 <= source_id <= _SOURCE_SLOT_COUNT:
+                    raise ValueError(f"Invalid request body: source id must be from 1 to {_SOURCE_SLOT_COUNT}")
                 if source_id in seen_source_ids:
                     raise ValueError(f"Invalid request body: duplicate source slot {source_id}")
                 seen_source_ids.add(source_id)
 
+                if not source_enabled:
+                    input_lookup.pop(source_id, None)
+                    continue
+                if source_id not in input_lookup:
+                    normalized_input = {"id": source_id}
+                    existing_inputs.append(normalized_input)
+                    input_lookup[source_id] = normalized_input
                 input_lookup[source_id]["name"] = source_name.strip() or _default_source_name(source_id)
 
-        updated_config["inputs"] = existing_inputs
+        updated_config["inputs"] = sorted(
+            (
+                {key: value for key, value in input_item.items() if key != "enabled"}
+                for source_id, input_item in input_lookup.items()
+                if input_item.get("enabled", True) is not False
+            ),
+            key=lambda input_item: int(input_item["id"]),
+        )
         persist_config(self.config_path, updated_config)
 
         updated_state = self.load_state(refresh_backend=False)
@@ -314,7 +340,7 @@ class RussoundController:
         inputs: list[dict[str, Any]] = [
             {"id": input_item["id"], "name": input_item["name"]}
             for input_item in _config_dict_list(config, "inputs")
-            if "id" in input_item and "name" in input_item
+            if "id" in input_item and "name" in input_item and input_item.get("enabled", True) is not False
         ]
         state = RussoundState(system_power=False, zones=[], inputs=inputs)
         for zone_config in _config_dict_list(config, "zones"):
@@ -351,7 +377,7 @@ class RussoundController:
         state.inputs = [
             {"id": input_item["id"], "name": input_item["name"]}
             for input_item in _config_dict_list(config, "inputs")
-            if "id" in input_item and "name" in input_item
+            if "id" in input_item and "name" in input_item and input_item.get("enabled", True) is not False
         ]
 
         zone_lookup = {

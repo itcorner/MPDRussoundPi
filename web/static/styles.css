@@ -304,9 +304,9 @@ h1 {
 
 .collapsible-summary {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: 1rem;
+  position: relative;
   cursor: pointer;
   list-style: none;
   padding: 1.05rem 1.25rem;
@@ -319,8 +319,9 @@ h1 {
 
 .collapsible-summary::before {
   content: "▾";
+  position: absolute;
+  left: 1.25rem;
   color: var(--muted);
-  margin-right: 0.45rem;
   transition: transform 180ms ease;
 }
 
@@ -338,6 +339,11 @@ h1 {
 
 .collapsible-summary .section-title {
   margin: 0;
+  padding-left: 1.25rem;
+}
+
+.collapsible-summary .status-count {
+  margin-left: auto;
 }
 
 .status-panel-header {
@@ -391,7 +397,7 @@ h1 {
 
 .config-source-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(240px, 2fr);
+  grid-template-columns: minmax(150px, 1fr) auto minmax(240px, 2fr);
   gap: 0.9rem;
   align-items: center;
   padding: 0.95rem 1rem;
