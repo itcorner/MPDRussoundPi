@@ -197,7 +197,6 @@ class RussoundController:
         updated_config["zones"] = new_zones
         updated_config["shortcuts"] = updated_shortcuts
 
-        existing_inputs: list[dict[str, Any]] = []
         input_lookup: dict[int, dict[str, Any]] = {}
         for input_item in _config_dict_list(config, "inputs"):
             source_id = int(input_item.get("id", 0))
@@ -205,7 +204,6 @@ class RussoundController:
                 continue
             normalized_input = dict(input_item)
             normalized_input.setdefault("name", _default_source_name(source_id))
-            existing_inputs.append(normalized_input)
             input_lookup[source_id] = normalized_input
 
         if source_slots:
@@ -232,14 +230,13 @@ class RussoundController:
                     continue
                 if source_id not in input_lookup:
                     normalized_input = {"id": source_id}
-                    existing_inputs.append(normalized_input)
                     input_lookup[source_id] = normalized_input
                 input_lookup[source_id]["name"] = source_name.strip() or _default_source_name(source_id)
 
         updated_config["inputs"] = sorted(
             (
                 {key: value for key, value in input_item.items() if key != "enabled"}
-                for source_id, input_item in input_lookup.items()
+                for input_item in input_lookup.values()
                 if input_item.get("enabled", True) is not False
             ),
             key=lambda input_item: int(input_item["id"]),
