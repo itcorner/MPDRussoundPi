@@ -19,6 +19,7 @@ connection: &russound
     enable: on
     options:
       telnet-brk-on-sync: true
+      mdns: false
     connector: serialdev,${device},${RUSSOUND_SERIAL_OPTIONS:-19200n81},local
 EOF
 
