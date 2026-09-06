@@ -93,6 +93,28 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             _close_server(server)
 
+    def test_sync_backend_state_uses_shared_event_backend(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            current_state = Mock()
+            refreshed_state = Mock()
+            current_state.to_payload.return_value = {"system_power": False, "zones": []}
+            refreshed_state.to_payload.return_value = {"system_power": False, "zones": []}
+            controller = Mock()
+            controller.load_state.side_effect = [current_state, refreshed_state]
+            shared_backend = Mock()
+            server.controller = controller
+            server._event_backend = shared_backend
+
+            self.assertFalse(server._sync_backend_state_if_changed())
+
+            self.assertEqual(
+                controller.load_state.call_args_list[1].kwargs,
+                {"refresh_backend": True, "backend": shared_backend},
+            )
+        finally:
+            _close_server(server)
+
     def test_root_response_sets_session_cookie(self):
         server = RussoundHTTPServer(None, None)
         try:
@@ -102,6 +124,21 @@ class RussoundServerTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             set_cookie_header = response.headers.get("Set-Cookie", "")
             self.assertIn("russound_session_id=", set_cookie_header)
+        finally:
+            _close_server(server)
+
+    def test_api_request_debug_log_contains_host_and_session_id(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            client = server.app.test_client()
+            with self.assertLogs("web.russound_server", level="DEBUG") as logs:
+                response = client.get("/api/state")
+
+            self.assertEqual(response.status_code, 401)
+            output = "\n".join(logs.output)
+            self.assertIn("API request method=GET path=/api/state", output)
+            self.assertIn("host=127.0.0.1", output)
+            self.assertIn("session_id=", output)
         finally:
             _close_server(server)
 

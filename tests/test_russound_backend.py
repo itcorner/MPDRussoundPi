@@ -144,6 +144,12 @@ class RussoundBackendTests(unittest.TestCase):
         self.assertEqual(backend.host, "192.168.1.50")
         self.assertEqual(backend.port, 6100)
 
+    def test_backend_serial_endpoint_is_loaded_from_config(self):
+        backend = RussoundBackend(config={"backend": {"device": "/dev/cu.test", "baud": 19200}})
+
+        self.assertEqual(backend.device, "/dev/cu.test")
+        self.assertEqual(backend.baud, 19200)
+
     def test_backend_endpoint_defaults_when_config_missing(self):
         backend = RussoundBackend(config={"controllers": [{"id": 1, "zone_count": 6}]})
 
@@ -193,6 +199,41 @@ class RussoundBackendTests(unittest.TestCase):
         self.assertIsNotNone(zone_state)
         self.assertTrue(zone_state["power"])
         self.assertEqual(zone_state["volume"], 40)
+
+    def test_read_zone_falls_back_to_discrete_reads_when_extended_info_raises(self):
+        class ResetClient:
+            def get_zone_extended_info(self, controller, zone):
+                raise ConnectionResetError(54, "Connection reset by peer")
+
+            def get_power(self, controller, zone):
+                return 1
+
+            def get_source(self, controller, zone):
+                return 0
+
+            def get_volume(self, controller, zone):
+                return 40
+
+        backend = RussoundBackend()
+
+        with patch.object(backend, "_connect", return_value=ResetClient()):
+            zone_state = backend.read_zone(Zone(name="Zone 1", controller=1, zone_number=1), [{"id": 1, "name": "Radio"}])
+
+        self.assertIsNotNone(zone_state)
+        self.assertTrue(zone_state["power"])
+        self.assertEqual(zone_state["volume"], 40)
+
+    def test_read_zone_parameters_returns_none_when_extended_info_raises(self):
+        class ResetClient:
+            def get_zone_extended_info(self, controller, zone):
+                raise ConnectionResetError(54, "Connection reset by peer")
+
+        backend = RussoundBackend()
+
+        with patch.object(backend, "_connect", return_value=ResetClient()):
+            zone_state = backend.read_zone_parameters(Zone(name="Zone 1", controller=1, zone_number=1))
+
+        self.assertIsNone(zone_state)
 
     def test_read_zone_keeps_hardware_source_indexes_stable_when_a_source_is_disabled(self):
         class ExtendedInfoClient:

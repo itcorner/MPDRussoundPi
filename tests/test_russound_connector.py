@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import tempfile
+import os
+import pty
+import socket
 from pathlib import Path
 from unittest.mock import patch
 import unittest
@@ -40,6 +43,21 @@ class _FakeSocket:
 
 
 class RussoundConnectorTests(unittest.TestCase):
+    def test_connects_to_direct_serial_device(self) -> None:
+        master_fd, slave_fd = pty.openpty()
+        device = os.ttyname(slave_fd)
+        connector = Russound("127.0.0.1", 6666, device=device, baud=19200)
+        try:
+            self.assertTrue(connector.connect())
+            self.assertTrue(connector.is_connected())
+            os.write(master_fd, b"F0")
+            connector.sock.setblocking(False)
+            self.assertEqual(connector.sock.recv(2), b"F0")
+        finally:
+            connector.close()
+            os.close(master_fd)
+            os.close(slave_fd)
+
     def test_update_listener_handles_connection_reset(self) -> None:
         class ResetSocket(_FakeSocket):
             def recv(self, _size: int) -> bytes:
@@ -49,6 +67,32 @@ class RussoundConnectorTests(unittest.TestCase):
         connector.sock = ResetSocket()
         with patch.object(connector._update_listener_stop, "wait", return_value=False):
             connector._update_listener_loop()
+
+        self.assertIsNone(connector.sock)
+
+    def test_send_data_resets_socket_on_connection_reset(self) -> None:
+        class ResetOnSendSocket(_FakeSocket):
+            def send(self, payload: bytes) -> None:
+                raise ConnectionResetError(54, "Connection reset by peer")
+
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = ResetOnSendSocket()
+
+        with self.assertRaises(ConnectionResetError):
+            connector.set_power(1, 1, 1)
+
+        self.assertIsNone(connector.sock)
+
+    def test_get_response_message_resets_socket_on_connection_reset(self) -> None:
+        class ResetOnRecvSocket(_FakeSocket):
+            def recv(self, _size: int) -> bytes:
+                raise ConnectionResetError(54, "Connection reset by peer")
+
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = ResetOnRecvSocket()
+
+        with self.assertRaises(ConnectionResetError):
+            connector.get_zone_extended_info(1, 1)
 
         self.assertIsNone(connector.sock)
 
@@ -99,6 +143,16 @@ class RussoundConnectorTests(unittest.TestCase):
         sent_hex = " ".join(f"{byte:02X}" for byte in fake_sock.sent)
         self.assertTrue(sent_hex.startswith("F0 7E 00 7F 00 00 70 05 02 02 00 00 F1 22"))
 
+    def test_connect_reuses_existing_open_connection(self) -> None:
+        fake_sock = _FakeSocket()
+        with patch("web.russound_connector.socket.socket", return_value=fake_sock) as socket_factory:
+            connector = Russound("127.0.0.1", 6666)
+            self.assertTrue(connector.connect())
+            self.assertTrue(connector.connect())
+
+        socket_factory.assert_called_once_with(socket.AF_INET, socket.SOCK_STREAM)
+        self.assertFalse(fake_sock.closed)
+
     def test_protocol_audit_logs_tx_and_rx_frames(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / "protocol-audit.log"
@@ -115,6 +169,128 @@ class RussoundConnectorTests(unittest.TestCase):
             self.assertIn(" RX ", log_text)
             self.assertIn("F0", log_text)
             self.assertIn("F7", log_text)
+
+    def test_zone_info_response_is_not_consumed_as_unsolicited_update(self) -> None:
+        fake_sock = _FakeSocket()
+        fake_sock.recv_queue.append(
+            bytes.fromhex(
+                "F0 00 00 70 00 00 7F 00 00 04 02 00 00 07 "
+                "00 00 01 00 0C 00 01 00 0F 00 00 00 00 01 00 00 00 00 2A F7"
+            )
+        )
+
+        with patch("web.russound_connector.socket.socket", return_value=fake_sock):
+            connector = Russound("127.0.0.1", 6666)
+            self.assertTrue(connector.connect())
+            self.assertEqual(connector.get_power(1, 1), 1)
+
+        self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_update_listener_preserves_active_expected_response(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex(
+            "F0 00 00 70 00 00 7F 00 00 04 02 00 00 07 "
+            "00 00 01 00 0C 00 01 00 1F 0D 00 00 00 01 00 00 00 00 47 F7"
+        )
+        connector._pending_frames.append(frame)
+        connector._expected_response_signature = "04 02 00 00 07"
+
+        connector._collect_unsolicited_updates_locked()
+
+        self.assertEqual(list(connector._pending_frames), [frame])
+        self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_update_listener_preserves_frames_during_response_transaction(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex(
+            "F0 00 00 70 00 00 7F 00 00 04 02 00 00 07 "
+            "00 00 01 00 0C 00 01 00 1F 0D 00 00 00 01 00 00 00 00 47 F7"
+        )
+        connector._pending_frames.append(frame)
+        connector._response_transaction_depth = 1
+
+        connector._collect_unsolicited_updates_locked()
+
+        self.assertEqual(list(connector._pending_frames), [frame])
+        self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_discards_frames_addressed_to_controller_7e(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        connector.sock.recv_queue.append(
+            bytes.fromhex(
+                "F0 7E 00 70 00 00 7F 05 02 01 00 02 01 00 "
+                "F1 37 00 00 00 01 00 01 28 F7"
+            )
+        )
+
+        connector._read_available_locked()
+
+        self.assertEqual(list(connector._pending_frames), [])
+        self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_discards_frames_with_undocumented_message_type_06(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        connector.sock.recv_queue.append(
+            bytes.fromhex("F0 00 00 70 00 00 7F 06 01 02 03 04 05 06 07 F7")
+        )
+
+        connector._read_available_locked()
+
+        self.assertEqual(list(connector._pending_frames), [])
+        self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_short_zone_parameter_response_matches_signature(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytes.fromhex(
+            "F0 00 00 70 00 00 7F 00 00 05 02 00 01 00 04 "
+            "00 00 01 00 01 00 00 03 F7"
+        )
+
+        matching, remainder = connector._Russound__find_signature(frame, "05 02 00 01 00 04")
+
+        self.assertEqual(matching, bytearray.fromhex("05 02 00 01 00 04 00 00 01 00 01 00 00 03 F7"))
+        self.assertEqual(remainder, b"")
+
+    def test_debug_logs_raw_tx_and_rx_frames(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytes.fromhex("F0 00 00 7F 00 00 70 02 06 4B F7")
+
+        with patch("web.russound_connector.LOGGER.debug") as debug_log:
+            connector._audit_frame("TX", frame)
+            connector._audit_frame("RX", frame)
+
+        debug_log.assert_any_call("RNET %s %s", "TX", "F0 00 00 7F 00 00 70 02 06 4B F7")
+        debug_log.assert_any_call("RNET %s %s", "RX", "F0 00 00 7F 00 00 70 02 06 4B F7")
+
+    def test_debug_logs_decoded_received_zone_and_display_messages(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        zone_info = bytearray.fromhex(
+            "F0 00 00 70 00 00 7F 00 00 04 02 00 00 07 "
+            "00 00 01 00 0C 00 01 00 0F 0A 0B 01 0A 01 00 00 00 00 F7"
+        )
+        extended = bytearray.fromhex(
+            "F0 00 00 70 00 00 7F 00 00 05 02 00 01 00 04 "
+            "00 00 01 00 01 00 00 03 F7"
+        )
+        display = bytearray.fromhex(
+            "F0 00 00 70 00 00 7F 00 02 01 01 00 01 19 00 "
+            "48 65 6C 6C 6F 00 F7"
+        )
+
+        with self.assertLogs("web.russound_connector", level="DEBUG") as logs:
+            connector._log_received_frame_semantics(zone_info)
+            connector._log_received_frame_semantics(extended)
+            connector._log_received_frame_semantics(display)
+
+        output = "\n".join(logs.output)
+        self.assertIn("Received zone info:", output)
+        self.assertIn("volume=30", output)
+        self.assertIn("Received zone extended parameter:", output)
+        self.assertIn("parameter=turn_on_volume value=0", output)
+        self.assertIn("Received display string:", output)
+        self.assertIn("text='Hello'", output)
 
     def test_get_zone_extended_info_reads_zone_info_and_turn_on_volume(self) -> None:
         fake_sock = _FakeSocket()

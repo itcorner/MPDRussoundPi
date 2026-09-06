@@ -70,7 +70,7 @@
     }
   ],
   "notes": [
-    "backend.host and backend.port configure the Russound hardware connection endpoint.",
+    "backend.host and backend.port configure the Russound TCP hardware endpoint; use backend.device and backend.baud for direct serial hardware access.",
     "backend.poll_interval_seconds configures how often backend state changes are polled while SSE clients are connected (minimum 1.0).",
     "backend.protocol_audit_log_file optionally enables protocol-audit logging of all TX/RX RNET frames.",
     "inputs.id values are numeric and start at 1.",

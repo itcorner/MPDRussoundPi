@@ -14,6 +14,8 @@ LOGGER = logging.getLogger(__name__)
 class BackendConfig(TypedDict, total=False):
     host: str
     port: int
+    device: str
+    baud: int
     poll_interval_seconds: float
     protocol_audit_log_file: str
 
@@ -62,6 +64,8 @@ class RussoundConfig(TypedDict, total=False):
 class BackendEndpoint:
     host: str = "127.0.0.1"
     port: int = 6666
+    device: str | None = None
+    baud: int = 19200
     loaded_from_config: bool = False
 
 
@@ -106,8 +110,22 @@ def _backend_endpoint_from_config(config: RussoundConfig | None) -> BackendEndpo
 
     host = backend_config.get("host")
     port = backend_config.get("port")
+    device = backend_config.get("device")
+    baud = backend_config.get("baud", 19200)
     if isinstance(host, str) and host.strip() and isinstance(port, int) and not isinstance(port, bool):
-        return BackendEndpoint(host=host.strip(), port=port, loaded_from_config=True)
+        return BackendEndpoint(
+            host=host.strip(),
+            port=port,
+            device=device.strip() if isinstance(device, str) and device.strip() else None,
+            baud=baud if isinstance(baud, int) and not isinstance(baud, bool) else 19200,
+            loaded_from_config=True,
+        )
+    if isinstance(device, str) and device.strip():
+        return BackendEndpoint(
+            device=device.strip(),
+            baud=baud if isinstance(baud, int) and not isinstance(baud, bool) else 19200,
+            loaded_from_config=True,
+        )
     return BackendEndpoint()
 
 

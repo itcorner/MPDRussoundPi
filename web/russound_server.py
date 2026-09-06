@@ -148,6 +148,13 @@ class RussoundHTTPServer:
         def _authorize_api_routes():
             if not request.path.startswith("/api/"):
                 return None
+            logging.getLogger(__name__).debug(
+                "API request method=%s path=%s host=%s session_id=%s",
+                request.method,
+                request.path,
+                request.remote_addr or "unknown",
+                self._get_or_create_session_id(),
+            )
             if self._is_authorized_request():
                 return None
             return jsonify({"error": "Unauthorized"}), 401
@@ -273,6 +280,13 @@ class RussoundHTTPServer:
                     return jsonify({"error": "Zone not found"}), 404
                 except RuntimeError as exc:
                     return jsonify({"error": str(exc)}), 502
+            logging.debug(
+                "API zone update applied controller=%d zone=%d action=%s value=%s",
+                controller_id,
+                zone_number,
+                action,
+                value,
+            )
             self.broadcast_state_change()
             return jsonify(response_payload)
 
@@ -326,6 +340,7 @@ class RussoundHTTPServer:
             return
         with self._event_backend_lock:
             self._event_backend = backend
+        self.controller.set_shared_backend(backend)
 
     def _handle_unsolicited_zone_update(self, update: dict[str, Any]) -> None:
         controller_id = update.get("controller")
@@ -388,7 +403,13 @@ class RussoundHTTPServer:
         with self.state_lock:
             current_state = self.controller.load_state(refresh_backend=False)
             health_before = self.controller.backend_health_snapshot()
-            refreshed_state = self.controller.load_state(refresh_backend=True)
+            with self._event_backend_lock:
+                shared_backend = self._event_backend
+            if shared_backend is None:
+                refreshed_state = self.controller.load_state(refresh_backend=True)
+            else:
+                logging.debug("Polling Russound state through the shared backend connector")
+                refreshed_state = self.controller.load_state(refresh_backend=True, backend=shared_backend)
             # Silent hardware keeps its last known zone values, so health has to be compared as well.
             health_changed = self.controller.backend_health_snapshot() != health_before
             if current_state.to_payload() == refreshed_state.to_payload():
@@ -448,6 +469,11 @@ class RussoundHTTPServer:
 
     def _serve_events(self) -> Response:
         session_id = self._get_or_create_session_id()
+        logging.info(
+            "SSE connection requested host=%s session_id=%s",
+            self._request_ip(),
+            session_id,
+        )
         client_id, event_queue = self.register_event_client(
             self._request_ip(),
             request.headers.get("User-Agent"),
@@ -472,6 +498,12 @@ class RussoundHTTPServer:
             except GeneratorExit:
                 return
             finally:
+                logging.info(
+                    "SSE connection closed client_id=%s host=%s session_id=%s",
+                    client_id,
+                    self._request_ip(),
+                    session_id,
+                )
                 self.unregister_event_client(client_id, expected_connection_id=connection_id)
 
         response = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
@@ -505,12 +537,11 @@ class RussoundHTTPServer:
                     existing_entry["connection_id"] = connection_id
                     self._event_client_index[normalized_session_id] = reused_client_id
                     if not was_active:
-                        logging.debug(
-                            "Re-registered client id=%s session_id=%s ip=%s user_agent=%s",
+                        logging.info(
+                            "SSE client reconnected client_id=%s session_id=%s host=%s",
                             reused_client_id,
                             normalized_session_id,
                             ip_address,
-                            user_agent or existing_entry.get("user_agent", ""),
                         )
                     return reused_client_id, event_queue
 
@@ -528,12 +559,11 @@ class RussoundHTTPServer:
             }
             if normalized_session_id is not None:
                 self._event_client_index[normalized_session_id] = client_id
-            logging.debug(
-                "Registered client id=%s session_id=%s ip=%s user_agent=%s",
+            logging.info(
+                "SSE client connected client_id=%s session_id=%s host=%s",
                 client_id,
                 normalized_session_id,
                 ip_address,
-                user_agent or "",
             )
         return client_id, event_queue
 
@@ -545,8 +575,8 @@ class RussoundHTTPServer:
             if expected_connection_id is not None and client_entry.get("connection_id") != expected_connection_id:
                 return
             client_entry["active"] = False
-            logging.debug(
-                "Unregistered client id=%s session_id=%s ip=%s",
+            logging.info(
+                "SSE client inactive client_id=%s session_id=%s host=%s",
                 client_id,
                 client_entry.get("session_id"),
                 client_entry.get("ip"),
@@ -556,6 +586,7 @@ class RussoundHTTPServer:
         state_payload = self._build_state_payload_for_event()
         with self._event_clients_lock:
             self.state_revision += 1
+            active_clients = 0
             event_text = json.dumps(
                 {
                     "revision": self.state_revision,
@@ -564,7 +595,13 @@ class RussoundHTTPServer:
             )
             for client in list(self._event_clients.values()):
                 if client.get("active", True):
+                    active_clients += 1
                     client["queue"].put(event_text)
+        logging.info(
+            "SSE state update broadcast revision=%d recipients=%d",
+            self.state_revision,
+            active_clients,
+        )
 
     def _build_state_payload_for_event(self) -> dict[str, Any]:
         with self.state_lock:
@@ -580,6 +617,11 @@ class RussoundHTTPServer:
         }
         with self._event_history_lock:
             self._event_history.appendleft(entry)
+        logging.info(
+            "UI interaction path=%s host=%s",
+            path,
+            ip_address,
+        )
 
     def build_status_payload(self) -> dict[str, Any]:
         return {
@@ -622,7 +664,7 @@ def _configure_logging(debug: bool) -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         force=True,
     )
-    for logger_name in ("web", "web.russound_backend", "web.russound_controller", "web.russound_state", "web.zone", "web.russound_server"):
+    for logger_name in ("web", "web.russound_backend", "web.russound_connector", "web.russound_controller", "web.russound_state", "web.zone", "web.russound_server"):
         logging.getLogger(logger_name).setLevel(level)
     logging.getLogger("russound.russound").setLevel(logging.DEBUG if debug else logging.WARNING)
 

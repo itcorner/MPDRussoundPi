@@ -21,6 +21,11 @@ class RussoundController:
         self.config_path = _resolve_config_path(config_path)
         self.state_path = _resolve_state_path(state_path)
         self._backend_health: dict[str, Any] | None = None
+        self._shared_backend: RussoundBackend | None = None
+
+    def set_shared_backend(self, backend: RussoundBackend | None) -> None:
+        """Use the server-owned backend for all controller hardware operations."""
+        self._shared_backend = backend
 
     def load_config(self) -> dict[str, Any] | None:
         resolved = _resolve_config_path(self.config_path)
@@ -250,8 +255,13 @@ class RussoundController:
     def _sync_system_power(self, state: RussoundState) -> RussoundState:
         return state.sync_system_power()
 
-    def _sync_state_from_backend(self, state: RussoundState, config: dict[str, Any]) -> RussoundState:
-        backend = RussoundBackend(config=config)
+    def _sync_state_from_backend(
+        self,
+        state: RussoundState,
+        config: dict[str, Any],
+        backend: RussoundBackend | None = None,
+    ) -> RussoundState:
+        backend = backend or RussoundBackend(config=config)
         inputs = [
             {"id": input_item["id"], "name": input_item["name"]}
             for input_item in _config_dict_list(config, "inputs")
@@ -311,6 +321,7 @@ class RussoundController:
         config_path: str | Path | None = None,
         state_path: str | Path | None = None,
         refresh_backend: bool = True,
+        backend: RussoundBackend | None = None,
     ) -> RussoundState:
         if config_path is not None:
             self.config_path = _resolve_config_path(config_path)
@@ -329,7 +340,7 @@ class RussoundController:
                     state_data = cast(dict[str, Any], data)
                     state = self.ensure_state_matches_config(state_data, config)
                     if refresh_backend:
-                        return self._sync_state_from_backend(state, config)
+                        return self._sync_state_from_backend(state, config, backend)
                     return self._sync_system_power(state)
             except (json.JSONDecodeError, OSError):
                 pass
@@ -361,7 +372,7 @@ class RussoundController:
                 )
             )
         if refresh_backend:
-            return self._sync_state_from_backend(state, config)
+            return self._sync_state_from_backend(state, config, backend)
         return self._sync_system_power(state)
 
     def ensure_state_matches_config(
@@ -420,6 +431,8 @@ class RussoundController:
         return _persist_json_file(resolved_state_path, prepared_payload)
 
     def _backend_for_config(self, config: dict[str, Any] | None = None) -> RussoundBackend | None:
+        if self._shared_backend is not None:
+            return self._shared_backend
         resolved_config = config if isinstance(config, dict) else self.load_config()
         backend = RussoundBackend(config=resolved_config)
         try:
@@ -434,6 +447,12 @@ class RussoundController:
         resolved_config = config if isinstance(config, dict) else self.load_config()
         if not isinstance(resolved_config, dict):
             return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
+
+        if self._shared_backend is not None:
+            return {
+                "connected": self._shared_backend.is_connected(),
+                "message": "" if self._shared_backend.is_connected() else _BACKEND_UNAVAILABLE_MESSAGE,
+            }
 
         recorded_health = self._backend_health
         if recorded_health is not None:

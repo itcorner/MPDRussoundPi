@@ -18,6 +18,8 @@ connection: &con0192
     enable: on
     options:
       telnet-brk-on-sync: true
+      # Reopen the serial device automatically after a USB stall/disconnect.
+      connector-retry-time: 5
     connector: serialdev,
               /dev/ttyUSB0,
               19200n81,local

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Callable
 
@@ -41,13 +42,19 @@ class RussoundBackend:
         endpoint = resolve_backend_endpoint(self.config)
         self.host = endpoint.host
         self.port = endpoint.port
+        self.device = endpoint.device
+        self.baud = endpoint.baud
         self.protocol_audit_log_file = protocol_audit_log_file or resolve_backend_protocol_audit_log_file(self.config)
         self.client: Russound | None = None
+        self._connection_lock = threading.Lock()
         self._connectivity_state = "idle"
         self._last_connectivity_detail: str | None = None
 
         if endpoint.loaded_from_config:
-            logging.debug("Loaded Russound backend endpoint from config: %s:%d", self.host, self.port)
+            if self.device:
+                logging.debug("Loaded Russound serial endpoint from config: %s at %d baud", self.device, self.baud)
+            else:
+                logging.debug("Loaded Russound backend endpoint from config: %s:%d", self.host, self.port)
 
     def _log_connectivity_state(self, state: str, message: str, *args: object, detail: str | None = None) -> None:
         if self._connectivity_state == state and self._last_connectivity_detail == detail:
@@ -56,62 +63,103 @@ class RussoundBackend:
         self._connectivity_state = state
         self._last_connectivity_detail = detail
 
+    def _endpoint_description(self) -> str:
+        if self.device:
+            return f"{self.device} at {self.baud} baud"
+        return f"{self.host}:{self.port}"
+
     def _connect(self) -> Russound | None:
         """Open a new Russound client connection."""
-        if self.client is not None:
-            try:
-                if self.client.is_connected():
-                    self._connectivity_state = "connected"
-                    self._last_connectivity_detail = None
-                    return self.client
-            except Exception:
-                pass
-            self._close_client(self.client)
+        with self._connection_lock:
+            if self.client is not None:
+                try:
+                    if self.client.is_connected():
+                        self._connectivity_state = "connected"
+                        self._last_connectivity_detail = None
+                        return self.client
+                except Exception:
+                    pass
+                self._close_client(self.client)
 
-        now = time.monotonic()
-        if now < self._next_connect_attempt_at:
-            self.client = None
-            return None
-
-        try:
-            client = Russound(self.host, self.port, self.protocol_audit_log_file)
-            connected = client.connect()
-            if not connected or not client.is_connected():
-                self._next_connect_attempt_at = time.monotonic() + self._connect_backoff_seconds
-                self._close_client(client)
-                self._log_connectivity_state(
-                    "connect-failed",
-                    "Russound backend unavailable at %s:%d; retrying in %.1fs",
-                    self.host,
-                    self.port,
-                    self._connect_backoff_seconds,
-                    detail="connect-failed",
-                )
+            now = time.monotonic()
+            if now < self._next_connect_attempt_at:
                 self.client = None
                 return None
-            self._next_connect_attempt_at = 0.0
-            self.client = client
-            self._log_connectivity_state(
-                "connected",
-                "Connected to Russound backend at %s:%d",
-                self.host,
-                self.port,
-            )
-            return client
-        except Exception as exc:  # pragma: no cover - connection failures are environment-dependent
-            self._next_connect_attempt_at = time.monotonic() + self._connect_backoff_seconds
-            self.client = None
-            error_detail = str(exc)
-            self._log_connectivity_state(
-                "connect-exception",
-                "Russound backend unavailable at %s:%d; retrying in %.1fs: %s",
-                self.host,
-                self.port,
-                self._connect_backoff_seconds,
-                error_detail,
-                detail=error_detail,
-            )
-            return None
+
+            try:
+                if self.device:
+                    client = Russound(
+                        self.host,
+                        self.port,
+                        self.protocol_audit_log_file,
+                        device=self.device,
+                        baud=self.baud,
+                    )
+                else:
+                    client = Russound(self.host, self.port, self.protocol_audit_log_file)
+                connected = client.connect()
+                if not connected or not client.is_connected():
+                    self._next_connect_attempt_at = time.monotonic() + self._connect_backoff_seconds
+                    self._close_client(client)
+                    if self.device:
+                        self._log_connectivity_state(
+                            "connect-failed",
+                            "Russound backend unavailable at %s; retrying in %.1fs",
+                            self._endpoint_description(),
+                            self._connect_backoff_seconds,
+                            detail="connect-failed",
+                        )
+                    else:
+                        self._log_connectivity_state(
+                            "connect-failed",
+                            "Russound backend unavailable at %s:%d; retrying in %.1fs",
+                            self.host,
+                            self.port,
+                            self._connect_backoff_seconds,
+                            detail="connect-failed",
+                        )
+                    self.client = None
+                    return None
+                self._next_connect_attempt_at = 0.0
+                self.client = client
+                if self.device:
+                    self._log_connectivity_state(
+                        "connected",
+                        "Connected to Russound backend at %s",
+                        self._endpoint_description(),
+                    )
+                else:
+                    self._log_connectivity_state(
+                        "connected",
+                        "Connected to Russound backend at %s:%d",
+                        self.host,
+                        self.port,
+                    )
+                return client
+            except Exception as exc:  # pragma: no cover - connection failures are environment-dependent
+                self._next_connect_attempt_at = time.monotonic() + self._connect_backoff_seconds
+                self.client = None
+                error_detail = str(exc)
+                if self.device:
+                    self._log_connectivity_state(
+                        "connect-exception",
+                        "Russound backend unavailable at %s; retrying in %.1fs: %s",
+                        self._endpoint_description(),
+                        self._connect_backoff_seconds,
+                        error_detail,
+                        detail=error_detail,
+                    )
+                else:
+                    self._log_connectivity_state(
+                        "connect-exception",
+                        "Russound backend unavailable at %s:%d; retrying in %.1fs: %s",
+                        self.host,
+                        self.port,
+                        self._connect_backoff_seconds,
+                        error_detail,
+                        detail=error_detail,
+                    )
+                return None
 
     def _source_index(self, source_id: int, inputs: list[dict[str, Any]]) -> int:
         """Resolve a configured input id to the zero-based index expected by the Russound API.
@@ -221,7 +269,11 @@ class RussoundBackend:
             return None
         try:
             controller, zone_number = self._resolve_zone_address(zone)
-            zone_info = client.get_zone_extended_info(controller, zone_number)
+            try:
+                zone_info = client.get_zone_extended_info(controller, zone_number)
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
+                logging.debug("Unable to read extended zone info for Russound controller %s - zone %s: %s", controller, zone_number, exc)
+                zone_info = None
             if zone_info is not None:
                 source_index = zone_info.get("source_index")
                 source_id = None
@@ -278,7 +330,11 @@ class RussoundBackend:
         try:
             controller, zone_number = self._resolve_zone_address(zone)
 
-            zone_info = client.get_zone_extended_info(controller, zone_number)
+            try:
+                zone_info = client.get_zone_extended_info(controller, zone_number)
+            except Exception as exc:  # pragma: no cover - hardware I/O failure
+                logging.debug("Unable to read extended zone parameters for Russound controller %s - zone %s: %s", controller, zone_number, exc)
+                return None
             if zone_info is None:
                 return None
 
@@ -387,7 +443,20 @@ class RussoundBackend:
         try:
             controller, zone_number = self._resolve_zone_address(zone)
             try:
-                client.set_volume(controller, zone_number, max(0, min(100, volume)))
+                normalized_volume = max(0, min(100, volume))
+                logging.debug(
+                    "Sending volume update controller=%d zone=%d volume=%d",
+                    controller,
+                    zone_number,
+                    normalized_volume,
+                )
+                client.set_volume(controller, zone_number, normalized_volume)
+                logging.debug(
+                    "Volume update sent controller=%d zone=%d volume=%d",
+                    controller,
+                    zone_number,
+                    normalized_volume,
+                )
                 return True
             except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to set volume for Russound controller %d - zone %d: %s", controller, zone_number, exc)

@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
 from pathlib import Path
 import socket
 import threading
+import termios
 import time
 from types import TracebackType
 from typing import Any, Callable, Iterable
 
 
+
 LOGGER = logging.getLogger(__name__)
 # Recommended command spacing when using source keypad id 0x70.
-COMMAND_DELAY = 0.1
+COMMAND_DELAY = 0.2
 # Bounds the initial TCP connect so an unreachable gateway cannot stall startup.
 CONNECT_TIMEOUT_SECONDS = 5.0
+DEFAULT_SERIAL_BAUD = 19200
 KEYPAD_CODE = "70"
 ZONE_INFO_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00"
 ZONE_INFO_RESPONSE_SIGNATURE = "04 02 00 @zz 07"
@@ -33,6 +37,75 @@ SPECIFIC_KEYPAD_DISPLAY_TEMPLATE = "F0 @cc @zz @tk 00 00 70 00 02 01 01 00 00 00
 DISPLAY_TEXT_LENGTH = 13
 
 
+def _unescape_rnet_payload(payload: bytes | bytearray) -> bytes:
+    decoded = bytearray()
+    index = 0
+    while index < len(payload):
+        if payload[index] == 0xF1 and index + 1 < len(payload):
+            decoded.append(payload[index + 1] ^ 0xFF)
+            index += 2
+        else:
+            decoded.append(payload[index])
+            index += 1
+    return bytes(decoded)
+
+
+class _SerialConnection:
+    def __init__(self, fd: int, device: str) -> None:
+        self._fd = fd
+        self._device = device
+
+    @classmethod
+    def open(cls, device: str, baud: int) -> _SerialConnection:
+        fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        try:
+            settings = termios.tcgetattr(fd)
+            settings[0] = 0
+            settings[1] = 0
+            settings[2] = termios.CLOCAL | termios.CREAD | termios.CS8
+            settings[3] = 0
+            baud_constant = getattr(termios, f"B{baud}")
+            settings[4] = baud_constant
+            settings[5] = baud_constant
+            settings[6][termios.VMIN] = 0
+            settings[6][termios.VTIME] = 1
+            termios.tcsetattr(fd, termios.TCSANOW, settings)
+            return cls(fd, device)
+        except Exception:
+            os.close(fd)
+            raise
+
+    def send(self, payload: bytes) -> int:
+        return os.write(self._fd, payload)
+
+    def recv(self, size: int) -> bytes:
+        try:
+            return os.read(self._fd, size)
+        except BlockingIOError:
+            raise
+        except OSError as exc:
+            if exc.errno in {11, 35, 60}:
+                raise BlockingIOError from exc
+            raise
+
+    def setblocking(self, _flag: bool) -> None:
+        return
+
+    def settimeout(self, _timeout: float | None) -> None:
+        return
+
+    def getpeername(self) -> str:
+        return self._device
+
+    def close(self) -> None:
+        if self._fd >= 0:
+            os.close(self._fd)
+            self._fd = -1
+
+    def fileno(self) -> int:
+        return self._fd
+
+
 class Russound:
     """Project-local Russound RNET connector over TCP.
 
@@ -43,15 +116,26 @@ class Russound:
 
     _sem_comm = 0
 
-    def __init__(self, host: str, port: int, protocol_audit_log_file: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        protocol_audit_log_file: str | Path | None = None,
+        device: str | None = None,
+        baud: int = DEFAULT_SERIAL_BAUD,
+    ) -> None:
         self._host = host
         self._port = int(port)
-        self.sock: socket.socket | None = None
+        self._device = device
+        self._baud = int(baud)
+        self.sock: _SerialConnection | socket.socket | None = None
         self._last_send = time.time()
         self.lock = threading.Lock()
         self._rx_buffer = bytearray()
         self._pending_frames: deque[bytearray] = deque()
         self._pending_zone_updates: deque[dict[str, Any]] = deque()
+        self._expected_response_signature: str | None = None
+        self._response_transaction_depth = 0
         self._update_callback: Callable[[dict[str, Any]], None] | None = None
         self._update_listener_stop = threading.Event()
         self._update_listener_thread: threading.Thread | None = None
@@ -65,16 +149,23 @@ class Russound:
     def connect(self) -> bool:
         with self.lock:
             try:
+                if self.sock is not None and self.is_connected():
+                    LOGGER.debug("Russound connection already open; reusing existing connection")
+                    return True
                 if self.sock is not None:
                     try:
                         self.sock.close()
                     except OSError:
                         pass
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.settimeout(CONNECT_TIMEOUT_SECONDS)
-                self.sock.connect((self._host, self._port))
-                self.sock.settimeout(None)
-                LOGGER.info("Successfully connected to Russound on %s:%s", self._host, self._port)
+                if self._device:
+                    self.sock = _SerialConnection.open(self._device, self._baud)
+                    LOGGER.info("Successfully connected to Russound serial device %s at %d baud", self._device, self._baud)
+                else:
+                    self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.sock.settimeout(CONNECT_TIMEOUT_SECONDS)
+                    self.sock.connect((self._host, self._port))
+                    self.sock.settimeout(None)
+                    LOGGER.info("Successfully connected to Russound TCP endpoint %s:%s", self._host, self._port)
                 return True
             except OSError as exc:
                 self.sock = None
@@ -95,6 +186,15 @@ class Russound:
 
     def close(self) -> None:
         self.disconnect()
+
+    def _reset_connection_on_error(self) -> None:
+        """Drop the socket so the next call reconnects instead of reusing a dead peer."""
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
 
     def start_update_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Start receiving unsolicited zone power and volume updates."""
@@ -181,17 +281,26 @@ class Russound:
     def get_zone_info(self, controller: int, zone: int, return_variable: int) -> int | list[int] | None:
         resp_msg_signature = self.__create_response_signature("04 02 00 @zz 07", zone)
         send_msg = self.__create_send_message("F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00", controller, zone)
+        self._response_transaction_depth += 1
         with self.lock:
-            self.__send_data(send_msg)
-            matching_message = self.__get_response_message(resp_msg_signature)
-            if matching_message is None:
-                LOGGER.warning(
-                    "Did not receive expected Russound zone state for controller %s zone %s", controller, zone
-                )
-                return None
-            if return_variable == 4:
-                return [matching_message[11], matching_message[12], matching_message[13]]
-            return matching_message[return_variable + 11]
+            try:
+                self.__send_data(send_msg)
+                matching_message = self.__get_response_message(resp_msg_signature)
+                if matching_message is None:
+                    LOGGER.warning(
+                        "Did not receive expected Russound zone state for controller %s zone %s "
+                        "(expected signature: %s; pending frames: %d)",
+                        controller,
+                        zone,
+                        resp_msg_signature,
+                        len(self._pending_frames),
+                    )
+                    return None
+                if return_variable == 4:
+                    return [matching_message[11], matching_message[12], matching_message[13]]
+                return matching_message[return_variable + 11]
+            finally:
+                self._response_transaction_depth -= 1
 
     def get_power(self, controller: int, zone: int) -> int | None:
         value = self.get_zone_info(controller, zone, 0)
@@ -361,8 +470,9 @@ class Russound:
             frame_bytes.extend(payload)
             try:
                 self.sock.send(payload)
-            except ConnectionResetError as exc:
+            except OSError as exc:
                 LOGGER.error("Error sending data to Russound controller: %s", exc)
+                self._reset_connection_on_error()
                 raise
         self._last_send = time.time()
         self._audit_frame("TX", frame_bytes)
@@ -376,17 +486,44 @@ class Russound:
             raise ConnectionResetError("Russound socket is not connected")
 
         no_of_socket_reads = 1 if resp_msg_signature is None else 10
-
-        time.sleep(delay)
-        self.sock.setblocking(False)
-
-        for _ in range(no_of_socket_reads):
-            self._read_available_locked()
-            matching_message = self._pop_matching_frame_locked(resp_msg_signature)
-            if matching_message is not None:
-                return matching_message
+        LOGGER.debug(
+            "Waiting for Russound response signature=%s (max reads=%d)",
+            resp_msg_signature or "any frame",
+            no_of_socket_reads,
+        )
+        self._expected_response_signature = resp_msg_signature
+        try:
             time.sleep(delay)
-        return None
+            self.sock.setblocking(False)
+
+            for _ in range(no_of_socket_reads):
+                self._read_available_locked()
+                if resp_msg_signature is not None:
+                    for frame in self._pending_frames:
+                        matching_message, _ = self.__find_signature(bytes(frame), resp_msg_signature)
+                        if matching_message is None:
+                            frame_text = " ".join(f"{byte:02X}" for byte in frame)
+                            LOGGER.debug(
+                                "Russound response candidate expected=%s received=%s match=False",
+                                resp_msg_signature,
+                                frame_text,
+                            )
+                matching_message = self._pop_matching_frame_locked(resp_msg_signature)
+                if matching_message is not None:
+                    LOGGER.debug(
+                        "Russound response matched pattern=%s",
+                        resp_msg_signature or "any frame",
+                    )
+                    return matching_message
+                time.sleep(delay)
+            LOGGER.debug(
+                "Russound response timed out expected=%s pending=%d",
+                resp_msg_signature or "any frame",
+                len(self._pending_frames),
+            )
+            return None
+        finally:
+            self._expected_response_signature = None
 
     def _update_listener_loop(self) -> None:
         while not self._update_listener_stop.wait(0.05):
@@ -399,6 +536,7 @@ class Russound:
                     except OSError:
                         continue
                     self._read_available_locked()
+                    self._collect_unsolicited_updates_locked()
                     updates = list(self._pending_zone_updates)
                     self._pending_zone_updates.clear()
             except (ConnectionResetError, OSError) as exc:
@@ -426,8 +564,9 @@ class Russound:
                 chunk = self.sock.recv(4096)
             except BlockingIOError:
                 break
-            except ConnectionResetError as exc:
+            except OSError as exc:
                 LOGGER.error("Error receiving data from Russound controller: %s", exc)
+                self._reset_connection_on_error()
                 raise
             if not chunk:
                 break
@@ -437,11 +576,110 @@ class Russound:
         frames, remainder = self._extract_complete_frames(bytes(self._rx_buffer))
         self._rx_buffer = bytearray(remainder)
         for frame in frames:
+            self._log_received_frame_semantics(frame)
+            if len(frame) > 1 and frame[1] == 0x7E:
+                LOGGER.debug("Discarding periodic RNET frame addressed to controller 0x7E")
+                continue
+            if len(frame) > 7 and frame[7] == 0x06:
+                LOGGER.debug("Discarding RNET frame with undocumented message type 0x06")
+                continue
+            self._pending_frames.append(frame)
+
+    def _log_received_frame_semantics(self, frame: bytearray) -> None:
+        if len(frame) < 12 or frame[0] != 0xF0 or frame[7] != 0x00:
+            return
+
+        if frame[8] == 0x00 and len(frame) >= 31 and frame[9:14] == bytearray((0x04, 0x02, 0x00, frame[12], 0x07)):
+            body = frame[20:-2]
+            if len(body) >= 11:
+                LOGGER.debug(
+                    "Received zone info: controller=%d zone=%d power=%s source=%d volume=%d "
+                    "bass=%d treble=%d loudness=%s balance=%d system_power=%s shared_source=%s "
+                    "party=%s do_not_disturb=%s",
+                    frame[1] + 1,
+                    frame[12] + 1,
+                    bool(body[0]),
+                    body[1],
+                    body[2] * 2,
+                    body[3] - 10,
+                    body[4] - 10,
+                    bool(body[5]),
+                    body[6] - 10,
+                    bool(body[7]),
+                    bool(body[8]),
+                    bool(body[9]),
+                    bool(body[10]),
+                )
+            return
+
+        if frame[8] == 0x00 and len(frame) >= 16 and frame[9:15] == bytearray((0x05, 0x02, 0x00, frame[12], 0x00, frame[14])):
+            parameter_names = {
+                0: "bass",
+                1: "treble",
+                2: "loudness",
+                3: "balance",
+                4: "turn_on_volume",
+            }
+            parameter_id = frame[14]
+            raw_value = frame[21] if len(frame) > 21 else None
+            if raw_value is None:
+                return
+            parameter = parameter_names.get(parameter_id, f"parameter_{parameter_id:02X}")
+            value: Any = raw_value
+            if parameter in {"bass", "treble", "balance"}:
+                value -= 10
+            elif parameter == "turn_on_volume":
+                value *= 2
+            elif parameter == "loudness":
+                value = bool(value)
+            LOGGER.debug(
+                "Received zone extended parameter: controller=%d zone=%d parameter=%s value=%s",
+                frame[1] + 1,
+                frame[12] + 1,
+                parameter,
+                value,
+            )
+            return
+
+        if frame[8:11] == bytearray((0x02, 0x01, 0x01)):
+            body = _unescape_rnet_payload(frame[12:-2])
+            if len(body) < 3:
+                return
+            text = body[3:].split(b"\x00", 1)[0].decode("ascii", errors="replace")
+            LOGGER.debug(
+                "Received display string: controller=%d zone=%d keypad=%d alignment=%d "
+                "flash_time_10ms=%d text=%r",
+                frame[1] + 1,
+                frame[2] + 1,
+                frame[3] + 1,
+                body[0],
+                body[1] | (body[2] << 8),
+                text,
+            )
+
+    def _collect_unsolicited_updates_locked(self) -> None:
+        """Move idle zone-update frames out of the response queue for callbacks."""
+        retained_frames: deque[bytearray] = deque()
+        while self._pending_frames:
+            frame = self._pending_frames.popleft()
+            if self._response_transaction_depth > 0:
+                retained_frames.append(frame)
+                continue
+            if self._expected_response_signature is not None:
+                matching_message, _ = self.__find_signature(bytes(frame), self._expected_response_signature)
+                if matching_message is not None:
+                    retained_frames.append(frame)
+                    continue
             zone_updates = self._parse_zone_updates(frame)
             if zone_updates:
+                LOGGER.debug(
+                    "Classified idle RNET frame as unsolicited zone update: %s",
+                    " ".join(f"{byte:02X}" for byte in frame),
+                )
                 self._pending_zone_updates.extend(zone_updates)
             else:
-                self._pending_frames.append(frame)
+                retained_frames.append(frame)
+        self._pending_frames = retained_frames
 
     def _pop_matching_frame_locked(self, message_signature: str | None) -> bytearray | None:
         if not self._pending_frames:
@@ -502,10 +740,9 @@ class Russound:
         for index in range(len(data_stream)):
             if data_stream[index] == 0xF7:
                 index_of_last_f7 = index
-            # Keep the original matching behavior: once the signature appears
-            # and enough bytes exist for a complete response, return the stream
-            # from that location.
-            if data_stream[index : index + len(signature)] == signature and (len(data_stream) - index >= 24):
+            # Return the response from the signature so existing field offsets
+            # remain relative to the matched protocol path.
+            if data_stream[index : index + len(signature)] == signature and 0xF7 in data_stream[index + len(signature) :]:
                 signature_match_index = index
                 break
 
@@ -547,8 +784,6 @@ class Russound:
         return frames, remainder
 
     def _audit_rx_frames(self, chunk: bytes) -> None:
-        if self._protocol_audit_log_file is None:
-            return
         self._audit_rx_buffer.extend(chunk)
         while True:
             end = self._audit_rx_buffer.find(0xF7)
@@ -562,12 +797,12 @@ class Russound:
             self._audit_frame("RX", candidate[start:])
 
     def _audit_frame(self, direction: str, frame: bytes | bytearray) -> None:
-        if self._protocol_audit_log_file is None:
-            return
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         frame_text = " ".join(f"{byte:02X}" for byte in frame)
-        with self._protocol_audit_log_file.open("a", encoding="utf-8") as handle:
-            handle.write(f"{timestamp} {direction} {frame_text}\n")
+        LOGGER.debug("RNET %s %s", direction, frame_text)
+        if self._protocol_audit_log_file is not None:
+            with self._protocol_audit_log_file.open("a", encoding="utf-8") as handle:
+                handle.write(f"{timestamp} {direction} {frame_text}\n")
 
     def _parse_zone_user_parameter_value(self, parameter: str, message: bytearray | None) -> Any | None:
         if message is None or len(message) < 13:
