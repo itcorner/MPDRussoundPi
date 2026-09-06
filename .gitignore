@@ -14,3 +14,4 @@ venv/
 docker/dummy-data/dummy_state.json
 docker/data/russound_state.json
 docker/config/russound_config.json
+russound_capture.log.bak
