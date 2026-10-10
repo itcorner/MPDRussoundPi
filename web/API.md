@@ -77,7 +77,7 @@ and DNS rebinding instead, so open pages keep working across server restarts.
 The backend tracks frontend sessions using an HTTP cookie (`russound_session_id`).
 
 - The cookie is set by the server on normal page/API responses.
-- SSE client deduplication for status monitoring uses this cookie session id.
+- SSE client grouping on the status page uses this cookie session id.
 - Frontend code does not need to generate or send custom session headers.
 
 Examples:
@@ -175,14 +175,12 @@ If no valid config file is supplied to the server (`--config`), `GET /api/state`
 
 Returns the current view payload (`config`, `config_required`, `state`).
 
-- Requires API token authentication.
 - Response type: JSON.
 
 ### GET /api/events
 
 Server-Sent Events stream used for multi-client synchronization.
 
-- Requires API token authentication.
 - Content type: `text/event-stream; charset=utf-8`
 - Event name: `state-change`
 - Data payload:
@@ -193,11 +191,20 @@ Server-Sent Events stream used for multi-client synchronization.
 
 The server also sends keepalive comments (`: ping`) periodically.
 
+- The stream starts with `retry: 2000` and is closed by the server after
+  5 minutes; `EventSource` reconnects automatically and the frontend
+  re-fetches state on every (re)connect.
+- Every stream is registered separately, so several tabs of the same browser
+  all receive updates.
+- Concurrent streams are limited (`RUSSOUND_MAX_EVENT_STREAMS`, at most
+  worker threads − 4). Above the limit the server answers `503` with
+  `Retry-After: 30`; the frontend keeps polling and retries the stream later.
+- The frontend closes its stream while the page is hidden.
+
 ### GET /api/status
 
 Returns the combined status payload for backwards compatibility.
 
-- Requires API token authentication.
 - Response type: JSON.
 
 Response shape:
@@ -227,7 +234,6 @@ Response shape:
 
 Returns the currently connected frontend clients.
 
-- Requires API token authentication.
 - Response type: JSON.
 
 Response shape:
@@ -249,7 +255,6 @@ Response shape:
 
 Returns the last 50 frontend-triggered actions.
 
-- Requires API token authentication.
 - Response type: JSON.
 
 Response shape:
@@ -267,14 +272,13 @@ Response shape:
 }
 ```
 
-`connected_clients` reflects active SSE connections. `recent_events` is an in-memory rolling history capped at 50 entries.
+`connected_clients` reflects active SSE connections, grouped per browser session (`streams` is the number of open streams, e.g. tabs). `recent_events` is an in-memory rolling history capped at 50 entries.
 When available, each connected client includes its cookie-based `session_id` value.
 
 ### GET /api/config
 
 Returns the editable zone-configuration payload used by the configuration page.
 
-- Requires API token authentication.
 - Response type: JSON.
 
 Response shape:
@@ -307,7 +311,6 @@ Response shape:
 
 Sets system power for all zones.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -320,7 +323,6 @@ Request body:
 
 Sets one shared source for all zones.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -335,9 +337,8 @@ Request body:
 
 Activates a shortcut from `config.shortcuts` by id.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
-- No request body is required.
+- No request body is required, but the request must still be sent with `Content-Type: application/json`.
 - If the shortcut id is unknown, state is unchanged and the current view payload is still returned.
 
 Shortcut targets now use physical Russound addresses:
@@ -358,7 +359,6 @@ Shortcut targets now use physical Russound addresses:
 
 Updates the zone configuration used by the frontend overview and persists it to the config file.
 
-- Requires API token authentication.
 - Returns the updated config-editor payload.
 - Rejects invalid controller/zone slots with `400 Bad Request`.
 - Only slots within each controller's configured `zone_count` can be enabled, so the frontend cannot create more zones than the controller supports.
@@ -384,7 +384,6 @@ Request body:
 
 Sets power for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -399,7 +398,6 @@ Request body:
 
 Sets source for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -414,7 +412,6 @@ Request body:
 
 Sets volume for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -429,7 +426,6 @@ Volume is clamped to the range `0..100`.
 
 Sets bass for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -444,7 +440,6 @@ Bass is normalized to the range `-10..10`.
 
 Sets treble for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -459,7 +454,6 @@ Treble is normalized to the range `-10..10`.
 
 Sets loudness for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -472,7 +466,6 @@ Request body:
 
 Sets balance for a single zone.
 
-- Requires API token authentication.
 - Returns the updated main view payload.
 
 Request body:
@@ -514,9 +507,7 @@ python web/russound_server.py \
 ## Deployment and security notes
 
 - The current server uses HTTP, not HTTPS. For non-local deployments, place it behind a TLS-terminating reverse proxy if transport encryption is required.
-- The API token protects browser-to-server API calls, but it is delivered to the served frontend and is therefore a same-origin request token, not user authentication.
-- Anyone who can load the controller page can also use its current token until the server process restarts.
-- Restarting the server rotates the token automatically.
+- There is no user authentication; state-changing requests are protected against cross-site requests (see "Request protection"). Anyone who can reach the web port can control the system.
 - The status API and status page expose client IP addresses and recent frontend-triggered actions; restrict access accordingly when deploying outside a trusted network.
 
 ## Config reference

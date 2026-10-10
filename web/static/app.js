@@ -15,6 +15,10 @@ const shortcutsContainer = document.getElementById("shortcuts");
 const configHint = document.getElementById("configHint");
 const appShell = document.querySelector("main.app-shell");
 let eventSource = null;
+let eventSourceRetryTimer = null;
+let statePollTimer = null;
+const eventSourceRetryDelayMs = 30000;
+const statePollIntervalMs = 5000;
 let stateFetchInFlight = false;
 let stateFetchQueued = false;
 // Zone changes still awaiting the backend; stale state payloads must not revert them in the UI.
@@ -131,7 +135,7 @@ async function fetchState() {
 }
 
 function startStateSync() {
-  if (!window.EventSource || eventSource) {
+  if (!window.EventSource || eventSource || document.hidden) {
     return;
   }
   eventSource = new EventSource("/api/events");
@@ -147,7 +151,41 @@ function startStateSync() {
     }
     fetchState();
   });
-  eventSource.onerror = () => {};
+  // Catch up on changes missed while the stream was reconnecting.
+  eventSource.onopen = () => {
+    fetchState();
+  };
+  eventSource.onerror = () => {
+    // EventSource gives up for good on non-200 responses (e.g. 503 when the server stream limit is reached).
+    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+      stopStateSync();
+      eventSourceRetryTimer = window.setTimeout(startStateSync, eventSourceRetryDelayMs);
+    }
+  };
+}
+
+function stopStateSync() {
+  if (eventSourceRetryTimer !== null) {
+    window.clearTimeout(eventSourceRetryTimer);
+    eventSourceRetryTimer = null;
+  }
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+}
+
+function startStatePolling() {
+  if (statePollTimer === null && !document.hidden) {
+    statePollTimer = window.setInterval(fetchState, statePollIntervalMs);
+  }
+}
+
+function stopStatePolling() {
+  if (statePollTimer !== null) {
+    window.clearInterval(statePollTimer);
+    statePollTimer = null;
+  }
 }
 
 function render() {
@@ -451,4 +489,16 @@ systemButton.addEventListener("click", () => {
 
 fetchState();
 startStateSync();
-setInterval(fetchState, 5000);
+startStatePolling();
+
+// Hidden pages (sleeping phones, background tabs) release their stream instead of leaving a dead connection behind.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopStateSync();
+    stopStatePolling();
+    return;
+  }
+  fetchState();
+  startStateSync();
+  startStatePolling();
+});

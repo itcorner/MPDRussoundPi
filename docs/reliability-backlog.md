@@ -13,9 +13,9 @@ degradation / resource growth, **L** = edge cases.
 | 2 | H | Update listener never started if gateway is down at boot | [x] |
 | 3 | H | Peer close / half-open TCP not detected | [x] |
 | 4 | H | Open UI pages die silently after server restart (API token) | [x] |
-| 5 | H | SSE streams pin waitress worker threads | [ ] |
+| 5 | H | SSE streams pin waitress worker threads | [x] |
 | 6 | M | Protocol audit log grows unbounded | [ ] |
-| 7 | M | SSE client registry never pruned | [ ] |
+| 7 | M | SSE client registry never pruned | [x] |
 | 8 | M | Unbounded per-client SSE queues | [ ] |
 | 9 | M | Silent zones hold `state_lock` for ~9 s per poll | [ ] |
 | 10 | L | Receive buffers unbounded on line noise | [ ] |
@@ -110,6 +110,13 @@ degradation / resource growth, **L** = edge cases.
 
 ## 5. SSE streams pin waitress worker threads (H)
 
+> **Done:** one registry entry per stream (fixes tabs of the same browser
+> silently losing live updates), streams end after 5 min with `retry: 2000`
+> and the page resyncs on reconnect, pages close their stream and pause
+> polling while hidden, concurrent streams are capped at threads − 4
+> (`503` + client retry after 30 s), default threads raised to 24, and
+> `TCP_USER_TIMEOUT` (30 s, Linux) drops dead client connections.
+
 - **Where:** `web/russound_server.py` `_serve_events()` / `event_stream()`;
   waitress `threads=16` default.
 - **Problem:** Each open SSE stream occupies a worker thread for its whole
@@ -137,6 +144,9 @@ degradation / resource growth, **L** = edge cases.
   file size stays bounded.
 
 ## 7. SSE client registry never pruned (M)
+
+> **Done** together with item 5: streams are removed from the registry when
+> they end; the status page groups streams per browser session.
 
 - **Where:** `web/russound_server.py` `_event_clients`,
   `_event_client_index`, `unregister_event_client()`.

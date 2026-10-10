@@ -5,6 +5,10 @@ const eventsEmpty = document.getElementById("eventsEmpty");
 const eventsTableBody = document.getElementById("eventsTableBody");
 
 let eventSource = null;
+let eventSourceRetryTimer = null;
+let statusPollTimer = null;
+const eventSourceRetryDelayMs = 30000;
+const statusPollIntervalMs = 5000;
 let statusFetchInFlight = false;
 let statusFetchQueued = false;
 const expandedPayloadRows = new Set();
@@ -62,6 +66,7 @@ function renderStatus(payload, historyPayload) {
       </div>
       <div class="status-meta">Connected: ${client.connected_at}</div>
       <div class="status-meta">Session: ${sessionValue}</div>
+      <div class="status-meta">Open streams: ${client.streams || 1}</div>
       <div class="status-meta">User-Agent: ${client.user_agent || "Unknown"}</div>
     `;
     clientsList.appendChild(item);
@@ -170,16 +175,60 @@ async function fetchStatus() {
 }
 
 function startStatusSync() {
-  if (!window.EventSource || eventSource) {
+  if (!window.EventSource || eventSource || document.hidden) {
     return;
   }
   eventSource = new EventSource("/api/events");
   eventSource.addEventListener("state-change", () => {
     fetchStatus();
   });
-  eventSource.onerror = () => {};
+  eventSource.onopen = () => {
+    fetchStatus();
+  };
+  eventSource.onerror = () => {
+    // EventSource gives up for good on non-200 responses (e.g. 503 when the server stream limit is reached).
+    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+      stopStatusSync();
+      eventSourceRetryTimer = window.setTimeout(startStatusSync, eventSourceRetryDelayMs);
+    }
+  };
+}
+
+function stopStatusSync() {
+  if (eventSourceRetryTimer !== null) {
+    window.clearTimeout(eventSourceRetryTimer);
+    eventSourceRetryTimer = null;
+  }
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+}
+
+function startStatusPolling() {
+  if (statusPollTimer === null && !document.hidden) {
+    statusPollTimer = window.setInterval(fetchStatus, statusPollIntervalMs);
+  }
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer !== null) {
+    window.clearInterval(statusPollTimer);
+    statusPollTimer = null;
+  }
 }
 
 fetchStatus();
 startStatusSync();
-setInterval(fetchStatus, 5000);
+startStatusPolling();
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopStatusSync();
+    stopStatusPolling();
+    return;
+  }
+  fetchStatus();
+  startStatusSync();
+  startStatusPolling();
+});

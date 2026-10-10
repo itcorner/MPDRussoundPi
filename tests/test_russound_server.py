@@ -1,11 +1,12 @@
 import logging
 import json
+import socket
 import sys
 import unittest
 from queue import Queue
 from unittest.mock import Mock, patch
 
-from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging
+from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging, _connection_socket_options
 from web.russound_state import RussoundState
 from web.zone import Zone
 
@@ -353,7 +354,7 @@ class RussoundServerTests(unittest.TestCase):
             client = server.app.test_client()
             response = client.get("/api/events", buffered=False)
             stream = iter(response.response)
-            self.assertEqual(next(stream), b": connected\n\n")
+            self.assertEqual(next(stream), b"retry: 2000\n: connected\n\n")
 
             server.broadcast_state_change()
 
@@ -451,7 +452,7 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             _close_server(server)
 
-    def test_status_client_payload_deduplicates_clients_from_same_session(self):
+    def test_status_client_payload_groups_streams_from_same_session(self):
         server = RussoundHTTPServer(None, None)
         try:
             server.register_event_client("127.0.0.1", "status-test", "session-123")
@@ -461,67 +462,87 @@ class RussoundServerTests(unittest.TestCase):
 
             self.assertEqual(len(payload["connected_clients"]), 1)
             self.assertEqual(payload["connected_clients"][0]["ip"], "127.0.0.1")
+            self.assertEqual(payload["connected_clients"][0]["streams"], 2)
         finally:
             _close_server(server)
 
-    def test_reconnecting_same_session_keeps_only_latest_active_client(self):
+    def test_every_tab_of_the_same_session_receives_broadcasts(self):
         server = RussoundHTTPServer(None, None)
         try:
-            first_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-123")
-            second_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-123")
+            first_client_id, first_queue = server.register_event_client("127.0.0.1", "tab", "session-123")
+            second_client_id, second_queue = server.register_event_client("127.0.0.1", "tab", "session-123")
+            self.assertNotEqual(first_client_id, second_client_id)
 
-            self.assertEqual(first_client_id, second_client_id)
+            server.broadcast_state_change()
 
-            payload = server.build_client_status_payload()
-            self.assertEqual(len(payload["connected_clients"]), 1)
-            self.assertEqual(payload["connected_clients"][0]["id"], second_client_id)
-
-            server.unregister_event_client(second_client_id)
-            payload = server.build_client_status_payload()
-            self.assertEqual(payload["connected_clients"], [])
+            self.assertEqual(json.loads(first_queue.get_nowait())["revision"], 1)
+            self.assertEqual(json.loads(second_queue.get_nowait())["revision"], 1)
         finally:
             _close_server(server)
 
-    def test_reconnecting_after_disconnect_reuses_existing_session_entry(self):
+    def test_unregister_removes_stream_from_registry(self):
         server = RussoundHTTPServer(None, None)
         try:
-            first_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-456")
-            server.unregister_event_client(first_client_id)
+            client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-456")
+            server.unregister_event_client(client_id)
 
-            second_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-456")
-
-            self.assertEqual(first_client_id, second_client_id)
-            payload = server.build_client_status_payload()
-            self.assertEqual(len(payload["connected_clients"]), 1)
-            self.assertEqual(payload["connected_clients"][0]["id"], second_client_id)
+            self.assertEqual(server._event_clients, {})
+            self.assertEqual(server.build_client_status_payload()["connected_clients"], [])
+            self.assertFalse(server._has_active_event_clients())
         finally:
             _close_server(server)
 
-    def test_stale_disconnect_does_not_deactivate_newer_same_session_connection(self):
-        server = RussoundHTTPServer(None, None)
+    def test_event_stream_limit_rejects_additional_streams_with_503(self):
+        server = RussoundHTTPServer(None, None, max_event_streams=1)
         try:
-            client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-789")
-            with server._event_clients_lock:
-                first_connection_id = server._event_clients[client_id]["connection_id"]
+            self.assertIsNotNone(server.register_event_client("127.0.0.1", "first"))
+            response = server.app.test_client().get("/api/events")
 
-            reused_client_id, _ = server.register_event_client("127.0.0.1", "status-test", "session-789")
-            self.assertEqual(client_id, reused_client_id)
-            with server._event_clients_lock:
-                second_connection_id = server._event_clients[reused_client_id]["connection_id"]
-
-            self.assertNotEqual(first_connection_id, second_connection_id)
-
-            # Simulate the older SSE stream closing after the replacement connection is active.
-            server.unregister_event_client(client_id, expected_connection_id=first_connection_id)
-            payload = server.build_client_status_payload()
-            self.assertEqual(len(payload["connected_clients"]), 1)
-            self.assertEqual(payload["connected_clients"][0]["id"], reused_client_id)
-
-            server.unregister_event_client(reused_client_id, expected_connection_id=second_connection_id)
-            payload = server.build_client_status_payload()
-            self.assertEqual(payload["connected_clients"], [])
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.headers.get("Retry-After"), "30")
+            self.assertEqual(len(server._event_clients), 1)
         finally:
             _close_server(server)
+
+    def test_event_stream_ends_after_max_lifetime_and_unregisters(self):
+        server = RussoundHTTPServer(None, None)
+        server._event_stream_max_seconds = 0
+        response = None
+        try:
+            response = server.app.test_client().get("/api/events", buffered=False)
+            chunks = list(response.response)
+
+            self.assertEqual(chunks, [b"retry: 2000\n: connected\n\n"])
+            self.assertEqual(server._event_clients, {})
+        finally:
+            if response is not None:
+                response.close()
+            _close_server(server)
+
+    def test_run_derives_stream_limit_from_thread_count(self):
+        server = RussoundHTTPServer(None, None, max_event_streams=100)
+        try:
+            with patch.object(server, "_start_backend_change_watcher"), patch(
+                "web.russound_server.importlib.import_module"
+            ) as import_module:
+                server.run("127.0.0.1", 8000, waitress_threads=10, tcp_user_timeout_seconds=30)
+
+            self.assertEqual(server._max_event_streams, 6)
+            create_server = import_module.return_value.create_server
+            self.assertEqual(create_server.call_args.kwargs["threads"], 10)
+            waitress_server = create_server.return_value
+            self.assertIn((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1), waitress_server.adj.socket_options)
+            waitress_server.run.assert_called_once_with()
+        finally:
+            _close_server(server)
+
+    def test_connection_socket_options_include_tcp_user_timeout_when_supported(self):
+        options = _connection_socket_options(30)
+        if hasattr(socket, "TCP_USER_TIMEOUT"):
+            self.assertIn((socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 30000), options)
+        else:
+            self.assertEqual(options, [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)])
+        self.assertEqual(_connection_socket_options(0), [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)])
 
     def test_status_history_payload_keeps_last_fifty_frontend_events(self):
         server = RussoundHTTPServer(None, None)

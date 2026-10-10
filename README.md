@@ -241,7 +241,9 @@ Host and port are configurable through environment variables, which take precede
 | `RUSSOUND_CONFIG` | Config file path | `/config/russound_config.json` |
 | `RUSSOUND_STATE` | State file path | `/data/russound_state.json` |
 | `RUSSOUND_DEBUG` | Enable debug logging | `false` |
-| `RUSSOUND_WAITRESS_THREADS` | Waitress worker threads | `16` |
+| `RUSSOUND_WAITRESS_THREADS` | Waitress worker threads | `24` |
+| `RUSSOUND_MAX_EVENT_STREAMS` | Max concurrent live-update (SSE) streams; capped at threads − 4 so page loads and API calls always have free threads | threads − 4 |
+| `RUSSOUND_TCP_USER_TIMEOUT_SECONDS` | Drop client connections whose sent data stays unacknowledged this long (Linux only, `0` disables) | `30` |
 | `RUSSOUND_ALLOWED_HOSTS` | Comma-separated `Host` names/IPs accepted (blocks DNS rebinding); empty accepts any | empty |
 | `RUSSOUND_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to send API writes, e.g. `https://music.example` | empty |
 | `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |

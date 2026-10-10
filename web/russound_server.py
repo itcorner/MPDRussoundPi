@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from queue import Empty, Queue
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -33,6 +34,14 @@ WEB_STATIC = WEB_ROOT / "static"
 SESSION_COOKIE_NAME = "russound_session_id"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Streams are closed periodically so a dead client cannot pin a worker thread indefinitely.
+EVENT_STREAM_MAX_SECONDS = 300.0
+EVENT_STREAM_PING_SECONDS = 15.0
+EVENT_STREAM_RETRY_MS = 2000
+# Worker threads always kept free for page loads and API calls.
+RESERVED_REQUEST_THREADS = 4
+DEFAULT_WAITRESS_THREADS = 24
+DEFAULT_TCP_USER_TIMEOUT_SECONDS = 30
 BACKEND_CHANGE_POLL_INTERVAL_SECONDS = 2.0
 # Gives the controller time to apply a keypad action and coalesces bursts of key presses.
 ZONE_REFRESH_DEBOUNCE_SECONDS = 0.5
@@ -125,6 +134,16 @@ def _split_env_list(name: str) -> list[str]:
     return [item.strip() for item in (env_str(name) or "").split(",") if item.strip()]
 
 
+def _connection_socket_options(tcp_user_timeout_seconds: int) -> list[tuple[int, int, int]]:
+    """Socket options waitress applies to each accepted client connection."""
+    options = [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
+    tcp_user_timeout = getattr(socket, "TCP_USER_TIMEOUT", None)
+    if tcp_user_timeout is not None and tcp_user_timeout_seconds > 0:
+        # Drops connections whose sent data stays unacknowledged, e.g. sleeping phones holding an SSE stream.
+        options.append((socket.IPPROTO_TCP, tcp_user_timeout, tcp_user_timeout_seconds * 1000))
+    return options
+
+
 class RussoundHTTPServer:
     def __init__(
         self,
@@ -133,6 +152,7 @@ class RussoundHTTPServer:
         allowed_hosts: list[str] | None = None,
         allowed_origins: list[str] | None = None,
         trusted_proxy_count: int = 0,
+        max_event_streams: int | None = None,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
@@ -142,7 +162,9 @@ class RussoundHTTPServer:
         self.state_revision = 0
         self.state_lock = threading.Lock()
         self._event_clients: dict[int, dict[str, Any]] = {}
-        self._event_client_index: dict[str, int] = {}
+        # None means unlimited until run() derives a limit from the worker thread count.
+        self._max_event_streams = max_event_streams
+        self._event_stream_max_seconds = EVENT_STREAM_MAX_SECONDS
         self.controller = get_controller(config_path, state_path)
         self._event_clients_lock = threading.Lock()
         self._event_client_id = 0
@@ -348,9 +370,13 @@ class RussoundHTTPServer:
         host: str,
         port: int,
         debug: bool = False,
-        waitress_threads: int = 16,
+        waitress_threads: int = DEFAULT_WAITRESS_THREADS,
+        tcp_user_timeout_seconds: int = DEFAULT_TCP_USER_TIMEOUT_SECONDS,
     ) -> None:
         self._backend_poll_interval_seconds = self._resolve_backend_poll_interval_seconds()
+        thread_count = max(RESERVED_REQUEST_THREADS + 1, waitress_threads)
+        stream_limit = thread_count - RESERVED_REQUEST_THREADS
+        self._max_event_streams = stream_limit if self._max_event_streams is None else min(self._max_event_streams, stream_limit)
         self._start_backend_change_watcher()
         if debug:
             self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
@@ -361,8 +387,11 @@ class RussoundHTTPServer:
         except ModuleNotFoundError as exc:
             raise RuntimeError("waitress is required when debug mode is disabled. Install it with 'pip install waitress'.") from exc
 
-        serve = getattr(waitress_module, "serve")
-        serve(self.app, host=host, port=port, threads=max(4, waitress_threads))
+        create_server = getattr(waitress_module, "create_server")
+        server = create_server(self.app, host=host, port=port, threads=thread_count)
+        # Waitress has no serve() argument for this; it applies adj.socket_options to every accepted connection.
+        server.adj.socket_options = _connection_socket_options(tcp_user_timeout_seconds)
+        server.run()
 
     def _start_backend_change_watcher(self) -> None:
         with self._backend_watcher_lock:
@@ -457,7 +486,7 @@ class RussoundHTTPServer:
 
     def _has_active_event_clients(self) -> bool:
         with self._event_clients_lock:
-            return any(client.get("active", True) for client in self._event_clients.values())
+            return bool(self._event_clients)
 
     def _request_zone_refresh(self, controller_id: int, zone_number: int) -> None:
         with self._zone_refresh_lock:
@@ -582,28 +611,36 @@ class RussoundHTTPServer:
 
     def _serve_events(self) -> Response:
         session_id = self._get_or_create_session_id()
-        logging.info(
-            "SSE connection requested host=%s session_id=%s",
-            self._request_ip(),
-            session_id,
-        )
-        client_id, event_queue = self.register_event_client(
+        registration = self.register_event_client(
             self._request_ip(),
             request.headers.get("User-Agent"),
             session_id,
         )
-        connection_id: str | None = None
-        with self._event_clients_lock:
-            client_entry = self._event_clients.get(client_id)
-            if client_entry is not None:
-                connection_id = client_entry.get("connection_id")
+        if registration is None:
+            logging.warning(
+                "SSE connection rejected: stream limit %s reached host=%s session_id=%s",
+                self._max_event_streams,
+                self._request_ip(),
+                session_id,
+            )
+            response = jsonify({"error": "Too many live update connections"})
+            response.status_code = 503
+            response.headers["Retry-After"] = "30"
+            return response
+        client_id, event_queue = registration
+        request_ip = self._request_ip()
+        stream_deadline = time.monotonic() + self._event_stream_max_seconds
 
         def event_stream():
             try:
-                yield ": connected\n\n"
+                yield f"retry: {EVENT_STREAM_RETRY_MS}\n: connected\n\n"
                 while True:
+                    remaining_seconds = stream_deadline - time.monotonic()
+                    if remaining_seconds <= 0:
+                        # The browser reconnects after the retry delay and resyncs on open.
+                        return
                     try:
-                        event_text = event_queue.get(timeout=15)
+                        event_text = event_queue.get(timeout=min(EVENT_STREAM_PING_SECONDS, remaining_seconds))
                     except Empty:
                         yield ": ping\n\n"
                         continue
@@ -611,13 +648,8 @@ class RussoundHTTPServer:
             except GeneratorExit:
                 return
             finally:
-                logging.info(
-                    "SSE connection closed client_id=%s host=%s session_id=%s",
-                    client_id,
-                    self._request_ip(),
-                    session_id,
-                )
-                self.unregister_event_client(client_id, expected_connection_id=connection_id)
+                self.unregister_event_client(client_id)
+                logging.info("SSE connection closed client_id=%s host=%s session_id=%s", client_id, request_ip, session_id)
 
         response = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
         response.headers["Cache-Control"] = "no-cache"
@@ -630,37 +662,12 @@ class RussoundHTTPServer:
         ip_address: str,
         user_agent: str | None,
         session_id: str | None = None,
-    ) -> tuple[int, Queue[str]]:
+    ) -> tuple[int, Queue[str]] | None:
+        """Register one SSE stream; returns None when the stream limit is reached."""
         event_queue: Queue[str] = Queue()
-        # Health may be stale while nobody was watching; re-poll so the new client sees the real hardware state.
-        self._full_poll_requested.set()
-        self._zone_refresh_requested.set()
         with self._event_clients_lock:
-            connection_id = secrets.token_urlsafe(12)
-            normalized_session_id = self._normalize_session_id(session_id)
-            if normalized_session_id is not None:
-                existing_client_id = self._event_client_index.get(normalized_session_id)
-                existing_entry = self._event_clients.get(existing_client_id) if existing_client_id is not None else None
-                if existing_entry is not None:
-                    reused_client_id = existing_entry["id"]
-                    was_active = bool(existing_entry.get("active", True))
-                    existing_entry["active"] = True
-                    existing_entry["queue"] = event_queue
-                    existing_entry["ip"] = ip_address
-                    existing_entry["user_agent"] = user_agent or existing_entry.get("user_agent", "")
-                    existing_entry["connected_at"] = self._timestamp()
-                    existing_entry["session_id"] = normalized_session_id
-                    existing_entry["connection_id"] = connection_id
-                    self._event_client_index[normalized_session_id] = reused_client_id
-                    if not was_active:
-                        logging.info(
-                            "SSE client reconnected client_id=%s session_id=%s host=%s",
-                            reused_client_id,
-                            normalized_session_id,
-                            ip_address,
-                        )
-                    return reused_client_id, event_queue
-
+            if self._max_event_streams is not None and len(self._event_clients) >= self._max_event_streams:
+                return None
             self._event_client_id += 1
             client_id = self._event_client_id
             self._event_clients[client_id] = {
@@ -669,54 +676,42 @@ class RussoundHTTPServer:
                 "user_agent": user_agent or "",
                 "connected_at": self._timestamp(),
                 "queue": event_queue,
-                "session_id": normalized_session_id,
-                "connection_id": connection_id,
-                "active": True,
+                "session_id": self._normalize_session_id(session_id),
             }
-            if normalized_session_id is not None:
-                self._event_client_index[normalized_session_id] = client_id
-            logging.info(
-                "SSE client connected client_id=%s session_id=%s host=%s",
-                client_id,
-                normalized_session_id,
-                ip_address,
-            )
+            stream_count = len(self._event_clients)
+        # Health may be stale while nobody was watching; re-poll so the new client sees the real hardware state.
+        self._full_poll_requested.set()
+        self._zone_refresh_requested.set()
+        logging.info(
+            "SSE client connected client_id=%s session_id=%s host=%s streams=%d",
+            client_id,
+            session_id,
+            ip_address,
+            stream_count,
+        )
         return client_id, event_queue
 
-    def unregister_event_client(self, client_id: int, expected_connection_id: str | None = None) -> None:
+    def unregister_event_client(self, client_id: int) -> None:
         with self._event_clients_lock:
-            client_entry = self._event_clients.get(client_id)
-            if client_entry is None:
-                return
-            if expected_connection_id is not None and client_entry.get("connection_id") != expected_connection_id:
-                return
-            client_entry["active"] = False
-            logging.info(
-                "SSE client inactive client_id=%s session_id=%s host=%s",
-                client_id,
-                client_entry.get("session_id"),
-                client_entry.get("ip"),
-            )
+            self._event_clients.pop(client_id, None)
 
     def broadcast_state_change(self) -> None:
         state_payload = self._build_state_payload_for_event()
         with self._event_clients_lock:
             self.state_revision += 1
-            active_clients = 0
             event_text = json.dumps(
                 {
                     "revision": self.state_revision,
                     "payload": state_payload,
                 }
             )
-            for client in list(self._event_clients.values()):
-                if client.get("active", True):
-                    active_clients += 1
-                    client["queue"].put(event_text)
+            for client in self._event_clients.values():
+                client["queue"].put(event_text)
+            recipients = len(self._event_clients)
         logging.info(
             "SSE state update broadcast revision=%d recipients=%d",
             self.state_revision,
-            active_clients,
+            recipients,
         )
 
     def _build_state_payload_for_event(self) -> dict[str, Any]:
@@ -746,21 +741,21 @@ class RussoundHTTPServer:
         }
 
     def build_client_status_payload(self) -> dict[str, Any]:
+        """List connected clients, one entry per browser session (tabs of one browser share a session)."""
+        sessions: dict[str, dict[str, Any]] = {}
         with self._event_clients_lock:
-            clients: list[dict[str, Any]] = []
-            for client in self._event_clients.values():
-                if not client.get("active", True):
-                    continue
-                clients.append(
-                    {
-                        "id": client["id"],
-                        "ip": client["ip"],
-                        "connected_at": client["connected_at"],
-                        "user_agent": client["user_agent"],
-                        "session_id": client["session_id"],
-                    }
-                )
-        return {"connected_clients": clients}
+            for client in sorted(self._event_clients.values(), key=lambda entry: entry["id"]):
+                session_key = client["session_id"] or f"stream-{client['id']}"
+                stream_count = sessions[session_key]["streams"] + 1 if session_key in sessions else 1
+                sessions[session_key] = {
+                    "id": client["id"],
+                    "ip": client["ip"],
+                    "connected_at": client["connected_at"],
+                    "user_agent": client["user_agent"],
+                    "session_id": client["session_id"],
+                    "streams": stream_count,
+                }
+        return {"connected_clients": list(sessions.values())}
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:
@@ -848,7 +843,12 @@ def main() -> None:
     parser.add_argument("--state", default=env_str("RUSSOUND_STATE") or str(WEB_ROOT / "russound_state.json"))
     parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
     parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging to the terminal")
-    parser.add_argument("--waitress-threads", type=int, default=_env_int("RUSSOUND_WAITRESS_THREADS", 16), help="Worker thread count for Waitress when not in debug mode (min 4, default 16)")
+    parser.add_argument(
+        "--waitress-threads",
+        type=int,
+        default=_env_int("RUSSOUND_WAITRESS_THREADS", DEFAULT_WAITRESS_THREADS),
+        help=f"Worker thread count for Waitress (min {RESERVED_REQUEST_THREADS + 1}, default {DEFAULT_WAITRESS_THREADS})",
+    )
     args = parser.parse_args()
 
     if args.daemon:
@@ -861,6 +861,7 @@ def main() -> None:
         allowed_hosts=_split_env_list("RUSSOUND_ALLOWED_HOSTS"),
         allowed_origins=_split_env_list("RUSSOUND_ALLOWED_ORIGINS"),
         trusted_proxy_count=_env_int("RUSSOUND_TRUSTED_PROXY_COUNT", 0),
+        max_event_streams=_env_int("RUSSOUND_MAX_EVENT_STREAMS", 0) or None,
     )
     if not args.daemon:
         print(f"Listening on http://{args.host}:{args.port}")
@@ -871,6 +872,7 @@ def main() -> None:
             port=args.port,
             debug=args.debug,
             waitress_threads=args.waitress_threads,
+            tcp_user_timeout_seconds=_env_int("RUSSOUND_TCP_USER_TIMEOUT_SECONDS", DEFAULT_TCP_USER_TIMEOUT_SECONDS),
         )
     except KeyboardInterrupt:
         print("\nShutting down Russound server...")
