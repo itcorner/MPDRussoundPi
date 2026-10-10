@@ -3,6 +3,7 @@ import json
 import socket
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from queue import Queue
@@ -20,6 +21,74 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_state_api_and_events_return_snapshot_while_hardware_poll_is_blocked(self):
+        server = RussoundHTTPServer(None, None)
+        controller = Mock()
+        server.controller = controller
+        previous = {"config_required": False, "state": {"zones": [{"volume": 20}]}}
+        refreshed = {"config_required": False, "state": {"zones": [{"volume": 42}]}}
+        controller.build_view_payload.return_value = previous
+        server._read_state_payload()
+        current_state = Mock()
+        current_state.to_payload.return_value = previous["state"]
+        new_state = Mock()
+        new_state.to_payload.return_value = refreshed["state"]
+        poll_entered = threading.Event()
+        release_poll = threading.Event()
+        read_done = threading.Event()
+        result = {}
+
+        def load_state(**kwargs):
+            if kwargs.get("refresh_backend"):
+                poll_entered.set()
+                if not release_poll.wait(5):
+                    raise RuntimeError("Test poll was not released")
+                controller.build_view_payload.return_value = refreshed
+                return new_state
+            return current_state
+
+        def read_state():
+            with server.app.test_client() as client:
+                response = client.get("/api/state")
+                result["http"] = response.status_code
+                result["payload"] = response.json
+            result["event"] = server._build_state_payload_for_event()
+            read_done.set()
+
+        controller.load_state.side_effect = load_state
+        poller = threading.Thread(target=server._sync_backend_state_if_changed)
+        reader = threading.Thread(target=read_state)
+        poller.start()
+        try:
+            self.assertTrue(poll_entered.wait(2))
+            reader.start()
+            self.assertTrue(read_done.wait(1), "State reads waited for hardware polling")
+            self.assertEqual(result, {"http": 200, "payload": previous, "event": previous})
+        finally:
+            release_poll.set()
+            poller.join(2)
+            if reader.ident is not None:
+                reader.join(2)
+        self.assertFalse(poller.is_alive())
+        controller.persist_state.assert_called_once_with(new_state)
+        with server.state_lock:
+            self.assertEqual(server.app.test_client().get("/api/state").json, refreshed)
+
+    def test_state_api_returns_latest_command_snapshot_while_lock_is_busy(self):
+        server = RussoundHTTPServer(None, None)
+        server.controller = Mock()
+        previous = {"state": {"zones": [{"volume": 20}]}}
+        updated = {"state": {"zones": [{"volume": 60}]}}
+        server.controller.build_view_payload.return_value = previous
+        server._read_state_payload()
+        server.controller.handle_zone_setting_change.return_value = updated
+        server.controller.build_view_payload.return_value = updated
+        with server.app.test_client() as client:
+            response = client.post("/api/controller/1/zone/1/volume", json={"volume": 60})
+            self.assertEqual(response.status_code, 200)
+            with server.state_lock:
+                self.assertEqual(client.get("/api/state").json, updated)
+
     def test_setup_routes_recover_invalid_config_and_replace_backend(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"
@@ -37,16 +106,22 @@ class RussoundServerTests(unittest.TestCase):
             server.controller.set_shared_backend(old_backend)
             with patch("web.russound_controller.RussoundBackend.connect", side_effect=AssertionError("Save must be offline")) as connect:
                 response = client.post("/api/config", json={
-                    "backend": {"host": "new-gateway", "port": 7777},
+                    "backend": {"host": "new-gateway", "port": 7777, "poll_interval_seconds": 7.5},
                     "controllers": [{"id": 1, "zone_count": 6}],
                     "zone_slots": [], "source_slots": [],
                 })
                 connect.assert_not_called()
             self.assertEqual(response.status_code, 200)
             self.assertFalse(response.json["config_required"])
+            self.assertEqual(response.json["config"]["backend"]["poll_interval_seconds"], 7.5)
+            self.assertEqual(server._backend_poll_interval_seconds, 7.5)
             old_backend.close.assert_called_once()
             self.assertIsNone(server._event_backend)
             self.assertTrue(server._full_poll_requested.is_set())
+            with server.state_lock:
+                snapshot = client.get("/api/state").json
+                self.assertFalse(snapshot["config_required"])
+                self.assertEqual(snapshot["config"]["backend"]["host"], "new-gateway")
             with client.get("/") as response:
                 self.assertEqual(response.status_code, 200)
             with patch("web.russound_server.RussoundBackend") as backend_class:

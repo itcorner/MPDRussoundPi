@@ -176,6 +176,11 @@ If no valid config file is supplied to the server (`--config`), `GET /api/state`
 Returns the current view payload (`config`, `config_required`, `state`).
 
 - Response type: JSON.
+- While a backend operation holds the state lock, returns the last published
+  snapshot immediately rather than waiting for hardware I/O. Successful commands,
+  configuration saves, and completed polls publish updated snapshots before
+  releasing that lock. Hardware refreshes remain serialized with commands to
+  prevent stale polls from overwriting newer changes; SSE announces refreshed state.
 
 ### GET /api/events
 
@@ -374,6 +379,8 @@ Creates or updates the backend, controller topology, zones, and sources, and per
   optional when updating an existing valid configuration.
 - `backend` accepts TCP `host`/`port` or serial `device`/`baud`. Controller ids and
   zone counts are integers from `1` to `6`; TCP ports are from `1` to `65535`.
+- `backend.poll_interval_seconds` is a finite number of at least `1` second
+  (default `2`). Fractional seconds are supported; saves apply it to the watcher immediately.
 - Saves perform no hardware I/O. The server detaches/closes the old connection
   and its watcher reconnects with the new settings; environment overrides still apply.
 - Replacing an invalid config preserves a sibling `.invalid-*.bak` copy.

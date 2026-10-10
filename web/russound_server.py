@@ -161,11 +161,13 @@ class RussoundHTTPServer:
         self._allowed_origins = {origin.rstrip("/").lower() for origin in allowed_origins or []}
         self.state_revision = 0
         self.state_lock = threading.Lock()
+        self._state_payload_lock = threading.Lock()
         self._event_clients: dict[int, dict[str, Any]] = {}
         # None means unlimited until run() derives a limit from the worker thread count.
         self._max_event_streams = max_event_streams
         self._event_stream_max_seconds = EVENT_STREAM_MAX_SECONDS
         self.controller = get_controller(config_path, state_path)
+        self._state_payload = self.controller.build_view_payload(refresh_backend=False)
         self._event_clients_lock = threading.Lock()
         self._event_client_id = 0
         self._event_history: deque[dict[str, Any]] = deque(maxlen=50)
@@ -245,9 +247,7 @@ class RussoundHTTPServer:
 
         @app.get("/api/state")
         def api_state():
-            with self.state_lock:
-                payload = self.controller.build_view_payload(refresh_backend=False)
-            return jsonify(payload)
+            return jsonify(self._read_state_payload())
 
         @app.get("/api/config")
         def api_config():
@@ -287,6 +287,7 @@ class RussoundHTTPServer:
                     self._backend_poll_interval_seconds = self._resolve_backend_poll_interval_seconds()
                     self._next_reconnect_at = 0.0
                     self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
+                    self._publish_state_payload_locked()
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
             except OSError as exc:
@@ -310,6 +311,7 @@ class RussoundHTTPServer:
                 return jsonify({"error": "Invalid request body: 'power' must be a boolean"}), 400
             with self.state_lock:
                 response_payload = self.controller.handle_system_power_change(power=power)
+                self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
             return jsonify(response_payload)
@@ -325,6 +327,7 @@ class RussoundHTTPServer:
                     response_payload = self.controller.handle_source_change(source=source_value)
                 except LookupError:
                     return jsonify({"error": "Source not found"}), 404
+                self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
             return jsonify(response_payload)
@@ -339,6 +342,7 @@ class RussoundHTTPServer:
                     return jsonify({"error": str(exc)}), 404
                 except RuntimeError as exc:
                     return jsonify({"error": str(exc)}), 500
+                self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
             return jsonify(response_payload)
@@ -366,6 +370,7 @@ class RussoundHTTPServer:
                     return jsonify({"error": "Zone not found"}), 404
                 except RuntimeError as exc:
                     return jsonify({"error": str(exc)}), 502
+                self._publish_state_payload(response_payload)
             logging.debug(
                 "API zone update applied controller=%d zone=%d action=%s value=%s",
                 controller_id,
@@ -503,6 +508,7 @@ class RussoundHTTPServer:
                 return
             state.sync_system_power()
             self.controller.persist_state(state)
+            self._publish_state_payload_locked()
         logging.debug(
             "Applied unsolicited Russound %s update for controller %s zone %s",
             setting,
@@ -570,8 +576,10 @@ class RussoundHTTPServer:
                 shared_backend = self._event_backend
             refreshed_state = self.controller.refresh_zones(zone_addresses, backend=shared_backend)
             if current_state.to_payload() == refreshed_state.to_payload():
+                self._publish_state_payload_locked()
                 return False
             self.controller.persist_state(refreshed_state)
+            self._publish_state_payload_locked()
             return True
 
     def _sync_backend_state_if_changed(self) -> bool:
@@ -588,8 +596,10 @@ class RussoundHTTPServer:
             # Silent hardware keeps its last known zone values, so health has to be compared as well.
             health_changed = self.controller.backend_health_snapshot() != health_before
             if current_state.to_payload() == refreshed_state.to_payload():
+                self._publish_state_payload_locked()
                 return health_changed
             self.controller.persist_state(refreshed_state)
+            self._publish_state_payload_locked()
             return True
 
     def _read_json_body(self) -> dict[str, Any]:
@@ -747,9 +757,23 @@ class RussoundHTTPServer:
         )
 
     def _build_state_payload_for_event(self) -> dict[str, Any]:
-        with self.state_lock:
-            payload = self.controller.build_view_payload(refresh_backend=False)
-        return payload
+        return self._read_state_payload()
+
+    def _publish_state_payload(self, payload: dict[str, Any]) -> None:
+        with self._state_payload_lock:
+            self._state_payload = payload
+
+    def _publish_state_payload_locked(self) -> None:
+        self._publish_state_payload(self.controller.build_view_payload(refresh_backend=False))
+
+    def _read_state_payload(self) -> dict[str, Any]:
+        if self.state_lock.acquire(blocking=False):
+            try:
+                self._publish_state_payload_locked()
+            finally:
+                self.state_lock.release()
+        with self._state_payload_lock:
+            return self._state_payload
 
     def record_frontend_event(self, ip_address: str, path: str, payload: dict[str, Any]) -> None:
         entry: dict[str, Any] = {

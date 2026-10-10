@@ -13,6 +13,7 @@ const backendHost = document.getElementById("backendHost");
 const backendPort = document.getElementById("backendPort");
 const backendDevice = document.getElementById("backendDevice");
 const backendBaud = document.getElementById("backendBaud");
+const backendPollInterval = document.getElementById("backendPollInterval");
 const backendConnectionStatus = document.getElementById("backendConnectionStatus");
 const backendSummaryStatus = document.getElementById("backendSummaryStatus");
 const backendOverrides = document.getElementById("backendOverrides");
@@ -31,9 +32,10 @@ function escapeAttribute(value) {
 }
 
 function collectBackend() {
-  return backendMode.value === "serial"
+  const endpoint = backendMode.value === "serial"
     ? { device: backendDevice.value.trim(), baud: Number(backendBaud.value) }
     : { host: backendHost.value.trim(), port: Number(backendPort.value) };
+  return { ...endpoint, poll_interval_seconds: Number(backendPollInterval.value) };
 }
 
 function collectControllers() {
@@ -181,6 +183,7 @@ function renderEditor(payload) {
   backendPort.value = payload.config?.backend?.port ?? 6666;
   backendDevice.value = payload.config?.backend?.device || "";
   backendBaud.value = payload.config?.backend?.baud ?? 19200;
+  backendPollInterval.value = payload.config?.backend?.poll_interval_seconds ?? 2;
   updateConnectionFields();
   controllerConfig.innerHTML = "";
   for (let controllerId = 1; controllerId <= 6; controllerId += 1) {
@@ -348,6 +351,10 @@ async function saveConfig() {
     return;
   }
   const backend = collectBackend();
+  if (!Number.isFinite(backend.poll_interval_seconds) || backend.poll_interval_seconds < 1) {
+    setMessage("Enter a poll interval of at least 1 second.", true);
+    return;
+  }
   if (backendMode.value === "tcp" && (!backend.host || !Number.isInteger(backend.port) || backend.port < 1 || backend.port > 65535)) {
     setMessage("Enter a gateway host and a TCP port from 1 to 65535.", true);
     return;
