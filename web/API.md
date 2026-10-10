@@ -54,15 +54,23 @@ The server currently expects these request body field types:
 
 The dashboard also exposes `backend_status` in the main view payload so the frontend can display a warning banner whenever hardware communication is unavailable.
 
-## API authorization
+## Request protection
 
-The backend now protects `/api/*` routes with a server-generated token.
+There is no API token. The server protects against cross-site request forgery
+and DNS rebinding instead, so open pages keep working across server restarts.
 
-- The token is injected into the HTML served at `/` and `/index.html`.
-- Frontend `fetch(...)` requests send it in the `X-Russound-Api-Token` header.
-- The SSE endpoint accepts the same token through the `token` query parameter because `EventSource` cannot set custom headers.
-- The token is tied to the currently running server process, not to a specific host name or IP.
-- If the server is restarted, a new token is generated and the old token becomes invalid.
+- `GET`/`HEAD` requests (including `/api/events`) are always allowed; other
+  sites cannot read the responses because the server sends no CORS headers.
+- State-changing requests (`POST`) are rejected with `403` unless one of:
+  - the `Origin` header matches the server origin or `RUSSOUND_ALLOWED_ORIGINS`,
+  - `Sec-Fetch-Site` is `same-origin` or `none`,
+  - neither header is present (non-browser clients such as `curl` or scripts).
+- State-changing requests must use `Content-Type: application/json`, otherwise
+  `415` is returned (prevents plain HTML form posts from other sites).
+- If `RUSSOUND_ALLOWED_HOSTS` is set, requests with any other `Host` header are
+  rejected with `400`.
+- Behind a reverse proxy set `RUSSOUND_TRUSTED_PROXY_COUNT` so the server sees
+  the original scheme/host via `X-Forwarded-*`.
 
 ## Session tracking
 
@@ -76,11 +84,13 @@ Examples:
 
 ```http
 GET /api/state
-X-Russound-Api-Token: <server-issued-token>
 ```
 
 ```http
-GET /api/events?token=<server-issued-token>
+POST /api/system/power
+Content-Type: application/json
+
+{"power": false}
 ```
 
 ## View payload

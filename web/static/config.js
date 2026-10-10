@@ -1,4 +1,3 @@
-const apiToken = document.querySelector('meta[name="russound-api-token"]')?.content || "";
 const saveConfigButton = document.getElementById("saveConfigButton");
 const configEditorMessage = document.getElementById("configEditorMessage");
 const configEmptyState = document.getElementById("configEmptyState");
@@ -14,12 +13,8 @@ let baselineZoneSlotsHash = "";
 let baselineSourceSlotsHash = "";
 let hasUnsavedChanges = false;
 
-function authorizedFetch(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (apiToken) {
-    headers.set("X-Russound-Api-Token", apiToken);
-  }
-  return fetch(path, { ...options, headers, credentials: "same-origin" });
+function apiFetch(path, options = {}) {
+  return fetch(path, { ...options, credentials: "same-origin" });
 }
 
 function setMessage(text, isError = false) {
@@ -213,7 +208,7 @@ function collectSourceSlots() {
 }
 
 async function fetchConfigEditor() {
-  const response = await authorizedFetch("/api/config");
+  const response = await apiFetch("/api/config");
   if (!response.ok) {
     setMessage("Failed to load configuration.", true);
     return;
@@ -230,7 +225,7 @@ async function saveConfig() {
   updateSaveButtonState();
   setMessage("");
   try {
-    const response = await authorizedFetch("/api/config", {
+    const response = await apiFetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

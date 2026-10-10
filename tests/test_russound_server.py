@@ -4,7 +4,6 @@ import sys
 import unittest
 from queue import Queue
 from unittest.mock import Mock, patch
-from urllib.parse import urlparse
 
 from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging
 from web.russound_state import RussoundState
@@ -240,7 +239,7 @@ class RussoundServerTests(unittest.TestCase):
             with self.assertLogs("web.russound_server", level="DEBUG") as logs:
                 response = client.get("/api/state")
 
-            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.status_code, 200)
             output = "\n".join(logs.output)
             self.assertIn("API request method=GET path=/api/state", output)
             self.assertIn("host=127.0.0.1", output)
@@ -248,15 +247,86 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             _close_server(server)
 
-    def test_api_state_requires_auth_token(self):
+    def test_api_state_is_readable_without_token(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            response = server.app.test_client().get("/api/state")
+            self.assertEqual(response.status_code, 200)
+        finally:
+            _close_server(server)
+
+    def test_same_origin_json_post_is_accepted(self):
         server = RussoundHTTPServer(None, None)
         try:
             client = server.app.test_client()
-            unauthorized_response = client.get("/api/state")
-            self.assertEqual(unauthorized_response.status_code, 401)
+            for headers in (
+                {"Sec-Fetch-Site": "same-origin"},
+                {"Origin": "http://localhost"},
+                {},
+            ):
+                response = client.post("/api/system/power", json={"power": "invalid"}, headers=headers)
+                # 400 proves the request passed the origin guard and reached the handler.
+                self.assertEqual(response.status_code, 400, headers)
+        finally:
+            _close_server(server)
 
-            authorized_response = client.get("/api/state", headers={"X-Russound-Api-Token": server.api_token})
-            self.assertEqual(authorized_response.status_code, 200)
+    def test_cross_site_post_is_rejected(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            client = server.app.test_client()
+            for headers in (
+                {"Sec-Fetch-Site": "cross-site"},
+                {"Sec-Fetch-Site": "same-site"},
+                {"Origin": "http://evil.example"},
+                {"Origin": "null"},
+            ):
+                response = client.post("/api/system/power", json={"power": False}, headers=headers)
+                self.assertEqual(response.status_code, 403, headers)
+        finally:
+            _close_server(server)
+
+    def test_configured_allowed_origin_is_accepted(self):
+        server = RussoundHTTPServer(None, None, allowed_origins=["https://music.example/"])
+        try:
+            response = server.app.test_client().post(
+                "/api/system/power",
+                json={"power": "invalid"},
+                headers={"Origin": "https://music.example", "Sec-Fetch-Site": "cross-site"},
+            )
+            self.assertEqual(response.status_code, 400)
+        finally:
+            _close_server(server)
+
+    def test_non_json_post_is_rejected(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            response = server.app.test_client().post(
+                "/api/shortcuts/any/activate",
+                data={"power": "false"},
+                headers={"Sec-Fetch-Site": "same-origin"},
+            )
+            self.assertEqual(response.status_code, 415)
+        finally:
+            _close_server(server)
+
+    def test_untrusted_host_is_rejected_when_allowlist_is_configured(self):
+        server = RussoundHTTPServer(None, None, allowed_hosts=["musicpi", "192.168.1.10"])
+        try:
+            client = server.app.test_client()
+            self.assertEqual(client.get("/api/state", headers={"Host": "attacker.example"}).status_code, 400)
+            self.assertEqual(client.get("/", headers={"Host": "attacker.example:8000"}).status_code, 400)
+            self.assertEqual(client.get("/api/state", headers={"Host": "musicpi:8000"}).status_code, 200)
+            self.assertEqual(client.get("/api/state", headers={"Host": "192.168.1.10"}).status_code, 200)
+        finally:
+            _close_server(server)
+
+    def test_index_page_is_served_without_token_placeholder(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            response = server.app.test_client().get("/")
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn(b"russound-api-token", response.data)
+            response.close()
         finally:
             _close_server(server)
 
@@ -281,7 +351,7 @@ class RussoundServerTests(unittest.TestCase):
         response = None
         try:
             client = server.app.test_client()
-            response = client.get(f"/api/events?token={server.api_token}", buffered=False)
+            response = client.get("/api/events", buffered=False)
             stream = iter(response.response)
             self.assertEqual(next(stream), b": connected\n\n")
 
@@ -295,38 +365,6 @@ class RussoundServerTests(unittest.TestCase):
                 response.close()
             _close_server(server)
 
-    def test_authorization_accepts_matching_header_token(self):
-        server = RussoundHTTPServer(None, None)
-        try:
-            handler = object.__new__(RussoundRequestHandler)
-            handler.server = server
-            handler.headers = {"X-Russound-Api-Token": server.api_token}
-
-            self.assertTrue(handler._is_authorized(server, urlparse("/api/state")))
-        finally:
-            _close_server(server)
-
-    def test_authorization_accepts_matching_query_token(self):
-        server = RussoundHTTPServer(None, None)
-        try:
-            handler = object.__new__(RussoundRequestHandler)
-            handler.server = server
-            handler.headers = {}
-
-            self.assertTrue(handler._is_authorized(server, urlparse(f"/api/events?token={server.api_token}")))
-        finally:
-            _close_server(server)
-
-    def test_authorization_rejects_missing_token(self):
-        server = RussoundHTTPServer(None, None)
-        try:
-            handler = object.__new__(RussoundRequestHandler)
-            handler.server = server
-            handler.headers = {}
-
-            self.assertFalse(handler._is_authorized(server, urlparse("/api/state")))
-        finally:
-            _close_server(server)
 
     def test_state_has_zone_address_matches_known_controller_and_zone(self):
         handler = object.__new__(RussoundRequestHandler)

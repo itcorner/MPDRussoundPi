@@ -1,4 +1,3 @@
-const apiToken = document.querySelector('meta[name="russound-api-token"]')?.content || "";
 const clientCount = document.getElementById("clientCount");
 const clientsList = document.getElementById("clientsList");
 const clientsEmpty = document.getElementById("clientsEmpty");
@@ -40,12 +39,8 @@ function eventKey(event) {
   return `${event.timestamp}|${event.ip}|${event.path}|${JSON.stringify(event.payload)}`;
 }
 
-function authorizedFetch(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (apiToken) {
-    headers.set("X-Russound-Api-Token", apiToken);
-  }
-  return fetch(path, { ...options, headers, credentials: "same-origin" });
+function apiFetch(path, options = {}) {
+  return fetch(path, { ...options, credentials: "same-origin" });
 }
 
 function renderStatus(payload, historyPayload) {
@@ -156,8 +151,8 @@ async function fetchStatus() {
   statusFetchInFlight = true;
   try {
     const [clientsResponse, historyResponse] = await Promise.all([
-      authorizedFetch("/api/status/clients"),
-      authorizedFetch("/api/status/history"),
+      apiFetch("/api/status/clients"),
+      apiFetch("/api/status/history"),
     ]);
     if (!clientsResponse.ok || !historyResponse.ok) {
       return;
@@ -178,12 +173,7 @@ function startStatusSync() {
   if (!window.EventSource || eventSource) {
     return;
   }
-  const params = new URLSearchParams();
-  if (apiToken) {
-    params.set("token", apiToken);
-  }
-  const query = params.toString();
-  eventSource = new EventSource(`/api/events${query ? `?${query}` : ""}`);
+  eventSource = new EventSource("/api/events");
   eventSource.addEventListener("state-change", () => {
     fetchStatus();
   });

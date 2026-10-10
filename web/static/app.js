@@ -14,7 +14,6 @@ const systemButton = document.getElementById("systemPower");
 const shortcutsContainer = document.getElementById("shortcuts");
 const configHint = document.getElementById("configHint");
 const appShell = document.querySelector("main.app-shell");
-const apiToken = document.querySelector('meta[name="russound-api-token"]')?.content || "";
 let eventSource = null;
 let stateFetchInFlight = false;
 let stateFetchQueued = false;
@@ -82,12 +81,8 @@ function formatControlValue(action, value) {
   return String(value);
 }
 
-function authorizedFetch(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (apiToken) {
-    headers.set("X-Russound-Api-Token", apiToken);
-  }
-  return fetch(path, { ...options, headers, credentials: "same-origin" });
+function apiFetch(path, options = {}) {
+  return fetch(path, { ...options, credentials: "same-origin" });
 }
 
 function applyPayload(payload) {
@@ -117,7 +112,7 @@ async function fetchState() {
   stateFetchInFlight = true;
   const revisionAtRequest = zoneUpdateRevision;
   try {
-    const response = await authorizedFetch("/api/state");
+    const response = await apiFetch("/api/state");
     if (!response.ok) {
       return;
     }
@@ -139,12 +134,7 @@ function startStateSync() {
   if (!window.EventSource || eventSource) {
     return;
   }
-  const params = new URLSearchParams();
-  if (apiToken) {
-    params.set("token", apiToken);
-  }
-  const query = params.toString();
-  eventSource = new EventSource(`/api/events${query ? `?${query}` : ""}`);
+  eventSource = new EventSource("/api/events");
   eventSource.addEventListener("state-change", (event) => {
     try {
       const data = JSON.parse(event.data || "{}");
@@ -308,7 +298,7 @@ async function updateZone(controllerId, zoneNumber, action, value) {
   zoneUpdateRevision += 1;
   let payload = null;
   try {
-    const response = await authorizedFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
+    const response = await apiFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ [action]: value }),
@@ -330,7 +320,7 @@ async function updateZone(controllerId, zoneNumber, action, value) {
 }
 
 async function updateSharedSource(source) {
-  const response = await authorizedFetch("/api/source", {
+  const response = await apiFetch("/api/source", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source }),
@@ -343,7 +333,7 @@ async function updateSharedSource(source) {
 }
 
 async function activateShortcut(shortcutId) {
-  const response = await authorizedFetch(`/api/shortcuts/${shortcutId}/activate`, {
+  const response = await apiFetch(`/api/shortcuts/${shortcutId}/activate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -355,7 +345,7 @@ async function activateShortcut(shortcutId) {
 }
 
 async function updateSystemPower(power) {
-  const response = await authorizedFetch("/api/system/power", {
+  const response = await apiFetch("/api/system/power", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ power }),

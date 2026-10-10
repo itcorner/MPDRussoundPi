@@ -42,6 +42,10 @@ services:
       RUSSOUND_STATE: "/data/russound_state.json"
       RUSSOUND_LOG_FILE: "/logs/russound-web.log"
       RUSSOUND_DEBUG: "${RUSSOUND_DEBUG:-false}"
+      # Optional request protection, see README "Deployment Notes".
+      RUSSOUND_ALLOWED_HOSTS: "${RUSSOUND_ALLOWED_HOSTS:-}"
+      RUSSOUND_ALLOWED_ORIGINS: "${RUSSOUND_ALLOWED_ORIGINS:-}"
+      RUSSOUND_TRUSTED_PROXY_COUNT: "${RUSSOUND_TRUSTED_PROXY_COUNT:-0}"
     volumes:
       # Directories, not single files: config and state are written atomically
       # through a temporary file in the same directory.

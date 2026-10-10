@@ -6,7 +6,7 @@ The repository currently includes:
 
 - Russound + MPD setup automation for target hosts (Ansible playbooks).
 - Runtime scripts for audio setup and MPD orchestration.
-- A Flask-based, token-protected web control server with live synchronization.
+- A Flask-based web control server with cross-site request protection and live synchronization.
 - A controller dashboard with flip-card advanced sound controls and a visible hardware warning banner.
 - A configuration editor for zones and sources.
 - A status monitor for connected clients and recent frontend actions.
@@ -36,7 +36,7 @@ The repository currently includes:
 - Config-driven UI visibility and naming.
 - Source renaming support in the web configuration editor.
 - Live UI updates using Server-Sent Events (SSE).
-- API request token enforcement for `/api/*` endpoints.
+- Cross-site request protection for state-changing `/api/*` requests (no token needed).
 
 ## Repository Structure
 
@@ -54,7 +54,7 @@ The repository currently includes:
   - Flask HTTP server.
   - Serves UI pages and static assets.
   - Exposes `/api/*` endpoints and `/api/events` SSE stream.
-  - Enforces API token authentication.
+  - Rejects cross-site and non-JSON state-changing API requests.
 - `web/russound_controller.py`
   - Domain/state orchestration.
   - Config loading and persistence.
@@ -242,6 +242,9 @@ Host and port are configurable through environment variables, which take precede
 | `RUSSOUND_STATE` | State file path | `/data/russound_state.json` |
 | `RUSSOUND_DEBUG` | Enable debug logging | `false` |
 | `RUSSOUND_WAITRESS_THREADS` | Waitress worker threads | `16` |
+| `RUSSOUND_ALLOWED_HOSTS` | Comma-separated `Host` names/IPs accepted (blocks DNS rebinding); empty accepts any | empty |
+| `RUSSOUND_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to send API writes, e.g. `https://music.example` | empty |
+| `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |
 
 Every web variable has an equivalent command-line flag (`--host`, `--port`, `--config`, `--state`, `--debug`), and the flag wins when both are provided.
 
@@ -268,8 +271,9 @@ The playbook detects the serial device's group and the deployment user's UID/GID
 
 ## Deployment Notes
 
-- API access is token-protected, but this is a same-origin request token model, not full user authentication.
-- For non-local deployments, place the service behind a TLS-terminating reverse proxy.
+- There is no user authentication: anyone who can reach the web port can control the system. State-changing API requests are protected against cross-site request forgery (same-origin check via `Origin`/`Sec-Fetch-Site`, JSON-only bodies), see `web/API.md`.
+- Set `RUSSOUND_ALLOWED_HOSTS` to the host names/IPs you use to reach the UI to block DNS-rebinding attacks.
+- For non-local deployments, place the service behind a TLS-terminating reverse proxy and set `RUSSOUND_TRUSTED_PROXY_COUNT`.
 - Restrict network access to trusted clients.
 
 ## AI-Assisted Development Disclosure

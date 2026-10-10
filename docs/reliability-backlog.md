@@ -12,7 +12,7 @@ degradation / resource growth, **L** = edge cases.
 | 1 | H | Update listener not restarted after reconnect | [x] |
 | 2 | H | Update listener never started if gateway is down at boot | [x] |
 | 3 | H | Peer close / half-open TCP not detected | [x] |
-| 4 | H | Open UI pages die silently after server restart (API token) | [ ] |
+| 4 | H | Open UI pages die silently after server restart (API token) | [x] |
 | 5 | H | SSE streams pin waitress worker threads | [ ] |
 | 6 | M | Protocol audit log grows unbounded | [ ] |
 | 7 | M | SSE client registry never pruned | [ ] |
@@ -86,6 +86,11 @@ degradation / resource growth, **L** = edge cases.
   Manual: restart ser2net, connection re-established within seconds.
 
 ## 4. Open UI pages die silently after server restart (H)
+
+> **Done (option D, layer 1):** the API token was removed. State-changing
+> requests are protected by a same-origin check (`Origin` /
+> `Sec-Fetch-Site`), JSON-only bodies and an optional `Host` allowlist
+> (`RUSSOUND_ALLOWED_HOSTS`). Nothing in the page can become stale anymore.
 
 - **Where:** `web/russound_server.py` (`self.api_token =
   secrets.token_urlsafe(32)` per process), `web/static/app.js`,

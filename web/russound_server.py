@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from datetime import datetime, timezone
-import html
 import importlib
 import json
 import logging
@@ -15,9 +14,9 @@ import sys
 import threading
 import time
 from typing import Any, cast
-from urllib.parse import parse_qs
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -33,6 +32,7 @@ WEB_STATIC = WEB_ROOT / "static"
 
 SESSION_COOKIE_NAME = "russound_session_id"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 BACKEND_CHANGE_POLL_INTERVAL_SECONDS = 2.0
 # Gives the controller time to apply a keypad action and coalesces bursts of key presses.
 ZONE_REFRESH_DEBOUNCE_SECONDS = 0.5
@@ -112,12 +112,17 @@ class RussoundRequestHandler:
             return None
         return controller_id, zone_number, action
 
-    def _is_authorized(self, server: "RussoundHTTPServer", parsed: Any) -> bool:
-        header_token = self.headers.get("X-Russound-Api-Token")
-        if header_token == server.api_token:
-            return True
-        query_token = parse_qs(parsed.query).get("token", [None])[0]
-        return query_token == server.api_token
+
+def _hostname(host: str) -> str:
+    """Strip the port from a Host header value (IPv6 literals keep their address)."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        return host[1:host.find("]")] if "]" in host else host
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def _split_env_list(name: str) -> list[str]:
+    return [item.strip() for item in (env_str(name) or "").split(",") if item.strip()]
 
 
 class RussoundHTTPServer:
@@ -125,10 +130,15 @@ class RussoundHTTPServer:
         self,
         config_path: str | Path | None,
         state_path: str | Path | None,
+        allowed_hosts: list[str] | None = None,
+        allowed_origins: list[str] | None = None,
+        trusted_proxy_count: int = 0,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
-        self.api_token = secrets.token_urlsafe(32)
+        # Empty means any Host is accepted; set it to block DNS-rebinding attacks.
+        self._allowed_hosts = {_hostname(host) for host in allowed_hosts or []}
+        self._allowed_origins = {origin.rstrip("/").lower() for origin in allowed_origins or []}
         self.state_revision = 0
         self.state_lock = threading.Lock()
         self._event_clients: dict[int, dict[str, Any]] = {}
@@ -151,12 +161,23 @@ class RussoundHTTPServer:
         self._zone_refresh_addresses: set[tuple[int, int]] = set()
         self._helpers = RussoundRequestHandler()
         self.app = self._build_flask_app()
+        if trusted_proxy_count > 0:
+            self.app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+                self.app.wsgi_app,
+                x_for=trusted_proxy_count,
+                x_proto=trusted_proxy_count,
+                x_host=trusted_proxy_count,
+                x_port=trusted_proxy_count,
+            )
 
     def _build_flask_app(self) -> Flask:
         app = Flask(__name__)
 
         @app.before_request
-        def _authorize_api_routes():
+        def _guard_requests():
+            if self._allowed_hosts and _hostname(request.host) not in self._allowed_hosts:
+                logging.warning("Rejected request with untrusted Host header %r from %s", request.host, request.remote_addr)
+                return jsonify({"error": "Host not allowed"}), 400
             if not request.path.startswith("/api/"):
                 return None
             logging.getLogger(__name__).debug(
@@ -166,9 +187,20 @@ class RussoundHTTPServer:
                 request.remote_addr or "unknown",
                 self._get_or_create_session_id(),
             )
-            if self._is_authorized_request():
+            if request.method in SAFE_HTTP_METHODS:
                 return None
-            return jsonify({"error": "Unauthorized"}), 401
+            if not self._is_same_origin_request():
+                logging.warning(
+                    "Rejected cross-site API request path=%s origin=%s sec-fetch-site=%s host=%s",
+                    request.path,
+                    request.headers.get("Origin"),
+                    request.headers.get("Sec-Fetch-Site"),
+                    request.remote_addr,
+                )
+                return jsonify({"error": "Cross-site request rejected"}), 403
+            if not request.is_json:
+                return jsonify({"error": "Content-Type must be application/json"}), 415
+            return None
 
         @app.after_request
         def _set_session_cookie(response: Response) -> Response:
@@ -177,15 +209,15 @@ class RussoundHTTPServer:
         @app.get("/")
         @app.get("/index.html")
         def index():
-            return self._serve_html_template(WEB_STATIC / "index.html")
+            return send_from_directory(WEB_STATIC, "index.html")
 
         @app.get("/status")
         def status_page():
-            return self._serve_html_template(WEB_STATIC / "status.html")
+            return send_from_directory(WEB_STATIC, "status.html")
 
         @app.get("/config")
         def config_page():
-            return self._serve_html_template(WEB_STATIC / "config.html")
+            return send_from_directory(WEB_STATIC, "config.html")
 
         @app.get("/api/state")
         def api_state():
@@ -505,18 +537,17 @@ class RussoundHTTPServer:
             return cast(dict[str, Any], payload)
         return {}
 
-    def _is_authorized_request(self) -> bool:
-        header_token = request.headers.get("X-Russound-Api-Token")
-        if header_token == self.api_token:
+    def _is_same_origin_request(self) -> bool:
+        origin = request.headers.get("Origin")
+        if origin is not None:
+            normalized_origin = origin.rstrip("/").lower()
+            if normalized_origin == request.host_url.rstrip("/").lower() or normalized_origin in self._allowed_origins:
+                return True
+        fetch_site = request.headers.get("Sec-Fetch-Site")
+        if fetch_site in {"same-origin", "none"}:
             return True
-        query_token = request.args.get("token")
-        return query_token == self.api_token
-
-    def _serve_html_template(self, file_path: Path) -> Response:
-        template = file_path.read_text(encoding="utf-8")
-        marker = '<meta name="russound-api-token" content="" />'
-        content = template.replace(marker, f'<meta name="russound-api-token" content="{html.escape(self.api_token, quote=True)}" />')
-        return Response(content, mimetype="text/html")
+        # Without browser provenance headers the caller is not a browser, so it cannot be a CSRF vector.
+        return origin is None and fetch_site is None
 
     def _request_ip(self) -> str:
         return request.remote_addr or ""
@@ -824,7 +855,13 @@ def main() -> None:
         _daemonize_process()
     _configure_logging(args.debug)
 
-    server = RussoundHTTPServer(args.config, args.state)
+    server = RussoundHTTPServer(
+        args.config,
+        args.state,
+        allowed_hosts=_split_env_list("RUSSOUND_ALLOWED_HOSTS"),
+        allowed_origins=_split_env_list("RUSSOUND_ALLOWED_ORIGINS"),
+        trusted_proxy_count=_env_int("RUSSOUND_TRUSTED_PROXY_COUNT", 0),
+    )
     if not args.daemon:
         print(f"Listening on http://{args.host}:{args.port}")
         print("Press Ctrl+C to stop the server.")
