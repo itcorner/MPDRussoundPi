@@ -37,17 +37,16 @@ services:
     environment:
       RUSSOUND_WEB_HOST: "0.0.0.0"
       RUSSOUND_WEB_PORT: "8000"
-      # Gateway endpoint. Overrides the "backend" block of the config file.
-      # Point this at host.docker.internal to use a ser2net instance on the host.
-      RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-russound-ser2net}"
-      RUSSOUND_BACKEND_PORT: "${RUSSOUND_BACKEND_PORT:-6666}"
+      # The backend host and port are read from the mounted configuration file.
       RUSSOUND_CONFIG: "/config/russound_config.json"
       RUSSOUND_STATE: "/data/russound_state.json"
+      RUSSOUND_LOG_FILE: "/logs/russound-web.log"
       RUSSOUND_DEBUG: "${RUSSOUND_DEBUG:-false}"
     volumes:
       # Directories, not single files: config and state are written atomically
       # through a temporary file in the same directory.
       - ./docker/config:/config
       - ./docker/data:/data
+      - ./docker/logs:/logs
     extra_hosts:
       - "host.docker.internal:host-gateway"

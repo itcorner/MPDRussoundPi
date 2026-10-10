@@ -164,6 +164,10 @@ class RussoundState:
                 success = zone.set_balance(max(-10, min(10, int(value))), backend=backend_instance)
                 if backend_provided and not success:
                     raise RuntimeError("Unable to update Russound hardware")
+            elif setting == "turn_on_volume":
+                success = zone.set_turn_on_volume(max(0, min(100, int(value))), backend=backend_instance)
+                if backend_provided and not success:
+                    raise RuntimeError("Unable to update Russound hardware")
             else:
                 raise ValueError(f"Unsupported setting: {setting}")
             break

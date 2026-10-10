@@ -18,6 +18,9 @@ const apiToken = document.querySelector('meta[name="russound-api-token"]')?.cont
 let eventSource = null;
 let stateFetchInFlight = false;
 let stateFetchQueued = false;
+// Zone changes still awaiting the backend; stale state payloads must not revert them in the UI.
+const pendingZoneUpdates = new Map();
+let zoneUpdateRevision = 0;
 const advancedStateStorageKey = "russound-advanced-open-zones-v1";
 const advancedOpenZones = loadAdvancedOpenZones();
 
@@ -93,6 +96,12 @@ function applyPayload(payload) {
   state.configMessage = payload.message || "";
   state.backendStatus = payload.backend_status || { connected: true, message: "" };
   state.zones = payload.state?.zones || [];
+  for (const pending of pendingZoneUpdates.values()) {
+    const zone = state.zones.find((candidate) => candidate.controller === pending.controllerId && candidate.zone === pending.zoneNumber);
+    if (zone) {
+      zone[pending.action] = pending.value;
+    }
+  }
   state.systemPower = Boolean(payload.state?.system_power);
   const configuredInputs = state.config?.inputs || payload.state?.inputs || [];
   state.inputs = configuredInputs.filter((input) => input.enabled !== false);
@@ -106,12 +115,16 @@ async function fetchState() {
     return;
   }
   stateFetchInFlight = true;
+  const revisionAtRequest = zoneUpdateRevision;
   try {
     const response = await authorizedFetch("/api/state");
     if (!response.ok) {
       return;
     }
     const payload = await response.json();
+    if (revisionAtRequest !== zoneUpdateRevision) {
+      return;
+    }
     applyPayload(payload);
   } finally {
     stateFetchInFlight = false;
@@ -207,6 +220,7 @@ function render() {
     const bass = Number(zone.bass ?? 0);
     const treble = Number(zone.treble ?? 0);
     const balance = Number(zone.balance ?? 0);
+    const turnOnVolume = Number(zone.turn_on_volume ?? 0);
     const loudness = Boolean(zone.loudness);
     const card = document.createElement("article");
     card.className = "zone-card";
@@ -232,7 +246,7 @@ function render() {
           </div>
           <div class="control-row">
             <label for="volume-${zoneDomId}">Volume: <span class="label-value" data-value-output="volume">${zone.volume}%</span></label>
-            <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+            <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" ${zone.power ? "" : "disabled"} />
           </div>
         </div>
         <button class="zone-advanced-toggle" type="button" data-action="toggle-advanced" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
@@ -247,6 +261,10 @@ function render() {
           <h3 class="zone-card-back-title">Advanced sound</h3>
         </div>
         <div class="zone-advanced-grid">
+          <div class="control-row">
+            <label for="turn-on-volume-${zoneDomId}">Turn-on volume: <span class="label-value" data-value-output="turn_on_volume">${turnOnVolume}%</span></label>
+            <input id="turn-on-volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${turnOnVolume}" data-action="turn_on_volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+          </div>
           <div class="control-row">
             <label for="bass-${zoneDomId}">Bass: <span class="label-value" data-value-output="bass">${formatSignedValue(bass)}</span></label>
             <input id="bass-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${bass}" data-action="bass" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
@@ -284,16 +302,31 @@ function render() {
 }
 
 async function updateZone(controllerId, zoneNumber, action, value) {
-  const response = await authorizedFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ [action]: value }),
-  });
-  if (!response.ok) {
-    return;
+  const pendingKey = `${zoneAddressKey(controllerId, zoneNumber)}-${action}`;
+  const pending = { controllerId, zoneNumber, action, value };
+  pendingZoneUpdates.set(pendingKey, pending);
+  zoneUpdateRevision += 1;
+  let payload = null;
+  try {
+    const response = await authorizedFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [action]: value }),
+    });
+    if (response.ok) {
+      payload = await response.json();
+    }
+  } finally {
+    if (pendingZoneUpdates.get(pendingKey) === pending) {
+      pendingZoneUpdates.delete(pendingKey);
+    }
+    zoneUpdateRevision += 1;
   }
-  const payload = await response.json();
-  applyPayload(payload);
+  if (payload) {
+    applyPayload(payload);
+  } else {
+    fetchState();
+  }
 }
 
 async function updateSharedSource(source) {
@@ -367,7 +400,7 @@ zonesContainer.addEventListener("input", (event) => {
     return;
   }
   const action = control.dataset.action;
-  if (action === "volume" || action === "bass" || action === "treble" || action === "balance") {
+  if (action === "volume" || action === "turn_on_volume" || action === "bass" || action === "treble" || action === "balance") {
     const value = Number(control.value);
     const row = control.closest(".control-row");
     const valueElement = row?.querySelector("[data-value-output]");
@@ -391,6 +424,10 @@ zonesContainer.addEventListener("change", (event) => {
   }
   if (action === "volume") {
     updateZone(controllerId, zoneNumber, "volume", Number(event.target.value));
+    return;
+  }
+  if (action === "turn_on_volume") {
+    updateZone(controllerId, zoneNumber, "turn_on_volume", Number(event.target.value));
     return;
   }
   if (action === "bass") {

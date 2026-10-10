@@ -23,6 +23,7 @@ class Zone:
         treble: int = 0,
         loudness: bool = False,
         balance: int = 0,
+        turn_on_volume: int = 0,
         controller: int = 1,
         zone_number: int = 1,
         keypad_id: int = 1,
@@ -37,6 +38,7 @@ class Zone:
         self.treble = max(-10, min(10, int(treble)))
         self.loudness = bool(loudness)
         self.balance = max(-10, min(10, int(balance)))
+        self.turn_on_volume = max(0, min(100, int(turn_on_volume)))
         self.controller = int(controller)
         self.zone_number = int(zone_number)
         self.keypad_id = max(1, min(6, int(keypad_id)))
@@ -80,6 +82,7 @@ class Zone:
             treble=int(data.get("treble", 0)),
             loudness=bool(data.get("loudness", False)),
             balance=int(data.get("balance", 0)),
+            turn_on_volume=int(data.get("turn_on_volume", 0)),
             controller=int(data.get("controller", 1)),
             zone_number=int(data.get("zone", data.get("zone_number", 1))),
             keypad_id=int(data.get("keypad_id", 1)),
@@ -91,7 +94,7 @@ class Zone:
     def from_dict(cls, data: dict[str, Any] | None, default_source: int | None = None) -> "Zone":
         if not isinstance(data, dict):
             raise TypeError("Zone data must be a dictionary")
-        if "power" in data or "source" in data or "volume" in data or "bass" in data or "treble" in data or "loudness" in data or "balance" in data:
+        if "power" in data or "source" in data or "volume" in data or "bass" in data or "treble" in data or "loudness" in data or "balance" in data or "turn_on_volume" in data:
             return cls.from_state_payload(data, default_source=default_source)
         return cls.from_config_payload(data)
 
@@ -114,6 +117,7 @@ class Zone:
             "treble": self.treble,
             "loudness": self.loudness,
             "balance": self.balance,
+            "turn_on_volume": self.turn_on_volume,
             "controller": self.controller,
             "zone": self.zone_number,
         }
@@ -136,6 +140,7 @@ class Zone:
         self.treble = max(-10, min(10, int(state.get("treble", self.treble))))
         self.loudness = bool(state.get("loudness", self.loudness))
         self.balance = max(-10, min(10, int(state.get("balance", self.balance))))
+        self.turn_on_volume = max(0, min(100, int(state.get("turn_on_volume", self.turn_on_volume))))
         self.controller = int(state.get("controller", self.controller))
         self.zone_number = int(state.get("zone", self.zone_number))
         return self
@@ -208,3 +213,10 @@ class Zone:
 
         backend = backend or RussoundBackend()
         return backend.set_zone_balance(self, self.balance)
+
+    def set_turn_on_volume(self, volume: int, backend: "RussoundBackend | None" = None) -> bool:
+        self.turn_on_volume = max(0, min(100, int(volume)))
+        from .russound_backend import RussoundBackend
+
+        backend = backend or RussoundBackend()
+        return backend.set_zone_turn_on_volume(self, self.turn_on_volume)

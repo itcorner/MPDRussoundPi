@@ -2,8 +2,8 @@
   "backend": {
     "host": "127.0.0.1",
     "port": 6666,
-    "poll_interval_seconds": 1.0,
-    "protocol_audit_log_file": "./protocol-audit.log"
+    "poll_interval_seconds": 5.0,
+    "protocol_audit_log_file": "/logs/protocol-audit.log"
   },
   "controllers": [
     {

@@ -34,6 +34,8 @@ WEB_STATIC = WEB_ROOT / "static"
 SESSION_COOKIE_NAME = "russound_session_id"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 BACKEND_CHANGE_POLL_INTERVAL_SECONDS = 2.0
+# Gives the controller time to apply a keypad action and coalesces bursts of key presses.
+ZONE_REFRESH_DEBOUNCE_SECONDS = 0.5
 
 
 class RussoundRequestHandler:
@@ -64,7 +66,7 @@ class RussoundRequestHandler:
     def _read_zone_setting_value(self, payload: dict[str, Any], action: str) -> Any | None:
         if action in {"power", "loudness"}:
             return self._read_bool_field(payload, action)
-        if action in {"source", "volume", "bass", "treble", "balance"}:
+        if action in {"source", "volume", "turn_on_volume", "bass", "treble", "balance"}:
             return self._read_int_field(payload, action)
         return None
 
@@ -103,7 +105,7 @@ class RussoundRequestHandler:
         except ValueError:
             return None
         action = parts[5]
-        if action not in {"power", "source", "volume", "bass", "treble", "loudness", "balance"}:
+        if action not in {"power", "source", "volume", "bass", "treble", "loudness", "balance", "turn_on_volume"}:
             return None
         return controller_id, zone_number, action
 
@@ -138,6 +140,10 @@ class RussoundHTTPServer:
         self._event_backend: RussoundBackend | None = None
         self._event_backend_lock = threading.Lock()
         self._backend_poll_interval_seconds = BACKEND_CHANGE_POLL_INTERVAL_SECONDS
+        self._zone_refresh_requested = threading.Event()
+        self._full_poll_requested = threading.Event()
+        self._zone_refresh_lock = threading.Lock()
+        self._zone_refresh_addresses: set[tuple[int, int]] = set()
         self._helpers = RussoundRequestHandler()
         self.app = self._build_flask_app()
 
@@ -259,7 +265,7 @@ class RussoundHTTPServer:
 
         @app.post("/api/controller/<int:controller_id>/zone/<int:zone_number>/<action>")
         def api_zone_action(controller_id: int, zone_number: int, action: str):
-            if action not in {"power", "source", "volume", "bass", "treble", "loudness", "balance"}:
+            if action not in {"power", "source", "volume", "bass", "treble", "loudness", "balance", "turn_on_volume"}:
                 return jsonify({"error": "Not found"}), 404
 
             payload = self._read_json_body()
@@ -348,6 +354,9 @@ class RussoundHTTPServer:
         setting = update.get("setting")
         if not all(isinstance(value, int) for value in (controller_id, zone_number)) or not isinstance(setting, str):
             return
+        if setting == "refresh":
+            self._request_zone_refresh(cast(int, controller_id), cast(int, zone_number))
+            return
         with self.state_lock:
             state = self.controller.load_state(refresh_backend=False)
             changed = False
@@ -359,6 +368,8 @@ class RussoundHTTPServer:
                     normalized_value = bool(value)
                 elif setting == "volume" and isinstance(value, int):
                     normalized_value = max(0, min(100, value))
+                elif setting == "source" and isinstance(value, int) and state.has_input(value):
+                    normalized_value = value
                 else:
                     return
                 if getattr(zone, setting) != normalized_value:
@@ -386,18 +397,55 @@ class RussoundHTTPServer:
         with self._event_clients_lock:
             return any(client.get("active", True) for client in self._event_clients.values())
 
+    def _request_zone_refresh(self, controller_id: int, zone_number: int) -> None:
+        with self._zone_refresh_lock:
+            self._zone_refresh_addresses.add((controller_id, zone_number))
+        self._zone_refresh_requested.set()
+
+    def _take_zone_refresh_addresses(self) -> set[tuple[int, int]]:
+        self._zone_refresh_requested.clear()
+        with self._zone_refresh_lock:
+            addresses = set(self._zone_refresh_addresses)
+            self._zone_refresh_addresses.clear()
+        return addresses
+
     def _backend_change_watcher_loop(self) -> None:
+        next_full_poll_at = time.monotonic()
         while True:
+            woken = self._zone_refresh_requested.wait(max(0.0, next_full_poll_at - time.monotonic()))
+            if woken and not self._full_poll_requested.is_set():
+                time.sleep(ZONE_REFRESH_DEBOUNCE_SECONDS)
+                try:
+                    if self._refresh_zones_if_changed(self._take_zone_refresh_addresses()):
+                        logging.debug("Keypad-triggered zone refresh detected a change; broadcasting SSE update")
+                        self.broadcast_state_change()
+                except Exception as exc:
+                    logging.debug("Keypad-triggered zone refresh failed: %s", exc)
+                continue
+            self._full_poll_requested.clear()
             iteration_started_at = time.monotonic()
             try:
-                if self._has_active_event_clients() and self._sync_backend_state_if_changed():
+                # Without a recorded poll result the hardware health would be a guess, so poll even without UI clients.
+                should_poll = self._has_active_event_clients() or self.controller.backend_health_snapshot() is None
+                if should_poll and self._sync_backend_state_if_changed():
                     logging.debug("Detected out-of-band hardware state change; broadcasting SSE update")
                     self.broadcast_state_change()
             except Exception as exc:
                 logging.debug("Backend change watcher iteration failed: %s", exc)
-            elapsed_seconds = time.monotonic() - iteration_started_at
-            sleep_seconds = max(0.0, self._backend_poll_interval_seconds - elapsed_seconds)
-            time.sleep(sleep_seconds)
+            next_full_poll_at = iteration_started_at + self._backend_poll_interval_seconds
+
+    def _refresh_zones_if_changed(self, zone_addresses: set[tuple[int, int]]) -> bool:
+        if not zone_addresses:
+            return False
+        with self.state_lock:
+            current_state = self.controller.load_state(refresh_backend=False)
+            with self._event_backend_lock:
+                shared_backend = self._event_backend
+            refreshed_state = self.controller.refresh_zones(zone_addresses, backend=shared_backend)
+            if current_state.to_payload() == refreshed_state.to_payload():
+                return False
+            self.controller.persist_state(refreshed_state)
+            return True
 
     def _sync_backend_state_if_changed(self) -> bool:
         with self.state_lock:
@@ -519,6 +567,9 @@ class RussoundHTTPServer:
         session_id: str | None = None,
     ) -> tuple[int, Queue[str]]:
         event_queue: Queue[str] = Queue()
+        # Health may be stale while nobody was watching; re-poll so the new client sees the real hardware state.
+        self._full_poll_requested.set()
+        self._zone_refresh_requested.set()
         with self._event_clients_lock:
             connection_id = secrets.token_urlsafe(12)
             normalized_session_id = self._normalize_session_id(session_id)
@@ -658,12 +709,22 @@ class RussoundHTTPServer:
 def _configure_logging(debug: bool) -> None:
     """Configure logging so debug output is emitted to stdout when requested."""
     level = logging.DEBUG if debug else logging.INFO
+    log_file = env_str("RUSSOUND_LOG_FILE")
+    file_handler: logging.Handler | None = None
+    if log_file:
+        from logging.handlers import RotatingFileHandler
+
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(
         level=level,
         stream=sys.stdout,
         format="%(asctime)s %(levelname)s %(message)s",
         force=True,
     )
+    if file_handler is not None:
+        logging.getLogger().addHandler(file_handler)
     for logger_name in ("web", "web.russound_backend", "web.russound_connector", "web.russound_controller", "web.russound_state", "web.zone", "web.russound_server"):
         logging.getLogger(logger_name).setLevel(level)
     logging.getLogger("russound.russound").setLevel(logging.DEBUG if debug else logging.WARNING)

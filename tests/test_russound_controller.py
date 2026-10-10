@@ -228,6 +228,33 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertFalse(status["connected"])
             self.assertIn("not responding", status["message"])
 
+    def test_backend_status_with_open_shared_connection_reports_silent_hardware(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.json"
+            state_path = Path(tmp_dir) / "state.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "backend": {"host": "127.0.0.1", "port": 6666},
+                        "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+                        "inputs": [{"id": 1, "name": "Radio"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            controller = RussoundController(config_path=config_path, state_path=state_path)
+            shared_backend = Mock()
+            shared_backend.connect.return_value = True
+            shared_backend.is_connected.return_value = True
+            shared_backend.read_zone.return_value = None
+            controller.set_shared_backend(shared_backend)
+
+            controller.load_state(refresh_backend=True, backend=shared_backend)
+            status = controller._backend_status()
+
+            self.assertFalse(status["connected"])
+            self.assertIn("not responding", status["message"])
+
     def test_backend_status_is_connected_when_a_zone_poll_answers(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.json"
@@ -529,6 +556,7 @@ class RussoundControllerTests(unittest.TestCase):
             "treble": 3,
             "loudness": True,
             "balance": -2,
+            "turn_on_volume": 0,
             "controller": 2,
             "zone": 3,
         })

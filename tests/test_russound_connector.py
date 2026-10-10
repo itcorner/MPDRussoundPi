@@ -126,6 +126,25 @@ class RussoundConnectorTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_power_on_source_volume_update(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex(
+            "F0 00 00 7D 00 00 7F 00 03 04 04 00 02 04 00 00 00 01 00 01 00 15 00 F7"
+        )
+
+        self.assertEqual(
+            connector._parse_zone_updates(frame),
+            [{"controller": 1, "zone": 1, "setting": "volume", "value": 42}],
+        )
+
+    def test_ignores_invalid_power_on_source_volume_above_wire_range(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex(
+            "F0 00 00 7D 00 00 7F 00 03 04 04 00 02 04 00 00 00 01 00 01 00 3C 00 F7"
+        )
+
+        self.assertEqual(connector._parse_zone_updates(frame), [])
+
     def test_calc_checksum_includes_pre_checksum_byte_count(self) -> None:
         connector = Russound("127.0.0.1", 6666)
         frame = connector._Russound__calc_checksum(["F0", "00", "67", "7C", "F1", "0F"])
@@ -200,6 +219,18 @@ class RussoundConnectorTests(unittest.TestCase):
         self.assertEqual(list(connector._pending_frames), [frame])
         self.assertEqual(connector.drain_zone_updates(), [])
 
+    def test_update_listener_drops_unhandled_idle_frames(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex("F0 00 00 7F 00 00 00 02 02 7C F7")
+        connector._pending_frames.append(frame)
+
+        with patch("web.russound_connector.LOGGER.debug") as debug_log:
+            connector._collect_unsolicited_updates_locked()
+
+        self.assertEqual(list(connector._pending_frames), [])
+        self.assertEqual(connector.drain_zone_updates(), [])
+        debug_log.assert_any_call("Dropping unhandled RNET frame: %s", "F0 00 00 7F 00 00 00 02 02 7C F7")
+
     def test_update_listener_preserves_frames_during_response_transaction(self) -> None:
         connector = Russound("127.0.0.1", 6666)
         frame = bytearray.fromhex(
@@ -240,6 +271,61 @@ class RussoundConnectorTests(unittest.TestCase):
 
         self.assertEqual(list(connector._pending_frames), [])
         self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_volume_feedback_frame_type_06_emits_volume_update(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        connector.sock.recv_queue.append(bytes.fromhex("F0 00 01 7D 00 00 7F 06 1F 1E F1 6F 01 10 2F F7"))
+
+        connector._read_available_locked()
+
+        self.assertEqual(list(connector._pending_frames), [])
+        self.assertEqual(
+            connector.drain_zone_updates(),
+            [{"controller": 1, "zone": 2, "setting": "volume", "value": 62}],
+        )
+
+    def test_keypad_event_emits_zone_refresh_hint(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex("F0 00 00 7F 00 00 00 05 03 02 00 00 02 04 03 6C 00 00 00 00 00 01 05 F7")
+
+        self.assertEqual(
+            connector._parse_zone_updates(frame),
+            [{"controller": 1, "zone": 1, "setting": "refresh"}],
+        )
+
+    def test_own_keypad_id_events_do_not_emit_refresh_hint(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        frame = bytearray.fromhex("F0 00 00 7F 00 00 70 05 03 02 00 00 02 04 03 6C 00 00 00 00 00 01 05 F7")
+
+        self.assertEqual(connector._parse_zone_updates(frame), [])
+
+    def test_hardware_source_and_power_notifications_emit_updates(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        connector.sock.recv_queue.append(
+            bytes.fromhex(
+                "F0 00 00 7F 00 00 00 05 03 02 00 00 02 04 03 6B 00 00 00 00 00 01 04 F7"
+                "F0 00 00 7D 00 00 7F 06 00 03 00 00 05 07 F7"
+                "F0 00 05 7D 00 00 7F 06 41 00 00 00 05 4A F7"
+                "F0 00 05 7D 00 00 7F 05 02 01 00 02 01 00 F1 23 00 01 00 05 00 01 2D F7"
+                "F0 00 00 7D 00 00 7F 05 02 01 00 02 01 00 F1 23 00 00 00 00 00 01 22 F7"
+            )
+        )
+
+        connector._read_available_locked()
+
+        self.assertEqual(list(connector._pending_frames), [])
+        self.assertEqual(
+            connector.drain_zone_updates(),
+            [
+                {"controller": 1, "zone": 1, "setting": "refresh"},
+                {"controller": 1, "zone": 1, "setting": "source", "value": 4},
+                {"controller": 1, "zone": 6, "setting": "source", "value": 1},
+                {"controller": 1, "zone": 6, "setting": "power", "value": True},
+                {"controller": 1, "zone": 1, "setting": "power", "value": False},
+            ],
+        )
 
     def test_short_zone_parameter_response_matches_signature(self) -> None:
         connector = Russound("127.0.0.1", 6666)

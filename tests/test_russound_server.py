@@ -38,6 +38,63 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             _close_server(server)
 
+    def test_unsolicited_source_update_requires_known_input(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            state = RussoundState(
+                zones=[Zone(name="Living Room", controller=1, zone_number=1, source=1)],
+                inputs=[{"id": 1, "name": "A"}, {"id": 2, "name": "B"}],
+            )
+            controller = Mock()
+            controller.load_state.return_value = state
+            controller.build_view_payload.return_value = {}
+            server.controller = controller
+
+            server._handle_unsolicited_zone_update({"controller": 1, "zone": 1, "setting": "source", "value": 9})
+            self.assertEqual(state.zones[0].source, 1)
+
+            server._handle_unsolicited_zone_update({"controller": 1, "zone": 1, "setting": "source", "value": 2})
+            self.assertEqual(state.zones[0].source, 2)
+            controller.persist_state.assert_called_once_with(state)
+        finally:
+            _close_server(server)
+
+    def test_refresh_hint_queues_targeted_zone_refresh(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            controller = Mock()
+            server.controller = controller
+
+            server._handle_unsolicited_zone_update({"controller": 1, "zone": 2, "setting": "refresh"})
+
+            controller.load_state.assert_not_called()
+            self.assertTrue(server._zone_refresh_requested.is_set())
+            self.assertEqual(server._take_zone_refresh_addresses(), {(1, 2)})
+            self.assertFalse(server._zone_refresh_requested.is_set())
+        finally:
+            _close_server(server)
+
+    def test_refresh_zones_if_changed_persists_refreshed_state(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            current_state = Mock()
+            refreshed_state = Mock()
+            current_state.to_payload.return_value = {"zones": [{"power": False}]}
+            refreshed_state.to_payload.return_value = {"zones": [{"power": True}]}
+            controller = Mock()
+            controller.load_state.return_value = current_state
+            controller.refresh_zones.return_value = refreshed_state
+            shared_backend = Mock()
+            server.controller = controller
+            server._event_backend = shared_backend
+
+            self.assertTrue(server._refresh_zones_if_changed({(1, 1)}))
+
+            controller.refresh_zones.assert_called_once_with({(1, 1)}, backend=shared_backend)
+            controller.persist_state.assert_called_once_with(refreshed_state)
+        finally:
+            _close_server(server)
+
     def test_backend_poll_interval_is_loaded_from_config(self):
         server = RussoundHTTPServer(None, None)
         try:

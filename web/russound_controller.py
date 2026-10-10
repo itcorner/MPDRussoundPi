@@ -260,6 +260,7 @@ class RussoundController:
         state: RussoundState,
         config: dict[str, Any],
         backend: RussoundBackend | None = None,
+        zone_addresses: set[tuple[int, int]] | None = None,
     ) -> RussoundState:
         backend = backend or RussoundBackend(config=config)
         inputs = [
@@ -276,6 +277,8 @@ class RussoundController:
             reachable = False
         for zone_index, zone_item in enumerate(zone_items):
             zone = _coerce_zone(zone_item, default_source=inputs[0].get("id") if inputs else None)
+            if zone_addresses is not None and zone.address not in zone_addresses:
+                continue
             zone_state = backend.read_zone(zone, inputs)
             if zone_state is None:
                 if not answered:
@@ -292,14 +295,24 @@ class RussoundController:
                     "treble": zone_state.get("treble", zone.treble),
                     "loudness": zone_state.get("loudness", zone.loudness),
                     "balance": zone_state.get("balance", zone.balance),
+                    "turn_on_volume": zone_state.get("turn_on_volume", zone.turn_on_volume),
                     "controller": zone.controller,
                     "zone": zone.zone_number,
                 },
             )
             zone_items[zone_index] = zone
-        self._record_backend_health(reachable=reachable, answered=answered, polled_zone_count=len(zone_items))
+        if zone_addresses is None:
+            self._record_backend_health(reachable=reachable, answered=answered, polled_zone_count=len(zone_items))
         state.zones = zone_items
         return self._sync_system_power(state)
+
+    def refresh_zones(self, zone_addresses: set[tuple[int, int]], backend: RussoundBackend | None = None) -> RussoundState:
+        """Re-read only the given zones from hardware; other zones keep their persisted values."""
+        state = self.load_state(refresh_backend=False)
+        config = self.load_config()
+        if config is None:
+            return state
+        return self._sync_state_from_backend(state, config, backend, zone_addresses=zone_addresses)
 
     def _record_backend_health(self, reachable: bool, answered: bool, polled_zone_count: int) -> None:
         """Derive hardware health from the zone reads that just ran."""
@@ -411,6 +424,7 @@ class RussoundController:
                 treble=int(existing_zone.treble if isinstance(existing_zone, Zone) else 0),
                 loudness=bool(existing_zone.loudness if isinstance(existing_zone, Zone) else False),
                 balance=int(existing_zone.balance if isinstance(existing_zone, Zone) else 0),
+                turn_on_volume=int(existing_zone.turn_on_volume if isinstance(existing_zone, Zone) else 0),
                 controller=int(existing_zone.controller if isinstance(existing_zone, Zone) else controller_id),
                 zone_number=int(existing_zone.zone_number if isinstance(existing_zone, Zone) else zone_number),
                 keypad_id=_keypad_id(zone_config.get("keypad_id")),
@@ -448,13 +462,13 @@ class RussoundController:
         if not isinstance(resolved_config, dict):
             return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
 
-        if self._shared_backend is not None:
-            return {
-                "connected": self._shared_backend.is_connected(),
-                "message": "" if self._shared_backend.is_connected() else _BACKEND_UNAVAILABLE_MESSAGE,
-            }
-
         recorded_health = self._backend_health
+        if self._shared_backend is not None:
+            # An open gateway socket does not prove the controller answers; prefer the last poll result.
+            if not self._shared_backend.is_connected():
+                return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
+            return dict(recorded_health) if recorded_health is not None else {"connected": True, "message": ""}
+
         if recorded_health is not None:
             return dict(recorded_health)
 

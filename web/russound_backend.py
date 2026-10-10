@@ -495,6 +495,9 @@ class RussoundBackend:
     def set_zone_balance(self, zone: Zone, balance: int) -> bool:
         return self.set_zone_user_parameter(zone, "balance", balance)
 
+    def set_zone_turn_on_volume(self, zone: Zone, volume: int) -> bool:
+        return self.set_zone_user_parameter(zone, "turn_on_volume", max(0, min(100, int(volume))))
+
     def display_on_all_keypads(self, message: str, alignment: int = 0, flash_time: int = 0) -> bool:
         """Display an ASCII message on all connected keypads.
 

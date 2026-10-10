@@ -581,7 +581,15 @@ class Russound:
                 LOGGER.debug("Discarding periodic RNET frame addressed to controller 0x7E")
                 continue
             if len(frame) > 7 and frame[7] == 0x06:
-                LOGGER.debug("Discarding RNET frame with undocumented message type 0x06")
+                feedback_updates = self._parse_feedback_frame(frame)
+                if feedback_updates:
+                    self._pending_zone_updates.extend(feedback_updates)
+                else:
+                    LOGGER.debug("Discarding RNET frame with undocumented message type 0x06")
+                continue
+            notification_updates = self._parse_power_event(frame) or self._parse_keypad_event(frame)
+            if notification_updates:
+                self._pending_zone_updates.extend(notification_updates)
                 continue
             self._pending_frames.append(frame)
 
@@ -610,6 +618,19 @@ class Russound:
                     bool(body[9]),
                     bool(body[10]),
                 )
+            return
+
+        if (
+            frame[8:12] == bytearray((0x03, 0x04, 0x04, 0x00))
+            and frame[12:15] == bytearray((0x02, 0x04, 0x00))
+            and len(frame) >= 24
+        ):
+            LOGGER.debug(
+                "Received power-on source volume: controller=%d zone=%d volume=%d",
+                frame[1] + 1,
+                frame[2] + 1,
+                frame[-3] * 2,
+            )
             return
 
         if frame[8] == 0x00 and len(frame) >= 16 and frame[9:15] == bytearray((0x05, 0x02, 0x00, frame[12], 0x00, frame[14])):
@@ -678,7 +699,7 @@ class Russound:
                 )
                 self._pending_zone_updates.extend(zone_updates)
             else:
-                retained_frames.append(frame)
+                LOGGER.debug("Dropping unhandled RNET frame: %s", " ".join(f"{byte:02X}" for byte in frame))
         self._pending_frames = retained_frames
 
     def _pop_matching_frame_locked(self, message_signature: str | None) -> bytearray | None:
@@ -698,9 +719,63 @@ class Russound:
         updates = self._parse_zone_updates(frame)
         return updates[0] if updates else None
 
+    def _parse_feedback_frame(self, frame: bytearray) -> list[dict[str, Any]]:
+        # Undocumented type 0x06 frames the controller sends to the source class 0x7D after zone changes.
+        if len(frame) < 15 or frame[0] != 0xF0 or frame[3] != 0x7D or frame[7] != 0x06 or frame[1] > 0x05 or frame[2] > 0x05:
+            return []
+        address = {"controller": int(frame[1]) + 1, "zone": int(frame[2]) + 1}
+        # Volume: `06 <vol> xx F1 6F 01 10`.
+        if len(frame) == 16 and frame[10:14] == bytearray((0xF1, 0x6F, 0x01, 0x10)) and frame[8] <= 50:
+            return [{**address, "setting": "volume", "value": int(frame[8]) * 2}]
+        # Source: `06 00 <index> 00 00 05`; index 0 is reported as `06 41 00 00 00 05`.
+        if len(frame) == 15 and frame[10:13] == bytearray((0x00, 0x00, 0x05)) and frame[9] <= 0x07:
+            if frame[8] == 0x00 or (frame[8] == 0x41 and frame[9] == 0x00):
+                return [{**address, "setting": "source", "value": int(frame[9]) + 1}]
+        return []
+
+    def _parse_power_event(self, frame: bytearray) -> list[dict[str, Any]]:
+        # Zone power is forwarded to the source class as Set State 0xDC: `... 7D 00 00 7F 05 02 01 00 02 01 00 F1 23 00 <pwr> 00 <zz> 00 01`.
+        if len(frame) != 24 or frame[0] != 0xF0 or frame[3] != 0x7D or frame[7] != 0x05 or frame[1] > 0x05:
+            return []
+        if frame[8:16] != bytearray((0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0xF1, 0x23)):
+            return []
+        if frame[2] != frame[19] or frame[2] > 0x05 or frame[17] > 0x01:
+            return []
+        return [{"controller": int(frame[1]) + 1, "zone": int(frame[2]) + 1, "setting": "power", "value": bool(frame[17])}]
+
+    def _parse_keypad_event(self, frame: bytearray) -> list[dict[str, Any]]:
+        # Keypad events (source keypad id < 0x70) only hint that the zone changed; the caller must re-read it.
+        if len(frame) < 12 or frame[7] != 0x05 or frame[3] != 0x7F or frame[6] >= 0x70:
+            return []
+        if frame[4] > 0x05 or frame[5] > 0x05:
+            return []
+        return [{"controller": int(frame[4]) + 1, "zone": int(frame[5]) + 1, "setting": "refresh"}]
+
     def _parse_zone_updates(self, frame: bytearray) -> list[dict[str, Any]]:
         if len(frame) < 2 or frame[0] != 0xF0:
             return []
+        if (
+            len(frame) >= 24
+            and frame[3] == 0x7D
+            and frame[7] == 0x00
+            and frame[8:12] == bytearray((0x03, 0x04, 0x04, 0x00))
+            and frame[12:15] == bytearray((0x02, 0x04, 0x00))
+        ):
+            wire_volume = int(frame[-3])
+            if not 0 <= wire_volume <= 50:
+                LOGGER.debug(
+                    "Ignoring invalid power-on source volume: controller=%d zone=%d wire_volume=%d",
+                    frame[1] + 1,
+                    frame[2] + 1,
+                    wire_volume,
+                )
+                return []
+            return [{
+                "controller": int(frame[1]) + 1,
+                "zone": int(frame[2]) + 1,
+                "setting": "volume",
+                "value": wire_volume * 2,
+            }]
         if frame[7] == 0x00:
             if len(frame) < 23 or frame[9:14] != bytearray((0x04, 0x02, 0x00, frame[12], 0x07)):
                 return []
@@ -712,11 +787,11 @@ class Russound:
             ]
 
         if len(frame) < 21:
-            return []
+            return self._parse_keypad_event(frame)
         if frame[1] > 0x05 or frame[7] != 0x05 or frame[8:12] != bytearray((0x02, 0x02, 0x00, 0x00)):
-            return []
+            return self._parse_keypad_event(frame)
         if frame[12] != 0xF1 or frame[14] != 0x00 or frame[16] != 0x00 or frame[18] != 0x00 or frame[19] != 0x01:
-            return []
+            return self._parse_keypad_event(frame)
         if frame[13] == 0x23:
             setting = "power"
             value: Any = bool(frame[15])
@@ -724,7 +799,7 @@ class Russound:
             setting = "volume"
             value = int(frame[15]) * 2
         else:
-            return []
+            return self._parse_keypad_event(frame)
         return [{
             "controller": int(frame[1]) + 1,
             "zone": int(frame[17]) + 1,
