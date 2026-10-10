@@ -257,10 +257,7 @@ function render() {
     card.innerHTML = `
       <div class="zone-card-face zone-card-front">
         <div class="zone-header">
-          <div>
-            <h2 class="zone-name">${zone.name}</h2>
-            <div class="zone-state">${zone.power ? "On" : "Off"}</div>
-          </div>
+          <h2 class="zone-name">${zone.name}</h2>
           <button class="zone-toggle ${zone.power ? "" : "is-off"}" type="button" data-action="power" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
             ${zone.power ? "On" : "Off"}
           </button>
@@ -284,7 +281,7 @@ function render() {
       <div class="zone-card-face zone-card-back">
         <div class="zone-card-back-header">
           <button class="zone-advanced-toggle zone-advanced-toggle--back" type="button" data-action="toggle-advanced" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-            Back to normal
+            Back
           </button>
           <h3 class="zone-card-back-title">Advanced sound</h3>
         </div>
@@ -295,26 +292,26 @@ function render() {
           </div>
           <div class="control-row">
             <label for="bass-${zoneDomId}">Bass: <span class="label-value" data-value-output="bass">${formatSignedValue(bass)}</span></label>
-            <input id="bass-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${bass}" data-action="bass" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-            <div class="range-endpoints" aria-hidden="true">
-              <span>-10</span>
-              <span>+10</span>
+            <div class="range-with-endpoints">
+              <span aria-hidden="true">-10</span>
+              <input id="bass-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${bass}" data-action="bass" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+              <span aria-hidden="true">+10</span>
             </div>
           </div>
           <div class="control-row">
             <label for="treble-${zoneDomId}">Treble: <span class="label-value" data-value-output="treble">${formatSignedValue(treble)}</span></label>
-            <input id="treble-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${treble}" data-action="treble" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-            <div class="range-endpoints" aria-hidden="true">
-              <span>-10</span>
-              <span>+10</span>
+            <div class="range-with-endpoints">
+              <span aria-hidden="true">-10</span>
+              <input id="treble-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${treble}" data-action="treble" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+              <span aria-hidden="true">+10</span>
             </div>
           </div>
           <div class="control-row">
             <label for="balance-${zoneDomId}">Balance: <span class="label-value" data-value-output="balance">${formatSignedValue(balance)}</span></label>
-            <input id="balance-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${balance}" data-action="balance" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-            <div class="range-endpoints" aria-hidden="true">
-              <span>Left</span>
-              <span>Right</span>
+            <div class="range-with-endpoints">
+              <span aria-hidden="true">L</span>
+              <input id="balance-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${balance}" data-action="balance" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
+              <span aria-hidden="true">R</span>
             </div>
           </div>
           <label class="advanced-check" for="loudness-${zoneDomId}">
