@@ -193,6 +193,7 @@ function stopStatePolling() {
 }
 
 function render() {
+  document.getElementById("shortcutsHeading").hidden = state.shortcuts.length === 0;
   if (appShell) {
     let banner = appShell.querySelector(".backend-warning-banner");
     if (!state.backendStatus.connected) {

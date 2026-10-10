@@ -82,6 +82,7 @@ function renderShortcuts(shortcuts) {
     remove.addEventListener("click", () => {
       editor.remove();
       shortcutCountBadge.textContent = `${collectShortcuts().length} shortcuts`;
+      shortcutCountBadge.hidden = collectShortcuts().length === 0;
       recomputeUnsavedChanges();
     });
     fields.appendChild(remove);
@@ -114,6 +115,7 @@ function renderShortcuts(shortcuts) {
     configShortcuts.appendChild(editor);
   }
   shortcutCountBadge.textContent = `${shortcuts.length} shortcuts`;
+  shortcutCountBadge.hidden = shortcuts.length === 0;
 }
 
 function escapeAttribute(value) {

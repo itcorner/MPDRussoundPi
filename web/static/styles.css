@@ -474,6 +474,15 @@ h1 {
   min-width: 0;
 }
 
+.setup-controller-row .config-check {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+#shortcutCountBadge[hidden] {
+  display: none;
+}
+
 .setup-fields select, .setup-controller-row select {
   padding: 0.7rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
