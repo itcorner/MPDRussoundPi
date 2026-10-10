@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from web.config_types import coerce_russound_config, env_port, env_str, resolve_backend_poll_interval_seconds
+from web.config_types import coerce_russound_config, env_port, env_str, resolve_backend_endpoint, resolve_backend_poll_interval_seconds, resolve_backend_protocol_audit_log_file
 from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
@@ -277,16 +277,27 @@ class RussoundHTTPServer:
             old_backend = None
             try:
                 with self.state_lock:
+                    previous_config = coerce_russound_config(self.controller.load_config())
                     response_payload = self.controller.update_config_zones(payload=payload)
-                    self._backend_reconfiguring.set()
+                    updated_config = coerce_russound_config(response_payload["config"])
+                    reconnect_required = (
+                        previous_config is None
+                        or resolve_backend_endpoint(previous_config) != resolve_backend_endpoint(updated_config)
+                        or resolve_backend_protocol_audit_log_file(previous_config) != resolve_backend_protocol_audit_log_file(updated_config)
+                    )
                     with self._event_backend_lock:
-                        old_backend = self._event_backend
-                        self._event_backend = None
-                        self._backend_generation += 1
-                    self.controller.set_shared_backend(None)
+                        if reconnect_required:
+                            self._backend_reconfiguring.set()
+                            old_backend = self._event_backend
+                            self._event_backend = None
+                            self._backend_generation += 1
+                        elif self._event_backend is not None:
+                            self._event_backend.config = updated_config
+                    if reconnect_required:
+                        self.controller.set_shared_backend(None)
+                        self._next_reconnect_at = 0.0
+                        self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
                     self._backend_poll_interval_seconds = self._resolve_backend_poll_interval_seconds()
-                    self._next_reconnect_at = 0.0
-                    self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
                     self._publish_state_payload_locked()
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
@@ -310,7 +321,10 @@ class RussoundHTTPServer:
             if power is None:
                 return jsonify({"error": "Invalid request body: 'power' must be a boolean"}), 400
             with self.state_lock:
-                response_payload = self.controller.handle_system_power_change(power=power)
+                try:
+                    response_payload = self.controller.handle_system_power_change(power=power)
+                except RuntimeError as exc:
+                    return jsonify({"error": str(exc)}), 502
                 self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()

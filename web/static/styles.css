@@ -388,6 +388,46 @@ h1 {
   min-width: 0;
 }
 
+.shortcut-editor {
+  padding: 1rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 1rem;
+  min-width: 0;
+}
+
+.shortcut-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: end;
+}
+
+.shortcut-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem 1.5rem;
+  border: 0;
+  padding: 0;
+  margin: 1rem 0 0;
+  min-width: 0;
+}
+
+.shortcut-targets legend {
+  margin-bottom: 0.75rem;
+  color: var(--muted);
+}
+
+.shortcut-targets label {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .shortcut-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .backend-summary-status::before {
   content: "";
   width: 0.55rem;

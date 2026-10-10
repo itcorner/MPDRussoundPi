@@ -24,6 +24,44 @@ from web.russound_controller import (
 
 
 class RussoundControllerTests(unittest.TestCase):
+    def test_system_off_write_failure_does_not_change_state(self):
+        zone = Zone(name="Kitchen", controller=1, zone_number=1, power=True)
+        state = RussoundState(system_power=True, zones=[zone])
+        backend = Mock()
+        backend.turn_all_zones_off.return_value = False
+        with self.assertRaises(RuntimeError):
+            state.set_system_power(False, backend=backend)
+        self.assertTrue(state.system_power)
+        self.assertTrue(zone.power)
+
+    def test_shortcut_editor_creates_updates_deletes_and_rejects_invalid_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps({"controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": []}))
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            shortcut = {"id": "party", "name": "Party", "source": 1, "zone_addresses": [{"controller": 1, "zone": 1}]}
+            payload = {
+                "zone_slots": [{"controller": 1, "zone": 1, "name": "Kitchen", "enabled": True, "visible": True}],
+                "source_slots": [{"id": 1, "name": "Radio", "enabled": True}], "shortcuts": [shortcut],
+            }
+            result = controller.update_config_zones(payload=payload)
+            self.assertEqual(result["config"]["shortcuts"], [shortcut])
+            payload["shortcuts"] = [{**shortcut, "name": "Evening"}]
+            controller.update_config_zones(payload=payload)
+            self.assertEqual(controller.load_config()["shortcuts"][0]["name"], "Evening")
+            saved = config_path.read_text()
+            for invalid in (
+                [{**shortcut, "source": 2}], [{**shortcut, "name": ""}],
+                [shortcut, shortcut], [{**shortcut, "zone_addresses": []}],
+                [{**shortcut, "zone_addresses": [{"controller": 1, "zone": 2}]}],
+                [{**shortcut, "id": ""}],
+            ):
+                with self.subTest(shortcuts=invalid), self.assertRaises(ValueError):
+                    controller.update_config_zones(payload={**payload, "shortcuts": invalid})
+                self.assertEqual(config_path.read_text(), saved)
+            controller.update_config_zones(payload={**payload, "shortcuts": []})
+            self.assertEqual(controller.load_config()["shortcuts"], [])
+
     def test_setup_recovers_invalid_config_and_saves_without_hardware(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"
@@ -829,9 +867,11 @@ class RussoundControllerTests(unittest.TestCase):
             config_path.write_text(json.dumps({"zones": [{"name": "Living Room", "controller": 1, "zone": 1}], "inputs": [{"id": 1, "name": "Radio"}]}), encoding="utf-8")
             state = load_state(config_path, state_path)
             update_zone_setting(state, 1, 1, "power", True)
-            update_system_power(state, True)
+            with patch.object(RussoundBackend, "turn_all_zones_on", return_value=True):
+                update_system_power(state, True)
             self.assertTrue(state["system_power"])
-            update_system_power(state, False)
+            with patch.object(RussoundBackend, "turn_all_zones_off", return_value=True):
+                update_system_power(state, False)
             self.assertFalse(state["system_power"])
             self.assertFalse(state["zones"][0].power)
 

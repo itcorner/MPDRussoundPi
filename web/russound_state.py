@@ -100,13 +100,15 @@ class RussoundState:
 
         backend = backend or RussoundBackend()
         if not power:
-            backend.turn_all_zones_off()
+            if not backend.turn_all_zones_off():
+                raise RuntimeError("Unable to turn all zones off: backend command failed")
             self.system_power = False
             for zone in self.zones:
                 zone.power = False
         else:
             enabled_zones = [zone for zone in self.zones if getattr(zone, "enabled", True)]
-            backend.turn_all_zones_on(enabled_zones)
+            if not backend.turn_all_zones_on(enabled_zones):
+                raise RuntimeError("Unable to turn zones on: backend command failed")
             for zone in self.zones:
                 zone.power = bool(getattr(zone, "enabled", True))
             self.system_power = True

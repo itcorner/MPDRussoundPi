@@ -21,6 +21,16 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_system_off_backend_failure_returns_error_without_publishing(self):
+        server = RussoundHTTPServer(None, None)
+        server.controller = Mock()
+        server.controller.handle_system_power_change.side_effect = RuntimeError("Backend command failed")
+        with patch.object(server, "broadcast_state_change") as broadcast:
+            response = server.app.test_client().post("/api/system/power", json={"power": False})
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json["error"], "Backend command failed")
+        broadcast.assert_not_called()
+
     def test_state_api_and_events_return_snapshot_while_hardware_poll_is_blocked(self):
         server = RussoundHTTPServer(None, None)
         controller = Mock()
@@ -136,6 +146,37 @@ class RussoundServerTests(unittest.TestCase):
         server._backend_generation = 1
         server._handle_unsolicited_zone_update({"controller": 1, "zone": 1, "setting": "power", "value": True}, generation=0)
         server.controller.load_state.assert_not_called()
+
+    def test_config_save_preserves_connection_health_when_endpoint_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps({
+                "backend": {"host": "gateway", "port": 6666},
+                "controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": [],
+            }))
+            server = RussoundHTTPServer(config_path, Path(directory) / "state.json")
+            backend = Mock()
+            backend.is_connected.return_value = True
+            server._event_backend = backend
+            server.controller.set_shared_backend(backend)
+            server.controller._record_backend_health(True, True, 1)
+            generation = server._backend_generation
+            client = server.app.test_client()
+            response = client.post("/api/config", json={
+                "backend": {"host": "gateway", "port": 6666, "poll_interval_seconds": 7.5},
+                "controllers": [{"id": 1, "zone_count": 4}],
+                "zone_slots": [{"controller": 1, "zone": 1, "name": "Kitchen", "enabled": True, "visible": True}],
+                "source_slots": [{"id": 1, "name": "Radio", "enabled": True}],
+                "shortcuts": [],
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertIs(server._event_backend, backend)
+            backend.close.assert_not_called()
+            self.assertEqual(server._backend_generation, generation)
+            self.assertEqual(backend.config["controllers"], [{"id": 1, "zone_count": 4}])
+            self.assertEqual(server._backend_poll_interval_seconds, 7.5)
+            with server.state_lock:
+                self.assertTrue(client.get("/api/state").json["backend_status"]["connected"])
 
     def test_setup_write_failure_returns_actionable_json_error(self):
         server = RussoundHTTPServer(None, None)

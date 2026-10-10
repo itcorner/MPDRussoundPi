@@ -205,8 +205,9 @@ loopback address. Serial-device access requires device passthrough and group per
 - Missing, malformed, or structurally invalid configuration enters setup instead of crashing the web server.
 - Setup validates backend settings, controller ids/counts, zone addresses, and sources before saving.
 - Saving does not contact hardware; an offline gateway does not prevent configuration.
+- The collapsible Shortcuts editor adds, renames, and removes shortcuts, with a source menu and zone checkboxes. Shortcut targets and sources must remain enabled before saving.
 - Backend connectivity is shown separately and checked by the background watcher.
-- Saves close the old backend connection, clear its recorded health, and reconnect using the new settings without restarting the container.
+- Endpoint or protocol-audit-log changes reconnect without restarting the container. Names, shortcuts, controller scope, and poll-interval edits retain the existing connection and health.
 - Replacing an invalid file preserves its original bytes in a sibling `russound_config.json.invalid-*.bak` file. Existing valid files are never replaced automatically.
 - Config/state are written atomically within their respective directories. Both must be writable by the container user (UID `10001` by default). Named volumes avoid most first-run bind-mount ownership problems; pre-existing volumes may still need ownership correction.
 - Configuration/state write errors are reported in the editor. For non-Docker runs, supply a writable `--config` path (or `RUSSOUND_CONFIG`).

@@ -17,6 +17,9 @@ const backendPollInterval = document.getElementById("backendPollInterval");
 const backendConnectionStatus = document.getElementById("backendConnectionStatus");
 const backendSummaryStatus = document.getElementById("backendSummaryStatus");
 const backendOverrides = document.getElementById("backendOverrides");
+const configShortcuts = document.getElementById("configShortcuts");
+const shortcutCountBadge = document.getElementById("shortcutCountBadge");
+const addShortcutButton = document.getElementById("addShortcutButton");
 
 let configPayload = null;
 let saveInFlight = false;
@@ -25,7 +28,93 @@ let baselineSourceSlotsHash = "";
 let hasUnsavedChanges = false;
 let baselineConnectionHash = "";
 let statusInFlight = false;
+let baselineShortcutsHash = "";
 const draftZones = new Map();
+
+function collectShortcuts() {
+  return Array.from(configShortcuts.querySelectorAll(".shortcut-editor")).map((editor) => ({
+    ...JSON.parse(editor.dataset.shortcut),
+    name: editor.querySelector('[data-field="shortcut-name"]').value,
+    source: Number(editor.querySelector('[data-field="shortcut-source"]').value),
+    zone_addresses: Array.from(editor.querySelectorAll('[data-field="shortcut-zone"]:checked')).map((checkbox) => ({
+      controller: Number(checkbox.dataset.controller), zone: Number(checkbox.dataset.zone),
+    })),
+  }));
+}
+
+function renderShortcuts(shortcuts) {
+  configShortcuts.replaceChildren();
+  const sources = collectSourceSlots().filter((source) => source.enabled);
+  const zones = collectZoneSlots().filter((zone) => zone.enabled);
+  for (const shortcut of shortcuts) {
+    const editor = document.createElement("article");
+    editor.className = "shortcut-editor";
+    editor.dataset.shortcut = JSON.stringify(shortcut);
+    const fields = document.createElement("div");
+    fields.className = "shortcut-fields";
+    const nameLabel = document.createElement("label");
+    nameLabel.className = "field config-name-field";
+    nameLabel.textContent = "Name";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.dataset.field = "shortcut-name";
+    name.value = shortcut.name || "";
+    nameLabel.appendChild(name);
+    fields.appendChild(nameLabel);
+    const sourceLabel = document.createElement("label");
+    sourceLabel.className = "field";
+    sourceLabel.textContent = "Source";
+    const select = document.createElement("select");
+    select.dataset.field = "shortcut-source";
+    select.add(new Option("Select source", "0"));
+    for (const source of sources) select.add(new Option(source.name || `Source ${source.id}`, String(source.id)));
+    if (shortcut.source && !sources.some((source) => source.id === shortcut.source)) {
+      select.add(new Option(`Source ${shortcut.source} (disabled)`, String(shortcut.source)));
+    }
+    select.value = String(shortcut.source || 0);
+    sourceLabel.appendChild(select);
+    fields.appendChild(sourceLabel);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "power-button";
+    remove.textContent = "Remove";
+    remove.title = "Remove shortcut";
+    remove.addEventListener("click", () => {
+      editor.remove();
+      shortcutCountBadge.textContent = `${collectShortcuts().length} shortcuts`;
+      recomputeUnsavedChanges();
+    });
+    fields.appendChild(remove);
+    editor.appendChild(fields);
+    const targets = document.createElement("fieldset");
+    targets.className = "shortcut-targets";
+    const legend = document.createElement("legend");
+    legend.textContent = "Zones";
+    targets.appendChild(legend);
+    const addresses = shortcut.zone_addresses || [];
+    const available = [...zones];
+    for (const address of addresses) {
+      if (!zones.some((zone) => zone.controller === address.controller && zone.zone === address.zone)) {
+        available.push({ ...address, name: `Controller ${address.controller} Zone ${address.zone} (disabled)` });
+      }
+    }
+    for (const zone of available) {
+      const label = document.createElement("label");
+      label.className = "config-check";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.field = "shortcut-zone";
+      checkbox.dataset.controller = String(zone.controller);
+      checkbox.dataset.zone = String(zone.zone);
+      checkbox.checked = addresses.some((address) => address.controller === zone.controller && address.zone === zone.zone);
+      label.append(checkbox, document.createTextNode(zone.name || `Controller ${zone.controller} Zone ${zone.zone}`));
+      targets.appendChild(label);
+    }
+    editor.appendChild(targets);
+    configShortcuts.appendChild(editor);
+  }
+  shortcutCountBadge.textContent = `${shortcuts.length} shortcuts`;
+}
 
 function escapeAttribute(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -168,7 +257,7 @@ function updateSaveButtonState() {
 function recomputeUnsavedChanges() {
   const currentHash = hashZoneSlots(collectZoneSlots());
   const currentSourceHash = hashSourceSlots(collectSourceSlots());
-  hasUnsavedChanges = Boolean(configPayload?.config_required) || currentHash !== baselineZoneSlotsHash || currentSourceHash !== baselineSourceSlotsHash || connectionHash() !== baselineConnectionHash;
+  hasUnsavedChanges = Boolean(configPayload?.config_required) || currentHash !== baselineZoneSlotsHash || currentSourceHash !== baselineSourceSlotsHash || connectionHash() !== baselineConnectionHash || JSON.stringify(collectShortcuts()) !== baselineShortcutsHash;
   updateSaveButtonState();
 }
 
@@ -289,6 +378,8 @@ function renderEditor(payload) {
     sourceConfigPanel.open = true;
     controllerZones.querySelectorAll("details").forEach((panel) => { panel.open = true; });
   }
+  renderShortcuts(payload.config?.shortcuts || []);
+  baselineShortcutsHash = JSON.stringify(collectShortcuts());
   recomputeUnsavedChanges();
   refreshBackendStatus();
 }
@@ -306,10 +397,10 @@ function rebuildZoneSlots() {
     }
   }
   const savedDrafts = new Map(draftZones);
-  const savedBaselines = [baselineZoneSlotsHash, baselineSourceSlotsHash, baselineConnectionHash];
-  renderEditor({ ...configPayload, config: { ...configPayload.config, backend: collectBackend(), controllers }, zone_slots: zoneSlots, source_slots: collectSourceSlots() });
+  const savedBaselines = [baselineZoneSlotsHash, baselineSourceSlotsHash, baselineConnectionHash, baselineShortcutsHash];
+  renderEditor({ ...configPayload, config: { ...configPayload.config, backend: collectBackend(), controllers, shortcuts: collectShortcuts() }, zone_slots: zoneSlots, source_slots: collectSourceSlots() });
   for (const [address, slot] of savedDrafts) draftZones.set(address, slot);
-  [baselineZoneSlotsHash, baselineSourceSlotsHash, baselineConnectionHash] = savedBaselines;
+  [baselineZoneSlotsHash, baselineSourceSlotsHash, baselineConnectionHash, baselineShortcutsHash] = savedBaselines;
   recomputeUnsavedChanges();
 }
 
@@ -379,6 +470,7 @@ async function saveConfig() {
         controllers: collectControllers(),
         zone_slots: collectZoneSlots(),
         source_slots: collectSourceSlots(),
+        shortcuts: collectShortcuts(),
       }),
     });
     const payload = await response.json();
@@ -472,6 +564,22 @@ document.addEventListener("click", handleNavigationGuard);
 connectionConfig.addEventListener("input", () => { updateConnectionFields(); recomputeUnsavedChanges(); });
 connectionConfig.addEventListener("change", () => { updateConnectionFields(); recomputeUnsavedChanges(); });
 controllerConfig.addEventListener("change", rebuildZoneSlots);
+configShortcuts.addEventListener("input", recomputeUnsavedChanges);
+configShortcuts.addEventListener("change", recomputeUnsavedChanges);
+addShortcutButton.addEventListener("click", () => {
+  const shortcuts = collectShortcuts();
+  const shortcutId = `shortcut-${Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16).padStart(8, "0")).join("")}`;
+  shortcuts.push({ id: shortcutId, name: "", source: 0, zone_addresses: [] });
+  renderShortcuts(shortcuts);
+  recomputeUnsavedChanges();
+  configShortcuts.lastElementChild.querySelector('[data-field="shortcut-name"]').focus();
+});
+for (const container of [controllerZones, configSources]) {
+  container.addEventListener("change", () => {
+    renderShortcuts(collectShortcuts());
+    recomputeUnsavedChanges();
+  });
+}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshBackendStatus(); });
 window.setInterval(refreshBackendStatus, 5000);
 

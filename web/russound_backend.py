@@ -571,13 +571,19 @@ class RussoundBackend:
                 self._close_client(client)
 
     def turn_all_zones_off(self) -> bool:
-        """Turn every zone off for the default controller."""
+        """Turn off every zone in the configured controller scope."""
         client = self._connect()
         if client is None:
             return False
         try:
             try:
-                client.all_on_off(0)
+                limits = self._controller_zone_limits()
+                if limits:
+                    for controller, zone_count in sorted(limits.items()):
+                        for zone_number in range(1, zone_count + 1):
+                            client.set_power(controller, zone_number, 0)
+                else:
+                    client.all_on_off(0)
                 return True
             except Exception as exc:  # pragma: no cover - hardware I/O failure
                 logging.debug("Unable to turn Russound zones off: %s", exc)

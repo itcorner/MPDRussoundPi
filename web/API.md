@@ -325,6 +325,10 @@ Response shape:
 Sets system power for all zones.
 
 - Returns the updated main view payload.
+- System Off sends addressed power-off commands to every zone in each configured
+  controller's scope, including zones hidden from the overview. Without controller
+  scope it retains the broadcast fallback. Backend write failures return `502`
+  rather than persisting or broadcasting a successful power change.
 
 Request body:
 
@@ -372,6 +376,12 @@ Shortcut targets now use physical Russound addresses:
 
 Creates or updates the backend, controller topology, zones, and sources, and persists the configuration.
 
+The optional `shortcuts` array replaces the saved shortcuts (`[]` deletes all).
+Each shortcut needs a unique non-empty string `id`, a non-empty `name`, an enabled
+numeric `source`, and at least one unique enabled target in `zone_addresses`
+(`{"controller": 1, "zone": 1}`). Invalid references return `400` before saving.
+Omitting `shortcuts` preserves the existing shortcuts, pruning removed zone targets.
+
 - Returns the updated config-editor payload.
 - Rejects invalid controller/zone slots with `400 Bad Request`.
 - Only slots within each controller's configured `zone_count` can be enabled, so the frontend cannot create more zones than the controller supports.
@@ -381,8 +391,10 @@ Creates or updates the backend, controller topology, zones, and sources, and per
   zone counts are integers from `1` to `6`; TCP ports are from `1` to `65535`.
 - `backend.poll_interval_seconds` is a finite number of at least `1` second
   (default `2`). Fractional seconds are supported; saves apply it to the watcher immediately.
-- Saves perform no hardware I/O. The server detaches/closes the old connection
-  and its watcher reconnects with the new settings; environment overrides still apply.
+- Saves perform no hardware I/O. Endpoint or protocol-audit-log changes detach
+  the old connection and reconnect through the watcher. Other edits keep the
+  connection and recorded health, updating controller scope and poll interval in
+  place; environment overrides still apply.
 - Replacing an invalid config preserves a sibling `.invalid-*.bak` copy.
 - Filesystem failures return `500` with an actionable JSON `error`; writable config/data directories are required.
 

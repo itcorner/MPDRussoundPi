@@ -1,6 +1,6 @@
 import unittest
 from contextlib import nullcontext
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 from web.russound_backend import RussoundBackend
 from web.zone import Zone
@@ -456,6 +456,17 @@ class RussoundBackendTests(unittest.TestCase):
             self.assertTrue(backend.turn_all_zones_off())
 
         self.assertEqual(client.calls, [("all_on_off", 0)])
+
+    def test_turn_all_zones_off_addresses_every_configured_controller_zone(self):
+        backend = RussoundBackend({"controllers": [{"id": 1, "zone_count": 6}, {"id": 2, "zone_count": 2}]})
+        client = Mock()
+        with patch.object(backend, "_connect", return_value=client):
+            self.assertTrue(backend.turn_all_zones_off())
+        self.assertEqual(client.set_power.call_args_list, [
+            call(controller, zone, 0)
+            for controller, count in ((1, 6), (2, 2)) for zone in range(1, count + 1)
+        ])
+        client.all_on_off.assert_not_called()
 
     def test_turn_all_zones_on_only_turns_on_provided_zones(self):
         class DummyClient:

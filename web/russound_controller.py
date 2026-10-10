@@ -286,6 +286,33 @@ class RussoundController:
             ),
             key=lambda input_item: int(input_item["id"]),
         )
+        if "shortcuts" in payload:
+            shortcuts = payload["shortcuts"]
+            validate_russound_config({"shortcuts": shortcuts})
+            source_ids = {item["id"] for item in updated_config["inputs"]}
+            seen_shortcut_ids: set[str] = set()
+            normalized_shortcuts = []
+            for shortcut in shortcuts:
+                shortcut_id = shortcut.get("id")
+                name = shortcut.get("name")
+                if not isinstance(shortcut_id, str) or not shortcut_id.strip():
+                    raise ValueError("Shortcut id must be a non-empty string")
+                shortcut_id = shortcut_id.strip()
+                if shortcut_id in seen_shortcut_ids:
+                    raise ValueError("Shortcut ids must be unique")
+                seen_shortcut_ids.add(shortcut_id)
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("Shortcut name must be a non-empty string")
+                if shortcut.get("source") not in source_ids:
+                    raise ValueError(f"Shortcut {name}: select an enabled source")
+                addresses = shortcut.get("zone_addresses", [])
+                if not addresses:
+                    raise ValueError(f"Shortcut {name}: select at least one enabled zone")
+                targets = [(address["controller"], address["zone"]) for address in addresses]
+                if len(set(targets)) != len(targets) or any(target not in valid_zone_addresses for target in targets):
+                    raise ValueError(f"Shortcut {name}: targets must be unique enabled zones")
+                normalized_shortcuts.append({**shortcut, "id": shortcut_id, "name": name.strip(), "zone_addresses": addresses})
+            updated_config["shortcuts"] = normalized_shortcuts
         validate_russound_config(updated_config)
         if self.config_path is None:
             raise ValueError("A config path is required to persist configuration")
