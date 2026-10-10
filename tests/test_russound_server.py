@@ -95,6 +95,55 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             _close_server(server)
 
+    def test_ensure_update_listener_reconnects_dropped_gateway_with_backoff(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            backend = Mock()
+            backend.client = None
+            backend.connect.return_value = False
+            server._event_backend = backend
+
+            with patch("web.russound_server.time.monotonic", return_value=100.0):
+                server._ensure_update_listener()
+                server._ensure_update_listener()
+            self.assertEqual(backend.connect.call_count, 1)
+
+            backend.connect.return_value = True
+            with patch("web.russound_server.time.monotonic", return_value=200.0):
+                server._ensure_update_listener()
+            self.assertEqual(backend.connect.call_count, 2)
+        finally:
+            _close_server(server)
+
+    def test_ensure_update_listener_skips_connected_gateway(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            backend = Mock()
+            backend.client.is_connected.return_value = True
+            server._event_backend = backend
+
+            server._ensure_update_listener()
+
+            backend.connect.assert_not_called()
+        finally:
+            _close_server(server)
+
+    def test_start_listener_keeps_shared_backend_when_gateway_is_down(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            controller = Mock()
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            server.controller = controller
+
+            with patch("web.russound_server.RussoundBackend") as backend_class:
+                backend_class.return_value.start_update_listener.return_value = False
+                server._start_unsolicited_update_listener()
+
+            self.assertIs(server._event_backend, backend_class.return_value)
+            controller.set_shared_backend.assert_called_once_with(backend_class.return_value)
+        finally:
+            _close_server(server)
+
     def test_backend_poll_interval_is_loaded_from_config(self):
         server = RussoundHTTPServer(None, None)
         try:

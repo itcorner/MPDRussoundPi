@@ -18,6 +18,8 @@ LOGGER = logging.getLogger(__name__)
 COMMAND_DELAY = 0.2
 # Bounds the initial TCP connect so an unreachable gateway cannot stall startup.
 CONNECT_TIMEOUT_SECONDS = 5.0
+# Detects silently dead TCP links (idle seconds, probe interval, probe count).
+TCP_KEEPALIVE_SETTINGS = (("TCP_KEEPIDLE", 30), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3))
 DEFAULT_SERIAL_BAUD = 19200
 KEYPAD_CODE = "70"
 ZONE_INFO_REQUEST_TEMPLATE = "F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00"
@@ -165,6 +167,7 @@ class Russound:
                     self.sock.settimeout(CONNECT_TIMEOUT_SECONDS)
                     self.sock.connect((self._host, self._port))
                     self.sock.settimeout(None)
+                    self._enable_tcp_keepalive(self.sock)
                     LOGGER.info("Successfully connected to Russound TCP endpoint %s:%s", self._host, self._port)
                 return True
             except OSError as exc:
@@ -177,6 +180,17 @@ class Russound:
             return bool(self.sock and self.sock.getpeername() != "")
         except OSError:
             return False
+
+    @staticmethod
+    def _enable_tcp_keepalive(sock: socket.socket) -> None:
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            for option_name, value in TCP_KEEPALIVE_SETTINGS:
+                option = getattr(socket, option_name, None)
+                if option is not None:
+                    sock.setsockopt(socket.IPPROTO_TCP, option, value)
+        except OSError as exc:
+            LOGGER.debug("Unable to configure TCP keepalive: %s", exc)
 
     def disconnect(self) -> None:
         self.stop_update_listener()
@@ -569,7 +583,12 @@ class Russound:
                 self._reset_connection_on_error()
                 raise
             if not chunk:
-                break
+                if isinstance(self.sock, _SerialConnection):
+                    break
+                # An empty read on a TCP socket means the gateway closed the connection.
+                LOGGER.warning("Russound TCP endpoint closed the connection")
+                self._reset_connection_on_error()
+                raise ConnectionResetError("Russound TCP endpoint closed the connection")
             self._rx_buffer.extend(chunk)
             self._audit_rx_frames(chunk)
 

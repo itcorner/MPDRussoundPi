@@ -46,6 +46,7 @@ class RussoundBackend:
         self.baud = endpoint.baud
         self.protocol_audit_log_file = protocol_audit_log_file or resolve_backend_protocol_audit_log_file(self.config)
         self.client: Russound | None = None
+        self._update_callback: Callable[[dict[str, Any]], None] | None = None
         self._connection_lock = threading.Lock()
         self._connectivity_state = "idle"
         self._last_connectivity_detail: str | None = None
@@ -76,6 +77,7 @@ class RussoundBackend:
                     if self.client.is_connected():
                         self._connectivity_state = "connected"
                         self._last_connectivity_detail = None
+                        self._attach_update_listener(self.client)
                         return self.client
                 except Exception:
                     pass
@@ -122,6 +124,7 @@ class RussoundBackend:
                     return None
                 self._next_connect_attempt_at = 0.0
                 self.client = client
+                self._attach_update_listener(client)
                 if self.device:
                     self._log_connectivity_state(
                         "connected",
@@ -183,11 +186,13 @@ class RussoundBackend:
         self._close_client()
 
     def start_update_listener(self, callback: Callable[[dict[str, Any]], None]) -> bool:
-        client = self._connect()
-        if client is None:
-            return False
-        client.start_update_listener(callback)
-        return True
+        """Register the unsolicited-update callback; it is re-attached on every reconnect."""
+        self._update_callback = callback
+        return self._connect() is not None
+
+    def _attach_update_listener(self, client: Russound) -> None:
+        if self._update_callback is not None:
+            client.start_update_listener(self._update_callback)
 
     def _close_client(self, client: Russound | None = None) -> None:
         client_to_close = self.client if client is None else client

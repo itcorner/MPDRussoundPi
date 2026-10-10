@@ -9,9 +9,9 @@ degradation / resource growth, **L** = edge cases.
 
 | # | Prio | Topic | Status |
 |---|------|-------|--------|
-| 1 | H | Update listener not restarted after reconnect | [ ] |
-| 2 | H | Update listener never started if gateway is down at boot | [ ] |
-| 3 | H | Peer close / half-open TCP not detected | [ ] |
+| 1 | H | Update listener not restarted after reconnect | [x] |
+| 2 | H | Update listener never started if gateway is down at boot | [x] |
+| 3 | H | Peer close / half-open TCP not detected | [x] |
 | 4 | H | Open UI pages die silently after server restart (API token) | [ ] |
 | 5 | H | SSE streams pin waitress worker threads | [ ] |
 | 6 | M | Protocol audit log grows unbounded | [ ] |
@@ -25,6 +25,9 @@ degradation / resource growth, **L** = edge cases.
 ---
 
 ## 1. Update listener not restarted after reconnect (H)
+
+> **Done:** `RussoundBackend` keeps the callback and re-attaches it to every
+> (re)connected client in `_connect()`.
 
 - **Where:** `web/russound_connector.py` `_update_listener_loop()`,
   `web/russound_backend.py` `_connect()`.
@@ -44,6 +47,10 @@ degradation / resource growth, **L** = edge cases.
 
 ## 2. Update listener never started if gateway is down at boot (H)
 
+> **Done:** the shared backend is always created; the watcher loop calls
+> `_ensure_update_listener()` at least every 5 s and reconnects with
+> exponential backoff (5 s → 60 s).
+
 - **Where:** `web/russound_server.py` `_start_unsolicited_update_listener()`.
 - **Problem:** Tried exactly once at startup; if `start_update_listener()`
   fails, it returns and is never retried. Without a shared backend every
@@ -58,6 +65,9 @@ degradation / resource growth, **L** = edge cases.
   ser2net; instant updates must work without restarting the web container.
 
 ## 3. Peer close / half-open TCP not detected (H)
+
+> **Done:** empty TCP reads reset the connection; TCP keepalive
+> (30 s idle / 10 s interval / 3 probes) is enabled on connect.
 
 - **Where:** `web/russound_connector.py` `_read_available_locked()`,
   `connect()`.

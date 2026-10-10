@@ -38,6 +38,9 @@ class _FakeSocket:
     def getpeername(self):
         return ("127.0.0.1", 6666)
 
+    def setsockopt(self, *_args) -> None:
+        return
+
     def close(self) -> None:
         self.closed = True
 
@@ -69,6 +72,31 @@ class RussoundConnectorTests(unittest.TestCase):
             connector._update_listener_loop()
 
         self.assertIsNone(connector.sock)
+
+    def test_tcp_peer_close_resets_connection(self) -> None:
+        class ClosedSocket(_FakeSocket):
+            def recv(self, _size: int) -> bytes:
+                return b""
+
+        connector = Russound("127.0.0.1", 6666)
+        sock = ClosedSocket()
+        connector.sock = sock
+
+        with self.assertRaises(ConnectionResetError):
+            connector._read_available_locked()
+
+        self.assertIsNone(connector.sock)
+        self.assertTrue(sock.closed)
+
+    def test_tcp_connect_enables_keepalive(self) -> None:
+        fake_sock = _FakeSocket()
+        with patch("web.russound_connector.socket.socket", return_value=fake_sock), patch.object(
+            fake_sock, "setsockopt"
+        ) as setsockopt:
+            connector = Russound("127.0.0.1", 6666)
+            self.assertTrue(connector.connect())
+
+        setsockopt.assert_any_call(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
     def test_send_data_resets_socket_on_connection_reset(self) -> None:
         class ResetOnSendSocket(_FakeSocket):

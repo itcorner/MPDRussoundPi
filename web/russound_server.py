@@ -36,6 +36,9 @@ SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 BACKEND_CHANGE_POLL_INTERVAL_SECONDS = 2.0
 # Gives the controller time to apply a keypad action and coalesces bursts of key presses.
 ZONE_REFRESH_DEBOUNCE_SECONDS = 0.5
+# Upper bound for how long a dropped gateway connection stays unnoticed by the watcher.
+UPDATE_LISTENER_CHECK_SECONDS = 5.0
+MAX_RECONNECT_DELAY_SECONDS = 60.0
 
 
 class RussoundRequestHandler:
@@ -142,6 +145,8 @@ class RussoundHTTPServer:
         self._backend_poll_interval_seconds = BACKEND_CHANGE_POLL_INTERVAL_SECONDS
         self._zone_refresh_requested = threading.Event()
         self._full_poll_requested = threading.Event()
+        self._next_reconnect_at = 0.0
+        self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
         self._zone_refresh_lock = threading.Lock()
         self._zone_refresh_addresses: set[tuple[int, int]] = set()
         self._helpers = RussoundRequestHandler()
@@ -342,11 +347,36 @@ class RussoundHTTPServer:
             return
         backend = RussoundBackend(config=config)
         if not backend.start_update_listener(self._handle_unsolicited_zone_update):
-            backend.close()
-            return
+            logging.warning("Russound gateway not reachable yet; the update listener will start once it connects")
         with self._event_backend_lock:
             self._event_backend = backend
         self.controller.set_shared_backend(backend)
+
+    def _ensure_update_listener(self) -> None:
+        """Create the shared backend if missing and reconnect it (re-attaching the listener) when dropped."""
+        with self._event_backend_lock:
+            backend = self._event_backend
+        if backend is None:
+            self._start_unsolicited_update_listener()
+            return
+        client = backend.client
+        if client is not None and client.is_connected():
+            self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
+            return
+        now = time.monotonic()
+        if now < self._next_reconnect_at:
+            return
+        try:
+            reconnected = backend.connect()
+        except Exception as exc:
+            logging.debug("Russound gateway reconnect attempt failed: %s", exc)
+            reconnected = False
+        if reconnected:
+            logging.info("Russound gateway connection re-established")
+            self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
+            return
+        self._next_reconnect_at = now + self._reconnect_delay_seconds
+        self._reconnect_delay_seconds = min(self._reconnect_delay_seconds * 2, MAX_RECONNECT_DELAY_SECONDS)
 
     def _handle_unsolicited_zone_update(self, update: dict[str, Any]) -> None:
         controller_id = update.get("controller")
@@ -412,7 +442,11 @@ class RussoundHTTPServer:
     def _backend_change_watcher_loop(self) -> None:
         next_full_poll_at = time.monotonic()
         while True:
-            woken = self._zone_refresh_requested.wait(max(0.0, next_full_poll_at - time.monotonic()))
+            self._ensure_update_listener()
+            wait_seconds = min(max(0.0, next_full_poll_at - time.monotonic()), UPDATE_LISTENER_CHECK_SECONDS)
+            woken = self._zone_refresh_requested.wait(wait_seconds)
+            if not woken and time.monotonic() < next_full_poll_at:
+                continue
             if woken and not self._full_poll_requested.is_set():
                 time.sleep(ZONE_REFRESH_DEBOUNCE_SECONDS)
                 try:

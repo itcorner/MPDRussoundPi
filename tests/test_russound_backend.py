@@ -33,6 +33,45 @@ class RussoundBackendTests(unittest.TestCase):
         self.assertIsNotNone(client)
         self.assertEqual(client.protocol_audit_log_file, "/tmp/rnet.log")
 
+    def test_update_listener_is_reattached_after_reconnect(self):
+        class DummyRussoundClient:
+            def __init__(self, host, port, protocol_audit_log_file=None):
+                self.connected = True
+                self.listener_callbacks = []
+
+            def connect(self):
+                return True
+
+            def is_connected(self):
+                return self.connected
+
+            def disconnect(self):
+                self.connected = False
+
+            def start_update_listener(self, callback):
+                self.listener_callbacks.append(callback)
+
+        def callback(_update):
+            return None
+
+        backend = RussoundBackend(config={"backend": {"host": "127.0.0.1", "port": 6666}})
+        with patch("web.russound_backend.Russound", DummyRussoundClient):
+            self.assertTrue(backend.start_update_listener(callback))
+            first_client = backend.client
+            first_client.connected = False
+
+            self.assertTrue(backend.connect())
+
+        self.assertIsNot(backend.client, first_client)
+        self.assertEqual(backend.client.listener_callbacks, [callback])
+
+    def test_update_listener_callback_is_kept_when_gateway_is_down(self):
+        backend = RussoundBackend(config={"backend": {"host": "127.0.0.1", "port": 6666}})
+        with patch.object(RussoundBackend, "_connect", return_value=None):
+            self.assertFalse(backend.start_update_listener(print))
+
+        self.assertIs(backend._update_callback, print)
+
     def test_close_client_falls_back_to_socket_close_when_disconnect_missing(self):
         class DummySocket:
             def __init__(self) -> None:
