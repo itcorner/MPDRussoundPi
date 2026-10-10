@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 from typing import TypedDict, cast
@@ -9,6 +10,66 @@ BACKEND_HOST_ENV_VAR = "RUSSOUND_BACKEND_HOST"
 BACKEND_PORT_ENV_VAR = "RUSSOUND_BACKEND_PORT"
 
 LOGGER = logging.getLogger(__name__)
+
+
+def validate_russound_config(config: object) -> None:
+    if not isinstance(config, dict) or not config:
+        raise ValueError("Configuration must be a non-empty JSON object")
+    backend = config.get("backend")
+    if backend is not None:
+        if not isinstance(backend, dict):
+            raise ValueError("backend must be an object")
+        if "host" in backend and (not isinstance(backend["host"], str) or not backend["host"].strip()):
+            raise ValueError("Backend host must be a non-empty hostname or IP address")
+        for field, minimum, maximum in (("port", 1, 65535), ("baud", 1, 4000000)):
+            if field in backend:
+                value = backend[field]
+                if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                    raise ValueError(f"Backend {field} must be an integer from {minimum} to {maximum}")
+        for field in ("device", "protocol_audit_log_file"):
+            if field in backend and (not isinstance(backend[field], str) or not backend[field].strip()):
+                raise ValueError(f"Backend {field} must be a non-empty string")
+        if "poll_interval_seconds" in backend:
+            interval = backend["poll_interval_seconds"]
+            if isinstance(interval, bool) or not isinstance(interval, (int, float)) or not math.isfinite(interval) or interval < 1:
+                raise ValueError("Backend poll interval must be a finite number of at least 1 second")
+    for collection in ("controllers", "zones", "inputs", "shortcuts"):
+        items = config.get(collection, [])
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise ValueError(f"{collection} must be a list of objects")
+        seen = set()
+        for item in items:
+            fields = {
+                "controllers": (("id", 1, 6), ("zone_count", 1, 6)),
+                "zones": (("controller", 1, 6), ("zone", 1, 6), ("keypad_id", 1, 6)),
+                "inputs": (("id", 1, 6),),
+                "shortcuts": (("source", 1, 6),),
+            }[collection]
+            for field, minimum, maximum in fields:
+                if field in item:
+                    value = item[field]
+                    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                        raise ValueError(f"{collection}.{field} must be an integer from {minimum} to {maximum}")
+            if "name" in item and not isinstance(item["name"], str):
+                raise ValueError(f"{collection}.name must be a string")
+            for field in ("enabled", "visible"):
+                if field in item and not isinstance(item[field], bool):
+                    raise ValueError(f"{collection}.{field} must be a boolean")
+            if collection in ("controllers", "inputs"):
+                if "id" not in item or (collection == "controllers" and "zone_count" not in item):
+                    raise ValueError(f"{collection} entries need id" + (" and zone_count" if collection == "controllers" else ""))
+                if item["id"] in seen:
+                    raise ValueError(f"Duplicate {collection} id {item['id']}")
+                seen.add(item["id"])
+            if collection == "shortcuts":
+                addresses = item.get("zone_addresses", [])
+                if not isinstance(addresses, list) or any(
+                    not isinstance(address, dict) or any(
+                        isinstance(address.get(field), bool) or not isinstance(address.get(field), int) or not 1 <= address[field] <= 6
+                        for field in ("controller", "zone")
+                    ) for address in addresses
+                ):
+                    raise ValueError("Shortcut zone_addresses must contain controller/zone addresses from 1 to 6")
 
 
 class BackendConfig(TypedDict, total=False):

@@ -24,8 +24,7 @@ ENV RUSSOUND_WEB_HOST=0.0.0.0 \
     RUSSOUND_WEB_PORT=8000 \
     RUSSOUND_CONFIG=/config/russound_config.json \
     RUSSOUND_STATE=/data/russound_state.json \
-    RUSSOUND_LOG_FILE=/logs/russound-web.log \
-    RUSSOUND_BACKEND_PORT=6666
+    RUSSOUND_LOG_FILE=/logs/russound-web.log
 
 EXPOSE 8000
 VOLUME ["/config", "/data", "/logs"]

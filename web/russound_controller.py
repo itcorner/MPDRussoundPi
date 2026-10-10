@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, cast
 
+from .config_types import env_str, validate_russound_config
 from .russound_backend import RussoundBackend
 from .russound_state import RussoundState
 from .zone import Zone
@@ -26,15 +28,21 @@ class RussoundController:
     def set_shared_backend(self, backend: RussoundBackend | None) -> None:
         """Use the server-owned backend for all controller hardware operations."""
         self._shared_backend = backend
+        self._backend_health = None
 
     def load_config(self) -> dict[str, Any] | None:
+        self.config_error = None
         resolved = _resolve_config_path(self.config_path)
         if resolved is None or not resolved.exists():
+            self.config_error = "A config file is required. Complete setup on the Configuration page."
             return None
-        with resolved.open("r", encoding="utf-8") as handle:
-            data: Any = json.load(handle)
-            if isinstance(data, dict):
+        try:
+            with resolved.open("r", encoding="utf-8") as handle:
+                data: Any = json.load(handle)
+                validate_russound_config(data)
                 return cast(dict[str, Any], data)
+        except (ValueError, OSError) as exc:
+            self.config_error = f"Cannot load configuration: {exc}"
         return None
 
     def build_config_editor_payload(
@@ -47,13 +55,12 @@ class RussoundController:
         if state_path is not None:
             self.state_path = _resolve_state_path(state_path)
         config = self.load_config()
+        config_required = config is None
         if config is None:
-            return {
-                "config": None,
-                "config_required": True,
-                "message": "A Russound config file is required. Copy web/config_example.json and start the server with --config.",
-                "zone_slots": [],
-                "source_slots": [],
+            config = {
+                "backend": {"host": "", "port": 6666},
+                "controllers": [{"id": 1, "zone_count": 6}],
+                "zones": [], "inputs": [], "shortcuts": [],
             }
 
         zone_lookup = {
@@ -95,7 +102,13 @@ class RussoundController:
 
         return {
             "config": config,
-            "config_required": False,
+            "config_required": config_required,
+            "message": self.config_error if config_required else "",
+            "config_writable": self.config_path is not None,
+            "backend_overrides": {
+                name: value for name in ("RUSSOUND_BACKEND_HOST", "RUSSOUND_BACKEND_PORT")
+                if (value := env_str(name))
+            },
             "zone_slots": zone_slots,
             "source_slots": source_slots,
         }
@@ -113,18 +126,45 @@ class RussoundController:
         if payload is None:
             raise ValueError("Invalid request body")
         config = self.load_config()
+        replacing_invalid = config is None
         if config is None:
-            raise ValueError("A config file is required before configuration can be updated")
+            config = {"zones": [], "inputs": [], "shortcuts": []}
+            if "backend" not in payload or "controllers" not in payload:
+                raise ValueError("Backend and controllers are required for initial setup")
+
+        config = dict(config)
+        if "backend" in payload:
+            backend = payload["backend"]
+            if not isinstance(backend, dict):
+                raise ValueError("backend must be an object")
+            validate_russound_config({"backend": backend})
+            if not backend.get("device") and (not isinstance(backend.get("host"), str) or not backend["host"].strip() or "port" not in backend):
+                raise ValueError("Backend host and port are required")
+            config["backend"] = {**config.get("backend", {}), **backend}
+            if not backend.get("device"):
+                config["backend"].pop("device", None)
+            else:
+                config["backend"].pop("host", None)
+                config["backend"].pop("port", None)
+        if "controllers" in payload:
+            validate_russound_config({"controllers": payload["controllers"]})
+            if not payload["controllers"]:
+                raise ValueError("At least one controller is required")
+            config["controllers"] = payload["controllers"]
 
         zone_slots = payload.get("zone_slots")
         if not isinstance(zone_slots, list):
             raise ValueError("Invalid request body: 'zone_slots' must be a list")
+        if any(not isinstance(slot, dict) for slot in zone_slots):
+            raise ValueError("Zone slots must be objects")
 
         source_slots = payload.get("source_slots")
         if source_slots is None:
             source_slots = []
         if not isinstance(source_slots, list):
             raise ValueError("Invalid request body: 'source_slots' must be a list")
+        if any(not isinstance(slot, dict) for slot in source_slots):
+            raise ValueError("Source slots must be objects")
 
         controller_limits: dict[int, int] = {}
         for controller in _config_dict_list(config, "controllers"):
@@ -246,10 +286,16 @@ class RussoundController:
             ),
             key=lambda input_item: int(input_item["id"]),
         )
-        persist_config(self.config_path, updated_config)
-
-        updated_state = self.load_state(refresh_backend=False)
+        validate_russound_config(updated_config)
+        if self.config_path is None:
+            raise ValueError("A config path is required to persist configuration")
+        updated_state = self.ensure_state_matches_config(self.load_state(refresh_backend=False), updated_config)
         self.persist_state(updated_state)
+        if replacing_invalid and self.config_path is not None and self.config_path.exists():
+            with tempfile.NamedTemporaryFile(dir=self.config_path.parent, prefix=f"{self.config_path.name}.invalid-", suffix=".bak", delete=False) as backup:
+                backup_path = Path(backup.name)
+            shutil.copyfile(self.config_path, backup_path)
+        persist_config(self.config_path, updated_config)
         return self.build_config_editor_payload()
 
     def _sync_system_power(self, state: RussoundState) -> RussoundState:
@@ -457,7 +503,7 @@ class RussoundController:
             return None
         return backend
 
-    def _backend_status(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _backend_status(self, config: dict[str, Any] | None = None, probe: bool = True) -> dict[str, Any]:
         resolved_config = config if isinstance(config, dict) else self.load_config()
         if not isinstance(resolved_config, dict):
             return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
@@ -471,6 +517,8 @@ class RussoundController:
 
         if recorded_health is not None:
             return dict(recorded_health)
+        if not probe:
+            return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
 
         # Nothing polled yet: fall back to reachability without issuing a hardware request.
         backend = RussoundBackend(config=resolved_config)
@@ -622,12 +670,12 @@ class RussoundController:
             self.state_path = _resolve_state_path(state_path)
         config = self.load_config()
         state = self.load_state(refresh_backend=refresh_backend)
-        backend_status = self._backend_status(config)
+        backend_status = self._backend_status(config, probe=refresh_backend)
         if config is None:
             return {
                 "config": None,
                 "config_required": True,
-                "message": "A Russound config file is required. Copy web/config_example.json and start the server with --config.",
+                "message": self.config_error or "Complete setup on the Configuration page.",
                 "backend_status": backend_status,
                 "state": state.to_payload(),
             }

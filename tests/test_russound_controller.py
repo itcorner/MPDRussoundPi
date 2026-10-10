@@ -24,6 +24,77 @@ from web.russound_controller import (
 
 
 class RussoundControllerTests(unittest.TestCase):
+    def test_setup_recovers_invalid_config_and_saves_without_hardware(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            state_path = Path(directory) / "state.json"
+            controller = RussoundController(config_path, state_path)
+            for text in ("{broken", "[]", "{}", '{"backend":"bad"}'):
+                config_path.write_text(text)
+                self.assertIsNone(controller.load_config())
+                payload = controller.build_config_editor_payload()
+                self.assertTrue(payload["config_required"])
+                self.assertEqual(len(payload["zone_slots"]), 6)
+                self.assertEqual(len(payload["source_slots"]), 6)
+            with patch.object(RussoundBackend, "connect", side_effect=AssertionError("Must not contact hardware")) as connect:
+                payload = controller.update_config_zones(payload={
+                    "backend": {"host": "gateway", "port": 7777},
+                    "controllers": [{"id": 1, "zone_count": 6}],
+                    "zone_slots": [{"controller": 1, "zone": 1, "name": "Kitchen", "enabled": True, "visible": True}],
+                    "source_slots": [{"id": 1, "name": "Radio", "enabled": True}],
+                })
+                connect.assert_not_called()
+            self.assertFalse(payload["config_required"])
+            self.assertEqual(json.loads(config_path.read_text())["backend"]["port"], 7777)
+            self.assertEqual(next(Path(directory).glob("*.bak")).read_text(), '{"backend":"bad"}')
+            self.assertTrue(state_path.exists())
+
+    def test_setup_rejects_invalid_endpoint_without_overwriting_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text("{broken")
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            with self.assertRaises(ValueError):
+                controller.update_config_zones(payload={"backend": {"host": "gateway", "port": 70000}, "controllers": [{"id": 1, "zone_count": 6}], "zone_slots": []})
+            self.assertEqual(config_path.read_text(), "{broken")
+            self.assertEqual(list(Path(directory).glob("*.bak")), [])
+
+    def test_setup_state_write_failure_preserves_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text("{broken")
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            with patch.object(controller, "persist_state", side_effect=PermissionError("read-only data volume")):
+                with self.assertRaises(PermissionError):
+                    controller.update_config_zones(payload={
+                        "backend": {"host": "gateway", "port": 6666},
+                        "controllers": [{"id": 1, "zone_count": 6}], "zone_slots": [],
+                    })
+            self.assertEqual(config_path.read_text(), "{broken")
+            self.assertEqual(list(Path(directory).glob("*.bak")), [])
+
+    def test_setup_handles_unreadable_and_malformed_nested_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            for config in (
+                {"backend": {"host": "gateway", "port": True}},
+                {"backend": {"poll_interval_seconds": "slow"}},
+                {"controllers": [{"id": "one", "zone_count": 6}]},
+                {"controllers": [{"id": 1, "zone_count": 7}]},
+                {"zones": [{"controller": 1, "zone": "one"}]},
+                {"inputs": [{"id": True}]},
+                {"shortcuts": [{"zone_addresses": "bad"}]},
+            ):
+                with self.subTest(config=config):
+                    config_path.write_text(json.dumps(config))
+                    self.assertTrue(controller.build_config_editor_payload()["config_required"])
+                    self.assertTrue(controller.build_view_payload(refresh_backend=False)["config_required"])
+            with patch.object(Path, "open", side_effect=PermissionError("unreadable config")):
+                payload = controller.build_config_editor_payload()
+                self.assertTrue(payload["config_required"])
+                self.assertIn("unreadable config", payload["message"])
+
     def test_controller_is_a_singleton_and_loads_state_as_russoundstate(self):
         controller = get_controller()
 

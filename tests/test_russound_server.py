@@ -2,7 +2,9 @@ import logging
 import json
 import socket
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from queue import Queue
 from unittest.mock import Mock, patch
 
@@ -18,6 +20,58 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_setup_routes_recover_invalid_config_and_replace_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text("{broken")
+            server = RussoundHTTPServer(config_path, Path(directory) / "state.json")
+            client = server.app.test_client()
+            with client.get("/") as response:
+                self.assertEqual(response.status_code, 200)
+            with client.get("/config") as response:
+                self.assertEqual(response.status_code, 200)
+            self.assertTrue(client.get("/api/config").json["config_required"])
+            self.assertTrue(client.get("/api/state").json["config_required"])
+            old_backend = Mock()
+            server._event_backend = old_backend
+            server.controller.set_shared_backend(old_backend)
+            with patch("web.russound_controller.RussoundBackend.connect", side_effect=AssertionError("Save must be offline")) as connect:
+                response = client.post("/api/config", json={
+                    "backend": {"host": "new-gateway", "port": 7777},
+                    "controllers": [{"id": 1, "zone_count": 6}],
+                    "zone_slots": [], "source_slots": [],
+                })
+                connect.assert_not_called()
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json["config_required"])
+            old_backend.close.assert_called_once()
+            self.assertIsNone(server._event_backend)
+            self.assertTrue(server._full_poll_requested.is_set())
+            with client.get("/") as response:
+                self.assertEqual(response.status_code, 200)
+            with patch("web.russound_server.RussoundBackend") as backend_class:
+                backend_class.return_value.start_update_listener.return_value = False
+                server._ensure_update_listener()
+                self.assertEqual(backend_class.call_args.kwargs["config"]["backend"]["host"], "new-gateway")
+                self.assertIs(server._event_backend, backend_class.return_value)
+
+    def test_old_backend_updates_are_ignored_after_reconfiguration(self):
+        server = RussoundHTTPServer(None, None)
+        server.controller = Mock()
+        server._backend_generation = 1
+        server._handle_unsolicited_zone_update({"controller": 1, "zone": 1, "setting": "power", "value": True}, generation=0)
+        server.controller.load_state.assert_not_called()
+
+    def test_setup_write_failure_returns_actionable_json_error(self):
+        server = RussoundHTTPServer(None, None)
+        server.controller = Mock()
+        server.controller.update_config_zones.side_effect = PermissionError("read-only volume")
+        response = server.app.test_client().post("/api/config", json={})
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("permissions", response.json["error"])
+        self.assertIn("read-only volume", response.json["error"])
+        self.assertFalse(server._backend_reconfiguring.is_set())
+
     def test_unsolicited_zone_update_persists_and_broadcasts_power_and_volume(self):
         server = RussoundHTTPServer(None, None)
         try:

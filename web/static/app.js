@@ -90,6 +90,10 @@ function apiFetch(path, options = {}) {
 }
 
 function applyPayload(payload) {
+  if (payload.config_required) {
+    window.location.replace("/config");
+    return;
+  }
   state.config = payload.config || null;
   state.configRequired = Boolean(payload.config_required);
   state.configMessage = payload.message || "";

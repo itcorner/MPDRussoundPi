@@ -37,7 +37,9 @@ services:
     environment:
       RUSSOUND_WEB_HOST: "0.0.0.0"
       RUSSOUND_WEB_PORT: "8000"
-      # The backend host and port are read from the mounted configuration file.
+      # Empty overrides leave the backend endpoint to the configuration editor.
+      RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-}"
+      RUSSOUND_BACKEND_PORT: "${RUSSOUND_BACKEND_PORT:-}"
       RUSSOUND_CONFIG: "/config/russound_config.json"
       RUSSOUND_STATE: "/data/russound_state.json"
       RUSSOUND_LOG_FILE: "/logs/russound-web.log"

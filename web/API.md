@@ -160,7 +160,7 @@ If no valid config file is supplied to the server (`--config`), `GET /api/state`
 {
   "config": null,
   "config_required": true,
-  "message": "A Russound config file is required. Copy web/config_example.json and start the server with --config.",
+  "message": "A config file is required. Complete setup on the Configuration page.",
   "state": {
     "system_power": false,
     "zones": [],
@@ -280,6 +280,14 @@ When available, each connected client includes its cookie-based `session_id` val
 Returns the editable zone-configuration payload used by the configuration page.
 
 - Response type: JSON.
+- Missing/invalid config returns `config_required: true`, a descriptive `message`,
+  and editable defaults (one six-zone controller and six disabled source slots).
+  These defaults are not persisted or used to connect to hardware until saved.
+- `config_writable` indicates whether a destination path is configured, not an
+  OS permission check; save errors describe filesystem/permission failures.
+- `backend_overrides` lists non-empty `RUSSOUND_BACKEND_HOST` and
+  `RUSSOUND_BACKEND_PORT` values. Environment overrides take precedence over saved settings.
+- Read `/api/state.backend_status` for recorded backend connectivity independently of configuration validity.
 
 Response shape:
 
@@ -357,28 +365,39 @@ Shortcut targets now use physical Russound addresses:
 
 ### POST /api/config
 
-Updates the zone configuration used by the frontend overview and persists it to the config file.
+Creates or updates the backend, controller topology, zones, and sources, and persists the configuration.
 
 - Returns the updated config-editor payload.
 - Rejects invalid controller/zone slots with `400 Bad Request`.
 - Only slots within each controller's configured `zone_count` can be enabled, so the frontend cannot create more zones than the controller supports.
+- Initial setup requires `backend` and a non-empty `controllers` list. They are
+  optional when updating an existing valid configuration.
+- `backend` accepts TCP `host`/`port` or serial `device`/`baud`. Controller ids and
+  zone counts are integers from `1` to `6`; TCP ports are from `1` to `65535`.
+- Saves perform no hardware I/O. The server detaches/closes the old connection
+  and its watcher reconnects with the new settings; environment overrides still apply.
+- Replacing an invalid config preserves a sibling `.invalid-*.bak` copy.
+- Filesystem failures return `500` with an actionable JSON `error`; writable config/data directories are required.
 
 Request body:
 
 ```json
 {
+  "backend": {"host": "russound-ser2net", "port": 6666},
+  "controllers": [{"id": 1, "zone_count": 6}],
   "zone_slots": [
     {"controller": 1, "zone": 1, "enabled": true, "visible": true, "name": "Living Room"},
     {"controller": 1, "zone": 2, "enabled": false, "visible": true, "name": "Controller 1 Zone 2"}
   ],
   "source_slots": [
-    {"id": 1, "name": "Radio"},
-    {"id": 2, "name": "Television"}
+    {"id": 1, "name": "Radio", "enabled": true},
+    {"id": 2, "name": "Television", "enabled": true}
   ]
 }
 ```
 
-`source_slots` is optional; if provided, each entry must reference an existing numeric source id.
+`source_slots` is optional; each supplied entry needs an integer id from `1` to `6`,
+a string name, and a boolean `enabled`. New source ids can be enabled during setup.
 
 ### POST /api/controller/{controllerId}/zone/{zoneNumber}/power
 

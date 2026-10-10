@@ -173,11 +173,47 @@ Each part runs in its own container:
 Two stacks combine them: `docker-compose.yml` runs the web application with the ser2net gateway (hardware), `docker-compose.dummy.yml` runs it with the dummy backend (no hardware).
 
 ```bash
-cp web/config_example.json docker/config/russound_config.json
 docker compose up -d
 ```
 
-The UI is then available on `http://<host>:8000/`.
+The UI is then available on `http://<host>:8000/`. With no valid configuration,
+the browser opens setup. Set the TCP gateway to `russound-ser2net`, port `6666`,
+select the installed controllers and zone counts, and enable/name the connected
+zones and sources. An existing valid config is retained.
+
+### First-run setup and recovery
+
+The web image can start with empty config/data volumes; no template file is required.
+For example, using an image built from this checkout:
+
+```bash
+docker build -t russound-web:local .
+docker run -d --name russound-web --restart unless-stopped \
+  -p 8000:8000 \
+  -v russound-config:/config \
+  -v russound-data:/data \
+  -v russound-logs:/logs \
+  russound-web:local
+```
+
+Open `http://<host>:8000/` and configure the backend and hardware layout. The
+web-only example requires an existing TCP gateway reachable from the container,
+or a passed-through serial device. `127.0.0.1` refers to the container itself;
+use the gateway's LAN address or its Compose service name, not the Docker host's
+loopback address. Serial-device access requires device passthrough and group permissions.
+
+- Missing, malformed, or structurally invalid configuration enters setup instead of crashing the web server.
+- Setup validates backend settings, controller ids/counts, zone addresses, and sources before saving.
+- Saving does not contact hardware; an offline gateway does not prevent configuration.
+- Backend connectivity is shown separately and checked by the background watcher.
+- Saves close the old backend connection, clear its recorded health, and reconnect using the new settings without restarting the container.
+- Replacing an invalid file preserves its original bytes in a sibling `russound_config.json.invalid-*.bak` file. Existing valid files are never replaced automatically.
+- Config/state are written atomically within their respective directories. Both must be writable by the container user (UID `10001` by default). Named volumes avoid most first-run bind-mount ownership problems; pre-existing volumes may still need ownership correction.
+- Configuration/state write errors are reported in the editor. For non-Docker runs, supply a writable `--config` path (or `RUSSOUND_CONFIG`).
+- The HTTP healthcheck remains healthy in setup mode; it measures web availability, not hardware readiness.
+
+There is no authentication. Keep the web port on a trusted LAN or protect it with
+an authenticated reverse proxy; the setup page can change the backend destination.
 
 ### Serial gateway container (ser2net)
 
@@ -196,7 +232,7 @@ Set `RUSSOUND_SERIAL_GID` to the group owning the device on the host (`stat -c '
 To use a ser2net instance on the host or another machine instead, point the web container elsewhere and skip the gateway service:
 
 ```bash
-RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d russound-web
+RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d --no-deps russound-web
 ```
 
 ### Dummy backend container (no hardware)
@@ -204,11 +240,14 @@ RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d russound-web
 `docker-compose.dummy.yml` starts the dummy backend together with the web container, which is pointed at `russound-dummy:6666`:
 
 ```bash
-cp web/config_example.json docker/config/russound_config.json
 docker compose -f docker-compose.dummy.yml up -d
 ```
 
 The curses TUI runs inside a `tmux` session in the container and can be attached to at any time:
+
+On first run, configure the controller/zone/source layout in the web setup page.
+The dummy stack overrides the TCP backend to `russound-dummy:6666`; the editor
+shows these environment overrides explicitly.
 
 ```bash
 docker exec -it russound-dummy tmux attach -t dummy
@@ -218,20 +257,24 @@ Detach again with `Ctrl-b d`; pressing `Q` in the TUI quits the backend and stop
 
 ### Volumes
 
-Both mounts must be **directories**, because config and state are written atomically through a temporary file in the same directory. They belong to the web container.
+Config, data, and log mounts must be **directories**. Config and state are written atomically through a temporary file in the same directory. They belong to the web container.
 
 - `/config`: holds `russound_config.json` (writable so the configuration editor can save).
 - `/data`: holds `russound_state.json` and optional protocol audit logs.
+- `/logs`: holds application logs and optional protocol audit logs when configured there.
 
 ### Endpoint configuration
 
 Host and port are configurable through environment variables, which take precedence over the `backend` block of the config file.
+Unset or empty overrides use the saved configuration. The image does not force a
+backend port; the application defaults to `6666` when a port is not configured.
+Remove an explicit override to let browser edits take effect for that field.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `RUSSOUND_WEB_HOST` | Web server bind address | `0.0.0.0` |
 | `RUSSOUND_WEB_PORT` | Web server port | `8000` |
-| `RUSSOUND_BACKEND_HOST` | Russound/ser2net gateway host | `russound-ser2net` |
+| `RUSSOUND_BACKEND_HOST` | Russound/ser2net gateway host override | saved config; otherwise `127.0.0.1` |
 | `RUSSOUND_BACKEND_PORT` | Russound/ser2net gateway port | `6666` |
 | `RUSSOUND_SERIAL_DEVICE` | USB serial device path (ser2net container) | `/dev/ttyUSB0` |
 | `RUSSOUND_SERIAL_OPTIONS` | Serial line settings (ser2net container) | `19200n81` |

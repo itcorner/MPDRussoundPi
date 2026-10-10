@@ -12,7 +12,7 @@
         <div class="panel-header">
           <div>
             <p class="eyebrow">Configuration</p>
-            <h1>Russound zone setup</h1>
+            <h1 id="configTitle">Russound configuration</h1>
           </div>
         </div>
         <nav class="page-menu" aria-label="Page navigation">
@@ -20,12 +20,49 @@
           <a class="page-menu-link is-active" href="/config" aria-current="page">Configuration</a>
           <a class="page-menu-link" href="/status">Status</a>
         </nav>
-        <p class="panel-copy">Set zone names, rename sources, choose which zones appear in the overview, and enable only valid controller slots.</p>
-        <p id="configEditorMessage" class="config-hint" hidden></p>
+        <p id="configEditorMessage" class="config-hint" role="status" hidden></p>
         <div class="header-actions-bottom">
           <button id="saveConfigButton" class="power-button" type="button">Save configuration</button>
         </div>
       </section>
+
+      <details id="connectionConfig" class="panel status-panel collapsible-panel">
+        <summary class="collapsible-summary">
+          <span class="section-title">Backend connection</span>
+          <span id="backendSummaryStatus" class="backend-summary-status" data-state="unknown" role="status">Not checked yet</span>
+        </summary>
+        <div class="collapsible-body">
+        <p id="backendConnectionStatus" class="config-hint" role="status">Not checked yet</p>
+        <p id="backendOverrides" class="config-hint" hidden></p>
+        <div class="setup-fields">
+          <label class="field config-name-field">Connection
+            <select id="backendMode"><option value="tcp">TCP gateway</option><option value="serial">Serial device</option></select>
+          </label>
+          <label id="backendHostField" class="field config-name-field">Gateway host
+            <input id="backendHost" type="text" autocomplete="off" placeholder="192.168.1.100" />
+          </label>
+          <label id="backendPortField" class="field config-name-field">TCP port
+            <input id="backendPort" type="number" min="1" max="65535" value="6666" />
+          </label>
+          <label id="backendDeviceField" class="field config-name-field" hidden>Serial device
+            <input id="backendDevice" type="text" placeholder="/dev/ttyUSB0" />
+          </label>
+          <label id="backendBaudField" class="field config-name-field" hidden>Baud rate
+            <input id="backendBaud" type="number" min="1" max="4000000" value="19200" />
+          </label>
+        </div>
+        </div>
+      </details>
+
+      <details class="panel status-panel collapsible-panel">
+        <summary class="collapsible-summary">
+          <span class="section-title">Controllers</span>
+          <span id="controllerCountBadge" class="status-count">0 enabled</span>
+        </summary>
+        <div class="collapsible-body">
+          <div id="controllerConfig" class="setup-controller-list"></div>
+        </div>
+      </details>
 
       <details id="sourceConfigPanel" class="panel status-panel collapsible-panel">
         <summary class="collapsible-summary">
@@ -40,7 +77,7 @@
       <section id="configEmptyState" class="panel status-panel" hidden>
         <article class="empty-state">
           <p class="empty-state-eyebrow">Configuration required</p>
-          <h2>No editable config file available</h2>
+          <h2>Russound setup</h2>
           <p id="configEmptyMessage"></p>
         </article>
       </section>

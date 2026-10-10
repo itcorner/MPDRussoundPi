@@ -174,6 +174,8 @@ class RussoundHTTPServer:
         self._backend_watcher_started = False
         self._event_backend: RussoundBackend | None = None
         self._event_backend_lock = threading.Lock()
+        self._backend_reconfiguring = threading.Event()
+        self._backend_generation = 0
         self._backend_poll_interval_seconds = BACKEND_CHANGE_POLL_INTERVAL_SECONDS
         self._zone_refresh_requested = threading.Event()
         self._full_poll_requested = threading.Event()
@@ -272,11 +274,30 @@ class RussoundHTTPServer:
         @app.post("/api/config")
         def api_update_config():
             payload = self._read_json_body()
+            old_backend = None
             try:
                 with self.state_lock:
                     response_payload = self.controller.update_config_zones(payload=payload)
+                    self._backend_reconfiguring.set()
+                    with self._event_backend_lock:
+                        old_backend = self._event_backend
+                        self._event_backend = None
+                        self._backend_generation += 1
+                    self.controller.set_shared_backend(None)
+                    self._backend_poll_interval_seconds = self._resolve_backend_poll_interval_seconds()
+                    self._next_reconnect_at = 0.0
+                    self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
+            except OSError as exc:
+                return jsonify({"error": f"Cannot save configuration or state. Check writable config/data volumes and permissions: {exc}"}), 500
+            try:
+                if old_backend is not None:
+                    old_backend.close()
+            finally:
+                self._backend_reconfiguring.clear()
+            self._full_poll_requested.set()
+            self._zone_refresh_requested.set()
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
             return jsonify(response_payload)
@@ -407,13 +428,20 @@ class RussoundHTTPServer:
         if not isinstance(config, dict):
             return
         backend = RussoundBackend(config=config)
-        if not backend.start_update_listener(self._handle_unsolicited_zone_update):
+        generation = self._backend_generation
+        if not backend.start_update_listener(lambda update: self._handle_unsolicited_zone_update(update, generation)):
             logging.warning("Russound gateway not reachable yet; the update listener will start once it connects")
         with self._event_backend_lock:
             self._event_backend = backend
         self.controller.set_shared_backend(backend)
 
     def _ensure_update_listener(self) -> None:
+        with self.state_lock:
+            if self._backend_reconfiguring.is_set():
+                return
+            self._ensure_update_listener_locked()
+
+    def _ensure_update_listener_locked(self) -> None:
         """Create the shared backend if missing and reconnect it (re-attaching the listener) when dropped."""
         with self._event_backend_lock:
             backend = self._event_backend
@@ -439,7 +467,9 @@ class RussoundHTTPServer:
         self._next_reconnect_at = now + self._reconnect_delay_seconds
         self._reconnect_delay_seconds = min(self._reconnect_delay_seconds * 2, MAX_RECONNECT_DELAY_SECONDS)
 
-    def _handle_unsolicited_zone_update(self, update: dict[str, Any]) -> None:
+    def _handle_unsolicited_zone_update(self, update: dict[str, Any], generation: int | None = None) -> None:
+        if generation is not None and generation != self._backend_generation:
+            return
         controller_id = update.get("controller")
         zone_number = update.get("zone")
         setting = update.get("setting")
@@ -449,6 +479,8 @@ class RussoundHTTPServer:
             self._request_zone_refresh(cast(int, controller_id), cast(int, zone_number))
             return
         with self.state_lock:
+            if generation is not None and generation != self._backend_generation:
+                return
             state = self.controller.load_state(refresh_backend=False)
             changed = False
             for zone in state.zones:

@@ -378,6 +378,79 @@ h1 {
   margin-top: 1rem;
 }
 
+.backend-summary-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.backend-summary-status::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 0.55rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.backend-summary-status[data-state="connected"]::before {
+  background: #55c98b;
+}
+
+.backend-summary-status[data-state="disconnected"]::before {
+  background: var(--danger);
+}
+
+.backend-summary-status[data-state="incomplete"]::before {
+  background: #edba54;
+}
+
+#connectionConfig > summary {
+  flex-wrap: wrap;
+}
+
+.setup-section {
+  padding: 1rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  min-width: 0;
+}
+
+.setup-fields, .setup-controller-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.setup-controller-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.setup-fields select, .setup-controller-row select {
+  padding: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #0e2132;
+  color: var(--text);
+  min-width: 0;
+}
+
+.setup-fields [hidden] {
+  display: none;
+}
+
+#backendOverrides, #configEmptyMessage {
+  overflow-wrap: anywhere;
+}
+
 .config-source-list {
   display: grid;
   gap: 0.85rem;
