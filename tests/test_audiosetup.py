@@ -156,6 +156,4 @@ class AudioSetupTests(unittest.TestCase):
                 'device.name = "alsa_card.usb-0d8c_USB_Sound_Device-00"', config
             )
             self.assertIn('device.profile = "output:analog-surround-71"', config)
-            run.assert_called_once_with(
-                ["systemctl", "--user", "restart", "wireplumber"], check=False
-            )
+            run.assert_not_called()

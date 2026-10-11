@@ -2,10 +2,11 @@
 - hosts: musicpi
   vars:
     mpd_russoundpi_repo: "https://github.com/itcorner/MPDRussoundPi.git"
-    mpd_russoundpi_dest: "~/MPDRussoundPi"
+    mpd_russoundpi_dest: "{{ ansible_facts['user_dir'] }}/MPDRussoundPi"
     mpd_russoundpi_scripts: "{{ mpd_russoundpi_dest }}/mpdrussoundpi/russound"
-    mpd_russoundpi_config: "{{ mpd_russoundpi_scripts }}/config.json"
-    venv_dir: "~/russound-venv"
+    mpd_russoundpi_config: "{{ ansible_facts['user_dir'] }}/.config/mpdrussoundpi/config.json"
+    venv_dir: "{{ ansible_facts['user_dir'] }}/russound-venv"
+    mpd_russoundpi_update_repo: true
   tasks:
     # Run apt-get update and apt-get upgrade 
     - include_tasks: ../tasks/update.yml
@@ -27,8 +28,14 @@
         - mpd
         - mpc
         - timidity
+        - pipewire
+        - pipewire-pulse
+        - wireplumber
+        - pulseaudio-utils
+        - ffmpeg
       tags:
         - init
+        - new
 
 
     - name: Copy ser2net configuration file
@@ -61,33 +68,141 @@
             name:
               - russound
               - flask
+              - python-mpd2
             virtualenv: "{{ venv_dir }}"
       vars:
         ansible_python_interpreter: /usr/bin/python3
         venv_python: "{{ venv_dir }}/bin/python3"
       tags:
         - init
+        - new
 
     - name: Clone/update MPDRussoundPi Repository
       ansible.builtin.git:
         repo: "{{ mpd_russoundpi_repo }}"
         dest: "{{ mpd_russoundpi_dest }}"
         update: true
+      when: mpd_russoundpi_update_repo | bool
       tags:
         - new
 
     - name: Run MPD setup scripts
       block:
+        - name: Allow headless access to sound devices without a seat session
+          become: true
+          ansible.builtin.user:
+            name: "{{ ansible_facts['user_id'] }}"
+            groups: audio
+            append: true
+
+        - name: Disable the distribution-wide MPD daemon
+          become: true
+          ansible.builtin.systemd_service:
+            name: mpd.service
+            enabled: false
+            state: stopped
+
+        - name: Enable lingering for the audio user
+          become: true
+          ansible.builtin.command:
+            argv: [loginctl, enable-linger, "{{ ansible_facts['user_id'] }}"]
+            creates: "/var/lib/systemd/linger/{{ ansible_facts['user_id'] }}"
+
+        - name: Start the persistent user manager
+          become: true
+          ansible.builtin.systemd_service:
+            name: "user@{{ ansible_facts['user_uid'] }}.service"
+            state: started
+
+        - name: Create persistent audio configuration directory
+          ansible.builtin.file:
+            path: "{{ mpd_russoundpi_config | dirname }}"
+            state: directory
+            mode: "0700"
+
+        - name: Seed persistent configuration without overwriting calibrated gains
+          ansible.builtin.copy:
+            src: "{{ mpd_russoundpi_scripts }}/config.json"
+            dest: "{{ mpd_russoundpi_config }}"
+            remote_src: true
+            force: false
+            mode: "0600"
+
+        - name: Retire the legacy automatic controller if present
+          ansible.builtin.stat:
+            path: "{{ ansible_facts['user_dir'] }}/.config/systemd/user/auto-mpd-control.service"
+          register: legacy_controller
+
+        - name: Disable obsolete automatic controller
+          ansible.builtin.systemd_service:
+            name: auto-mpd-control.service
+            scope: user
+            enabled: false
+            state: stopped
+          when: legacy_controller.stat.exists
+
+        - name: Enable and start the user audio services
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            scope: user
+            enabled: true
+            state: started
+          loop: [pipewire.socket, pipewire-pulse.socket, pipewire.service, wireplumber.service, pipewire-pulse.service]
+
+        - name: Stop playback reconciliation while regenerating configuration
+          ansible.builtin.stat:
+            path: "{{ ansible_facts['user_dir'] }}/.config/systemd/user/mpd_playback_supervisor.service"
+          register: existing_supervisor
+
+        - name: Stop existing supervisor during deployment
+          ansible.builtin.systemd_service:
+            name: mpd_playback_supervisor.service
+            scope: user
+            state: stopped
+          when: existing_supervisor.stat.exists
+
         - name: Setup audio system
           #setup audio system
-          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_scripts }}/audiosetup.py --install {{ mpd_russoundpi_config }}"
+          ansible.builtin.command:
+            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/audiosetup.py", --install, --audio-processor, pipewire, "{{ mpd_russoundpi_config }}"]
         - name: Setup MPD services
           #setup MPD services configuration and auto-start and start services
-          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_scripts }}/mpdsetup.py {{ item }} {{ mpd_russoundpi_config }}"
-          with_items:
-            - "--install"
-            - "--enable"
-            - "--start"
+          ansible.builtin.command:
+            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --install, "{{ mpd_russoundpi_config }}"]
+
+        - name: Initialize missing playback intentions as playing
+          ansible.builtin.command:
+            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsupervisor.py", --initialize, "{{ mpd_russoundpi_config }}"]
+
+        - name: Enable MPD meta service
+          ansible.builtin.systemd_service:
+            name: mpd_meta_control.service
+            scope: user
+            daemon_reload: true
+            enabled: true
+            state: started
+
+        - name: Restart configured MPD instances
+          ansible.builtin.command:
+            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --restart, "{{ mpd_russoundpi_config }}"]
+
+        - name: Verify restored playback, routes and gains before enabling supervision
+          ansible.builtin.command:
+            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsupervisor.py", --once, "{{ mpd_russoundpi_config }}"]
+          register: playback_verification
+          retries: 3
+          delay: 5
+          until: playback_verification.rc == 0
+
+        - name: Enable and start playback reconciliation
+          ansible.builtin.systemd_service:
+            name: mpd_playback_supervisor.service
+            scope: user
+            enabled: true
+            state: started
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['user_uid'] }}/bus"
       tags:
         - new
 

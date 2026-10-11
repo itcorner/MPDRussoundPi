@@ -21,7 +21,8 @@ This review covers the Python production modules in `web/` and `tool/`.
 - `web/config_types.py` has no dedicated tests for malformed configuration, boolean-vs-integer rejection, endpoint defaults, or controller-limit normalization.
 - The `web/` and `tool/` package marker files are intentionally not documented as modules because they contain no application behavior.
 - Frontend JavaScript and HTML files are not covered by the Python suite.
-- Ansible playbooks and templates are not covered by automated tests.
+- Ansible setup syntax is checked separately; target execution and reboot
+  behavior require hardware verification.
 - Audio setup has a regression test for the generated WirePlumber ALSA rule
   section, device match, and requested profile. The service restart is mocked.
 - Loopback tests require input channel layout inside `capture.props` and the
@@ -65,25 +66,36 @@ This review covers the Python production modules in `web/` and `tool/`.
   The shared lock's exception, interrupt and SIGKILL behavior is covered by
   the audio setup tests. Both require a private mode-0700 `XDG_RUNTIME_DIR`;
   persistent lock files must not be deleted while setup may be running.
-- [MPD controller tests](../tests/test_mpdctrl.py) cover individual start/stop
-  for every configured name, all-stream defaults, selected/all status,
-  unknown/ambiguous names, removed/conflicting options, kernel-lock contention,
-  exception release and inode preservation. MPD protocol effects are mocked.
+- [MPD controller tests](../tests/test_mpdctrl.py) cover shared-backend
+  delegation, selected/all actions, pause, read-only status/routes,
+  unavailable/wrong routes, unknown names and truthful exit status.
+  [Backend tests](../tests/test_mpdbackend.py) cover locking, protocol behavior,
+  queue idempotence, persistence, saved intentions and startup gating.
+- [Readiness tests](../tests/test_audioready.py) cover missing hardware/sinks,
+  profile enforcement with mandatory re-verification and bounded retries.
+  [Supervisor tests](../tests/test_mpdsupervisor.py) cover independent
+  recovery, service failures, initialization and per-stream backoff.
 
 ## Manual MPD Stream Control
+
+A reusable [Python MPD backend API](./mpd-backend-api.md) also provides
+playback/status/route control and persistent per-stream gain changes without
+an HTTP server. [Backend tests](../tests/test_mpdbackend.py) cover queue
+idempotence, protocol errors, locking, gain persistence and rollback.
 
 From `mpdrussoundpi/russound/`, with MPD services already running:
 
 ```sh
-python mpdctrl.py --start --stream "FM4 Radio" config.json
-python mpdctrl.py --stop --stream "FM4 Radio" config.json
-python mpdctrl.py --status --stream "FM4 Radio" config.json
-python mpdctrl.py --start config.json
-python mpdctrl.py --stop config.json
-python mpdctrl.py --status config.json
-python mpdctrl.py --apply-gain config.json
-python mpdctrl.py --check-route config.json
-python mpdctrl.py --recover-route --stream "Radio 88.6" config.json
+python mpdctrl.py --start --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --stop --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --pause --stream "Radio 88.6" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --status --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --stop ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --status ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --apply-gain ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --check-route ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --recover-route --stream "Radio 88.6" ~/.config/mpdrussoundpi/config.json
 ```
 
 Names are exact, case-sensitive configured stream names. Omitting `--stream`
@@ -95,7 +107,9 @@ Automatic Russound power polling and controller service management options
 (`--auto`, `--install`, `--enable`, `--disable`, `--cleanup`) have been removed.
 The obsolete system-info helper and its `system_on` JSON output have also
 been removed; no remaining repository consumers were found.
-Provisioning no longer installs that controller or starts playback.
+Provisioning retires that controller and installs a separate intended-playback
+supervisor; first boot starts all configured streams. See
+[headless deployment](./mpd-headless-deployment.md).
 Existing installations should retire the old service before deploying the
 manual-only controller, running as the owning user:
 
@@ -106,16 +120,15 @@ systemctl --user disable --now auto-mpd-control.service
 Remove the obsolete user unit after backing it up, then run
 `systemctl --user daemon-reload`. This is separate from MPD instance service
 management, which remains in `mpdsetup.py`. The new controller starts/stops
-playback, not daemon services. Its existing MPD helper still appends the URL
-on each start; queue deduplication and protocol error handling remain separate
-follow-up work.
+playback, not daemon services. It now delegates to the shared backend with
+idempotent queue handling, explicit protocol failures and saved intention.
 
 ## Explicit route verification and recovery
 
 The controller uses [streamroute.py](../mpdrussoundpi/russound/lib/streamroute.py)
 to inspect actual PulseAudio/PipeWire sink-input routing, rather than trusting
 the requested `target.object` property. `--check-route` is read-only, requires
-no runtime lock and checks every selected stream. It prints the client ID,
+no runtime lock and checks every selected stream. It prints the stream,
 actual sink and expected sink, exiting 1 for wrong routes, missing sinks,
 missing playback clients or ambiguous identities. Stopped streams have no
 verifiable active playback route and are reported as failures, not silently

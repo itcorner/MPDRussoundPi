@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 from pathlib import Path
 import runpy
@@ -18,9 +19,9 @@ with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
 
 
 class MPDSetupTests(unittest.TestCase):
-    def run_cli(self, option, home, runtime, run):
+    def run_cli(self, option, home, runtime, run, config="config.json"):
         with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-            with patch.object(sys, "argv", ["mpdsetup.py", option, "config.json"]):
+            with patch.object(sys, "argv", ["mpdsetup.py", option, config]):
                 with patch.dict(os.environ, {"HOME": home, "XDG_RUNTIME_DIR": runtime}):
                     with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
                         with patch("subprocess.run", side_effect=run), patch("time.sleep"):
@@ -52,9 +53,10 @@ class MPDSetupTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, command)
 
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as runtime:
-            with patch.object(mpdsetup.readconfig, "read_and_parse_json", return_value={"streams": []}):
-                with self.assertRaises(subprocess.CalledProcessError):
-                    self.run_cli("--install", home, runtime, reload)
+            config = Path(home) / "config.json"
+            config.write_text(json.dumps({"streams": []}))
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_cli("--install", home, runtime, reload, str(config))
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
                 with mpdsetup.setup_lock("mpd_setup.lock"):
                     pass
@@ -120,3 +122,43 @@ class MPDSetupTests(unittest.TestCase):
             config = (Path(directory) / mpdsetup.SYSTEMD_MPD_METASERVICE).read_text()
         self.assertNotIn("Wants=", config)
         self.assertNotIn("*", config)
+
+    def test_instance_and_supervisor_units_include_headless_recovery(self):
+        instance = mpdsetup.MPDInstance(
+            "Radio 88.6", "127.0.0.1", 6601, stream.Stream("https://example.com", "Radio")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(mpdsetup, "SYSTEMD_USER_CONFIG_DIR", directory):
+                mpdsetup.create_mpd_systemd_service(instance, "/home/user/audio config.json")
+                mpdsetup.create_supervisor_service("/home/user/audio config.json")
+                available = mpdsetup.get_available_systemd_mpd_services()
+            unit = (Path(directory) / "mpd_radio_88.6.service").read_text()
+            supervisor = (Path(directory) / mpdsetup.SYSTEMD_MPD_SUPERVISOR).read_text()
+        for dependency in ("pipewire.service", "pipewire-pulse.service", "wireplumber.service"):
+            self.assertIn(dependency, unit)
+            self.assertIn(dependency, supervisor)
+        self.assertIn("ExecStartPre=", unit)
+        self.assertIn(mpdsetup.systemd_quote(str(Path("/home/user/audio config.json").resolve())), unit)
+        self.assertIn("Restart=on-failure", unit)
+        self.assertIn("RestartSec=5", unit)
+        self.assertIn("StartLimitBurst=10", unit)
+        self.assertIn("mpdsupervisor.py", supervisor)
+        self.assertEqual(available, ["mpd_radio_88.6.service"])
+
+    def test_output_generator_uses_software_mixer_for_startup_gate(self):
+        config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+        sinks = {
+            entry["name"]: mpdsetup.sink.config2sink(entry)
+            for device in config["outputmappers"]["audio_devices"]
+            for entry in device["sinks"]
+        }
+        for entry in config["streams"]:
+            instance = mpdsetup.config2mpd(entry, sinks)
+            self.assertIsNotNone(instance)
+            assert instance is not None
+            self.assertIn('mixer_type "software"', instance.to_mpd_config())
+
+    def test_systemd_arguments_escape_specifiers_variables_and_quotes(self):
+        self.assertEqual(mpdsetup.systemd_quote('a%$"b'), '"a%%$$\\"b"')
+        with self.assertRaises(ValueError):
+            mpdsetup.systemd_quote("a\nb")

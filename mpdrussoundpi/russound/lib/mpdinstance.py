@@ -32,7 +32,7 @@ class AudioOutput:
         sink=f"sink.{self.sink_obj.get_name()}"
         # Use Pulseaudio sink 
         type="pulse"
-        return f"audio_output {{\n    type \"{type}\"\n    name \"{name}\"\n    sink \"{sink}\"\n}}"
+        return f"audio_output {{\n    type \"{type}\"\n    name \"{name}\"\n    sink \"{sink}\"\n    mixer_type \"software\"\n}}"
     
 
 

@@ -2,6 +2,7 @@ import lib.readconfig as readconfig
 #from lib.mpdinstance import MPDInstance, config2mpd
 from lib.audiodevice import AudioDevice, config2audiodevice
 from lib.setuplock import setup_lock
+from lib.audioready import wait_for_audio
 import argparse
 import os
 import subprocess
@@ -10,10 +11,7 @@ import time
 
 MPD_CONFIG_DIR = os.path.expanduser('~/.config/mpd/')
 PULSE_CONFIG = os.path.expanduser('~/.config/pulse/default.pa')
-
-#PIPEWIRE_CONFIG = os.path.expanduser('~/.config/pipewire/pipewire-pulse.conf.d/remapped-sinks.conf')
 PIPEWIRE_CONFIG = os.path.expanduser('~/.config/pipewire/pipewire.conf.d/remapped-sinks.conf')
-
 WIREPLUMBER_CONFIG = os.path.expanduser('~/.config/wireplumber/wireplumber.conf.d/card-modes.conf')
 
 logging.basicConfig(filename='russound_debugging.log', level=logging.DEBUG,
@@ -64,9 +62,6 @@ def create_wireplumber_config(device_dict: dict[str, AudioDevice]):
         f.write("]\n")
 
     print(f"Created WirePlumber config: {WIREPLUMBER_CONFIG}")
-    # Reload PipeWire/WirePlumber configuration
-    subprocess.run(['systemctl', '--user', 'restart', 'wireplumber'], check=False)
-    #subprocess.run(['systemctl', '--user', 'restart', 'pipewire'], check=False)
 
 def create_pulse_config(device_dict: dict[str, AudioDevice]):
     """Create PulseAudio configuration file based on the provided device dictionary."""
@@ -168,7 +163,11 @@ if __name__ == "__main__":
             if audio_processor == 'pipewire':
                 create_wireplumber_config(device_dict)
                 create_pipewire_config(device_dict)
+                subprocess.run(
+                    ['systemctl', '--user', 'restart', 'pipewire', 'wireplumber', 'pipewire-pulse'],
+                    check=True,
+                )
+                wait_for_audio(args.json)
             else:
                 create_pulse_config(device_dict)
             # Allow the audio processor to settle before the next setup step.
-            time.sleep(1)
