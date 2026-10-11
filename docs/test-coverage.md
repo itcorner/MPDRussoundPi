@@ -81,6 +81,10 @@ This review covers the Python production modules in `web/` and `tool/`.
   legacy/malformed configuration refusal, backend selection, partial installs,
   locking and checked restart failures. Audio service commands are mocked;
   this is not a live production teardown test.
+- [Endurance recorder tests](../tests/test_playbackaudit.py) cover read-only
+  protocol calls, playback/route/gain/silence anomalies, bounded observations,
+  failure isolation, cursor handling, persistent deadline/counters and
+  independent service generation. See [test procedure](./mpd-playback-endurance-test.md).
 
 ## Manual MPD Stream Control
 

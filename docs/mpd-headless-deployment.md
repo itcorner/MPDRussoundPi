@@ -110,6 +110,11 @@ python mpdsetup.py --start ~/.config/mpdrussoundpi/config.json
 
 ## Validation evidence
 
+For an independent read-only endurance/USB recorder, see
+[long-term test instructions](./mpd-playback-endurance-test.md). This recorder
+does not add another recovery loop and is installed/started explicitly, not by
+the normal deployment playbook.
+
 Focused tests cover first-boot defaults, preserving intentions, audio-error
 recovery, mute/route/gain/unmute ordering, failed readiness, atomic persistence,
 queue idempotence, per-stream failure isolation/backoff, CLI delegation and
