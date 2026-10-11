@@ -75,6 +75,12 @@ This review covers the Python production modules in `web/` and `tool/`.
   profile enforcement with mandatory re-verification and bounded retries.
   [Supervisor tests](../tests/test_mpdsupervisor.py) cover independent
   recovery, service failures, initialization and per-stream backoff.
+- [Audio cleanup tests](../tests/test_audiosetup.py) cover CLI dispatch,
+  install/cleanup/reinstall, ownership preflight, symlink refusal, byte-preserved
+  PulseAudio settings, idempotent includes/cleanup, safe wrapper removal,
+  legacy/malformed configuration refusal, backend selection, partial installs,
+  locking and checked restart failures. Audio service commands are mocked;
+  this is not a live production teardown test.
 
 ## Manual MPD Stream Control
 

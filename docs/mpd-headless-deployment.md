@@ -62,7 +62,53 @@ python mpdsupervisor.py --once ~/.config/mpdrussoundpi/config.json
 one nonblocking lock and can fail with contention. API/CLI errors remain
 explicit, including a failure to save an intention or gain.
 
-## Validation
+## Removing managed audio configuration
+
+Cleanup is separate from MPD service removal. Stop the playback supervisor and
+MPD instances first during an approved maintenance window; otherwise they will
+keep trying to restore streams whose virtual sinks you are removing:
+
+```sh
+python mpdsetup.py --stop ~/.config/mpdrussoundpi/config.json
+python audiosetup.py --cleanup --audio-processor pipewire
+```
+
+Cleanup requires no JSON file or running audio server. Omitting
+`--audio-processor` checks both backends. It uses the audio setup lock and
+removes only the known generated PipeWire/WirePlumber fragments whose ownership
+header matches. Unowned files or symlinks cause an explicit error before any
+configuration is removed. Unrelated fragments, MPD configuration, persisted
+gains and playback intentions are not deleted.
+
+PulseAudio installation now writes a separate managed fragment and adds a
+bounded include block to the existing user `default.pa`, preserving its original
+bytes. Updates use a flushed/fsynced temporary file and atomic replacement,
+preserving file permissions rather than truncating the user's file in place.
+With no user file, it creates a wrapper that includes the distribution
+defaults. Repeated installs do not duplicate the block. Cleanup removes only
+the managed include and fragment; it deletes the wrapper only if it has no
+additional user content. Modified/malformed include blocks are refused.
+
+Older generated PulseAudio `default.pa` files lack a safe ownership boundary.
+Install/cleanup refuses to overwrite or delete them. Back up such a file,
+manually migrate any custom settings into a normal user configuration, then
+rerun the command. No automatic migration can establish which edits were yours.
+Explicit PipeWire-only cleanup does not inspect or alter this legacy Pulse file.
+
+Affected running user audio services are restarted with checked
+`systemctl --user try-restart`; inactive services are not deliberately started.
+Repeated cleanup with nothing left does not restart services. Restart failure
+returns nonzero; removed configuration is not rolled back, so inspect/fix the
+service and retry its restart before reinstalling or resuming playback.
+
+Reinstall using the operational configuration, then restart MPD/supervision:
+
+```sh
+python audiosetup.py --install --audio-processor pipewire ~/.config/mpdrussoundpi/config.json
+python mpdsetup.py --start ~/.config/mpdrussoundpi/config.json
+```
+
+## Validation evidence
 
 Focused tests cover first-boot defaults, preserving intentions, audio-error
 recovery, mute/route/gain/unmute ordering, failed readiness, atomic persistence,
