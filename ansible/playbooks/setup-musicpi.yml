@@ -88,13 +88,6 @@
             - "--install"
             - "--enable"
             - "--start"
-        - name: Setup MPD control service
-          #setup MPD control service and enable it to auto-start and start the service
-          ansible.builtin.command: "{{ venv_dir }}/bin/python3 {{ mpd_russoundpi_scripts }}/mpdctrl.py {{ item }} {{ mpd_russoundpi_config }}"
-          with_items:
-            - "--install"
-            - "--enable"
-            - "--start"
       tags:
         - new
 
@@ -103,4 +96,3 @@
       systemd:
         name: ser2net
         state: restarted
-

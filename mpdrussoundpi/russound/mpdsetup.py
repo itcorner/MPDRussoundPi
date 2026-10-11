@@ -1,13 +1,12 @@
 import lib.readconfig as readconfig
 from lib.mpdinstance import MPDInstance, config2mpd
+from lib.setuplock import setup_lock
 import argparse
 import os
 import subprocess
 import lib.sink as sink
 import logging
 import time
-
-LOCKFILE = '/tmp/mpd_setup.lock'
 
 MPD_CONFIG_DIR = os.path.expanduser('~/.config/mpd/')
 PULSE_CONFIG = os.path.expanduser('~/.config/pulse/default.pa')
@@ -20,30 +19,6 @@ SYSTEMD_MPD_METASERVICE = 'mpd_meta_control.service'
 
 logging.basicConfig(filename='russound_debugging.log', level=logging.DEBUG,
                     format='%(asctime)s:%(name)s:%(levelname)s:%(funcName)s():%(message)s')
-
-def acquire_lock():
-    """Acquire a lock to prevent multiple instances of the script from running simultaneously."""
-    import os
-    import sys
-
-    if os.path.exists(LOCKFILE):
-        print("Another instance of the script is already running. Exiting.")
-        print(f"If you are sure no other instance is running, delete the lock file: {LOCKFILE}")
-        sys.exit(1)
-
-    with open(LOCKFILE, 'w') as f:
-        f.write(str(os.getpid()))
-
-def release_lock():
-    """Release the lock when the script finishes."""
-    import os
-
-    if os.path.exists(LOCKFILE):
-        # Check if the PID in the lock file matches the current process before removing it
-        with open(LOCKFILE, 'r') as f:
-            pid = f.read()
-            if pid == str(os.getpid()):
-                os.remove(LOCKFILE)
 
 def mpd_config_filename(instance_name: str) -> str:
     """Generate a safe filename for the MPD config based on the instance name."""
@@ -67,15 +42,17 @@ def create_mpd_config(mpd_instance: MPDInstance):
         f.write(mpd_instance.to_mpd_config())
         logging.info(f"Created MPD config: {config_file}")
 
-def create_mpd_metaservice():
+def create_mpd_metaservice(mpd_instances: list[MPDInstance]):
     """Create a systemd service that can be used as a target for propagating stop/reload signals to all MPD instance services."""
     if not os.path.exists(SYSTEMD_USER_CONFIG_DIR):
         os.makedirs(SYSTEMD_USER_CONFIG_DIR)
 
     service_file = os.path.join(SYSTEMD_USER_CONFIG_DIR, SYSTEMD_MPD_METASERVICE)
+    services = " ".join(mpd_service_filename(instance.name) for instance in mpd_instances)
     with open(service_file, 'w') as f:
         f.write(f"[Unit]\nDescription=MPD Meta Control Service\nAfter=network.target sound.target\n\n")
-        f.write(f"Wants=mpd_*.service\n")
+        if services:
+            f.write(f"Wants={services}\nAfter={services}\n")
         f.write(f"[Service]\nType=oneshot\nExecStart=/bin/true\nExecStop=/bin/true\nRemainAfterExit=yes\n")
         f.write("\n[Install]\nWantedBy=default.target\n")
     logging.info(f"Created MPD meta-control systemd service: {service_file}")
@@ -256,43 +233,38 @@ if __name__ == "__main__":
         kill_all_mpd_instances()
         exit(0)
     elif args.cleanup:
-        # Stop all running MPD instances (in case any are still running) and remove all auto-generated config files
-        stop_all_mpd_services()
-        time.sleep(2)  # Give some time for services to stop before cleaning up files
-        disable_all_mpd_services()  # Disable services to prevent them from starting on boot after cleanup
-        # Remove all auto-generated MPD config files and systemd service files
-        cleanup_all()
+        with setup_lock('mpd_setup.lock'):
+            stop_all_mpd_services()
+            time.sleep(2)
+            disable_all_mpd_services()
+            cleanup_all()
         exit(0)
     elif args.install:
-        # Create MPD config files for each instance and start MPD with those configs
-        acquire_lock()
+        with setup_lock('mpd_setup.lock'):
+            config = readconfig.read_and_parse_json(args.json)
+            if not config:
+                logging.error("Failed to read configuration. Exiting.")
+                parser.print_help()
+                exit(1)
 
-        config = readconfig.read_and_parse_json(args.json)
-        if not config:
-            logging.error("Failed to read configuration. Exiting.")
-            parser.print_help()
-            exit(1)
+            sink_dict: dict[str, sink.Sink] = {}
+            for audio_device in config.get('outputmappers', {}).get('audio_devices', []):
+                for sink_element in audio_device.get('sinks', []):
+                    logging.debug(f"Audio Device: {audio_device.get('name')}, Sink: {sink_element.get('name')}")
+                    sink_dict[sink_element.get('name')] = sink.config2sink(sink_element)
 
-        sink_dict: dict[str, sink.Sink] = {}
-        for audio_device in config.get('outputmappers', {}).get('audio_devices', []):
-            for sink_element in audio_device.get('sinks', []):
-                logging.debug(f"Audio Device: {audio_device.get('name')}, Sink: {sink_element.get('name')}")
-                sink_dict[sink_element.get('name')] = sink.config2sink(sink_element)
+            mpd_instances: list[MPDInstance] = []
+            for stream_config in config.get('streams', []):
+                inst = config2mpd(stream_config, sink_dict, ignore_missing_sinks=False)
+                if inst:
+                    mpd_instances.append(inst)
+                    logging.debug(f"Found valid configuration for MPD instance: {inst.name} on port {inst.port} with stream URL: {inst.stream.get_url()}")
 
-        mpd_instances: list[MPDInstance] = []
-        for stream_config in config.get('streams', []):
-            inst = config2mpd(stream_config, sink_dict, ignore_missing_sinks=False)
-            if inst:            
-                mpd_instances.append(inst)
-                logging.debug(f"Found valid configuration for MPD instance: {inst.name} on port {inst.port} with stream URL: {inst.stream.get_url()}")
-
-
-        for instance in mpd_instances:
-            create_mpd_config(instance)
-            create_mpd_systemd_service(instance)
-        create_mpd_metaservice()
-
-        release_lock()
+            for instance in mpd_instances:
+                create_mpd_config(instance)
+                create_mpd_systemd_service(instance)
+            create_mpd_metaservice(mpd_instances)
+            subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
 
     if args.start:
         # Start all MPD instances using systemd services
@@ -309,4 +281,3 @@ if __name__ == "__main__":
     elif args.disable:
         # Disable all MPD systemd services from starting on boot
         disable_all_mpd_services()
-
