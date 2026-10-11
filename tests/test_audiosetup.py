@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -15,6 +16,41 @@ with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
 
 
 class AudioSetupTests(unittest.TestCase):
+    def test_configured_surround_51_routes_all_three_pairs(self):
+        config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+        devices = config["outputmappers"]["audio_devices"]
+        self.assertEqual(len(devices), 1)
+        device = audiosetup.config2audiodevice(devices[0])
+        self.assertEqual(device.card_profile, "analog-surround-51")
+        self.assertEqual(
+            [item.master_channel_map for item in device.sinks],
+            ["[ FL FR ]", "[ FC LFE ]", "[ RL RR ]"],
+        )
+        generated = device.get_pipewire_sink_config()
+        self.assertEqual(generated.count(
+            f'target.object = "alsa_output.{device.name}.analog-surround-51"'
+        ), 3)
+        self.assertNotIn("analog-surround-71", generated)
+        self.assertIn('device.profile = "output:analog-surround-51"',
+                      device.get_wireplumber_card_config())
+
+    def test_loopback_maps_channels_without_global_layout_conversion(self):
+        for output_map in ("[ FL FR ]", "[ FC LFE ]", "[ RL RR ]"):
+            with self.subTest(output_map=output_map):
+                device = audiosetup.config2audiodevice({
+                    "name": "test", "card-profile": "analog-surround-71",
+                    "sinks": [{"name": "test", "master_channel_map": output_map,
+                               "channel_map": "[ FL FR ]", "remix": "no"}],
+                })
+                config = device.sinks[0].get_pipewire_config("master")
+                before_capture, streams = config.split("capture.props = {", 1)
+                capture, playback = streams.split("playback.props = {", 1)
+                self.assertNotIn("audio.position", before_capture)
+                self.assertIn("audio.position = [ FL FR ]", capture)
+                self.assertIn(f"audio.position = {output_map}", playback)
+                self.assertIn('target.object = "master"', playback)
+                self.assertIn("stream.dont-remix = true", playback)
+
     def test_setup_lock_rejects_contention_and_keeps_inode(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}):

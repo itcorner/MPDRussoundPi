@@ -71,9 +71,9 @@ class Sink:
         config += "        args = {\n"
         if self.sink_description and self.sink_description.strip() != "":
             config += f"            node.description = \"PipeWire {self.sink_description}\"\n"
-        config += f"            audio.position = {self.channel_map}\n"
         config += "            capture.props = {\n"
         config += f"                node.name = \"sink.{self.name}\"\n"
+        config += f"                audio.position = {self.channel_map}\n"
         config += "                media.class = \"Audio/Sink\"\n"
         config += "            }\n"
         config += "            playback.props = {\n"

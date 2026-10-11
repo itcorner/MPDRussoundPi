@@ -24,6 +24,16 @@ This review covers the Python production modules in `web/` and `tool/`.
 - Ansible playbooks and templates are not covered by automated tests.
 - Audio setup has a regression test for the generated WirePlumber ALSA rule
   section, device match, and requested profile. The service restart is mocked.
+- Loopback tests require input channel layout inside `capture.props` and the
+  output layout inside `playback.props`, with no global `audio.position`.
+  A global layout enables conversion rather than direct channel remapping.
+  Target A/B metering reproduced silent rear/LFE with the old layout and
+  verified individual digital channel isolation with the corrected layout.
+- The configured USB device uses `analog-surround-51`, mapping three stereo
+  inputs to FL/FR, FC/LFE and RL/RR on a six-channel master. A configuration
+  regression verifies that all loopback targets and the WirePlumber rule use
+  5.1. Target equal-tone calibration verified unity software gain on all pairs;
+  analog jack placement and levels require physical measurement.
 - Audio setup locking tests cover contention, inode preservation, exception
   cleanup, invalid runtime directories, and kernel lock release after SIGKILL.
   Installation requires a current-user-owned mode-0700 `XDG_RUNTIME_DIR`.
@@ -71,6 +81,9 @@ python mpdctrl.py --status --stream "FM4 Radio" config.json
 python mpdctrl.py --start config.json
 python mpdctrl.py --stop config.json
 python mpdctrl.py --status config.json
+python mpdctrl.py --apply-gain config.json
+python mpdctrl.py --check-route config.json
+python mpdctrl.py --recover-route --stream "Radio 88.6" config.json
 ```
 
 Names are exact, case-sensitive configured stream names. Omitting `--stream`
@@ -96,5 +109,131 @@ management, which remains in `mpdsetup.py`. The new controller starts/stops
 playback, not daemon services. Its existing MPD helper still appends the URL
 on each start; queue deduplication and protocol error handling remain separate
 follow-up work.
+
+## Explicit route verification and recovery
+
+The controller uses [streamroute.py](../mpdrussoundpi/russound/lib/streamroute.py)
+to inspect actual PulseAudio/PipeWire sink-input routing, rather than trusting
+the requested `target.object` property. `--check-route` is read-only, requires
+no runtime lock and checks every selected stream. It prints the client ID,
+actual sink and expected sink, exiting 1 for wrong routes, missing sinks,
+missing playback clients or ambiguous identities. Stopped streams have no
+verifiable active playback route and are reported as failures, not silently
+skipped. Start them separately if desired.
+
+`--recover-route` uses `mpd_control.lock` and moves only incorrectly routed
+MPD clients to their configured virtual sinks. Both commands accept
+`--stream NAME`; omit it for all streams. Recovery does not start/stop MPD,
+change queues, alter gains, restart services or modify audio configuration.
+Already-correct routes are left alone. A failed recovery exits 1; previously
+recovered streams remain corrected.
+
+The configured output name `pw_<sink>` must match the live MPD client's
+`media.name`, `application.name=Music Player Daemon` and
+`application.process.binary=mpd`. Zero matches fail explicitly; multiple
+matches refuse recovery. Configured sink names must be unique across streams.
+The helper discovers current sink-input IDs on every inspection, including
+after client recreation, instead of storing transient IDs such as `253`.
+Recovery retries missing clients/sinks for five seconds, uses two-second
+timeouts for each `pactl` call, and requires two consecutive correct snapshots
+for the same client, separated by 0.2 seconds. Move command errors and invalid
+JSON fail explicitly. Recreated clients must retain the generated output name.
+
+`--start` now starts playback, recovers/verifies the route, then applies gain.
+`--apply-gain` also recovers/verifies routing before changing gain, preventing
+gain changes to a bypassed virtual sink. A route/gain failure during start
+requests stop on the affected stream; other already-processed streams are not
+rolled back. There is no background watchdog or restored automatic controller:
+after a later USB reconnect or audio-stack restart, run `--check-route` and
+`--recover-route`, or call recovery from future orchestration. Successful
+verification is a current observation, not a guarantee against future policy
+rerouting. Gain-only and recovery-only operations do not add queue entries.
+
+[Route tests](../tests/test_streamroute.py) reproduce a front client whose
+requested sink is correct but actual route bypasses it. Tests cover dynamic
+client IDs, idempotence, post-move verification, startup waiting, ignored
+moves, missing/ambiguous clients, command errors and JSON validation.
+Controller tests cover selected/all route actions, read-only failures,
+mutation locking, route-before-gain ordering and failure cleanup.
+
+## Per-stream loudness balancing
+
+Each stream in `config.json` has an optional `gain_db` number (default `0.0`).
+Only finite values <= 0 are supported: `-6.0` attenuates by 6 dB and `0.0`
+leaves unity gain. Gains apply equally to both channels of that stream's
+virtual PulseAudio/PipeWire sink; the six-channel USB master and channel maps
+are not changed. Gain control requires `pactl` (`pulseaudio-utils` on Debian).
+Streams must use separate configured PulseAudio sinks, and MPD must actually
+be routed to those sinks: clients falling back directly to the USB master
+bypass virtual-sink gain.
+
+`mpdctrl.py --start` starts each stream, recovers/verifies its route, then
+applies and verifies its gain.
+There can be a brief interval at the previous volume while playback starts;
+inactive virtual sinks on the tested Pi ignored volume changes until a client
+was active. The helper retries/read-checks for five seconds and reports failure
+instead of claiming an ignored setting succeeded.
+`--apply-gain` applies them without changing MPD state or adding queue entries;
+it accepts the same optional `--stream NAME` selector. For non-unity gains,
+playback must already be active. Both actions hold `mpd_control.lock`; a gain
+failure exits nonzero, and start requests stop on the affected stream before
+exiting. A failure partway through multiple streams can leave earlier streams
+playing with gains applied: correct the error and retry. Stop and status do not alter
+gain. Run `--apply-gain` again after recreating sinks or changing configuration.
+Starting MPD directly does not read these JSON gain settings.
+Gain commands use absolute PulseAudio volume units, converted using its cubic
+volume scale, rather than signed dB arguments (which apply relative changes).
+Repeated gain application therefore does not accumulate attenuation.
+
+The [measurement helper](../mpdrussoundpi/russound/streamlevels.py) requires
+FFmpeg with the `ebur128` filter (Debian/Raspberry Pi: `sudo apt install ffmpeg`).
+From `mpdrussoundpi/russound/`, measure all configured feeds concurrently:
+
+```sh
+python streamlevels.py config.json --duration 900 \
+  --output-config balanced-config.json > stream-levels.json
+```
+
+Duration is seconds of decoded audio per feed (default 15 minutes; minimum
+10 seconds). The helper opens an additional connection to each radio URL,
+decodes to stereo, and measures integrated EBU R128 loudness (LUFS), loudness
+range (LU), and true peak (dBTP). It bypasses existing gain settings, does not
+touch MPD/PipeWire playback, and stores no raw audio. Concurrent measurements
+increase network and CPU load; run on the Pi or another machine with FFmpeg.
+Input is paced at real time, including any initial server burst of buffered audio.
+The whole job has a duration-plus-60-second deadline per feed, a 15-second
+network read timeout, and terminates its own FFmpeg processes on failure or
+interruption. No automatic reconnection hides outages. Failed, silent,
+unmeasurable, truncated or decoding-error feeds prevent recommendations for
+the entire set; FFmpeg warnings are included in the report for review.
+
+Recommendations attenuate toward the quietest measured feed. The common
+target is lowered further if needed to respect `--peak-ceiling` (default
+`-1` dBTP). Gains are rounded down to 0.1 dB; FFmpeg summary values are also
+rounded, so these are estimates, not a real-time peak guarantee. The JSON
+report includes measured duration, UTC timestamps, gains and predicted
+loudness/peaks. Omit `--output-config` for report-only operation. Output
+configuration must be a new file; input and existing files are never
+overwritten, and unrelated configuration fields are retained.
+
+Review the report, particularly warnings, and compare several representative
+programme windows before adopting the values. Fixed gains do not continuously
+normalize changing programmes or limit future peaks. To try the generated
+configuration without restarting or modifying queues:
+
+```sh
+python mpdctrl.py --apply-gain balanced-config.json
+```
+
+After review, copy the recommended `gain_db` values into the authoritative
+configuration so subsequent starts use them. All shipped values remain `0.0`
+until real extended measurements are evaluated.
+
+[Loudness tests](../tests/test_streamlevels.py) cover FFmpeg summary/duration
+parsing, rejection of silence and failures, concurrent process cleanup,
+attenuation/peak calculations, safe output configuration and checked dB gain
+commands. An optional real-FFmpeg test compares equal reference tones with a
+known 6 dB difference. Controller tests cover selected/all gain application,
+default unity, invalid settings/shared sinks and failure lock release.
 
 Each module document below links its closest test cases and names the remaining untested behavior.

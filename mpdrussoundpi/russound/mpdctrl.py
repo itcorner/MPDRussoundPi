@@ -4,12 +4,9 @@ import logging
 import lib.readconfig as readconfig
 from lib.mpdinstance import MPDInstance, config2mpd
 from lib.setuplock import setup_lock
+from lib.streamgain import set_sink_gain, validate_gain_db
+from lib.streamroute import inspect_route, recover_route
 import lib.sink as sink
-
-
-def play(mpd_instances: list[MPDInstance]):
-    for instance in mpd_instances:
-        instance.play()
 
 
 def stop(mpd_instances: list[MPDInstance]):
@@ -30,6 +27,9 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument('--start', action='store_true', help='Start selected or all streams')
     action.add_argument('--stop', action='store_true', help='Stop selected or all streams')
     action.add_argument('--status', action='store_true', help='Show selected or all stream statuses')
+    action.add_argument('--apply-gain', action='store_true', help='Apply configured gains without changing playback')
+    action.add_argument('--check-route', action='store_true', help='Verify actual playback routes without changing them')
+    action.add_argument('--recover-route', action='store_true', help='Recover and verify selected or all playback routes')
     parser.add_argument('--stream', metavar='NAME', help='Exact configured stream name; omit for all streams')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('json', help='Path to JSON configuration file')
@@ -61,6 +61,57 @@ def main(argv: list[str] | None = None) -> None:
         for sink_element in audio_device.get('sinks', []):
             sink_dict[sink_element.get('name')] = sink.config2sink(sink_element)
 
+    gains: dict[str, tuple[str, float]] = {}
+    if args.start or args.apply_gain or args.check_route or args.recover_route:
+        used_sinks: set[str] = set()
+        for entry in config.get('streams', []):
+            try:
+                gain = validate_gain_db(entry.get('gain_db', 0)) if args.start or args.apply_gain else 0.0
+                sink_name = entry.get('audio_output', {}).get('sink')
+                if (entry.get('audio_output', {}).get('type') != 'pulse'
+                        or not isinstance(sink_name, str) or sink_name not in sink_dict):
+                    raise ValueError("gain/route control requires a configured PulseAudio virtual sink")
+                if sink_name in used_sinks:
+                    raise ValueError(f"per-stream gain/route control requires separate sinks: {sink_name!r}")
+                name = entry.get('name')
+                if not isinstance(name, str) or not name:
+                    raise ValueError("stream name must be a nonempty string")
+                if name in gains:
+                    raise ValueError(f"duplicate stream name: {entry['name']!r}")
+                used_sinks.add(sink_name)
+                gains[name] = (sink_name, gain)
+            except (ValueError, KeyError, TypeError) as error:
+                parser.error(f"Invalid gain/route configuration for {entry.get('name')!r}: {error}")
+
+    if args.check_route:
+        failed = False
+        for entry in streams:
+            sink_name, _ = gains[entry['name']]
+            try:
+                route = inspect_route(sink_name)
+                print(f"{entry['name']}: client {route.client_index} -> {route.actual_sink}"
+                      f" (expected {route.expected_sink})")
+                if not route.correct:
+                    logging.error("Incorrect route for %s", entry['name'])
+                    failed = True
+            except (OSError, RuntimeError) as error:
+                logging.error("Route check failed for %s: %s", entry['name'], error)
+                failed = True
+        if failed:
+            parser.exit(1, "One or more stream routes failed verification.\n")
+        return
+
+    if args.recover_route:
+        with setup_lock('mpd_control.lock'):
+            for entry in streams:
+                sink_name, _ = gains[entry['name']]
+                try:
+                    route = recover_route(sink_name)
+                except (OSError, RuntimeError) as error:
+                    parser.exit(1, f"Route recovery failed for {entry['name']}: {error}\n")
+                print(f"{entry['name']}: verified client {route.client_index} -> {route.actual_sink}")
+        return
+
     instances: list[MPDInstance] = []
     for entry in streams:
         instance = config2mpd(entry, sink_dict, ignore_missing_sinks=True)
@@ -72,9 +123,19 @@ def main(argv: list[str] | None = None) -> None:
         status(instances)
     else:
         with setup_lock('mpd_control.lock'):
-            if args.start:
-                play(instances)
-            else:
+            if args.start or args.apply_gain:
+                for entry, instance in zip(streams, instances):
+                    sink_name, gain = gains[entry['name']]
+                    if args.start:
+                        instance.play()
+                    try:
+                        recover_route(sink_name)
+                        set_sink_gain(sink_name, gain)
+                    except (OSError, RuntimeError, TimeoutError) as error:
+                        if args.start:
+                            instance.stop()
+                        parser.exit(1, f"Failed to recover route/apply gain for {entry['name']}: {error}\n")
+            elif args.stop:
                 stop(instances)
 
 
