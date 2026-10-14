@@ -1,7 +1,8 @@
 # Playback read API v1: S01 contract
 
 Status: S01 read-contract baseline, 2026-10-14. S02 local observation collector
-implemented and tested; **HTTP agent/web endpoints are not implemented**.
+and S03 read-only HTTP agent implemented/tested locally; **web endpoints and
+Pi deployment are not implemented**.
 Changes to this baseline require updating this document and its
 [contract fixtures](../tests/fixtures/playback-read-v1.json) together.
 See the [implementation plan](./mpd-web-integration-implementation-plan.md).
@@ -105,6 +106,11 @@ are a different domain, not defined by this read contract.
 All four routes require configured service authentication. Exact credential/TLS
 provisioning remains D06; health must not become a public inventory backdoor.
 HTTP service unavailable cannot yield JSON; clients report a transport error.
+S03 uses a startup-loaded bearer service token with constant-time comparison.
+Default binding is loopback; remote binding requires explicit opt-in and
+separately provisioned secure transport. See [usage](./mpd-backend-api.md#read-only-http-agent-s03).
+No query parameters or request bodies are supported. Unauthenticated requests,
+including unknown routes and unsupported methods, return 401 before diagnostics.
 
 ### Liveness object
 
@@ -280,6 +286,7 @@ Non-200 response:
 | 400 | `invalid_request` |
 | 401 / 403 | `unauthorized` / `forbidden` |
 | 404 | `output_not_found`, `agent_not_found`, `route_not_found` |
+| 405 | `method_not_allowed` (GET/HEAD only; OPTIONS and writes disabled) |
 | 503 | `configuration_invalid`, `snapshot_unavailable`, `agent_unavailable` |
 | 500 | `internal_error` (logged, sanitized response) |
 
@@ -313,8 +320,8 @@ must match an already published cache. SSE is not durable/replayable.
 | New `web/playback_client.py` | Remote contract decoding, timeout/age handling |
 | Existing web server/frontend | Optional registry, cache publication, same-origin reads, SSE and cards |
 
-Only the S02 local collector/helpers are implemented; agent and web modules
-remain future work. Use
+The S02 collector/helpers and S03 agent are implemented locally; web modules
+and Pi deployment remain future work. Use
 the Pi script directory's existing `lib` import layout initially; do not perform
 an unrelated package migration. Agent dependency manifest belongs with Pi
 scripts. Web client dependencies stay in web requirements; the Docker image
@@ -324,8 +331,9 @@ helpers into the web domain.
 Fixture file contains healthy, unreachable MPD, pending, inactive-route, stale and disabled
 examples plus envelopes, errors and SSE. Timestamps/ages/epochs are illustrative;
 config tokens are valid token shapes, not hashes of real operational files.
-S02/S03/S05 tests consume these same fixtures. No current endpoint or output
-schema is claimed implemented just because these examples exist.
+S02/S03/S05 tests consume these same fixtures. S03 adds authentication,
+invalid-config, unknown-cache and unsupported-method error fixtures. The web
+examples remain planned, not implemented.
 
 S01 acceptance evidence:
 
@@ -353,3 +361,19 @@ S02 acceptance (local, 2026-10-14):
   config changes; S04 still owns the production identity migration.
 - No Pi deployment/playback change. HTTP/browser/real-LAN latency acceptance
   remains S03/S05/S06, not proven by these tests.
+
+## S03 acceptance (local, 2026-10-15)
+
+- Authenticated Flask/Waitress reads, process epoch, cached inventory/per-output
+  reads, JSON errors, HEAD/no-store and empty write capabilities implemented.
+- Background config validation/replacement, explicit invalid/unconfigured cache,
+  per-output bounded backoff and independent audio cadence implemented.
+- Fake tests verify partial results, cold/stale cache, config failure/recovery,
+  retry/reset behavior, malformed requests and cache access during blocked retirement.
+- Real loopback Waitress and standalone CLI tests verify responsive liveness
+  without config and clean SIGTERM. No Pi access or playback changes.
+- 94 targeted agent/collector/backend/readiness/CLI/supervisor tests passed,
+  including real collector integration with mocked MPD/audio failures.
+  VS Code test discovery found no tests; validation used the repository's
+  `unittest` runner. Production migration/security and real-LAN latency remain
+  S04/S06 gates. Web routes remain S05 work.

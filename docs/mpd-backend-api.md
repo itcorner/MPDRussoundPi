@@ -13,8 +13,9 @@ selection and hardware-driven policy require extensions and are not part of
 the current API below.
 
 The [S01 read API contract](./mpd-playback-read-api.md) specifies the remote
-observation interface and fixtures. S02 implements the local collector below;
-HTTP endpoints, agent service and web integration are not implemented yet.
+observation interface and fixtures. S02 implements the local collector and S03
+the read-only HTTP adapter below. Pi service deployment and web integration
+are not implemented yet.
 Existing `status()` behavior remains unchanged.
 
 ## Read-only detailed observations (S02)
@@ -51,6 +52,8 @@ finally:
 - `refresh()` submits playback reads without waiting; `audio=True` also submits
   independent readiness/route/mixer reads. At most one in-flight job of each
   kind exists per output; repeated refreshes do not grow an offline backlog.
+  `output_ids=(...)` restricts submissions to known IDs; `playback=False`
+  permits audio-only work without bypassing playback retry backoff.
 - Separate per-output workers publish completed probes immediately: slow/dead
   MPDs and slow audio commands do not block healthy playback snapshots.
   `snapshot()` returns an ID-sorted tuple without doing I/O.
@@ -88,7 +91,73 @@ Validation: [collector tests](../tests/test_playbackstatus.py) consume the
 [S01 fixtures](../tests/fixtures/playback-read-v1.json) and cover serialization,
 race retries, null tags, errors/cleanup, monotonic freshness, identity validation,
 read-only calls and blocked-output/audio isolation. Local mocked acceptance
-only; no agent, Pi deployment or live latency acceptance is claimed.
+only; S03's agent acceptance is separate below. No Pi deployment or live
+latency acceptance is claimed.
+
+## Read-only HTTP agent (S03)
+
+[playbackagent.py](../mpdrussoundpi/russound/playbackagent.py) runs Waitress;
+[lib/playbackagent.py](../mpdrussoundpi/russound/lib/playbackagent.py) implements
+the Flask adapter, immutable cache and background scheduler. It does not
+initialize intentions, start services, reconcile playback or write configuration.
+
+Install [agent dependencies](../mpdrussoundpi/russound/requirements-agent.txt)
+in the audio user's environment, separately from web dependencies:
+
+```sh
+python -m pip install -r mpdrussoundpi/russound/requirements-agent.txt
+```
+
+Create a private service-token file outside the checkout (mode 0600, private
+parent directory), containing a cryptographically random token of at least
+32 ASCII characters without whitespace. Never pass credentials on the command
+line or commit them. The token is read once on startup; rotation requires restart.
+For local testing, use a separate migrated config with persisted output IDs/labels:
+
+```sh
+python mpdrussoundpi/russound/playbackagent.py migrated-test-config.json \
+  --agent-id musicpi --token-file /private/path/playback-agent-token
+```
+
+- Default bind is `127.0.0.1:8081`. All routes require
+  `Authorization: Bearer <token>`, including health, unknown routes and HEAD.
+  This credential covers read access only; no write routes exist.
+- Non-loopback binding requires explicit `--allow-remote`. This is not TLS:
+  do not expose bearer credentials over unprotected LAN HTTP. D06 still gates
+  secure proxy/tunnel/TLS provisioning and S06 deployment.
+- GET/HEAD `/v1/health`, `/v1/capabilities`, `/v1/outputs` and
+  `/v1/outputs/{id}` follow the read contract. Responses are JSON/no-store;
+  writes/OPTIONS return JSON 405, unauthorized access 401, malformed requests
+  400. Query parameters and GET bodies are not supported.
+- HTTP reads serialize one immutable publication; they never read config,
+  connect to MPD, run audio commands or wait for worker retirement.
+  Cold valid inventory contains pending probes; unknown inventory returns 503.
+  Liveness/capabilities remain available with missing/invalid config or dead MPDs.
+- Playback polls normally follow completed observations at approximately
+  two-second intervals. Each failed output retries after 2, 4, 8, 16, then
+  at most 30 seconds; a successful observation resets its delay. Other outputs
+  continue independently. Audio probes are scheduled every 30 seconds in
+  their separate pool and never trigger playback outside its schedule.
+- Background config validation normally runs every two seconds; invalid config
+  retries with the same bounded backoff. Changes replace the collector/cache
+  using its validated exact-byte revision. Invalid updates invalidate inventory
+  with 503, not old success. Old bounded workers are joined outside cache locks;
+  GETs remain available while they retire. Replacement probes start afterward.
+- Publication revisions advance on changed immutable observations/config/errors;
+  monotonic snapshot age becomes stale at 10 seconds. Individual probes retain
+  their own timestamps/staleness; fresh audio does not make failed playback healthy.
+- Transition logs contain IDs/status codes, not URLs, metadata, token values or
+  raw config errors. Unexpected scheduler failure invalidates the snapshot,
+  logs an error and makes shutdown fail explicitly.
+- SIGINT/SIGTERM close the HTTP listener/Waitress workers and join bounded
+  observer reads. The standalone entry point does not generate systemd units.
+  S06's separate [deployment preparation](./playback-agent-deployment.md)
+  provides an independent user unit but has not been executed. Run as the
+  existing audio user when eventually approved, never as a second playback supervisor.
+
+Local tests exercise real loopback Waitress and standalone CLI liveness/clean
+SIGTERM with missing config, plus fake observations for HTTP/config/retry behavior.
+They do not certify real-Pi scheduling latency or provision production transport.
 
 ## Usage
 

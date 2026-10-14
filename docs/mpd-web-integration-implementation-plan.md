@@ -181,6 +181,13 @@ healthy outputs remain observable during another output's timeout.
 
 ### S03. Build the read-only agent
 
+**Complete locally (2026-10-15):** authenticated Flask/Waitress adapter,
+immutable cached reads, background collector replacement/config failure
+handling, independent playback/audio scheduling and bounded read retry backoff.
+See [agent usage](./mpd-backend-api.md#read-only-http-agent-s03) and
+[contract acceptance](./mpd-playback-read-api.md#s03-acceptance-local-2026-10-15).
+No Pi deployment, ID migration or D06 transport decision is implied.
+
 1. Add a thin HTTP adapter, observer scheduler and immutable snapshot cache.
    Reuse Flask/Waitress; declare/install agent-specific dependencies separately
    from the [web requirements](../web/requirements.txt).
@@ -256,6 +263,15 @@ checks for stale status, metadata escaping, reconnect and disabled integration.
 tabs do not multiply Pi polling; measured update latency meets the agreed target.
 
 ### S06. Provision and verify read-only deployment
+
+**Deployment preparation (2026-10-15; not executed):** separate
+[agent-only install](../ansible/playbooks/deploy-playback-agent.yml),
+[user service](../ansible/templates/playback-agent.service.j2) and
+[rollback](../ansible/playbooks/remove-playback-agent.yml) prepared.
+See [operator instructions](./playback-agent-deployment.md). Activation is
+opt-in; transport remains loopback-only until D06. No production IDs are
+assigned by these scripts. S06 is not complete: migration, secure transport,
+web configuration and approved target acceptance still remain.
 
 1. Extend [Pi provisioning](../ansible/playbooks/setup-musicpi.yml) with a
    separate **agent-only** installation path. Avoid its existing audio/MPD
@@ -414,7 +430,10 @@ credentials and operational files must have an explicit owner.
 - A01, A02, D01 and D08 accepted.
 - S01 complete: read contract, component boundaries and fixtures documented.
   S02 complete locally: collector and focused regression acceptance.
-  S03-S11 not started. Next implementation work package is S03.
+  S03 complete locally: authenticated cached HTTP reads and scheduler acceptance.
+  S06 agent-only deployment files prepared but not run; S04/S05/S07-S11
+  not started. Next implementation work package is S04; D04 must be
+  resolved before designing the automation control schema.
 - D02-D07 and D09-D16 open. No transport, provider, physical mapping or demand rule has
   been silently chosen.
 - **Next question: D02, source-specific demand versus system-wide power.**

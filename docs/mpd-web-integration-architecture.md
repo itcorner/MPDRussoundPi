@@ -2,8 +2,9 @@
 
 Date: 2026-10-14. Status: solution D selected; detailed design pending, not an implemented API.
 
-Implementation progress: S01 read contracts and S02 local observation collector
-are complete. HTTP agent/web integration and production ID migration remain
+Implementation progress: S01 read contracts, S02 local observation collector
+and S03 authenticated read-only HTTP agent are complete locally.
+Agent deployment, web integration and production ID migration remain
 future work; see the [implementation plan](./mpd-web-integration-implementation-plan.md)
 and [collector usage](./mpd-backend-api.md).
 

@@ -83,8 +83,11 @@ status/metadata contracts, source providers, volume controls and hardware-driven
 automation. Solution D (Pi-local HTTP agent) has been selected; the
 [stepwise implementation plan](docs/mpd-web-integration-implementation-plan.md)
 tracks work packages and open decisions. The web application does not yet expose MPD controls.
-S02's [local read-only collector](docs/mpd-backend-api.md) is implemented and
-mock-tested; HTTP agent deployment and browser integration remain future steps.
+S02's local collector and S03's authenticated [read-only HTTP agent](docs/mpd-backend-api.md)
+are implemented and locally tested. Pi deployment, transport provisioning,
+production ID migration and browser integration remain future steps.
+Agent-only [Pi deployment and rollback scripts](docs/playback-agent-deployment.md)
+are prepared but have not been executed; activation is opt-in and loopback-only.
 
 ## Requirements
 

@@ -94,6 +94,23 @@ This review covers the Python production modules in `web/` and `tool/`.
   focused observation/backend/readiness/CLI/supervisor/audit/measurement run:
   100 tests, 99 passed and one existing real-FFmpeg skip (2026-10-14).
   HTTP agent, browser integration and real-Pi latency are not tested by S02.
+- [Read-only agent tests](../tests/test_playbackagent.py) cover S03 bearer
+  authentication on every route/method, cached inventory/individual reads,
+  HEAD/JSON/no-store, missing/invalid configuration, cold/stale/partial
+  observations, epoch renewal, bounded independent retries, config replacement
+  and reads during blocked worker retirement. Real loopback Waitress and CLI
+  tests verify responsive liveness without config and clean SIGTERM shutdown.
+  Selected/audio-only collector submissions have a related isolation test.
+  A real-collector integration test verifies MPD/audio failures remain cached
+  diagnostics without config/state writes.
+  Targeted agent/collector/backend/readiness/CLI/supervisor run: 94 passed
+  (2026-10-15). No Pi deployment, production transport, browser integration or
+  real-LAN latency claim is made.
+- [Agent deployment tests](../tests/test_playback_agent_deployment.py) perform
+  static YAML/template validation only: loopback user unit, opt-in activation,
+  isolated sources/venv, private credentials, no audio/MPD service operations
+  and limited rollback. They execute no deployment or target commands.
+  Six static tests and both Ansible syntax checks passed (2026-10-15).
 
 ## Manual MPD Stream Control
 

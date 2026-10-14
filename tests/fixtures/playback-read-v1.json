@@ -157,5 +157,25 @@
     "api_version": 1,
     "error": {"code": "output_not_found", "message": "Output is not configured.", "retryable": false}
   },
-  "playback_change": {"api_version": 1, "epoch": "web-1", "revision": 8}
+  "playback_change": {"api_version": 1, "epoch": "web-1", "revision": 8},
+  "unauthorized": {
+    "api_version": 1,
+    "error": {"code": "unauthorized", "message": "Service authentication required.", "retryable": false}
+  },
+  "configuration_invalid": {
+    "api_version": 1,
+    "error": {
+      "code": "configuration_invalid",
+      "message": "Playback configuration is invalid or unavailable.",
+      "retryable": true
+    }
+  },
+  "snapshot_unavailable": {
+    "api_version": 1,
+    "error": {"code": "snapshot_unavailable", "message": "Playback snapshot is unavailable.", "retryable": true}
+  },
+  "method_not_allowed": {
+    "api_version": 1,
+    "error": {"code": "method_not_allowed", "message": "Method is not supported.", "retryable": false}
+  }
 }

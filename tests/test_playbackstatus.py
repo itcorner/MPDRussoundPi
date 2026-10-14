@@ -111,6 +111,21 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertFalse((self.path.parent / "playback.json").exists())
         self.assertEqual(sorted(p.name for p in self.path.parent.iterdir()), ["config.json"])
 
+    def test_selected_and_audio_only_refresh_preserve_read_isolation(self):
+        jobs = self.collector.refresh(output_ids=("front",))
+        for job in jobs:
+            job.result(timeout=5)
+        self.assertEqual(self.output().playback.status, "ok")
+        self.assertEqual(self.output("rear").playback.status, "pending")
+        self.assertEqual(len(self.clients), 1)
+        jobs = self.collector.refresh(audio=True, playback=False)
+        for job in jobs:
+            job.result(timeout=5)
+        self.assertEqual(len(self.clients), 1)
+        self.assertEqual(self.output("rear").gain.status, "ok")
+        with self.assertRaisesRegex(ValueError, "Unknown observation output ID"):
+            self.collector.refresh(output_ids=("missing",))
+
     def test_missing_metadata_is_not_configured_station_fallback(self):
         client = self.client()
         client.currentsong.return_value = {"id": "1", "file": "https://secret.example?token=private"}

@@ -289,17 +289,25 @@ class PlaybackCollector:
         with self._lock:
             return tuple(self._outputs[key] for key in sorted(self._outputs))
 
-    def refresh(self, *, audio: bool = False) -> tuple[Future[None], ...]:
+    def refresh(
+        self, *, audio: bool = False, playback: bool = True,
+        output_ids: tuple[str, ...] | None = None,
+    ) -> tuple[Future[None], ...]:
         """Submit at most one playback/audio job per output; never wait for I/O."""
         with self._lock:
             if self._closed:
                 raise RuntimeError("Observation collector is closed")
-            for identity in self._streams:
+            identities = tuple(self._streams) if output_ids is None else output_ids
+            if any(identity not in self._streams for identity in identities):
+                raise ValueError("Unknown observation output ID")
+            for identity in identities:
                 for kind, pool, operation in (
                     ("playback", self._playback_pool, self._collect_playback),
                     ("audio", self._audio_pool, self._collect_audio),
                 ):
                     if kind == "audio" and not audio:
+                        continue
+                    if kind == "playback" and not playback:
                         continue
                     key = identity, kind
                     previous = self._jobs.get(key)
