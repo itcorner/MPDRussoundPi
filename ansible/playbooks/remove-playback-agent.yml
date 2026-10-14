@@ -1,0 +1,45 @@
+---
+- name: Retire only the playback agent while retaining files and credentials
+  hosts: musicpi
+  become: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    playback_agent_unit_dir: "{{ ansible_facts['user_dir'] }}/.config/systemd/user"
+    playback_agent_environment:
+      XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}"
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['user_uid'] }}/bus"
+  tasks:
+    - name: Require the existing non-root audio account
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['system'] == 'Linux'
+          - ansible_facts['user_uid'] | int > 0
+          - playback_agent_unit_dir is match('^/[A-Za-z0-9_./-]+$')
+          - "'/../' not in playback_agent_unit_dir"
+          - not playback_agent_unit_dir.endswith('/..')
+
+    - name: Inspect the independent agent unit
+      ansible.builtin.stat:
+        path: "{{ playback_agent_unit_dir }}/mpdrussoundpi-playback-agent.service"
+      register: playback_agent_existing_unit
+
+    - name: Stop and disable only the agent
+      ansible.builtin.systemd_service:
+        name: mpdrussoundpi-playback-agent.service
+        scope: user
+        enabled: false
+        state: stopped
+      environment: "{{ playback_agent_environment }}"
+      when: playback_agent_existing_unit.stat.exists
+
+    - name: Remove only the agent unit file
+      ansible.builtin.file:
+        path: "{{ playback_agent_unit_dir }}/mpdrussoundpi-playback-agent.service"
+        state: absent
+
+    - name: Reload the user unit definitions
+      ansible.builtin.systemd_service:
+        scope: user
+        daemon_reload: true
+      environment: "{{ playback_agent_environment }}"
+      when: not ansible_check_mode

@@ -1,0 +1,228 @@
+---
+- name: Install the read-only playback agent without regenerating audio or MPD
+  hosts: musicpi
+  become: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    playback_agent_id: musicpi
+    playback_agent_port: 8081
+    playback_agent_start: false
+    playback_agent_home: "{{ ansible_facts['user_dir'] }}"
+    playback_agent_dir: "{{ playback_agent_home }}/.local/share/mpdrussoundpi-agent"
+    playback_agent_venv: "{{ playback_agent_dir }}/venv"
+    playback_agent_secret_dir: "{{ playback_agent_home }}/.config/mpdrussoundpi-agent"
+    playback_agent_config: "{{ playback_agent_home }}/.config/mpdrussoundpi/config.json"
+    playback_agent_unit_dir: "{{ playback_agent_home }}/.config/systemd/user"
+    playback_agent_source: "{{ playbook_dir }}/../../mpdrussoundpi/russound"
+    playback_agent_environment:
+      XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}"
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['user_uid'] }}/bus"
+      PULSE_SERVER: "unix:/run/user/{{ ansible_facts['user_uid'] }}/pulse/native"
+  tasks:
+    - name: Require the existing non-root audio account and explicit credential source
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['system'] == 'Linux'
+          - ansible_facts['user_uid'] | int > 0
+          - playback_agent_id is match('^[a-z][a-z0-9_-]{0,63}$')
+          - playback_agent_port | int >= 1
+          - playback_agent_port | int <= 65535
+          - playback_agent_token_source is defined
+        fail_msg: "Use the existing audio account and supply playback_agent_token_source (a private controller-side file)."
+
+    - name: Require systemd-safe absolute paths for installation
+      ansible.builtin.assert:
+        that:
+          - item is match('^/[A-Za-z0-9_./-]+$')
+          - "'/../' not in item"
+          - not item.endswith('/..')
+        fail_msg: "Agent paths must be absolute and contain no spaces, traversal or systemd specifiers."
+      loop:
+        - "{{ playback_agent_dir }}"
+        - "{{ playback_agent_venv }}"
+        - "{{ playback_agent_secret_dir }}"
+        - "{{ playback_agent_config }}"
+        - "{{ playback_agent_unit_dir }}"
+
+    - name: Inspect the existing audio-user runtime directory
+      ansible.builtin.stat:
+        path: "{{ playback_agent_environment.XDG_RUNTIME_DIR }}"
+      register: playback_agent_runtime
+
+    - name: Inspect the existing user bus
+      ansible.builtin.stat:
+        path: "{{ playback_agent_environment.XDG_RUNTIME_DIR }}/bus"
+      register: playback_agent_bus
+
+    - name: Refuse to bootstrap a user manager or implicitly activate audio services
+      ansible.builtin.assert:
+        that:
+          - playback_agent_runtime.stat.isdir | default(false)
+          - not (playback_agent_runtime.stat.islnk | default(false))
+          - playback_agent_runtime.stat.uid | default(-1) == ansible_facts['user_uid'] | int
+          - playback_agent_runtime.stat.mode | default('') == '0700'
+          - playback_agent_bus.stat.issock | default(false)
+        fail_msg: "The audio user's private runtime directory and active user bus must already exist."
+
+    - name: Validate the controller-side bearer token without logging it
+      ansible.builtin.assert:
+        that:
+          - playback_agent_token | length >= 32
+          - playback_agent_token is match('^[!-~]+$')
+        fail_msg: "Service token must be at least 32 non-whitespace ASCII characters."
+      vars:
+        playback_agent_token: "{{ lookup('ansible.builtin.file', playback_agent_token_source) }}"
+      no_log: true
+
+    - name: Ensure the agent-only installation directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ playback_agent_dir }}"
+        - "{{ playback_agent_dir }}/lib"
+        - "{{ playback_agent_secret_dir }}"
+        - "{{ playback_agent_unit_dir }}"
+
+    - name: Copy only the agent entry point and dependency manifest from this checkout
+      ansible.builtin.copy:
+        src: "{{ playback_agent_source }}/{{ item }}"
+        dest: "{{ playback_agent_dir }}/{{ item }}"
+        mode: "0600"
+      loop: [playbackagent.py, requirements-agent.txt]
+      register: playback_agent_files
+
+    - name: Copy Python helper sources without caches or playback setup scripts
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ playback_agent_dir }}/lib/{{ item | basename }}"
+        mode: "0600"
+      loop: "{{ lookup('ansible.builtin.fileglob', playback_agent_source + '/lib/*.py', wantlist=true) }}"
+      register: playback_agent_helpers
+
+    - name: Create an isolated agent virtual environment
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, -m, venv, "{{ playback_agent_venv }}"]
+        creates: "{{ playback_agent_venv }}/bin/python"
+      register: playback_agent_environment_created
+
+    - name: Install only agent dependencies in the isolated environment
+      ansible.builtin.pip:
+        requirements: "{{ playback_agent_dir }}/requirements-agent.txt"
+        virtualenv: "{{ playback_agent_venv }}"
+      when: not ansible_check_mode
+      register: playback_agent_dependencies
+
+    - name: Install the private service token without logging changes
+      ansible.builtin.copy:
+        src: "{{ playback_agent_token_source }}"
+        dest: "{{ playback_agent_secret_dir }}/token"
+        mode: "0600"
+      no_log: true
+      diff: false
+      register: playback_agent_token_installed
+
+    - name: Validate migrated inventory without connecting to MPD or audio
+      ansible.builtin.command:
+        argv:
+          - "{{ playback_agent_venv }}/bin/python"
+          - -c
+          - >-
+            import sys;
+            from lib.mpdbackend import MPDBackend;
+            from lib.playbackstatus import PlaybackCollector;
+            collector = PlaybackCollector(MPDBackend(sys.argv[1]));
+            collector.close()
+          - "{{ playback_agent_config }}"
+        chdir: "{{ playback_agent_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Enable persistent user-manager availability without restarting it
+      become: true
+      ansible.builtin.command:
+        argv: [loginctl, enable-linger, "{{ ansible_facts['user_id'] }}"]
+        creates: "/var/lib/systemd/linger/{{ ansible_facts['user_id'] }}"
+
+    - name: Install the independent loopback-only user service
+      ansible.builtin.template:
+        src: ../templates/playback-agent.service.j2
+        dest: "{{ playback_agent_unit_dir }}/mpdrussoundpi-playback-agent.service"
+        mode: "0600"
+      register: playback_agent_unit
+
+    - name: Reload only the user service definitions
+      ansible.builtin.systemd_service:
+        scope: user
+        daemon_reload: true
+      environment: "{{ playback_agent_environment }}"
+      when: not ansible_check_mode
+
+    - name: Explicitly enable and start or update only the playback agent
+      ansible.builtin.systemd_service:
+        name: mpdrussoundpi-playback-agent.service
+        scope: user
+        enabled: true
+        state: "{{ 'restarted' if playback_agent_changed else 'started' }}"
+      vars:
+        playback_agent_changed: >-
+          {{ playback_agent_files.changed or playback_agent_helpers.changed
+             or playback_agent_unit.changed or playback_agent_token_installed.changed
+             or playback_agent_environment_created.changed
+             or (playback_agent_dependencies.changed | default(false)) }}
+      environment: "{{ playback_agent_environment }}"
+      when:
+        - playback_agent_start | bool
+        - not ansible_check_mode
+
+    - name: Verify authenticated liveness locally without exposing the credential
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ playback_agent_port }}/v1/health"
+        headers:
+          Authorization: "Bearer {{ lookup('ansible.builtin.file', playback_agent_token_source) }}"
+        status_code: 200
+        return_content: true
+        use_proxy: false
+      register: playback_agent_health
+      until:
+        - playback_agent_health.status | default(0) == 200
+        - playback_agent_health.json.agent_id | default('') == playback_agent_id
+        - playback_agent_health.json.api_version | default(0) == 1
+        - playback_agent_health.json.status | default('') == 'alive'
+      retries: 10
+      delay: 1
+      no_log: true
+      when:
+        - playback_agent_start | bool
+        - not ansible_check_mode
+
+    - name: Verify authenticated inventory after explicit activation
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ playback_agent_port }}/v1/outputs"
+        headers:
+          Authorization: "Bearer {{ lookup('ansible.builtin.file', playback_agent_token_source) }}"
+        status_code: 200
+        return_content: true
+        use_proxy: false
+      register: playback_agent_inventory
+      until:
+        - playback_agent_inventory.status | default(0) == 200
+        - playback_agent_inventory.json.agent_id | default('') == playback_agent_id
+        - playback_agent_inventory.json.api_version | default(0) == 1
+      retries: 10
+      delay: 1
+      no_log: true
+      when:
+        - playback_agent_start | bool
+        - not ansible_check_mode
+
+    - name: Verify unauthenticated requests are rejected
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ playback_agent_port }}/v1/health"
+        status_code: 401
+        use_proxy: false
+      when:
+        - playback_agent_start | bool
+        - not ansible_check_mode
