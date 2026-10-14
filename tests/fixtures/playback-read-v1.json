@@ -1,0 +1,161 @@
+{
+  "health": {
+    "api_version": 1, "agent_id": "musicpi", "epoch": "agent-1", "status": "alive"
+  },
+  "capabilities": {
+    "api_version": 1,
+    "agent_id": "musicpi",
+    "epoch": "agent-1",
+    "read_features": ["inventory", "playback", "now_playing", "audio_diagnostics"],
+    "write_operations": []
+  },
+  "healthy_inventory": {
+    "api_version": 1,
+    "agent_id": "musicpi",
+    "epoch": "agent-1",
+    "revision": 42,
+    "config_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "snapshot_at": "2026-10-14T18:50:00Z",
+    "snapshot_age_ms": 500,
+    "stale": false,
+    "outputs": [
+      {
+        "id": "front",
+        "label": "Front stream",
+        "selection": {"label": "Radio 88.6"},
+        "gain": {"configured_db": -7.1},
+        "playback": {
+          "status": "ok",
+          "attempted_at": "2026-10-14T18:50:00Z",
+          "observed_at": "2026-10-14T18:50:00Z",
+          "age_ms": 500,
+          "stale": false,
+          "error": null,
+          "value": {
+            "reachable": true,
+            "state": "play",
+            "song_id": "1",
+            "queue_entries": 1,
+            "elapsed_seconds": 1234.5,
+            "duration_seconds": null,
+            "bitrate_kbps": 128,
+            "audio_format": "44100:24:2",
+            "mpd_error": null,
+            "now_playing": {
+              "title": "Example track",
+              "artist": null,
+              "album": null,
+              "station": "Radio 88.6",
+              "metadata_available": true
+            }
+          },
+          "last_known": null
+        },
+        "audio": {
+          "readiness": {
+            "status": "ok",
+            "attempted_at": "2026-10-14T18:49:58Z",
+            "observed_at": "2026-10-14T18:49:58Z",
+            "age_ms": 2500,
+            "stale": false,
+            "error": null,
+            "value": {"ready": true},
+            "last_known": null
+          },
+          "route": {
+            "status": "ok",
+            "attempted_at": "2026-10-14T18:49:58Z",
+            "observed_at": "2026-10-14T18:49:58Z",
+            "age_ms": 2500,
+            "stale": false,
+            "error": null,
+            "value": {
+              "expected_sink": "sink.stereo_front",
+              "actual_sink": "sink.stereo_front",
+              "correct": true
+            },
+            "last_known": null
+          },
+          "gain": {
+            "status": "ok",
+            "attempted_at": "2026-10-14T18:49:58Z",
+            "observed_at": "2026-10-14T18:49:58Z",
+            "age_ms": 2500,
+            "stale": false,
+            "error": null,
+            "value": {"measured_units": [49905, 49905]},
+            "last_known": null
+          }
+        }
+      }
+    ]
+  },
+  "unreachable_playback": {
+    "status": "error",
+    "attempted_at": "2026-10-14T18:50:20Z",
+    "observed_at": null,
+    "age_ms": null,
+    "stale": true,
+    "error": {"code": "mpd_unavailable", "message": "MPD is unreachable.", "retryable": true},
+    "value": null,
+    "last_known": {
+      "observed_at": "2026-10-14T18:50:00Z",
+      "age_ms": 20000,
+      "value": {
+        "reachable": true,
+        "state": "play",
+        "song_id": "1",
+        "queue_entries": 1,
+        "elapsed_seconds": 1234.5,
+        "duration_seconds": null,
+        "bitrate_kbps": 128,
+        "audio_format": "44100:24:2",
+        "mpd_error": null,
+        "now_playing": {
+          "title": null, "artist": null, "album": null, "station": null,
+          "metadata_available": false
+        }
+      }
+    }
+  },
+  "pending_probe": {
+    "status": "pending", "attempted_at": null, "observed_at": null,
+    "age_ms": null, "stale": true, "error": null, "value": null, "last_known": null
+  },
+  "inactive_route": {
+    "status": "not_applicable", "attempted_at": null, "observed_at": null,
+    "age_ms": null, "stale": false, "error": null, "value": null, "last_known": null
+  },
+  "stale_readiness": {
+    "status": "ok",
+    "attempted_at": "2026-10-14T18:49:00Z",
+    "observed_at": "2026-10-14T18:49:00Z",
+    "age_ms": 60500,
+    "stale": true,
+    "error": null,
+    "value": {"ready": true},
+    "last_known": null
+  },
+  "disabled_web": {
+    "api_version": 1, "epoch": "web-1", "revision": 0,
+    "configured": false, "agents": []
+  },
+  "unavailable_web": {
+    "api_version": 1, "epoch": "web-1", "revision": 8, "configured": true,
+    "agents": [
+      {
+        "agent_id": "musicpi",
+        "status": "unavailable",
+        "last_attempt_at": "2026-10-14T18:50:20Z",
+        "last_success_at": null,
+        "error": {"code": "agent_timeout", "message": "Playback agent timed out.", "retryable": true},
+        "snapshot": null
+      }
+    ]
+  },
+  "not_found": {
+    "api_version": 1,
+    "error": {"code": "output_not_found", "message": "Output is not configured.", "retryable": false}
+  },
+  "playback_change": {"api_version": 1, "epoch": "web-1", "revision": 8}
+}

@@ -13,6 +13,19 @@ def validate_gain_db(value: object) -> float:
     return gain
 
 
+def read_sink_gain(sink_name: str) -> tuple[int, int]:
+    result = subprocess.run(
+        ["pactl", "get-sink-volume", f"sink.{sink_name}"],
+        check=True, capture_output=True, text=True, timeout=2,
+    )
+    if result.stderr.strip():
+        raise RuntimeError("Mixer inspection reported a diagnostic")
+    observed = [int(value) for value in re.findall(r":\s*(\d+)\s*/", result.stdout)]
+    if len(observed) != 2:
+        raise ValueError("Mixer inspection requires exactly two channels")
+    return observed[0], observed[1]
+
+
 def set_sink_gain(sink_name: str, gain_db: float) -> None:
     gain = validate_gain_db(gain_db)
     # PulseAudio volume is cubic; signed dB arguments are relative, not absolute.

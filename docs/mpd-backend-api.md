@@ -5,6 +5,91 @@ API for configured local MPD instances. It runs no HTTP server and manages
 playback, not daemon services. The CLI now delegates to this backend. Both
 interfaces use the same persisted intentions, route/gain helpers and lock.
 
+For planned remote web access, see the
+[MPD web integration architecture](./mpd-web-integration-architecture.md).
+It proposes a Pi-local agent around this backend. Web stream volume directly
+uses the existing `set_gain` calibration operation; metadata, runtime source
+selection and hardware-driven policy require extensions and are not part of
+the current API below.
+
+The [S01 read API contract](./mpd-playback-read-api.md) specifies the remote
+observation interface and fixtures. S02 implements the local collector below;
+HTTP endpoints, agent service and web integration are not implemented yet.
+Existing `status()` behavior remains unchanged.
+
+## Read-only detailed observations (S02)
+
+[playbackstatus.py](../mpdrussoundpi/russound/lib/playbackstatus.py) provides
+`PlaybackCollector`, immutable `OutputObservation`/`Probe` results and MPD
+metadata normalization. It uses the backend's new `configuration_snapshot()`
+and independent `observation_connection()` helpers; it does not write config,
+intentions, queues, gain, routes, services or audio profiles.
+
+**Prerequisite:** each config stream must have persisted `id` and printable
+`label`, as defined by the read contract. Legacy configs remain accepted by
+`MPDBackend`/CLI/supervisor but are rejected by this collector. S04 assigns IDs
+in an approved migration; do not edit the running Pi just to try this example.
+Use a separate migrated fixture configuration for local testing.
+
+```python
+import time
+from lib.mpdbackend import MPDBackend
+from lib.playbackstatus import PlaybackCollector
+
+backend = MPDBackend("migrated-test-config.json")
+collector = PlaybackCollector(backend)
+try:
+    for job in collector.refresh():
+        job.result(timeout=30)   # Worker wait for a local tool, never an HTTP GET.
+    for job in collector.refresh(audio=True):
+        job.result(timeout=30)
+    outputs = [item.to_dict(time.monotonic()) for item in collector.snapshot()]
+finally:
+    collector.close()
+```
+
+- `refresh()` submits playback reads without waiting; `audio=True` also submits
+  independent readiness/route/mixer reads. At most one in-flight job of each
+  kind exists per output; repeated refreshes do not grow an offline backlog.
+- Separate per-output workers publish completed probes immediately: slow/dead
+  MPDs and slow audio commands do not block healthy playback snapshots.
+  `snapshot()` returns an ID-sorted tuple without doing I/O.
+- Results include state, song ID, queue size, elapsed/duration, bitrate/format,
+  optional station/title/artist/album tags and sanitized MPD error presence.
+  Two consistency attempts compare song ID, playlist revision and playback
+  state before/after metadata reads. Unsettled/malformed snapshots fail explicitly.
+- Missing tags stay null; configured station labels do not become invented
+  now-playing tags. Repeated tags normalize to a bounded display string.
+  URLs/URI credentials in displayed text are redacted; MPD's `file` field,
+  local paths, ports and transient audio client IDs are never serialized.
+  Raw MPD error text is replaced by a generic playback-error message.
+- Playback connections use three-second per-operation timeouts; `pactl`
+  commands use two-second timeouts. A consistency retry can span multiple
+  timeouts: three seconds is not a whole-output latency guarantee.
+  Disconnect is attempted even on failure; disconnect failures cannot report
+  a successful observation. Read-path failure logs omit raw endpoint errors.
+- Readiness uses the captured config without profile enforcement. Route is
+  inspected only for freshly observed playing outputs; known paused/stopped
+  outputs are not applicable, unknown playback stays pending. Wrong routes
+  are observations, never repaired. Stereo mixer values are measured separately
+  from persisted calibration and may differ on inactive outputs.
+- Probe ages use monotonic time; playback becomes stale at 10 seconds and audio
+  probes at 30 seconds. Failures expose null current value plus timestamped
+  last-known data when available; recovery clears the old fallback.
+- The collector captures one validated inventory/config hash for its lifetime.
+  It does not watch changes or schedule recurring polls. S03 must check config
+  revisions in its background scheduler and replace collectors on changes;
+  neither cached GET reads nor this constructor performs a migration.
+- `close()` stops accepting work, joins the bounded reads and propagates
+  unexpected worker failures. Operational errors are explicit probes; programming
+  errors are not converted into successful/default snapshots.
+
+Validation: [collector tests](../tests/test_playbackstatus.py) consume the
+[S01 fixtures](../tests/fixtures/playback-read-v1.json) and cover serialization,
+race retries, null tags, errors/cleanup, monotonic freshness, identity validation,
+read-only calls and blocked-output/audio isolation. Local mocked acceptance
+only; no agent, Pi deployment or live latency acceptance is claimed.
+
 ## Usage
 
 Run as the audio-owning user with the same Python environment as the controller

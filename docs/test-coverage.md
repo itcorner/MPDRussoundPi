@@ -85,6 +85,15 @@ This review covers the Python production modules in `web/` and `tool/`.
   protocol calls, playback/route/gain/silence anomalies, bounded observations,
   failure isolation, cursor handling, persistent deadline/counters and
   independent service generation. See [test procedure](./mpd-playback-endurance-test.md).
+- [Playback observation tests](../tests/test_playbackstatus.py) cover S02's
+  immutable ID-sorted snapshots, detailed metadata and bounded race retry,
+  failed/last-known probes, monotonic stale thresholds, sanitized errors,
+  captured config revision, read-only audio/MPD calls and independent healthy
+  publication while another MPD/audio read is blocked. They consume the
+  [S01 contract fixtures](../tests/fixtures/playback-read-v1.json). Local
+  focused observation/backend/readiness/CLI/supervisor/audit/measurement run:
+  100 tests, 99 passed and one existing real-FFmpeg skip (2026-10-14).
+  HTTP agent, browser integration and real-Pi latency are not tested by S02.
 
 ## Manual MPD Stream Control
 

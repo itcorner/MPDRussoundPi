@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+import hashlib
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ class MPDConnection(Protocol):
     def connect(self, host: str, port: int) -> None: ...
     def disconnect(self) -> None: ...
     def status(self) -> dict[str, str]: ...
+    def currentsong(self) -> dict[str, str | list[str]]: ...
     def playlistinfo(self) -> list[dict[str, str]]: ...
     def addid(self, uri: str) -> str: ...
     def playid(self, songid: str) -> None: ...
@@ -69,9 +71,25 @@ class MPDBackend:
 
     def _load(self) -> tuple[dict[str, JSONValue], list[StreamSettings]]:
         try:
-            config: JSONValue = json.loads(self.config_path.read_text(encoding="utf-8"))
+            raw = self.config_path.read_bytes()
         except (OSError, ValueError) as error:
             raise BackendError(f"Cannot read configuration: {error}") from error
+        return self._parse_configuration(raw)
+
+    def configuration_snapshot(self) -> tuple[dict[str, JSONValue], tuple[StreamSettings, ...], str]:
+        """Validate settings and revision from the same configuration bytes."""
+        try:
+            raw = self.config_path.read_bytes()
+        except OSError as error:
+            raise BackendError("Cannot read observation configuration") from error
+        config, streams = self._parse_configuration(raw)
+        return config, tuple(streams), hashlib.sha256(raw).hexdigest()
+
+    def _parse_configuration(self, raw: bytes) -> tuple[dict[str, JSONValue], list[StreamSettings]]:
+        try:
+            config: JSONValue = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeError) as error:
+            raise BackendError("Cannot read configuration: invalid JSON") from error
         if not isinstance(config, dict):
             raise ValueError("Configuration must be an object")
         entries = config.get("streams")
@@ -149,14 +167,18 @@ class MPDBackend:
             raise BackendError(str(error)) from error
 
     @contextmanager
-    def _connection(self, stream: StreamSettings) -> Generator[MPDConnection, None, None]:
+    def _connection(
+        self, stream: StreamSettings, *, timeout: float = 5, redact_errors: bool = False,
+    ) -> Generator[MPDConnection, None, None]:
         # python-mpd2 exposes protocol commands dynamically through __getattr__.
         client = cast(MPDConnection, mpd.MPDClient())
-        client.timeout = 5
+        client.timeout = timeout
         try:
             client.connect("localhost", stream.port)
             yield client
         except (mpd.MPDError, OSError) as error:
+            if redact_errors:
+                raise BackendError("MPD read failed") from error
             raise BackendError(f"{stream.name}: MPD operation failed: {error}") from error
         finally:
             failing = sys.exc_info()[0] is not None
@@ -164,9 +186,20 @@ class MPDBackend:
                 client.disconnect()
             except (mpd.MPDError, OSError) as error:
                 if failing:
-                    logging.error("%s: disconnect failed during error cleanup: %s", stream.name, error)
+                    if redact_errors:
+                        logging.error("MPD observation disconnect failed during error cleanup")
+                    else:
+                        logging.error("%s: disconnect failed during error cleanup: %s", stream.name, error)
                 else:
+                    if redact_errors:
+                        raise BackendError("MPD observation disconnect failed") from error
                     raise BackendError(f"{stream.name}: disconnect failed: {error}") from error
+
+    @contextmanager
+    def observation_connection(self, stream: StreamSettings) -> Generator[MPDConnection, None, None]:
+        """An independent bounded connection with sanitized operational errors."""
+        with self._connection(stream, timeout=3, redact_errors=True) as client:
+            yield client
 
     def status(self, name: str | None = None) -> tuple[PlaybackStatus, ...]:
         statuses: list[PlaybackStatus] = []

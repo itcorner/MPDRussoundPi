@@ -11,6 +11,11 @@ JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dic
 
 def audio_ready(config_path: str | Path, *, enforce_profile: bool = False) -> None:
     config: JSONValue = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    audio_ready_config(config, enforce_profile=enforce_profile)
+
+
+def audio_ready_config(config: JSONValue, *, enforce_profile: bool = False) -> None:
+    """Inspect a captured configuration without re-reading a newer file."""
     if not isinstance(config, dict):
         raise ValueError("Invalid audio configuration")
     mappers = config.get("outputmappers")

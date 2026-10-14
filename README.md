@@ -75,6 +75,17 @@ The repository currently includes:
 - `web/static/styles.css`
   - Shared visual styling across all pages.
 
+### Planned MPD web integration
+
+See the [MPD web integration architecture](docs/mpd-web-integration-architecture.md)
+for deployment alternatives, the recommended Pi-local playback agent, live
+status/metadata contracts, source providers, volume controls and hardware-driven
+automation. Solution D (Pi-local HTTP agent) has been selected; the
+[stepwise implementation plan](docs/mpd-web-integration-implementation-plan.md)
+tracks work packages and open decisions. The web application does not yet expose MPD controls.
+S02's [local read-only collector](docs/mpd-backend-api.md) is implemented and
+mock-tested; HTTP agent deployment and browser integration remain future steps.
+
 ## Requirements
 
 - macOS/Linux environment.
