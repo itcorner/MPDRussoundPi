@@ -584,7 +584,13 @@ preserving play/pause/stop choices. Change all agent/CLI/supervisor readers and
 writers together; do not bolt on a second file that competing processes
 independently interpret.
 
-Recommended semantics:
+D04 is accepted (2026-10-16): manual play/pause/stop switches only that output
+to manual mode until explicitly returned to automatic. S04's offline migration
+preview starts every output in manual mode, preserving its saved intention.
+It is not installed as runtime state; the coordinated reader/writer migration
+and automatic-target metadata remain prerequisites for S10.
+
+Semantics (manual precedence accepted; remaining automation details proposed):
 
 - Default is **manual**, retaining today's behavior; enabling automatic mode
   is per-output and explicit.

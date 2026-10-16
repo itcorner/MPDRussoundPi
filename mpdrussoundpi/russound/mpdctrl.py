@@ -15,16 +15,32 @@ def main(argv: list[str] | None = None) -> None:
         ("apply-gain", "Apply configured gains after recovering routes"),
         ("check-route", "Check actual playback routes without changing them"),
         ("recover-route", "Recover actual playback routes"),
+        ("config-revision", "Show the current configuration SHA-256 revision"),
     ):
         action.add_argument(f"--{option}", action="store_true", help=help_text)
+    action.add_argument("--set-gain", type=float, metavar="DB", help="Set persisted output calibration")
+    action.add_argument("--set-label", metavar="LABEL", help="Edit display label without changing identity")
+    parser.add_argument("--expected-revision", metavar="SHA256")
     parser.add_argument("--stream", metavar="NAME")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("json")
     args = parser.parse_args(argv)
+    if (args.set_gain is not None or args.set_label is not None) and args.stream is None:
+        parser.error("--set-gain/--set-label requires --stream")
+    if args.set_label is not None and args.expected_revision is None:
+        parser.error("--set-label requires --expected-revision")
+    if args.expected_revision is not None and args.set_gain is None and args.set_label is None:
+        parser.error("--expected-revision requires --set-gain or --set-label")
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
     try:
         backend = MPDBackend(args.json)
-        if args.start:
+        if args.config_revision:
+            print(backend.configuration_snapshot()[2])
+        elif args.set_gain is not None:
+            backend.set_gain(args.stream, args.set_gain, expected_revision=args.expected_revision)
+        elif args.set_label is not None and args.expected_revision is not None:
+            backend.set_label(args.stream, args.set_label, expected_revision=args.expected_revision)
+        elif args.start:
             backend.start(args.stream)
         elif args.pause:
             backend.pause(args.stream)

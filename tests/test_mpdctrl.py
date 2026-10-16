@@ -39,6 +39,18 @@ class MPDControlTests(unittest.TestCase):
         self.api.status.assert_called_once_with(None)
         self.api.start.assert_not_called()
 
+    def test_revision_guarded_gain_and_label(self):
+        mpdctrl.main(["--set-gain", "-6.1", "--stream", "FM4 Radio",
+                      "--expected-revision", "revision", "config.json"])
+        self.api.set_gain.assert_called_once_with("FM4 Radio", -6.1, expected_revision="revision")
+        mpdctrl.main(["--set-label", "Kitchen", "--stream", "FM4 Radio",
+                      "--expected-revision", "revision", "config.json"])
+        self.api.set_label.assert_called_once_with("FM4 Radio", "Kitchen", expected_revision="revision")
+        for argv in (["--set-gain", "-6"], ["--set-label", "Kitchen", "--stream", "FM4 Radio"],
+                     ["--status", "--expected-revision", "revision"]):
+            with self.assertRaises(SystemExit):
+                mpdctrl.main([*argv, "config.json"])
+
     def test_errors_have_nonzero_exit(self):
         for error, code in ((ValueError("invalid"), 2), (mpdctrl.BackendError("offline"), 1)):
             self.api.start.side_effect = error

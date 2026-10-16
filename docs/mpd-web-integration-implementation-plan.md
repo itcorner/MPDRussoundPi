@@ -1,6 +1,7 @@
 # MPD web integration: stepwise implementation plan
 
-Date: 2026-10-14. Status: planning and design decisions; implementation not started.
+Date: 2026-10-14; updated 2026-10-16. Status: S01-S03 implemented;
+S04 prepared locally; production migration and web integration remain gated.
 
 ## 1. Confirmed scope and working rules
 
@@ -47,6 +48,7 @@ and the architecture document. Do not silently turn a recommendation into scope.
 | A02 | Meaning of stream volume | Direct output calibration gain; reuse persisted `gain_db` and `set_gain` |
 | D01 | Automation availability during web-host outage | Web owns hardware-demand policy. Pi preserves/reconciles the last playback intention; it does not make new hardware-driven decisions while the web host is offline. |
 | D08 | Stable output identity | Immutable IDs persisted in Pi operational config; editable labels separate. Preserve legacy names, ports, sinks and systemd units during coordinated migration. |
+| D04 | Manual playback precedence | Manual play/pause/stop switches that output to manual mode until explicitly returned to automatic. Accepted 2026-10-16 during S04 preparation; automation is not enabled by this decision. |
 
 ### Open decisions, in discussion order
 
@@ -57,7 +59,6 @@ read-only status; the gate column states when the answer becomes necessary.
 | --- | --- | --- | --- |
 | D02 | Which hardware demand rule should automatic mode use? | Any powered zone selecting the mapped input. Alternative: any powered zone starts all managed outputs. | S10 |
 | D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
-| D04 | Precedence of manual playback commands over automatic mode | Manual play/pause/stop exits automatic mode until explicit return. Alternatives: temporary override or forbid manual commands in automatic mode. | Control schema in S04; S10 |
 | D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
 | D06 | Web-to-agent transport security | TLS with scoped service credentials, via direct TLS or a configured reverse proxy/tunnel. Decide the actual deployment mechanism. | Agent deployment in S06; write access in S07 |
 | D07 | Browser access protection | Existing or new authenticated reverse proxy. Alternatives: application login or explicitly trusted-LAN-only access. | Live write rollout in S07 |
@@ -234,6 +235,33 @@ reads do not wait for background I/O; no second recovery loop exists.
 atomic persistence, concurrent CLI edits and preserving calibration/intentions.
 **Acceptance:** migration does not require audio unit regeneration; old processes
 cannot overwrite the new schema; endurance artifacts remain untouched.
+
+**Local preparation, 2026-10-16:** optional all-or-none persisted IDs/labels
+are now validated by a shared helper. Existing legacy configuration remains
+valid for CLI/supervisor; observation still requires persisted identities.
+Backend/CLI calibration writes support SHA-256 revision preconditions checked
+under the existing mutation lock, and label edits require a revision. Legacy
+gain edits still work and invalidate old revisions. No ID mutation API exists.
+
+[playbackmigrate.py](../mpdrussoundpi/russound/playbackmigrate.py) creates an
+offline-only private bundle from local config/intention copies and an explicit
+name-to-ID/label mapping. It preserves exact originals and every nonidentity
+config field, retains legacy intentions, and generates a strictly validated
+manual-mode control-v1 preview. Missing, corrupt, partial or unknown intentions
+fail rather than defaulting to play. Existing persisted IDs cannot be reassigned.
+The tool does not install files, regenerate units, contact MPD or restart services.
+
+The [backend API migration procedure](./mpd-backend-api.md#offline-identity-and-control-preparation-s04)
+records the reader/writer inventory, revision contract, rollout and rollback.
+The preview is deliberately **not** a live schema migration: runtime readers
+continue using legacy intentions and reject the preview. S10 must coordinate
+all readers/writers and add the still-undecided automatic-target metadata before
+activation. No old running process is authorized to coexist with a new control
+schema. Production ID assignment/migration and rollback rehearsal on the target
+remain gated maintenance work; offline acceptance does not imply deployment.
+Local validation: 208 tests pass across the coordinated playback/USB/agent and
+S04 selection, including 13 new migration/identity/revision tests and one new
+CLI test. Changed Python production files have no reported Pylance diagnostics.
 
 ### S05. Integrate read-only web status
 
@@ -435,14 +463,16 @@ credentials and operational files must have an explicit owner.
 
 ## 5. Current progress and next discussion
 
-- A01, A02, D01 and D08 accepted.
+- A01, A02, D01, D04 and D08 accepted.
 - S01 complete: read contract, component boundaries and fixtures documented.
   S02 complete locally: collector and focused regression acceptance.
   S03 complete locally: authenticated cached HTTP reads and scheduler acceptance.
-  S06 agent-only deployment files prepared but not run; S04/S05/S07-S11
-  not started. Next implementation work package is S04; D04 must be
-  resolved before designing the automation control schema.
-- D02-D07 and D09-D16 open. No transport, provider, physical mapping or demand rule has
+  S06 agent deployed/tested on loopback using an approved separate config copy;
+  full production acceptance remains outstanding. S04 prepared locally with
+  offline migration/revision tests; production migration is not executed.
+  S05/S07-S11 not started. Next implementation work package is S05;
+  D06 is required before production Docker-to-agent connectivity.
+- D02-D03, D05-D07 and D09-D16 open. No transport, provider, physical mapping or demand rule has
   been silently chosen.
 - **Next question: D02, source-specific demand versus system-wide power.**
 

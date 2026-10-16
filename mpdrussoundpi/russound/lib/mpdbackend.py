@@ -15,6 +15,7 @@ from lib.setuplock import setup_lock
 from lib.atomicjson import write_json
 from lib.audioready import wait_for_audio
 from lib.audioidentity import validate_hardware_devices
+from lib.playbackidentity import identities, output_label
 from lib.streamgain import set_sink_gain, validate_gain_db
 from lib.streamroute import StreamRoute, inspect_route, recover_route
 
@@ -24,6 +25,10 @@ JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dic
 
 class BackendError(RuntimeError):
     """An MPD, audio, locking or persistence operation failed."""
+
+
+class RevisionConflict(BackendError):
+    """The configuration changed since the caller read it."""
 
 
 class MPDConnection(Protocol):
@@ -96,6 +101,7 @@ class MPDBackend:
         entries = config.get("streams")
         if not isinstance(entries, list) or not entries:
             raise ValueError("Configuration requires a nonempty streams list")
+        identities(entries)
         mappers = config.get("outputmappers")
         if not isinstance(mappers, dict):
             raise ValueError("Configuration requires outputmappers")
@@ -165,6 +171,8 @@ class MPDBackend:
                 yield
         except SystemExit as error:
             raise BackendError("MPD control lock is busy") from error
+        except BackendError:
+            raise
         except (OSError, RuntimeError) as error:
             raise BackendError(str(error)) from error
 
@@ -283,10 +291,11 @@ class MPDBackend:
         with self._mutation():
             return tuple(recover_route(stream.sink) for stream in self._select(name))
 
-    def set_gain(self, name: str, gain_db: float) -> None:
+    def set_gain(self, name: str, gain_db: float, *, expected_revision: str | None = None) -> None:
         gain = validate_gain_db(gain_db)
         with self._mutation():
-            config, settings = self._load()
+            config, settings, revision = self.configuration_snapshot()
+            self._check_revision(expected_revision, revision)
             stream = next((item for item in settings if item.name == name), None)
             if stream is None:
                 raise ValueError(f"Unknown stream name: {name!r}")
@@ -319,6 +328,26 @@ class MPDBackend:
 
     def _save(self, config: dict[str, JSONValue]) -> None:
         write_json(self.config_path, config)
+
+    @staticmethod
+    def _check_revision(expected: str | None, actual: str) -> None:
+        if expected is not None and expected != actual:
+            raise RevisionConflict("Configuration revision conflict; read the current configuration and retry")
+
+    def set_label(self, name: str, label: str, *, expected_revision: str) -> None:
+        label = output_label(label)
+        with self._mutation():
+            config, _, revision = self.configuration_snapshot()
+            self._check_revision(expected_revision, revision)
+            known = identities(config["streams"], required=True)
+            if name not in known:
+                raise ValueError(f"Unknown stream name: {name!r}")
+            entries = config["streams"]
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get("name") == name:
+                        entry["label"] = label
+            self._save(config)
 
     def _intentions(self) -> dict[str, str]:
         if not self.state_path.exists():

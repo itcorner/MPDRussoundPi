@@ -35,6 +35,151 @@ Read-only collection and audit do not set profiles. Saved intentions and
 daemon is introduced. See the [coordinated recovery design and validation
 gates](./usb-audio-recovery-fix.md) before deploying the opt-in configuration.
 
+## Offline identity and control preparation (S04)
+
+This preparation is local only. Do not run against the Pi's live files during
+an observation run. Use private local copies; configuration and backup bundles
+can contain stream credentials.
+
+### Identity and revision contract
+
+- Configurations without any stream `id`/`label` retain legacy behavior.
+  If either field is present, every stream must have a unique ID matching
+  `[a-z][a-z0-9_-]{0,63}` and a nonempty printable label. The backend and
+  collector share validation in
+  [playbackidentity.py](../mpdrussoundpi/russound/lib/playbackidentity.py).
+- Persist the ID once. Changing the display label does not change the ID,
+  legacy `name`, MPD port, sink or derived systemd unit name.
+- `configuration_snapshot()[2]` is SHA-256 of the exact configuration bytes,
+  the same opaque revision published by the read API. Every file edit,
+  including a legacy CLI gain edit or whitespace-only edit, invalidates it.
+- `set_gain(name, gain_db, expected_revision=revision)` checks the revision
+  **under `mpd_control.lock`, before connecting to MPD or changing gain**.
+  Stale requests raise `RevisionConflict`. Omitting the revision preserves the
+  existing Python API behavior; future HTTP mutations must require it.
+- `set_label(name, label, expected_revision=revision)` requires persisted IDs
+  and edits only the label under that same lock, without contacting audio.
+  Neither operation exposes an ID setter. A busy lock is an explicit failure,
+  not permission to write without locking. Re-read before retrying a conflict.
+- The guarantee covers cooperating backend writers, not arbitrary external
+  file edits. Operational config replacement/Ansible/manual installs must not
+  run concurrently with a live writer.
+
+The CLI exposes these operations (examples only, not deployment instructions):
+
+```sh
+python mpdctrl.py --config-revision local-config.json
+python mpdctrl.py --set-gain -6.1 --stream "FM4 Radio" \
+  --expected-revision SHA256_FROM_READ local-config.json
+python mpdctrl.py --set-label "Kitchen radio" --stream "FM4 Radio" \
+  --expected-revision SHA256_FROM_READ local-config.json
+```
+
+Read a new revision after each successful edit. Labels are display-only;
+`--stream` still uses the preserved legacy name.
+
+### Offline bundle
+
+Provide an explicit identity mapping for **every** existing name. Choose labels
+for the installation; do not infer physical Russound input mappings from sinks:
+
+```json
+{
+  "Radio 88.6": {"id": "front", "label": "Front stream"},
+  "FM4 Radio": {"id": "centerlfe", "label": "Center/LFE stream"},
+  "OE3 Radio": {"id": "rear", "label": "Rear stream"}
+}
+```
+
+From the script directory, using copied input files:
+
+```sh
+python playbackmigrate.py --config local-config.json \
+  --intentions local-playback.json --identities local-identities.json \
+  --output private-s04-bundle
+```
+
+The output directory must not exist; its parent must exist. The tool creates
+a mode-0700 directory with mode-0600 files, refuses ID reassignment, requires
+exact name coverage and preserves:
+
+| Bundle file | Purpose |
+| --- | --- |
+| `config.original.json` | Exact original config bytes for rollback |
+| `playback.original.json` | Exact original intention bytes for rollback |
+| `config.prepared.json` | Only adds/updates explicit IDs and labels |
+| `playback.legacy.json` | Exact legacy intention bytes; current runtime format |
+| `control-v1.preview.json` | Offline, manual-only future control schema |
+| `manifest.json` | Bundle version, original/prepared revisions, file hashes and original permission modes |
+
+Every generated file is flushed/fsynced before success is printed. A failed
+file write cleans up only files created by that invocation. Originals are
+never written. Unsupported control preview versions, corrupt/unknown states
+and missing intention entries fail explicitly; migration does not invent
+playing defaults. The preview is shaped as:
+
+```json
+{
+  "schema_version": 1,
+  "outputs": {
+    "front": {"mode": "manual", "intention": "play"},
+    "centerlfe": {"mode": "manual", "intention": "pause"},
+    "rear": {"mode": "manual", "intention": "stop"}
+  }
+}
+```
+
+D04 is accepted: future manual play/pause/stop sets mode to manual until
+explicit return to automatic. This preview deliberately permits manual mode
+only. Automatic owner/generation/target fields must be specified with S10;
+do not fabricate them while their policy decisions remain open.
+**Do not install this preview as the current playback intention file.**
+Current runtime readers reject it rather than treating it as missing state.
+
+### Reader/writer inventory and coordinated rollout
+
+| Surface | Current ownership / migration requirement |
+| --- | --- |
+| Backend start/pause/stop | Reads/writes legacy intentions under `mpd_control.lock` |
+| Backend initialize/reconcile | Initializes missing legacy entries/reconciles them; must migrate together with any state schema |
+| CLI | Delegates to backend; gain/label config edits use the same lock |
+| Supervisor | Uses preserved legacy names for service units and delegates intentions to backend |
+| Recorder | Reads name-to-intention JSON directly; must adopt a shared versioned reader before control-v1 activation |
+| Agent/collector | Read-only configuration/metadata; no intention initialization or writes; scheduler replaces collectors when config hash changes |
+| MPD/audio setup | Reads config; derives existing services/sinks from unchanged fields; no unit regeneration needed just for IDs/labels |
+| Setup Ansible | Seeds operational config only if absent; invokes legacy intention initialization; coordinate before changing state schema |
+| Agent Ansible | Copies helpers and explicitly selected config; separate observer copy must be deliberately reconciled with operational IDs |
+| `streamlevels.py` | Writes a new, exclusively created calibration output config, not a locked live edit; installation needs maintenance |
+
+Offline acceptance is preparation, not approval to migrate production. Later:
+
+1. Wait for observation completion and obtain maintenance approval. Verify a
+   fresh bundle against unchanged source revision/state; back up all affected
+   code/config/state and permissions. Do not overwrite endurance artifacts.
+2. Stop all mutation-capable entry points (supervisor, future worker/policy and
+   any CLI sessions); stop the recorder before changing its state schema.
+   Ensure no old writer remains, and hold the existing control lock throughout
+   replacement. The lock alone cannot prevent an old process from overwriting
+   new state after it is released.
+3. For an **identity-only** rollout, install coordinated helpers and prepared
+   config, retaining `playback.legacy.json` as runtime state. Deliberately align
+   the observer config. Ports, unit names, audio fragments and gains do not
+   change; do not rerun audio or MPD setup.
+4. A **control-v1** rollout is not implemented here. Before enabling it, update
+   every state reader/writer above, including the recorder and initializer,
+   validate supported versions, and finalize the automatic control record.
+   Old code must fail closed and must never run alongside new writers.
+5. Verify IDs, byte-preserved intentions, gains, service lifecycles, readiness
+   and collector/API health before resuming approved writers. On failure,
+   keep writers stopped; restore the coordinated original code/config/state
+   from named backups with manifest-recorded original modes. Verify original
+   hashes, then restart the old writers. Never roll back only one side of a
+   code/state-schema transition.
+
+Local fixtures verify field preservation, exact-byte rollback material,
+permissions, explicit schema rejection, stale edits and concurrent lock
+exclusion. No production migration or live rollback is claimed.
+
 ## Read-only detailed observations (S02)
 
 [playbackstatus.py](../mpdrussoundpi/russound/lib/playbackstatus.py) provides
@@ -211,7 +356,8 @@ backend.stop("Radio 88.6")
 | `pause(name=None)` | Explicit pause, not a toggle; verify paused state. A stopped instance cannot be reported as successfully paused. |
 | `stop(name=None)` | Stop playback and verify state without clearing the queue. |
 | `get_gain(name)` | Read persisted configured gain. |
-| `set_gain(name, gain_db)` | Persist per-stream attenuation. When playing, recover/verify route and apply/read-verify gain before saving. When stopped or paused, save without starting audio; next `start` applies it. |
+| `set_gain(name, gain_db, *, expected_revision=None)` | Persist per-stream attenuation; optional stale-write guard under the mutation lock. When playing, recover/verify route and apply/read-verify gain before saving. When stopped or paused, save without starting audio; next `start` applies it. |
+| `set_label(name, label, *, expected_revision)` | Edit only the display label of an output with persisted identity; require a matching config revision and do not change audio. |
 | `check_route(name)` | Return `StreamRoute` including actual/expected sink, current client ID and `correct`. Missing/ambiguous clients raise an error. |
 | `recover_route(name=None)` | Return tuple of verified `StreamRoute` objects; move only incorrectly routed matching MPD clients. |
 | `initialize_intentions()` | Initialize only unknown streams as playing; preserve previously saved choices. |

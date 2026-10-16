@@ -15,6 +15,7 @@ from lib.audioidentity import HardwareUnavailable
 from lib.mpdbackend import BackendError, MPDBackend, MPDConnection, StreamSettings
 from lib.streamgain import read_sink_gain
 from lib.streamroute import inspect_route
+from lib.playbackidentity import identities
 
 
 class ReadValue(Protocol):
@@ -259,18 +260,13 @@ class PlaybackCollector:
         entries = config["streams"]
         if not isinstance(entries, list):
             raise ValueError("Invalid observation inventory")
+        known = identities(entries, required=True)
         self._streams: dict[str, StreamSettings] = {}
         self._outputs: dict[str, OutputObservation] = {}
         for entry, stream in zip(entries, streams, strict=True):
             if not isinstance(entry, dict):
                 raise ValueError("Invalid observation entry")
-            identity, label = entry.get("id"), entry.get("label")
-            if not isinstance(identity, str) or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", identity) is None:
-                raise ValueError("Observation inventory requires persisted output IDs")
-            if identity in self._streams:
-                raise ValueError("Duplicate observation output ID")
-            if not isinstance(label, str) or not label.strip():
-                raise ValueError("Observation inventory requires output labels")
+            identity, label = known[stream.name]
             normalized_label, selection_label = _text(label), _text(stream.name)
             if normalized_label is None or selection_label is None:
                 raise ValueError("Observation inventory requires printable labels")

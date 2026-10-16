@@ -60,6 +60,26 @@ This review covers the Python production modules in `web/` and `tool/`.
   descriptor failures. USB bandwidth limits remain unresolved; see the
   [acceptance qualifications](./usb-audio-recovery-fix.md#final-checkpoint-after-guided-tests).
 
+## S04 offline preparation (2026-10-16)
+
+[Migration/revision tests](../tests/test_playbackmigration.py) cover exact
+original-byte rollback material, preservation of all nonidentity fields,
+private bundle permissions, unchanged input files, exclusive destination
+creation and failed-write cleanup. They reject duplicate/partial mappings,
+ID reassignment, corrupt/missing/unknown intentions and unsupported control
+preview versions. Current runtime readers reject the preview rather than
+initializing playing defaults. Backend tests verify stale gain edits fail
+before audio effects, legacy edits invalidate revisions, label edits preserve
+IDs/operational fields and concurrent gain edits respect the existing lock.
+[CLI tests](../tests/test_mpdctrl.py) cover revision preconditions and argument
+requirements. The offline CLI test verifies preparation does not create an
+MPD client.
+
+The coordinated local selection passes **208 tests**, including the existing
+194 playback/USB/agent regressions and 14 added S04 tests. This is not measured
+line coverage or live production-migration acceptance. Pylance reports no
+diagnostics in the changed production Python files. No Pi deployment, live
+control-state replacement or production rollback was performed for S04.
 
 ## Test Links
 
