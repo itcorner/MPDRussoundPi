@@ -15,9 +15,14 @@ and USB descriptor failures; a stable-port retry passed. USB bandwidth failures
 remain a separate limitation, including errors from the second adapter.
 See the [detailed acceptance record](./usb-audio-recovery-fix.md#resumed-physical-tests-short-cycles-25-and-long-disconnect)
 for timing and scope qualifications.
-At 22:04:45 the fresh two-hour recorder (started at 20:49:43) was still active
-with no open incidents, not yet completed. The initial failed test and completed
-72-hour run remain separate evidence.
+The fresh two-hour recorder (started at 20:49:43) completed successfully at
+**22:49:44.918 CEST**, with no open incidents and zero recorder restarts.
+Historical problem counters were unchanged since 22:04:45, so the final
+approximately 45-minute tail added no recorded problems. Fresh post-completion
+readiness/routes/gains/intentions and unchanged service lifecycles passed.
+The fault-injection run was not interruption-free; the initial failed test and
+completed 72-hour run remain separate evidence. See the
+[completion record](./usb-audio-recovery-fix.md#observation-period-completed-2026-10-16).
 
 [playbackaudit.py](../mpdrussoundpi/russound/playbackaudit.py) observes the existing
 recovery supervisor. It never calls play/stop, moves clients, changes gains,

@@ -827,3 +827,28 @@ The observed real `.2` name occurred on the rejected second adapter, not a
 uniquely selected suffixed production card. Isolated tests remain the evidence
 for that latter selection case. The two-hour recorder is still running toward
 its approximately **22:49:43** deadline; do not describe it as completed.
+
+### Observation period completed (2026-10-16)
+
+Final recorder event: **22:49:44.918 CEST** (`20:49:44.918 UTC`),
+`recorder_stopped`, status **`completed`**. At **22:50:57**, systemd reported
+the recorder inactive/dead with `Result=success`, exit status 0 and zero
+restarts. The summary reports no open incidents.
+
+Final historical problem counters remain **51 readiness measurement samples**,
+**one kernel journal-overflow flag** and **one OE3 route measurement error**,
+unchanged since the **22:04:45** checkpoint. Thus the final approximately
+45-minute observation tail added no recorded problem samples. This is not a
+claim that the entire two-hour fault-injection run was interruption-free, nor
+that evidence retention was complete despite the earlier overflow flag.
+
+Fresh post-completion verification passed full downstream readiness, all three
+playing states/routes and calibrated gain units. Saved intention bytes and
+service PIDs/start times/restart counters still match the maintenance baseline.
+Post-completion verification, lifecycle and graph captures are retained as
+`completed-*` in the same private audit directory. No services were restarted
+or production files migrated to close the observation period.
+
+The observation run is now complete. The documented USB bandwidth/controller
+limitations, contaminated first mixed-state attempt and suffix-selection scope
+qualifications remain unchanged.
