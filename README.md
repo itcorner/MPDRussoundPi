@@ -146,6 +146,8 @@ Common endpoints:
 - `GET /api/config`
 - `GET /api/status`
 - `GET /api/events` (SSE)
+- `GET /api/playback` (optional, read-only MPD inventory)
+- `GET /api/playback/health` (optional MPD agent health)
 - `POST /api/system/power`
 - `POST /api/source`
 - `POST /api/shortcuts/{shortcutId}/activate`

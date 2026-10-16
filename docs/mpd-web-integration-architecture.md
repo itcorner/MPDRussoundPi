@@ -653,8 +653,11 @@ and fenced ownership before automation resumes after reconnect.
   authentication/authorization before exposing powerful source-edit controls
   beyond a trusted network.
 - Agent control requires service authentication independently of browser
-  origin checks. Prefer TLS plus a scoped service credential (or mTLS/private
-  authenticated tunnel). A LAN/IP allowlist alone is not identity.
+  origin checks. The selected D06 design terminates TLS at Caddy on the Pi and
+  forwards to the loopback-only agent. Docker trusts the proxy's self-signed
+  certificate through the configured `tls_ca_file`; normal certificate and
+  hostname validation remain enabled. Retain the scoped bearer credential and
+  firewall the proxy to the Docker host. A LAN/IP allowlist alone is not identity.
 - Keep agent credentials in mounted secrets/environment configuration, never
   JavaScript, ordinary configuration payloads, request history or log URLs.
   Separate read-only and control scopes; rotate credentials.

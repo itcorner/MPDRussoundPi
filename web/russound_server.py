@@ -27,6 +27,7 @@ from web.config_types import coerce_russound_config, env_port, env_str, resolve_
 from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
+from web.playback_status import PlaybackAgentConfig, PlaybackStatusClient
 
 WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"
@@ -38,6 +39,7 @@ SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 EVENT_STREAM_MAX_SECONDS = 300.0
 EVENT_STREAM_PING_SECONDS = 15.0
 EVENT_STREAM_RETRY_MS = 2000
+EVENT_QUEUE_MAXSIZE = 8
 # Worker threads always kept free for page loads and API calls.
 RESERVED_REQUEST_THREADS = 4
 DEFAULT_WAITRESS_THREADS = 24
@@ -153,6 +155,7 @@ class RussoundHTTPServer:
         allowed_origins: list[str] | None = None,
         trusted_proxy_count: int = 0,
         max_event_streams: int | None = None,
+        playback_clients: list[PlaybackStatusClient] | None = None,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
@@ -172,6 +175,14 @@ class RussoundHTTPServer:
         self._event_client_id = 0
         self._event_history: deque[dict[str, Any]] = deque(maxlen=50)
         self._event_history_lock = threading.Lock()
+        self.playback_revision = 0
+        playback_configs = PlaybackAgentConfig.from_environment() if playback_clients is None else None
+        self._playback_clients = playback_clients or [
+            PlaybackStatusClient(config, self.broadcast_playback_change)
+            for config in (playback_configs or ())
+        ]
+        for client in self._playback_clients:
+            client.set_on_change_callback(self.broadcast_playback_change)
         self._backend_watcher_lock = threading.Lock()
         self._backend_watcher_started = False
         self._event_backend: RussoundBackend | None = None
@@ -248,6 +259,54 @@ class RussoundHTTPServer:
         @app.get("/api/state")
         def api_state():
             return jsonify(self._read_state_payload())
+
+        @app.get("/api/playback")
+        def api_playback():
+            return jsonify(self._read_playback_snapshot())
+
+        @app.get("/api/playback/health")
+        def api_playback_health():
+            snapshot = self._read_playback_snapshot()
+            agents = snapshot["agents"]
+            status = "disabled" if not agents else "ok" if all(agent["status"] == "ok" for agent in agents) else "unavailable"
+            return jsonify({
+                "api_version": 1,
+                "configured": snapshot["configured"],
+                "status": status,
+                "revision": snapshot["revision"],
+                "agents": [
+                    {"agent_id": agent["agent_id"], "status": agent["status"], "error": agent["error"]}
+                    for agent in agents
+                ],
+            })
+
+        @app.get("/api/playback/agents/<agent_id>/outputs/<output_id>")
+        def api_playback_output(agent_id: str, output_id: str):
+            snapshot = self._read_playback_snapshot()
+            agents: list[dict[str, Any]] = snapshot["agents"]
+            agent = next((item for item in agents if item["agent_id"] == agent_id), None)
+            if agent is None:
+                return jsonify({"error": "Playback integration is not configured"}), 404
+            agent_snapshot = agent.get("snapshot")
+            if not isinstance(agent_snapshot, dict):
+                return jsonify({"error": "Playback output not found"}), 404
+            agent_snapshot = cast(dict[str, Any], agent_snapshot)
+            outputs = agent_snapshot.get("outputs")
+            if not isinstance(outputs, list):
+                return jsonify({"error": "Playback output not found"}), 404
+            output_candidates: list[Any] = cast(list[Any], outputs)
+            for output in output_candidates:
+                if isinstance(output, dict):
+                    output_payload: dict[str, Any] = cast(dict[str, Any], output)
+                    if output_payload.get("id") != output_id:
+                        continue
+                    return jsonify({
+                        "api_version": 1,
+                        "agent_id": agent["agent_id"],
+                        "status": agent["status"],
+                        "output": output_payload,
+                    })
+            return jsonify({"error": "Playback output not found"}), 404
 
         @app.get("/api/config")
         def api_config():
@@ -419,7 +478,11 @@ class RussoundHTTPServer:
         self._max_event_streams = stream_limit if self._max_event_streams is None else min(self._max_event_streams, stream_limit)
         self._start_backend_change_watcher()
         if debug:
-            self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
+            try:
+                self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
+            finally:
+                for playback_client in self._playback_clients:
+                    playback_client.close()
             return
 
         try:
@@ -431,12 +494,18 @@ class RussoundHTTPServer:
         server = create_server(self.app, host=host, port=port, threads=thread_count)
         # Waitress has no serve() argument for this; it applies adj.socket_options to every accepted connection.
         server.adj.socket_options = _connection_socket_options(tcp_user_timeout_seconds)
-        server.run()
+        try:
+            server.run()
+        finally:
+            for playback_client in self._playback_clients:
+                playback_client.close()
 
     def _start_backend_change_watcher(self) -> None:
         with self._backend_watcher_lock:
             if self._backend_watcher_started:
                 return
+            for playback_client in self._playback_clients:
+                playback_client.start()
             self._start_unsolicited_update_listener()
             watcher = threading.Thread(target=self._backend_change_watcher_loop, daemon=True, name="backend-change-watcher")
             watcher.start()
@@ -700,7 +769,16 @@ class RussoundHTTPServer:
                     except Empty:
                         yield ": ping\n\n"
                         continue
-                    yield f"event: state-change\ndata: {event_text}\n\n"
+                    event_type = json.loads(event_text).get("event", "state-change")
+                    if event_type == "playback-change":
+                        with self._event_clients_lock:
+                            client = self._event_clients.get(client_id)
+                            if client is not None:
+                                event_payload = json.loads(event_text)
+                                event_payload["revision"] = client["playback_revision"]
+                                event_text = json.dumps(event_payload)
+                                client["playback_pending"] = False
+                    yield f"event: {event_type}\ndata: {event_text}\n\n"
             except GeneratorExit:
                 return
             finally:
@@ -720,7 +798,7 @@ class RussoundHTTPServer:
         session_id: str | None = None,
     ) -> tuple[int, Queue[str]] | None:
         """Register one SSE stream; returns None when the stream limit is reached."""
-        event_queue: Queue[str] = Queue()
+        event_queue: Queue[str] = Queue(maxsize=EVENT_QUEUE_MAXSIZE)
         with self._event_clients_lock:
             if self._max_event_streams is not None and len(self._event_clients) >= self._max_event_streams:
                 return None
@@ -733,6 +811,8 @@ class RussoundHTTPServer:
                 "connected_at": self._timestamp(),
                 "queue": event_queue,
                 "session_id": self._normalize_session_id(session_id),
+                "playback_pending": False,
+                "playback_revision": 0,
             }
             stream_count = len(self._event_clients)
         # Health may be stale while nobody was watching; re-poll so the new client sees the real hardware state.
@@ -762,13 +842,57 @@ class RussoundHTTPServer:
                 }
             )
             for client in self._event_clients.values():
-                client["queue"].put(event_text)
+                self._enqueue_event_locked(client, event_text)
             recipients = len(self._event_clients)
         logging.info(
             "SSE state update broadcast revision=%d recipients=%d",
             self.state_revision,
             recipients,
         )
+
+    def broadcast_playback_change(self) -> None:
+        with self._event_clients_lock:
+            self.playback_revision += 1
+            event_text = json.dumps({
+                "event": "playback-change",
+                "api_version": 1,
+                "revision": self.playback_revision,
+            })
+            for client in self._event_clients.values():
+                if client["playback_pending"]:
+                    client["playback_revision"] = self.playback_revision
+                    continue
+                self._enqueue_event_locked(client, event_text)
+                client["playback_pending"] = True
+                client["playback_revision"] = self.playback_revision
+
+    def _enqueue_event_locked(self, client: dict[str, Any], event_text: str) -> None:
+        event_queue: Queue[str] = client["queue"]
+        if event_queue.full():
+            while not event_queue.empty():
+                try:
+                    discarded = json.loads(event_queue.get_nowait())
+                    if discarded.get("event") == "playback-change":
+                        client["playback_pending"] = False
+                except Empty:
+                    break
+                except (TypeError, json.JSONDecodeError):
+                    continue
+        event_queue.put_nowait(event_text)
+
+    def _read_playback_snapshot(self) -> dict[str, Any]:
+        if not self._playback_clients:
+            return {"api_version": 1, "configured": False, "revision": 0, "agents": []}
+        return {
+            "api_version": 1,
+            "configured": True,
+            "revision": self.playback_revision,
+            "agents": [
+                agent
+                for client in self._playback_clients
+                for agent in client.snapshot()["agents"]
+            ],
+        }
 
     def _build_state_payload_for_event(self) -> dict[str, Any]:
         return self._read_state_payload()

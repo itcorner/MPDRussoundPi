@@ -16,4 +16,5 @@ docker/data/russound_state.json
 docker/config/russound_config.json
 docker/logs/*
 !docker/logs/README.md
+docker/secrets/*
 russound_capture.log.bak

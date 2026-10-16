@@ -3,7 +3,7 @@
 Status: agent-only deployment executed on 2026-10-15 with explicit approval
 using a separate observation-test config. This is partial S06 acceptance,
 not the completed production rollout. S04 production ID migration,
-D06 secure transport and S05 web integration remain outstanding.
+D06 reverse-proxy transport and S05 web integration remain outstanding.
 
 ## Scope and prerequisites
 
@@ -74,9 +74,17 @@ Default locations:
 Override `playback_agent_id`, `playback_agent_port`, `playback_agent_config`
 or installation path variables as necessary. Paths must be absolute and
 systemd-safe (no spaces, traversal or `%` specifiers). The fixed listener is
-**127.0.0.1:8081** by default. There is no remote-binding option in this play.
-Do not expose it via an unprotected HTTP proxy: D06 must separately choose and
-provision secure transport. No Docker registry, TLS or firewall is configured here.
+**127.0.0.1:8081** by default and must stay loopback-only. The selected D06 design places Caddy on the Pi as a TLS-terminating reverse
+proxy in front of this listener. Docker connects to Caddy using a self-signed
+certificate trusted via the web agent's `tls_ca_file`; hostname validation
+remains enabled, so the Docker-reachable DNS name must match the certificate
+subject alternative name. Caddy forwards the bearer token and only the read API.
+Firewall proxy ingress to the Docker host. Do not configure
+agent remote binding, expose an unprotected HTTP proxy, or treat this as
+browser access protection (D07). Proxy software/configuration, certificate
+provisioning and firewall rules are not configured by this agent play. The
+certificate may be mounted read-only at `/run/secrets/musicpi-proxy.crt`;
+the private key must remain on the Pi. Keep both files out of version control.
 
 The installation validates config without MPD/audio commands, preserves token
 privacy in task output and enables lingering without restarting the user manager.
@@ -145,8 +153,9 @@ is enabled and remains running. No full Pi setup or rollback play was executed.
 - Generated a private random service credential outside the checkout; target
   token/config are mode 0600 under a mode-0700 directory. No credential values
   were logged or committed.
-- Actual listener verified as **127.0.0.1:8081**, not a LAN listener. D06 and
-  Docker/web integration remain unimplemented; SSH carried the test commands.
+- Actual listener verified as **127.0.0.1:8081**, not a LAN listener. The
+  selected D06 reverse proxy and Docker/web integration remain unimplemented;
+  SSH carried the test commands.
 - Verified authenticated health/capabilities/inventory, per-output HEAD,
   unknown-output 404, unauthenticated 401 and unsupported POST 405.
   `write_operations` is empty.
@@ -176,7 +185,7 @@ is enabled and remains running. No full Pi setup or rollback play was executed.
 Private baseline evidence is retained on the Pi at
 `~/.config/mpdrussoundpi-agent/deployment-baseline.json`. The separate config
 and service remain in place for read-only tests; full S06 acceptance still
-requires migrated production IDs, D06 transport, Docker reachability and final
+requires migrated production IDs, the D06 reverse proxy, Docker reachability and final
 endurance review.
 
 ## USB maintenance update (2026-10-16)

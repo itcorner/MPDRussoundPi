@@ -40,6 +40,8 @@ services:
       # Empty overrides leave the backend endpoint to the configuration editor.
       RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-}"
       RUSSOUND_BACKEND_PORT: "${RUSSOUND_BACKEND_PORT:-}"
+      # Optional JSON agent list. token_file paths must resolve inside the container.
+      RUSSOUND_PLAYBACK_AGENTS: "${RUSSOUND_PLAYBACK_AGENTS:-}"
       RUSSOUND_CONFIG: "/config/russound_config.json"
       RUSSOUND_STATE: "/data/russound_state.json"
       RUSSOUND_LOG_FILE: "/logs/russound-web.log"
@@ -54,5 +56,7 @@ services:
       - ./docker/config:/config
       - ./docker/data:/data
       - ./docker/logs:/logs
+      # Store playback tokens and the pinned Pi proxy certificate outside git.
+      - ./docker/secrets:/run/secrets:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"

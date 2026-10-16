@@ -104,9 +104,12 @@ are a different domain, not defined by this read contract.
 | `GET /v1/outputs` | Inventory envelope |
 | `GET /v1/outputs/{output_id}` | Same envelope metadata with `output` instead of `outputs` |
 
-All four routes require configured service authentication. Exact credential/TLS
-provisioning remains D06; health must not become a public inventory backdoor.
-HTTP service unavailable cannot yield JSON; clients report a transport error.
+All four routes require configured service authentication. Under selected D06,
+TLS terminates at Caddy on the Pi and forwards to the loopback-only agent; the
+Docker client trusts the self-signed certificate using `tls_ca_file` with
+hostname validation enabled. Proxy and credential provisioning remain part of
+D06; health must not become a public inventory backdoor. HTTP service
+unavailable cannot yield JSON; clients report a transport error.
 S03 uses a startup-loaded bearer service token with constant-time comparison.
 Default binding is loopback; remote binding requires explicit opt-in and
 separately provisioned secure transport. See [usage](./mpd-backend-api.md#read-only-http-agent-s03).

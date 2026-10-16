@@ -1,7 +1,8 @@
 # MPD web integration: stepwise implementation plan
 
-Date: 2026-10-14; updated 2026-10-16. Status: S01-S03 implemented;
-S04 prepared locally; production migration and web integration remain gated.
+Date: 2026-10-14; updated 2026-10-16. Status: S01-S03 implemented; S04
+prepared locally; S05 read-only web integration implemented locally. Production
+migration and cross-host web integration remain gated.
 
 ## 1. Confirmed scope and working rules
 
@@ -60,7 +61,7 @@ read-only status; the gate column states when the answer becomes necessary.
 | D02 | Which hardware demand rule should automatic mode use? | Any powered zone selecting the mapped input. Alternative: any powered zone starts all managed outputs. | S10 |
 | D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
 | D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
-| D06 | Web-to-agent transport security | TLS with scoped service credentials, via direct TLS or a configured reverse proxy/tunnel. Decide the actual deployment mechanism. | Agent deployment in S06; write access in S07 |
+| D06 | Web-to-agent transport security | **Selected:** Caddy terminates TLS on the Pi and forwards to the loopback agent. Use a self-signed certificate trusted/pinned by the Docker web client through `tls_ca_file`, retain the scoped bearer credential, and firewall ingress to the Docker host. | Agent deployment in S06; write access in S07 |
 | D07 | Browser access protection | Existing or new authenticated reverse proxy. Alternatives: application login or explicitly trusted-LAN-only access. | Live write rollout in S07 |
 | D09 | Initial source URL scope | Direct HTTP(S) radio feeds only. Alternative: explicitly supported playlist resolution or additional MPD URI schemes. | Source validation in S08 |
 | D10 | Permission to adopt/manage MPD queues | Explicit per-output adoption of a one-selected-source managed queue. Alternative: preserve unmanaged entries and expose that limitation. | S08 |
@@ -78,8 +79,9 @@ their own policy decision. Web-host loss must preserve the last Pi intention.
 
 D03 is a configuration decision: collect the actual mapping in a separate
 focused question after D02, not during the availability question D01.
-D06 may need successive questions about the chosen TLS mechanism and credential
-provisioning; do not bundle unrelated security/product choices into one prompt.
+D06's reverse-proxy and certificate trust model are selected. Certificate,
+token and firewall provisioning must be completed and verified before S06;
+these deployment actions do not authorize changing the Pi in this local task.
 D13 concerns a UI control, not a new attenuation layer or a change to calibration
 semantics. No independent mute control is assumed.
 
@@ -187,7 +189,8 @@ immutable cached reads, background collector replacement/config failure
 handling, independent playback/audio scheduling and bounded read retry backoff.
 See [agent usage](./mpd-backend-api.md#read-only-http-agent-s03) and
 [contract acceptance](./mpd-playback-read-api.md#s03-acceptance-local-2026-10-15).
-No Pi deployment, ID migration or D06 transport decision is implied.
+No Pi deployment or ID migration is implied; D06 transport provisioning remains
+separate from this local agent implementation.
 
 1. Add a thin HTTP adapter, observer scheduler and immutable snapshot cache.
    Reuse Flask/Waitress; declare/install agent-specific dependencies separately
@@ -267,7 +270,8 @@ CLI test. Changed Python production files have no reported Pylance diagnostics.
 
 Primary surfaces: [web server](../web/russound_server.py),
 [controller](../web/russound_controller.py), [frontend](../web/static/app.js),
-configuration editor and [web API](../web/API.md).
+[web API](../web/API.md). Agent identities, URLs and secret-file references
+are deployment configuration, not editable browser settings.
 
 1. Add validated agent endpoint/identity configuration and a playback client.
    Endpoint credentials are secret references, not returned editable plaintext.
@@ -290,6 +294,32 @@ checks for stale status, metadata escaping, reconnect and disabled integration.
 **Acceptance:** agent failure does not freeze zone controls; several browser
 tabs do not multiply Pi polling; measured update latency meets the agreed target.
 
+**Local implementation, 2026-10-16:** the web process now accepts optional
+agents through `RUSSOUND_PLAYBACK_AGENTS`, a JSON array of identities, base
+URLs, and token-file secret references. It validates configured
+identity, read-only capabilities, response shape and remote HTTPS (HTTP is
+loopback-only). One background worker per agent caches inventory; same-origin
+inventory, output and health routes expose cached data and user-safe agent
+errors. The UI shows safe-text-only stream cards and adds coalesced playback
+invalidations to the bounded SSE queue; reconnects and visible-page polling
+resync both interfaces. Playback remains optional and has no write controls.
+Validation: 121 playback-agent, collector-contract, and web-server tests pass;
+the changed playback client and test file have no Pylance diagnostics, and the
+server has no Pylance errors. Browser smoke checks verified healthy and stale
+agent rendering, safe text rendering for markup-like track metadata, SSE
+invalidation refresh, polling-fallback refresh, disabled integration, and
+continued Russound dashboard rendering. A multi-session cache regression issued
+playback requests from eight separate web test-client sessions and verified
+that they all received the same cached revision without adding upstream agent
+requests (three requests for the single initial health/capability/inventory
+poll). An eight-sample same-host HTTP fake-agent poll-to-cache measurement
+ranged from 2.031 to 2.057 seconds (nearest-rank p95 2.057 seconds), below the
+proposed five-second target in this local simulation. Local S05 acceptance is
+complete; healthy-LAN/Pi latency remains outstanding. No production web
+configuration or deployment has been changed; remote Docker-to-Pi use remains
+gated on reverse-proxy provisioning, certificate trust setup and firewall
+acceptance under D06.
+
 ### S06. Provision and verify read-only deployment
 
 **Deployment preparation (2026-10-15; not executed):** separate
@@ -297,7 +327,8 @@ tabs do not multiply Pi polling; measured update latency meets the agreed target
 [user service](../ansible/templates/playback-agent.service.j2) and
 [rollback](../ansible/playbooks/remove-playback-agent.yml) prepared.
 See [operator instructions](./playback-agent-deployment.md). Activation is
-opt-in; transport remains loopback-only until D06. No production IDs are
+opt-in; agent transport remains loopback-only until the D06 reverse proxy is
+provisioned. No production IDs are
 assigned by these scripts. S06 is not complete: migration, secure transport,
 web configuration and approved target acceptance still remain.
 
@@ -307,7 +338,8 @@ Pi loopback; authenticated reads, real MPD metadata, routes/gains and unchanged
 production config/intentions/service lifecycle verified. Existing Radio 88.6
 faults continued; no zero-impact or uninterrupted-playback claim.
 See [target evidence](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15).
-D06, production migration and Docker/web reachability remain outstanding.
+D06 implementation, production migration and Docker/web reachability remain
+outstanding.
 
 1. Extend [Pi provisioning](../ansible/playbooks/setup-musicpi.yml) with a
    separate **agent-only** installation path. Avoid its existing audio/MPD
@@ -315,8 +347,9 @@ D06, production migration and Docker/web reachability remain outstanding.
 2. Generate an independent user service under the audio-owning user with
    lingering, private runtime directory, D-Bus/Pulse environment, bounded
    restarts and writable ledger/state locations.
-3. Provision D06 transport, credentials and firewall; configure Docker endpoint/
-   secret wiring without embedding secrets in the
+3. Provision Caddy on the Pi with the selected self-signed TLS certificate,
+   Docker-side `tls_ca_file` trust, scoped credentials and firewall; configure
+   the Docker endpoint/secret wiring without embedding secrets in the
    [web image](../Dockerfile) or browser assets.
 4. Fix/test the known MPD binding-schema mismatch in the setup generator before
    claiming loopback isolation. Applying regenerated MPD listeners is a later
@@ -470,9 +503,14 @@ credentials and operational files must have an explicit owner.
   S06 agent deployed/tested on loopback using an approved separate config copy;
   full production acceptance remains outstanding. S04 prepared locally with
   offline migration/revision tests; production migration is not executed.
-  S05/S07-S11 not started. Next implementation work package is S05;
-  D06 is required before production Docker-to-agent connectivity.
-- D02-D03, D05-D07 and D09-D16 open. No transport, provider, physical mapping or demand rule has
+  S05 complete locally with browser smoke checks, eight-session cache
+  verification and same-host latency measurements; healthy-LAN/Pi acceptance
+  remains unverified.
+  Remote connectivity still requires D06 reverse-proxy provisioning and D07/D13
+  decisions. Next implementation work package is S07 after S06 transport and
+  D07/D13 decisions; Docker-to-agent production connectivity remains gated on
+  the proxy, certificate and firewall acceptance.
+- D02-D03, D05, D07 and D09-D16 open. No provider, physical mapping or demand rule has
   been silently chosen.
 - **Next question: D02, source-specific demand versus system-wide power.**
 

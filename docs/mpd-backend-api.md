@@ -284,9 +284,13 @@ python mpdrussoundpi/russound/playbackagent.py migrated-test-config.json \
 - Default bind is `127.0.0.1:8081`. All routes require
   `Authorization: Bearer <token>`, including health, unknown routes and HEAD.
   This credential covers read access only; no write routes exist.
-- Non-loopback binding requires explicit `--allow-remote`. This is not TLS:
-  do not expose bearer credentials over unprotected LAN HTTP. D06 still gates
-  secure proxy/tunnel/TLS provisioning and S06 deployment.
+- The selected D06 deployment keeps the agent bound to loopback and terminates
+  TLS at Caddy on the Pi. Caddy must forward the bearer credential unchanged,
+  expose only the read API, and be restricted by firewall to the Docker web
+  host. The web client trusts the self-signed certificate with its
+  `tls_ca_file` setting while retaining hostname validation. Do not use
+  `--allow-remote` to bypass this boundary or expose bearer credentials over
+  unprotected LAN HTTP. Proxy provisioning remains required for S06.
 - GET/HEAD `/v1/health`, `/v1/capabilities`, `/v1/outputs` and
   `/v1/outputs/{id}` follow the read contract. Responses are JSON/no-store;
   writes/OPTIONS return JSON 405, unauthorized access 401, malformed requests

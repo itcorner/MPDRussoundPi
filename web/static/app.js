@@ -7,6 +7,7 @@ const state = {
   systemPower: false,
   inputs: [],
   shortcuts: [],
+  playback: null,
 };
 
 const zonesContainer = document.getElementById("zones");
@@ -21,6 +22,8 @@ const eventSourceRetryDelayMs = 30000;
 const statePollIntervalMs = 5000;
 let stateFetchInFlight = false;
 let stateFetchQueued = false;
+let playbackFetchInFlight = false;
+let playbackFetchQueued = false;
 // Zone changes still awaiting the backend; stale state payloads must not revert them in the UI.
 const pendingZoneUpdates = new Map();
 let zoneUpdateRevision = 0;
@@ -112,6 +115,106 @@ function applyPayload(payload) {
   render();
 }
 
+async function fetchPlayback() {
+  if (playbackFetchInFlight) {
+    playbackFetchQueued = true;
+    return;
+  }
+  playbackFetchInFlight = true;
+  try {
+    const response = await apiFetch("/api/playback");
+    if (!response.ok) {
+      return;
+    }
+    state.playback = await response.json();
+    renderPlayback();
+  } finally {
+    playbackFetchInFlight = false;
+    if (playbackFetchQueued) {
+      playbackFetchQueued = false;
+      fetchPlayback();
+    }
+  }
+}
+
+function appendPlaybackText(parent, className, text) {
+  const element = document.createElement("p");
+  element.className = className;
+  element.textContent = text;
+  parent.appendChild(element);
+}
+
+function renderPlayback() {
+  const panel = document.getElementById("playbackPanel");
+  const health = document.getElementById("playbackHealth");
+  const outputsContainer = document.getElementById("playbackOutputs");
+  const playback = state.playback;
+  panel.hidden = !playback?.configured;
+  outputsContainer.replaceChildren();
+  if (!playback?.configured) {
+    return;
+  }
+
+  const agents = playback.agents || [];
+  const allHealthy = agents.length > 0 && agents.every((agent) => agent.status === "ok");
+  health.textContent = allHealthy ? "Connected" : "One or more agents unavailable";
+  health.dataset.status = allHealthy ? "ok" : "unavailable";
+  for (const agent of agents) {
+    const outputs = agent.snapshot?.outputs || [];
+    if (outputs.length === 0) {
+      appendPlaybackText(outputsContainer, "playback-message", `${agent.agent_id}: ${agent.error?.message || "Waiting for stream status."}`);
+      continue;
+    }
+    for (const output of outputs) {
+      const card = document.createElement("article");
+      card.className = "playback-card";
+      const title = document.createElement("h3");
+      title.textContent = `${agent.agent_id} · ${output.label}`;
+      card.appendChild(title);
+
+      const playbackProbe = output.playback || {};
+      const observed = playbackProbe.value || playbackProbe.last_known?.value || {};
+      const nowPlaying = observed.now_playing || {};
+      const selection = output.selection?.label;
+      const playbackState = observed.state || playbackProbe.status || "unknown";
+      appendPlaybackText(card, "playback-state", `${playbackState}${selection ? ` · ${selection}` : ""}`);
+      const track = [nowPlaying.artist, nowPlaying.title].filter((value) => typeof value === "string" && value).join(" — ");
+      if (track) {
+        appendPlaybackText(card, "playback-track", track);
+      }
+      if (typeof nowPlaying.album === "string" && nowPlaying.album) {
+        appendPlaybackText(card, "playback-meta", nowPlaying.album);
+      }
+      if (!track && typeof nowPlaying.station === "string" && nowPlaying.station) {
+        appendPlaybackText(card, "playback-meta", nowPlaying.station);
+      }
+      if (typeof output.gain?.configured_db === "number" && Number.isFinite(output.gain.configured_db)) {
+        appendPlaybackText(card, "playback-meta", `Configured gain: ${output.gain.configured_db.toFixed(1)} dB`);
+      }
+      const ageMs = playbackProbe.age_ms ?? agent.snapshot.snapshot_age_ms;
+      const successTime = Date.parse(agent.last_success_at || "");
+      const elapsedSinceSuccess = Number.isFinite(successTime) ? Date.now() - successTime : null;
+      const knownAgeMs = Number.isFinite(ageMs) ? Math.max(0, ageMs) : null;
+      const effectiveAgeMs = elapsedSinceSuccess === null
+        ? knownAgeMs
+        : knownAgeMs === null ? elapsedSinceSuccess : Math.max(knownAgeMs, elapsedSinceSuccess);
+      const isStale = agent.status !== "ok" || playbackProbe.stale || agent.snapshot.stale;
+      const freshness = isStale
+        ? `Stale${effectiveAgeMs === null ? "" : ` · last data ${Math.floor(effectiveAgeMs / 1000)}s old`}`
+        : effectiveAgeMs === null ? "Update age unknown" : `Updated ${Math.floor(effectiveAgeMs / 1000)}s ago`;
+      appendPlaybackText(card, "playback-meta", freshness);
+      if (playbackProbe.error?.message) {
+        appendPlaybackText(card, "playback-error", playbackProbe.error.message);
+      }
+      card.setAttribute("aria-label", `${agent.agent_id}, ${output.label}, ${playbackState}`);
+      outputsContainer.appendChild(card);
+    }
+    if (agent.error?.message) {
+      appendPlaybackText(outputsContainer, "playback-message", `${agent.agent_id}: ${agent.error.message}`);
+    }
+  }
+}
+
 async function fetchState() {
   if (stateFetchInFlight) {
     stateFetchQueued = true;
@@ -155,9 +258,13 @@ function startStateSync() {
     }
     fetchState();
   });
+  eventSource.addEventListener("playback-change", () => {
+    fetchPlayback();
+  });
   // Catch up on changes missed while the stream was reconnecting.
   eventSource.onopen = () => {
     fetchState();
+    fetchPlayback();
   };
   eventSource.onerror = () => {
     // EventSource gives up for good on non-200 responses (e.g. 503 when the server stream limit is reached).
@@ -181,7 +288,10 @@ function stopStateSync() {
 
 function startStatePolling() {
   if (statePollTimer === null && !document.hidden) {
-    statePollTimer = window.setInterval(fetchState, statePollIntervalMs);
+    statePollTimer = window.setInterval(() => {
+      fetchState();
+      fetchPlayback();
+    }, statePollIntervalMs);
   }
 }
 
@@ -356,6 +466,7 @@ async function updateZone(controllerId, zoneNumber, action, value) {
     applyPayload(payload);
   } else {
     fetchState();
+    fetchPlayback();
   }
 }
 
@@ -501,6 +612,7 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   fetchState();
+  fetchPlayback();
   startStateSync();
   startStatePolling();
 });

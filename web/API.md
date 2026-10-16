@@ -24,8 +24,6 @@ Examples:
 - Source-changing routes return `404` with `{ "error": "Source not found" }` when the requested source id does not exist.
 - Shortcut activation returns `404` with `{ "error": "Shortcut not found" }` when the shortcut id does not exist.
 - Shortcut activation returns `500` when a configured shortcut references an unknown controller/zone address or source, because that indicates a server-side configuration error.
-- API routes require a per-process token issued by the server to the served frontend.
-- Unauthorized API requests return `401` with `{ "error": "Unauthorized" }`.
 
 ## Response categories
 
@@ -41,6 +39,9 @@ Exceptions:
 
 - `GET /api/events` returns an event stream, not JSON
 - `GET /api/status` returns connected-client and event-history data, not the main controller view payload
+- `GET /api/playback`, `/api/playback/health`, and
+  `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
+  status payloads, independently of the Russound view payload
 
 The server currently expects these request body field types:
 
@@ -171,6 +172,88 @@ If no valid config file is supplied to the server (`--config`), `GET /api/state`
 
 ## Endpoints
 
+### Optional MPD playback status
+
+Playback status is disabled unless the web-process environment variable
+`RUSSOUND_PLAYBACK_AGENTS` contains a non-empty JSON array. Each entry has an
+`agent_id`, `url`, and `token_file` path; HTTPS agents may also specify
+`tls_ca_file` to trust a mounted private CA or self-signed server certificate.
+For example:
+
+```json
+[
+  {
+    "agent_id": "musicpi",
+    "url": "https://musicpi.example.internal",
+    "token_file": "/run/secrets/musicpi-playback-token",
+    "tls_ca_file": "/run/secrets/musicpi-proxy.crt"
+  }
+]
+```
+
+Plain HTTP is accepted only for loopback URLs; remote agents require HTTPS.
+The token-file path is a secret reference and the token value is never included
+in an API response or browser code. Invalid/partial entries, duplicate agent
+identities, or unreadable/invalid token files are startup errors. The web
+The TLS file is used as a trust anchor with normal certificate and hostname
+validation; it is not an insecure verification bypass. The hostname in `url`
+must resolve from Docker and match the certificate's subject alternative name.
+`tls_ca_file` is rejected for HTTP URLs. For the selected Pi Caddy design, the agent remains at
+`127.0.0.1:8081` and Caddy serves HTTPS using the matching certificate/key.
+The certificate file can be mounted from `./docker/secrets` read-only; keep
+the private key on the Pi and outside the web container.
+Invalid/partial entries, duplicate agent
+identities, or unreadable/invalid token or TLS trust files are startup errors.
+The web process runs one background snapshot fetcher per configured agent and serves
+cached snapshots; requests and browser tabs do not poll agents independently.
+For Docker deployment, mount token and trust files into the web container
+read-only and use their in-container paths in `token_file` and `tls_ca_file`.
+Agent authentication, identity, and response-shape failures appear as playback
+health errors and do not block Russound state or control routes.
+
+#### GET /api/playback
+
+Returns the cached playback inventory, or an explicit disabled response.
+
+```json
+{
+  "api_version": 1,
+  "configured": true,
+  "revision": 8,
+  "agents": [{
+    "agent_id": "musicpi",
+    "status": "ok",
+    "last_attempt_at": "2026-10-14T18:50:00Z",
+    "last_success_at": "2026-10-14T18:50:00Z",
+    "error": null,
+    "snapshot": {
+      "agent_id": "musicpi",
+      "revision": 42,
+      "snapshot_age_ms": 500,
+      "stale": false,
+      "outputs": []
+    }
+  }]
+}
+```
+
+When not configured, the response is
+`{"api_version":1,"configured":false,"revision":0,"agents":[]}`. On an agent
+failure, `status` is `unavailable`, `error` contains a stable code and
+user-safe message, and the last successful snapshot is retained when available.
+
+#### GET /api/playback/health
+
+Returns playback integration configuration, aggregate connection status,
+revision, and per-agent user-safe errors independently of Russound
+`backend_status`.
+
+#### GET /api/playback/agents/{agent_id}/outputs/{output_id}
+
+Returns one output from the web process's cached inventories with its playback
+integration status. Returns `404` when playback is disabled or no configured
+agent has that output id.
+
 ### GET /api/state
 
 Returns the current view payload (`config`, `config_required`, `state`).
@@ -187,18 +270,24 @@ Returns the current view payload (`config`, `config_required`, `state`).
 Server-Sent Events stream used for multi-client synchronization.
 
 - Content type: `text/event-stream; charset=utf-8`
-- Event name: `state-change`
-- Data payload:
+- Event names: `state-change` and `playback-change`.
+- `state-change` carries the latest Russound view payload.
+- `playback-change` is a coalesced invalidation; clients fetch `/api/playback`
+  for the latest cached snapshot.
+- Both event types share a bounded per-browser queue. When a slow client falls
+  behind, queued notifications are replaced by the latest state notification.
+- On connection/reconnection, the frontend fetches both `/api/state` and
+  `/api/playback`.
 
 ```json
-{ "revision": 12 }
+{ "event": "playback-change", "api_version": 1, "revision": 8 }
 ```
 
 The server also sends keepalive comments (`: ping`) periodically.
 
 - The stream starts with `retry: 2000` and is closed by the server after
   5 minutes; `EventSource` reconnects automatically and the frontend
-  re-fetches state on every (re)connect.
+  re-fetches both state snapshots on every (re)connect.
 - Every stream is registered separately, so several tabs of the same browser
   all receive updates.
 - Concurrent streams are limited (`RUSSOUND_MAX_EVENT_STREAMS`, at most
