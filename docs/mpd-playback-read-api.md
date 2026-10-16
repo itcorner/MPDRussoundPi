@@ -1,8 +1,9 @@
 # Playback read API v1: S01 contract
 
 Status: S01 read-contract baseline, 2026-10-14. S02 local observation collector
-and S03 read-only HTTP agent implemented/tested locally; **web endpoints and
-Pi deployment are not implemented**.
+and S03 read-only HTTP agent implemented/tested locally, plus an approved
+loopback Pi deployment with a separate test config. **Web endpoints and
+full production rollout remain unimplemented**.
 Changes to this baseline require updating this document and its
 [contract fixtures](../tests/fixtures/playback-read-v1.json) together.
 See the [implementation plan](./mpd-web-integration-implementation-plan.md).
@@ -213,7 +214,11 @@ Do not use route/signal checks as evidence of physical audible delivery.
 ### Audio values
 
 - Readiness: `{ready: true}` on successful inspection. Missing hardware/profile/
-  sink is a probe error `audio_unavailable`, not enforcing/repairing readiness.
+  sink is a probe error, not enforcing/repairing readiness. Legacy exact-name
+  configurations use `audio_unavailable`. Opt-in USB selectors additionally
+  distinguish `hardware_missing`, `hardware_ambiguous`,
+  `hardware_profile_unavailable`, `hardware_output_unavailable` and
+  `downstream_unavailable`; messages remain sanitized.
 - Route: `{expected_sink, actual_sink, correct}`. Incorrect route is a successful
   observation with `correct: false`; missing/ambiguous client is an error.
 - Gain: `{measured_units: [left, right]}` with two nonnegative integers.
@@ -292,7 +297,9 @@ Non-200 response:
 
 Probe codes include `mpd_unavailable`, `snapshot_inconsistent`,
 `observation_invalid`, `audio_unavailable`, `route_unavailable`,
-`gain_unavailable`. Web remote errors include `agent_timeout`, `agent_unreachable`,
+`gain_unavailable`, `hardware_missing`, `hardware_ambiguous`,
+`hardware_profile_unavailable`, `hardware_output_unavailable`,
+`downstream_unavailable`. Web remote errors include `agent_timeout`, `agent_unreachable`,
 `agent_unauthorized`, `agent_configuration_invalid`, `agent_protocol_error`.
 Remote credentials/schema errors are not an HTTP browser-login error.
 
@@ -320,8 +327,9 @@ must match an already published cache. SSE is not durable/replayable.
 | New `web/playback_client.py` | Remote contract decoding, timeout/age handling |
 | Existing web server/frontend | Optional registry, cache publication, same-origin reads, SSE and cards |
 
-The S02 collector/helpers and S03 agent are implemented locally; web modules
-and Pi deployment remain future work. Use
+The S02 collector/helpers and S03 agent are implemented and tested on Pi
+loopback with a separate config copy; web modules and production transport/
+migration remain future work. Use
 the Pi script directory's existing `lib` import layout initially; do not perform
 an unrelated package migration. Agent dependency manifest belongs with Pi
 scripts. Web client dependencies stay in web requirements; the Docker image

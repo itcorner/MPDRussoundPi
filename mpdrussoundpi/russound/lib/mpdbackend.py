@@ -14,6 +14,7 @@ import mpd  # pyright: ignore[reportMissingTypeStubs]
 from lib.setuplock import setup_lock
 from lib.atomicjson import write_json
 from lib.audioready import wait_for_audio
+from lib.audioidentity import validate_hardware_devices
 from lib.streamgain import set_sink_gain, validate_gain_db
 from lib.streamroute import StreamRoute, inspect_route, recover_route
 
@@ -101,6 +102,7 @@ class MPDBackend:
         devices = mappers.get("audio_devices")
         if not isinstance(devices, list):
             raise ValueError("Configuration requires audio_devices")
+        validate_hardware_devices(devices)
         sinks: set[str] = set()
         for device in devices:
             if not isinstance(device, dict) or not isinstance(device.get("sinks"), list):

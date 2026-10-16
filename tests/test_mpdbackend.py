@@ -221,6 +221,39 @@ class MPDBackendTests(unittest.TestCase):
         self.assertEqual(self.api._intentions()["Radio 88.6"], "play")
         self.client.connect.assert_not_called()
 
+    def test_selector_recovery_preserves_stopped_paused_intentions_and_gain(self):
+        self.config["outputmappers"]["audio_devices"][0]["hardware-selector"] = {
+            "vendor": "0d8c", "product": "0102",
+        }
+        self.path.write_text(json.dumps(self.config))
+        self.api.initialize_intentions()
+        self.api._record_intention(self.api._select("FM4 Radio"), "pause")
+        self.api._record_intention(self.api._select("OE3 Radio"), "stop")
+        config_before = self.path.read_bytes()
+        intentions_before = self.api.state_path.read_bytes()
+        self.wait_for_audio.side_effect = RuntimeError("Selected USB audio hardware is ambiguous")
+        with self.assertRaisesRegex(backend.BackendError, "ambiguous"):
+            self.api.reconcile("Radio 88.6")
+        self.client.connect.assert_not_called()
+        self.client.status.return_value = {"state": "stop"}
+        self.api.reconcile("FM4 Radio")
+        self.api.reconcile("OE3 Radio")
+        self.assertEqual(self.wait_for_audio.call_count, 1)
+        self.client.playid.assert_not_called()
+        self.client.setvol.assert_not_called()
+        self.set_sink_gain.assert_not_called()
+        self.assertEqual(config_before, self.path.read_bytes())
+        self.assertEqual(intentions_before, self.api.state_path.read_bytes())
+
+    def test_invalid_selector_rejected_during_configuration_snapshot(self):
+        self.config["outputmappers"]["audio_devices"][0]["hardware-selector"] = {
+            "vendor": True, "product": "0102",
+        }
+        self.path.write_text(json.dumps(self.config))
+        with self.assertRaisesRegex(ValueError, "USB identifier"):
+            self.api.configuration_snapshot()
+        self.client.connect.assert_not_called()
+
     def test_busy_lock_raises_exception_not_systemexit(self):
         with backend.setup_lock("mpd_control.lock"):
             with self.assertRaisesRegex(backend.BackendError, "busy"):

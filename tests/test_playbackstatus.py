@@ -111,6 +111,39 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertFalse((self.path.parent / "playback.json").exists())
         self.assertEqual(sorted(p.name for p in self.path.parent.iterdir()), ["config.json"])
 
+    def test_selector_readiness_reaches_shared_validator_without_profile_mutation(self):
+        device = self.config["outputmappers"]["audio_devices"][0]
+        device["hardware-selector"] = {"vendor": "0d8c", "product": "0102"}
+        self.save()
+        self.collector.close()
+        self.collector = status.PlaybackCollector(self.api)
+        self.addCleanup(self.collector.close)
+        before = self.path.read_bytes()
+        properties = {
+            "device.api": "alsa", "device.bus": "usb",
+            "device.vendor.id": "0x0d8c", "device.product.id": "0x0102",
+            "object.id": "10",
+        }
+        card = {"index": 1234, "name": "alsa_card.example.3",
+                "active_profile": "output:analog-surround-51", "properties": properties}
+        graph = [{"id": 10, "type": "PipeWire:Interface:Device", "info": {"props": properties}}]
+        self.readiness.side_effect = ready.audio_ready_config
+        def pactl(*args):
+            if args == ("--format=json", "list", "cards"):
+                return json.dumps([card])
+            if args == ("--format=json", "list", "sinks"):
+                return "[]"
+            self.fail("Read-only collector attempted a profile mutation")
+        with patch.object(ready, "_pactl", side_effect=pactl):
+            with patch.object(ready, "pipewire_graph", return_value=graph):
+                self.refresh(audio=True)
+        for output in self.collector.snapshot():
+            self.assertEqual(output.readiness.status, "error")
+            self.assertEqual(output.readiness.error.code, "hardware_output_unavailable")
+            self.assertNotIn("example", output.readiness.error.message)
+        self.assertEqual(before, self.path.read_bytes())
+        self.assertFalse((self.path.parent / "playback.json").exists())
+
     def test_selected_and_audio_only_refresh_preserve_read_isolation(self):
         jobs = self.collector.refresh(output_ids=("front",))
         for job in jobs:

@@ -273,6 +273,14 @@ opt-in; transport remains loopback-only until D06. No production IDs are
 assigned by these scripts. S06 is not complete: migration, secure transport,
 web configuration and approved target acceptance still remain.
 
+**Partial target acceptance (2026-10-15):** user approved deployment with a
+separate private observation-test config during endurance. Agent running on
+Pi loopback; authenticated reads, real MPD metadata, routes/gains and unchanged
+production config/intentions/service lifecycle verified. Existing Radio 88.6
+faults continued; no zero-impact or uninterrupted-playback claim.
+See [target evidence](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15).
+D06, production migration and Docker/web reachability remain outstanding.
+
 1. Extend [Pi provisioning](../ansible/playbooks/setup-musicpi.yml) with a
    separate **agent-only** installation path. Avoid its existing audio/MPD
    restart steps for additive agent deployment.

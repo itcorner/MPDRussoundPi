@@ -1,11 +1,13 @@
 # MPD integration with the Russound web interface
 
-Date: 2026-10-14. Status: solution D selected; detailed design pending, not an implemented API.
+Date: 2026-10-14. Status: solution D selected; read-only agent implemented,
+remaining controls/web integration still planned.
 
 Implementation progress: S01 read contracts, S02 local observation collector
-and S03 authenticated read-only HTTP agent are complete locally.
-Agent deployment, web integration and production ID migration remain
-future work; see the [implementation plan](./mpd-web-integration-implementation-plan.md)
+and S03 authenticated read-only HTTP agent are complete locally, with
+[isolated Pi target acceptance](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15).
+Production transport/migration and web integration remain future work;
+see the [implementation plan](./mpd-web-integration-implementation-plan.md)
 and [collector usage](./mpd-backend-api.md).
 
 ## 1. Selected architecture

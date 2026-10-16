@@ -24,6 +24,8 @@ class AudioSetupTests(unittest.TestCase):
             ("PULSE_CONFIG", "default.pa"), ("PULSE_FRAGMENT", "managed.pa"),
             ("PIPEWIRE_CONFIG", "remapped-sinks.conf"), ("WIREPLUMBER_CONFIG", "card-modes.conf"),
             ("PULSE_SYSTEM_CONFIG", "system-default.pa"),
+            ("USB_TARGET_CORE", "scripts/lib/mpdrussoundpi-usb-target.lua"),
+            ("USB_TARGET_HOOK", "scripts/mpdrussoundpi/usb-target-hook.lua"),
         ):
             patcher = patch.object(audiosetup, name, str(self.directory / filename))
             patcher.start()
@@ -235,6 +237,96 @@ class AudioSetupTests(unittest.TestCase):
                 self.assertIn(f"audio.position = {output_map}", playback)
                 self.assertIn('target.object = "master"', playback)
                 self.assertIn("stream.dont-remix = true", playback)
+
+    def selector_config(self):
+        config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+        device = config["outputmappers"]["audio_devices"][0]
+        device["hardware-selector"] = {"vendor": "0d8c", "product": "0102"}
+        return config, device
+
+    def test_usb_selector_generates_guarded_loopbacks_and_coordinated_policy(self):
+        _, settings = self.selector_config()
+        device = audiosetup.config2audiodevice(settings)
+        config = device.get_pipewire_sink_config()
+        self.assertEqual(config.count("mpdrussoundpi.managed = true"), 3)
+        self.assertEqual(config.count("node.dont-fallback = true"), 3)
+        self.assertEqual(config.count("node.linger = true"), 3)
+        self.assertEqual(config.count("node.dont-reconnect = false"), 3)
+        self.assertEqual(config.count('target.object = "mpdrussoundpi.usb-required"'), 3)
+        self.assertNotIn("alsa_output.", config)
+        self.assertEqual(device.get_wireplumber_card_config(), "")
+        audiosetup.create_wireplumber_config({device.name: device})
+        generated = Path(audiosetup.WIREPLUMBER_CONFIG).read_text()
+        self.assertIn("custom.mpdrussoundpi-usb-target", generated)
+        self.assertIn("support.standard-event-source", generated)
+        self.assertNotIn("device.profile =", generated)
+        entries = generated.split("mpdrussoundpi.usb-targets = ", 1)[1].split("\n", 1)[0]
+        self.assertEqual(json.loads(entries), [
+            {"node": f"playback.{sink.name}", "vendor": "0d8c", "product": "0102"}
+            for sink in device.sinks
+        ])
+        for path in (audiosetup.USB_TARGET_CORE, audiosetup.USB_TARGET_HOOK):
+            self.assertTrue(Path(path).read_text().startswith(audiosetup.SCRIPT_HEADER))
+        with patch.object(audiosetup.subprocess, "run") as run:
+            audiosetup.cleanup_configs("pipewire")
+        run.assert_called_once()
+        self.assertFalse(Path(audiosetup.USB_TARGET_CORE).exists())
+        self.assertFalse(Path(audiosetup.USB_TARGET_HOOK).exists())
+
+    def test_unowned_or_symlink_policy_refuses_install_and_cleanup_before_any_write(self):
+        _, settings = self.selector_config()
+        device = audiosetup.config2audiodevice(settings)
+        path = Path(audiosetup.USB_TARGET_HOOK)
+        path.parent.mkdir(parents=True)
+        path.write_text("-- unrelated user script\n")
+        Path(audiosetup.PIPEWIRE_CONFIG).write_text(audiosetup.MANAGED_HEADER)
+        for action in (lambda: audiosetup.create_wireplumber_config({device.name: device}),
+                       lambda: audiosetup.cleanup_configs("pipewire")):
+            with self.assertRaisesRegex(ValueError, "unowned"):
+                action()
+        self.assertFalse(Path(audiosetup.WIREPLUMBER_CONFIG).exists())
+        self.assertTrue(Path(audiosetup.PIPEWIRE_CONFIG).exists())
+        path.unlink()
+        path.symlink_to(Path(audiosetup.PIPEWIRE_CONFIG))
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            audiosetup.create_wireplumber_config({device.name: device})
+
+    def test_legacy_reinstall_removes_owned_policy_scripts_only(self):
+        _, settings = self.selector_config()
+        device = audiosetup.config2audiodevice(settings)
+        audiosetup.create_wireplumber_config({device.name: device})
+        del settings["hardware-selector"]
+        legacy = audiosetup.config2audiodevice(settings)
+        audiosetup.create_wireplumber_config({legacy.name: legacy})
+        self.assertFalse(Path(audiosetup.USB_TARGET_CORE).exists())
+        self.assertFalse(Path(audiosetup.USB_TARGET_HOOK).exists())
+        self.assertNotIn("wireplumber.components", Path(audiosetup.WIREPLUMBER_CONFIG).read_text())
+        self.assertIn("device.profile =", Path(audiosetup.WIREPLUMBER_CONFIG).read_text())
+
+    def test_selector_install_requires_unique_hardware_before_writing_files(self):
+        config, _ = self.selector_config()
+        path = self.directory / "config.json"
+        path.write_text(json.dumps(config))
+        with patch.object(audiosetup, "detect_audio_processor", return_value={"pipewire": True}):
+            with patch.object(audiosetup, "hardware_preflight", side_effect=RuntimeError("ambiguous")):
+                with patch.object(audiosetup.subprocess, "run") as run:
+                    with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                        audiosetup.install(str(path), "pipewire")
+        self.assertFalse(Path(audiosetup.WIREPLUMBER_CONFIG).exists())
+        self.assertFalse(Path(audiosetup.PIPEWIRE_CONFIG).exists())
+        run.assert_not_called()
+
+    def test_selector_pulse_install_refused_before_writing_files(self):
+        config, _ = self.selector_config()
+        path = self.directory / "config.json"
+        path.write_text(json.dumps(config))
+        with patch.object(audiosetup, "detect_audio_processor", return_value={"pulseaudio": True}):
+            with patch.object(audiosetup.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "PipeWire"):
+                    audiosetup.install(str(path), "pulseaudio")
+        self.assertFalse(Path(audiosetup.PULSE_CONFIG).exists())
+        self.assertFalse(Path(audiosetup.PULSE_FRAGMENT).exists())
+        run.assert_not_called()
 
     def test_setup_lock_rejects_contention_and_keeps_inode(self):
         with tempfile.TemporaryDirectory() as directory:

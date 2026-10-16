@@ -1,5 +1,24 @@
 # Read-only playback endurance and USB reconnect recorder
 
+The [approved Oct 16 USB maintenance deployment](./usb-audio-recovery-fix.md#approved-maintenance-deployment-2026-10-16)
+restored a verified 5.1 baseline, including user-confirmed physical output.
+Its explicit audio restart is maintenance, not a passed reconnect cycle.
+A subsequent short physical cycle disconnected at 20:50:31, enumerated at
+20:50:43 and passed recorded readiness by 20:50:47 CEST, with unchanged service
+lifecycles, gains/intentions and user-confirmed recovered output.
+Guided tests subsequently exercised four further short cycles, a 149-second
+absence, physical port relocation, paused/stopped intention preservation and
+real duplicate-adapter refusal/removal recovery. All final routes, gains,
+intentions and audible outputs passed without service restarts. The first
+mixed-intention attempt was contaminated by additional physical adjustments
+and USB descriptor failures; a stable-port retry passed. USB bandwidth failures
+remain a separate limitation, including errors from the second adapter.
+See the [detailed acceptance record](./usb-audio-recovery-fix.md#resumed-physical-tests-short-cycles-25-and-long-disconnect)
+for timing and scope qualifications.
+At 22:04:45 the fresh two-hour recorder (started at 20:49:43) was still active
+with no open incidents, not yet completed. The initial failed test and completed
+72-hour run remain separate evidence.
+
 [playbackaudit.py](../mpdrussoundpi/russound/playbackaudit.py) observes the existing
 recovery supervisor. It never calls play/stop, moves clients, changes gains,
 selects profiles or starts/restarts audio/MPD services. Monitor recordings
@@ -112,6 +131,12 @@ journals; investigate signal flags. No automatic pass/fail certification is
 produced.
 
 ## Physical reconnect procedure
+
+The 2026-10-16 initial reconnect did not restore 5.1: WirePlumber returned the
+adapter with a suffixed runtime name, defeating exact-name rules/readiness and
+hardware loopback targets. Controlled cycles are paused pending the
+[coordinated hardware identity/routing fix](./usb-audio-recovery-fix.md).
+Do not count a software-repaired baseline as automatic reconnect acceptance.
 
 Keep the recorder and recovery supervisor running. In an approved maintenance
 window, note exact unplug/replug timestamps (for example in a separate

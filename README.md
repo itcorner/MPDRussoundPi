@@ -87,7 +87,8 @@ S02's local collector and S03's authenticated [read-only HTTP agent](docs/mpd-ba
 are implemented and locally tested. Pi deployment, transport provisioning,
 production ID migration and browser integration remain future steps.
 Agent-only [Pi deployment and rollback scripts](docs/playback-agent-deployment.md)
-are prepared but have not been executed; activation is opt-in and loopback-only.
+were tested by deploying the loopback-only agent with a separate observation
+config; production migration, secure transport and web integration remain pending.
 
 ## Requirements
 

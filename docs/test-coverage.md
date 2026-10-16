@@ -42,6 +42,24 @@ This review covers the Python production modules in `web/` and `tool/`.
   active lock, and it must not be deleted while setup may be running.
 - Several web tests exercise private helpers or mocks rather than full HTTP request flows for every route.
 - Hardware-dependent behavior, systemd/PulseAudio/PipeWire commands, and real MPD connections are not tested in this environment.
+- The opt-in [USB recovery implementation](./usb-audio-recovery-fix.md#step-4-coordinated-opt-in-implementation)
+  adds model-selection, shared-readiness and downstream graph tests in
+  [test_audioidentity.py](../tests/test_audioidentity.py), plus standalone Lua
+  [decision-core](../tests/usb-target-policy-test.lua) and
+  [hook-adapter](../tests/usb-target-hook-test.lua) harnesses. The hook harness
+  mocks WirePlumber APIs. The separate
+  [runtime harness](../tests/usb-target-runtime.sh) exercises an actual isolated
+  PipeWire/WirePlumber graph with synthetic exported devices, not production
+  ALSA/USB hotplug. Setup tests cover generated policy ownership, guarded
+  loopbacks, legacy reinstall and ambiguity preflight; backend/collector tests
+  cover retained intentions/gain and read-only readiness error reporting.
+  Approved Oct 16 maintenance and five short reconnects, a 149-second absence,
+  port relocation, a stable-port mixed-intention retry and real duplicate-card
+  refusal/removal recovery subsequently passed on the target. The first
+  mixed-intention attempt was contaminated by extra physical adjustments and
+  descriptor failures. USB bandwidth limits remain unresolved; see the
+  [acceptance qualifications](./usb-audio-recovery-fix.md#final-checkpoint-after-guided-tests).
+
 
 ## Test Links
 
@@ -111,6 +129,12 @@ This review covers the Python production modules in `web/` and `tool/`.
   isolated sources/venv, private credentials, no audio/MPD service operations
   and limited rollback. They execute no deployment or target commands.
   Six static tests and both Ansible syntax checks passed (2026-10-15).
+- [Isolated target acceptance](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15)
+  verifies real Pi cached reads, metadata, routes/gain and HTTP authentication
+  with a separate private config copy. Production config/intentions hashes and
+  existing audio/MPD/supervisor/recorder PIDs/restarts were unchanged; recorder
+  sampling advanced. Existing Radio 88.6 faults continued. No fault injection,
+  playback repair, Docker transport or p95 update-latency acceptance was performed.
 
 ## Manual MPD Stream Control
 

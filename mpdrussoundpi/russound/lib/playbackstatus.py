@@ -11,6 +11,7 @@ import time
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
 from lib.audioready import audio_ready_config
+from lib.audioidentity import HardwareUnavailable
 from lib.mpdbackend import BackendError, MPDBackend, MPDConnection, StreamSettings
 from lib.streamgain import read_sink_gain
 from lib.streamroute import inspect_route
@@ -333,7 +334,8 @@ class PlaybackCollector:
         try:
             value = operation()
         except (BackendError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-            code = ("snapshot_inconsistent" if isinstance(error, InconsistentSnapshot) else
+            code = (error.code if isinstance(error, HardwareUnavailable) else
+                    "snapshot_inconsistent" if isinstance(error, InconsistentSnapshot) else
                     "observation_invalid" if isinstance(error, (InvalidObservation, ValueError)) else error_code)
             logging.warning("Output %s %s observation failed: %s", identity, kind, code)
             return Probe(

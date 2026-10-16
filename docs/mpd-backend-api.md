@@ -14,9 +14,26 @@ the current API below.
 
 The [S01 read API contract](./mpd-playback-read-api.md) specifies the remote
 observation interface and fixtures. S02 implements the local collector and S03
-the read-only HTTP adapter below. Pi service deployment and web integration
-are not implemented yet.
+the read-only HTTP adapter below. A loopback Pi test deployment uses a separate
+config copy; production migration/transport and web integration remain pending.
 Existing `status()` behavior remains unchanged.
+
+## Opt-in USB hardware recovery
+
+An audio device may explicitly configure
+`"hardware-selector": {"vendor": "0d8c", "product": "0102"}`.
+This selects one USB model independent of port/runtime naming, refusing zero
+or multiple matches. It requires PipeWire/WirePlumber, `analog-surround-51` and
+unique stereo channel pairs. Existing configurations without the field keep
+their exact-name behavior; no automatic migration occurs.
+
+The shared readiness path checks the actual downstream PipeWire links, not
+only MPD-to-virtual-sink routing. Startup/reconciliation can set the profile
+only on the uniquely selected card and must re-observe readiness afterward.
+Read-only collection and audit do not set profiles. Saved intentions and
+`gain_db` still belong to the existing backend/supervisor; no extra recovery
+daemon is introduced. See the [coordinated recovery design and validation
+gates](./usb-audio-recovery-fix.md) before deploying the opt-in configuration.
 
 ## Read-only detailed observations (S02)
 
@@ -152,7 +169,7 @@ python mpdrussoundpi/russound/playbackagent.py migrated-test-config.json \
 - SIGINT/SIGTERM close the HTTP listener/Waitress workers and join bounded
   observer reads. The standalone entry point does not generate systemd units.
   S06's separate [deployment preparation](./playback-agent-deployment.md)
-  provides an independent user unit but has not been executed. Run as the
+  provides an independent user unit, tested with a separate Pi config copy. Run as the
   existing audio user when eventually approved, never as a second playback supervisor.
 
 Local tests exercise real loopback Waitress and standalone CLI liveness/clean
