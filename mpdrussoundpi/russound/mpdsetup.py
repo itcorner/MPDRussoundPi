@@ -290,7 +290,7 @@ if __name__ == "__main__":
                 inst = config2mpd(stream_config, sink_dict, ignore_missing_sinks=False)
                 if inst:
                     mpd_instances.append(inst)
-                    logging.debug(f"Found valid configuration for MPD instance: {inst.name} on port {inst.port} with stream URL: {inst.stream.get_url()}")
+                    logging.debug(f"Found valid configuration for MPD instance: {inst.name} on port {inst.port}")
 
             for instance in mpd_instances:
                 create_mpd_config(instance)

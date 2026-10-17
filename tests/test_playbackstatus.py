@@ -92,7 +92,7 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertEqual(value, expected)
         for client in self.clients:
             self.assertEqual(client.timeout, 3)
-            self.assertEqual(client.connect.call_args.args[0], "localhost")
+            self.assertEqual(client.connect.call_args.args[0], "127.0.0.1")
             self.assertEqual([call[0] for call in client.mock_calls],
                              ["connect", "status", "currentsong", "status", "disconnect"])
 

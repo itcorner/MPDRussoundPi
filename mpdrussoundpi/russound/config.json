@@ -38,7 +38,6 @@
       "gain_db": -7.1,
       "stream": "https://edge85.streamonkey.net/radio886-onair/stream/mp3?aggregator=886Website",
       "port": 6601,
-      "bind_to_address": "0.0.0.0",
       "audio_output": {
         "type": "pulse",
         "sink": "stereo_front"
@@ -54,7 +53,6 @@
       "source_station_name": "ORF Radio FM4",
       "queue_managed": true,
       "port": 6602,
-      "bind_to_address": "0.0.0.0",
       "audio_output": {
         "type": "pulse",
         "sink": "stereo_centerlfe"
@@ -70,7 +68,6 @@
       "source_station_name": "ORF Hitradio OE3",
       "queue_managed": true,
       "port": 6603,
-      "bind_to_address": "0.0.0.0",
       "audio_output": {
         "type": "pulse",
         "sink": "stereo_rear"

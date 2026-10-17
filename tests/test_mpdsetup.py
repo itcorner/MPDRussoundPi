@@ -15,7 +15,6 @@ with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
     # Unit generation does not use an MPD protocol connection.
     with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
         mpdsetup = importlib.import_module("mpdsetup")
-        stream = importlib.import_module("lib.stream")
 
 
 class MPDSetupTests(unittest.TestCase):
@@ -98,9 +97,7 @@ class MPDSetupTests(unittest.TestCase):
 
     def test_meta_service_names_and_orders_configured_instances(self):
         instances = [
-            mpdsetup.MPDInstance(
-                name, "127.0.0.1", port, stream.Stream("https://example.com/radio", name)
-            )
+            mpdsetup.MPDInstance(name, port)
             for name, port in [("Stereo Front", 6601), ("Stereo CenterLFE", 6602), ("Stereo Rear", 6603)]
         ]
         with tempfile.TemporaryDirectory() as directory:
@@ -124,9 +121,7 @@ class MPDSetupTests(unittest.TestCase):
         self.assertNotIn("*", config)
 
     def test_instance_and_supervisor_units_include_headless_recovery(self):
-        instance = mpdsetup.MPDInstance(
-            "Stereo Front", "127.0.0.1", 6601, stream.Stream("https://example.com", "Radio")
-        )
+        instance = mpdsetup.MPDInstance("Stereo Front", 6601)
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(mpdsetup, "SYSTEMD_USER_CONFIG_DIR", directory):
                 mpdsetup.create_mpd_systemd_service(instance, "/home/user/audio config.json")
@@ -157,6 +152,18 @@ class MPDSetupTests(unittest.TestCase):
             self.assertIsNotNone(instance)
             assert instance is not None
             self.assertIn('mixer_type "software"', instance.to_mpd_config())
+
+    def test_generated_mpd_config_listens_on_loopback_only(self):
+        sinks = {"stereo_front": mpdsetup.sink.config2sink({"name": "stereo_front", "master_channel_map": "[ FL FR ]"})}
+        for requested in ({}, {"bind_to_address": "0.0.0.0"}, {"bind_to_addr": "0.0.0.0"}):
+            with self.subTest(requested=requested):
+                entry = {"name": "Stereo Front", "port": 6601,
+                         "audio_output": {"type": "pulse", "sink": "stereo_front"}, **requested}
+                instance = mpdsetup.config2mpd(entry, sinks)
+                assert instance is not None
+                config = instance.to_mpd_config()
+                self.assertIn('bind_to_address "127.0.0.1"\n', config)
+                self.assertNotIn("0.0.0.0", config)
 
     def test_systemd_arguments_escape_specifiers_variables_and_quotes(self):
         self.assertEqual(mpdsetup.systemd_quote('a%$"b'), '"a%%$$\\"b"')

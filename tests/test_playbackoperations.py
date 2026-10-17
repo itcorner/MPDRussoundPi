@@ -355,7 +355,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(json.loads(self.api.state_path.read_text()), {
             "Stereo Front": "stop", "Stereo CenterLFE": "play", "Stereo Rear": "play",
         })
-        self.client.connect.assert_called_once_with("localhost", self.config["streams"][0]["port"])
+        self.client.connect.assert_called_once_with("127.0.0.1", self.config["streams"][0]["port"])
         self.set_sink_gain.assert_not_called()
 
     def test_gain_while_paused_is_persisted_without_starting_and_reapplied_later(self):

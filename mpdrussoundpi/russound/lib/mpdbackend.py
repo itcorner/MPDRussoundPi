@@ -15,6 +15,7 @@ from lib.setuplock import setup_lock
 from lib.atomicjson import write_json
 from lib.audioready import wait_for_audio
 from lib.audioidentity import validate_hardware_devices
+from lib.mpdinstance import MPD_HOST
 from lib.playbackidentity import identities, output_label
 from lib.sourceurl import validate_source_url
 from lib.tunein import TuneInCatalog, TuneInError
@@ -267,7 +268,7 @@ class MPDBackend:
         client = cast(MPDConnection, mpd.MPDClient())
         client.timeout = timeout
         try:
-            client.connect("localhost", stream.port)
+            client.connect(MPD_HOST, stream.port)
             yield client
         except (mpd.MPDError, OSError) as error:
             if redact_errors:

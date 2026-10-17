@@ -144,9 +144,11 @@ user authentication. The current SSE implementation includes the view payload.
 - The web image currently copies only `web/`; its dependencies are Flask and
   Waitress. It intentionally excludes the MPD/audio tree. Avoid importing
   Pi-local audio code into that image.
-- MPD binding generation has a known `bind_to_address` versus `bind_to_addr`
-  mismatch, and generated configs contain no MPD password. Do not assume MPD
-  ports are isolated until generated configs and listeners are verified.
+- Generated MPD configs always bind `127.0.0.1` and have no MPD password;
+  only local processes (agent, supervisor, audit, CLI) connect. Remote MPD
+  clients are intentionally unsupported. Existing installs must rerun
+  `mpdsetup.py --install` and restart MPD to drop the earlier all-interface
+  binding.
 
 ## 4. Architecture choices
 

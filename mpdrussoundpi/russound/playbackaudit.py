@@ -27,6 +27,7 @@ import mpd  # pyright: ignore[reportMissingTypeStubs]
 from lib.atomicjson import write_json
 from lib.audioready import audio_ready
 from lib.mpdbackend import JSONValue, MPDBackend, MPDConnection, StreamSettings
+from lib.mpdinstance import MPD_HOST
 from lib.setuplock import setup_lock
 from lib.streamroute import inspect_route
 
@@ -54,7 +55,7 @@ def playback(stream: StreamSettings) -> dict[str, str]:
     client = cast(MPDConnection, mpd.MPDClient())
     client.timeout = 3
     try:
-        client.connect("localhost", stream.port)
+        client.connect(MPD_HOST, stream.port)
         state = client.status()
         queue = client.playlistinfo()
         empty: dict[str, str] = {}
