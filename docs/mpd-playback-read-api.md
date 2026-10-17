@@ -243,7 +243,10 @@ freshness transitions. Observation timestamps, age counters, snapshot
 revisions, and elapsed playback counters alone do not invalidate browser
 content. The visible playback page retains a 5-second fallback poll; when only
 ages have changed, it updates freshness labels in place rather than rebuilding
-the stream cards.
+the stream cards. Fresh updates less than four seconds old display "Updated
+now"; older updates retain the seconds-ago label, and stale data retains its
+explicit stale label. Agent and request errors appear above the page header,
+matching the Controller page's warning placement.
 
 Web computes effective age from agent-reported age, full HTTP request duration
 (conservative), and elapsed time since receipt. For agent `stale` values the web

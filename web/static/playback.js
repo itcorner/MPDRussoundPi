@@ -42,18 +42,12 @@ function appendPlaybackWarning(parent, title, detail) {
   description.textContent = detail;
   warning.append(heading, description);
   parent.appendChild(warning);
+  parent.hidden = false;
 }
 
 function renderPlaybackWarning(title, detail) {
-  const warning = document.createElement("div");
-  warning.className = "backend-warning-banner";
-  const heading = document.createElement("strong");
-  heading.textContent = title;
-  const description = document.createElement("span");
-  description.textContent = detail;
-  warning.append(heading, description);
-  message.replaceChildren(warning);
-  message.hidden = false;
+  message.replaceChildren();
+  appendPlaybackWarning(message, title, detail);
 }
 
 function meaningfulPlaybackValue(value) {
@@ -86,7 +80,8 @@ function playbackFreshness(playbackProbe, agent) {
   const isStale = agent.status !== "ok" || playbackProbe.stale || agent.snapshot.stale;
   return isStale
     ? `Stale${effectiveAgeMs === null ? "" : ` · last data ${Math.floor(effectiveAgeMs / 1000)}s old`}`
-    : effectiveAgeMs === null ? "Update age unknown" : `Updated ${Math.floor(effectiveAgeMs / 1000)}s ago`;
+    : effectiveAgeMs === null ? "Update age unknown"
+      : effectiveAgeMs < 4000 ? "Updated now" : `Updated ${Math.floor(effectiveAgeMs / 1000)}s ago`;
 }
 
 function updatePlaybackFreshness(playback) {
@@ -108,6 +103,7 @@ function updatePlaybackFreshness(playback) {
 
 function renderPlayback(playback) {
   outputsContainer.replaceChildren();
+  message.replaceChildren();
   message.hidden = true;
 
   if (!playback.configured) {
@@ -125,7 +121,7 @@ function renderPlayback(playback) {
     const outputs = agent.snapshot?.outputs || [];
     if (outputs.length === 0) {
       appendPlaybackWarning(
-        outputsContainer,
+        message,
         "Playback agent unavailable",
         `${agent.agent_id}: ${agent.error?.message || "Waiting for stream status."}`,
       );
@@ -167,7 +163,7 @@ function renderPlayback(playback) {
     }
     if (agent.error?.message) {
       appendPlaybackWarning(
-        outputsContainer,
+        message,
         "Playback agent unavailable",
         `${agent.agent_id}: ${agent.error.message}`,
       );
