@@ -8,6 +8,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PLAYBOOKS = ROOT / "ansible/playbooks"
 SERVICE = ROOT / "ansible/templates/playback-agent.service.j2"
+PROXY_PLAYBOOK = PLAYBOOKS / "deploy-playback-agent-proxy.yml"
+PROXY_CADDYFILE = ROOT / "ansible/templates/playback-agent.Caddyfile.j2"
+PROXY_SERVICE = ROOT / "ansible/templates/playback-agent-proxy.service.j2"
 
 
 class PlaybackAgentDeploymentTests(unittest.TestCase):
@@ -118,6 +121,92 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
                 self.assertFalse(config["enabled"])
                 self.assertEqual(config["state"], "stopped")
         self.assertFalse(self.tasks(self.remove, "ansible.builtin.command"))
+
+    def test_tls_proxy_is_separate_loopback_only_and_start_is_opt_in(self):
+        play = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
+        self.assertEqual(play["hosts"], "musicpi")
+        self.assertTrue(play["become"])
+        self.assertFalse(play["vars"]["playback_proxy_start"])
+        caddyfile = Environment(undefined=StrictUndefined).from_string(
+            PROXY_CADDYFILE.read_text()
+        ).render(
+            playback_proxy_hostname="musicpi.home.arpa",
+            playback_proxy_port=8443,
+            playback_proxy_certificate="/etc/caddy/certs/agent.crt",
+            playback_proxy_private_key="/etc/caddy/certs/agent.key",
+            playback_proxy_allowed_cidr="192.168.1.20/32",
+            playback_agent_port=8081,
+        )
+        self.assertIn("admin 127.0.0.1:2020", caddyfile)
+        self.assertIn("protocols h1 h2", caddyfile)
+        self.assertIn("musicpi.home.arpa:8443", caddyfile)
+        self.assertIn("remote_ip 192.168.1.20/32", caddyfile)
+        self.assertIn("reverse_proxy 127.0.0.1:8081", caddyfile)
+        self.assertIn("/v1/outputs/*", caddyfile)
+        self.assertIn("respond 403", caddyfile)
+        self.assertNotIn("--allow-remote", caddyfile)
+        named_services = [
+            task
+            for task in self.tasks(play, "ansible.builtin.systemd_service")
+            if "name" in task["ansible.builtin.systemd_service"]
+        ]
+        self.assertEqual(len(named_services), 1)
+        for task in named_services:
+            config = task["ansible.builtin.systemd_service"]
+            self.assertEqual(config["name"], "mpdrussoundpi-playback-agent-proxy.service")
+            self.assertIn("playback_proxy_start | bool", task["when"])
+        proxy_unit = Environment(undefined=StrictUndefined).from_string(
+            PROXY_SERVICE.read_text()
+        ).render(
+            playback_proxy_caddy_binary="/usr/bin/caddy",
+            playback_proxy_caddyfile="/etc/caddy/mpdrussoundpi-playback-agent.Caddyfile",
+        )
+        self.assertIn("User=caddy", proxy_unit)
+        self.assertIn("Group=caddy", proxy_unit)
+        self.assertIn("NoNewPrivileges=true", proxy_unit)
+        self.assertIn("ProtectSystem=strict", proxy_unit)
+        self.assertIn("ReadWritePaths=/var/lib/caddy/playback-agent", proxy_unit)
+        self.assertNotIn("CAP_NET_BIND_SERVICE", proxy_unit)
+
+    def test_proxy_play_never_restarts_agent_or_audio_services(self):
+        play = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
+        services = [
+            task
+            for task in self.tasks(play, "ansible.builtin.systemd_service")
+            if "name" in task["ansible.builtin.systemd_service"]
+        ]
+        self.assertEqual(len(services), 1)
+        for task in services:
+            self.assertEqual(
+                task["ansible.builtin.systemd_service"]["name"],
+                "mpdrussoundpi-playback-agent-proxy.service",
+            )
+        content = PROXY_PLAYBOOK.read_text()
+        for forbidden in (
+            "mpdrussoundpi-playback-agent.service",
+            "mpd.service",
+            "pipewire.service",
+            "ser2net",
+            "ansible.builtin.apt",
+        ):
+            self.assertNotIn(forbidden, content)
+        self.assertTrue(any(
+            task.get("no_log")
+            for task in self.tasks(play, "ansible.builtin.command")
+            if "Generate a self-signed certificate" in task["name"]
+        ))
+        trust_copy = self.tasks(play, "ansible.builtin.fetch")
+        self.assertEqual(len(trust_copy), 1)
+        self.assertEqual(
+            trust_copy[0]["ansible.builtin.fetch"]["src"],
+            "{{ playback_proxy_certificate }}",
+        )
+        self.assertIn("musicpi-proxy.crt", trust_copy[0]["ansible.builtin.fetch"]["dest"])
+        self.assertNotIn("private_key", trust_copy[0]["ansible.builtin.fetch"]["src"])
+        self.assertFalse(any(
+            "firewall" in task["name"].lower()
+            for task in play["tasks"]
+        ))
 
 
 if __name__ == "__main__":

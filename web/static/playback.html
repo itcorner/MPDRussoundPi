@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Playback Status</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell status-shell">
+      <section class="panel system-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">MPD playback</p>
+            <h1>Playback status</h1>
+          </div>
+        </div>
+        <nav class="page-menu" aria-label="Page navigation">
+          <a class="page-menu-link" href="/">Controller</a>
+          <a class="page-menu-link is-active" href="/playback" aria-current="page">Playback</a>
+          <a class="page-menu-link" href="/config">Configuration</a>
+          <a class="page-menu-link" href="/status">Status</a>
+        </nav>
+        <p class="panel-copy">See whether each stream is running and what it is currently playing.</p>
+      </section>
+
+      <section class="panel playback-panel" aria-live="polite">
+        <div class="panel-header">
+          <h2 class="section-title">Streams</h2>
+          <span id="playbackHealth" class="playback-health" role="status">Connecting…</span>
+        </div>
+        <div id="playbackMessage" class="playback-message" role="alert" hidden></div>
+        <div id="playbackOutputs" class="playback-grid"></div>
+      </section>
+    </main>
+
+    <script src="/static/playback.js"></script>
+  </body>
+</html>

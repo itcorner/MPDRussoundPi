@@ -82,13 +82,14 @@ for deployment alternatives, the recommended Pi-local playback agent, live
 status/metadata contracts, source providers, volume controls and hardware-driven
 automation. Solution D (Pi-local HTTP agent) has been selected; the
 [stepwise implementation plan](docs/mpd-web-integration-implementation-plan.md)
-tracks work packages and open decisions. The web application does not yet expose MPD controls.
-S02's local collector and S03's authenticated [read-only HTTP agent](docs/mpd-backend-api.md)
-are implemented and locally tested. Pi deployment, transport provisioning,
-production ID migration and browser integration remain future steps.
-Agent-only [Pi deployment and rollback scripts](docs/playback-agent-deployment.md)
-were tested by deploying the loopback-only agent with a separate observation
-config; production migration, secure transport and web integration remain pending.
+tracks work packages and open decisions. The web application currently provides an optional, read-only MPD playback
+dashboard; it does not expose playback controls. S02's collector, S03's
+authenticated [read-only HTTP agent](docs/mpd-backend-api.md), the S04
+production identity migration, and the S05/S06 Pi-to-Docker status path are
+implemented and deployed. The dashboard reports each output's live playback
+state and available now-playing metadata. Write controls, source selection,
+volume changes, and hardware-driven playback policy remain future work.
+See the [deployment record](docs/playback-agent-deployment.md).
 
 ## Requirements
 

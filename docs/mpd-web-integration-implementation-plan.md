@@ -1,8 +1,9 @@
 # MPD web integration: stepwise implementation plan
 
-Date: 2026-10-14; updated 2026-10-16. Status: S01-S03 implemented; S04
-prepared locally; S05 read-only web integration implemented locally. Production
-migration and cross-host web integration remain gated.
+Date: 2026-10-14; updated 2026-10-17. Status: S01-S06 implemented for
+read-only playback status. S04 production identities and the S06 Pi-to-Docker
+deployment are complete; the healthy-LAN update-latency target is met. S07
+write controls remain outstanding.
 
 ## 1. Confirmed scope and working rules
 
@@ -61,7 +62,7 @@ read-only status; the gate column states when the answer becomes necessary.
 | D02 | Which hardware demand rule should automatic mode use? | Any powered zone selecting the mapped input. Alternative: any powered zone starts all managed outputs. | S10 |
 | D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
 | D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
-| D06 | Web-to-agent transport security | **Selected:** Caddy terminates TLS on the Pi and forwards to the loopback agent. Use a self-signed certificate trusted/pinned by the Docker web client through `tls_ca_file`, retain the scoped bearer credential, and firewall ingress to the Docker host. | Agent deployment in S06; write access in S07 |
+| D06 | Web-to-agent transport security | **Selected:** Caddy terminates TLS on the Pi and forwards to the loopback agent. Use a self-signed certificate trusted by the Docker web client through `tls_ca_file` and retain the scoped bearer credential. The user explicitly declined a host firewall and approved Caddy's `192.168.1.0/24` source allowlist for trusted-LAN operation on 2026-10-17. | Agent deployment in S06; write access in S07 |
 | D07 | Browser access protection | Existing or new authenticated reverse proxy. Alternatives: application login or explicitly trusted-LAN-only access. | Live write rollout in S07 |
 | D09 | Initial source URL scope | Direct HTTP(S) radio feeds only. Alternative: explicitly supported playlist resolution or additional MPD URI schemes. | Source validation in S08 |
 | D10 | Permission to adopt/manage MPD queues | Explicit per-output adoption of a one-selected-source managed queue. Alternative: preserve unmanaged entries and expose that limitation. | S08 |
@@ -79,9 +80,10 @@ their own policy decision. Web-host loss must preserve the last Pi intention.
 
 D03 is a configuration decision: collect the actual mapping in a separate
 focused question after D02, not during the availability question D01.
-D06's reverse-proxy and certificate trust model are selected. Certificate,
-token and firewall provisioning must be completed and verified before S06;
-these deployment actions do not authorize changing the Pi in this local task.
+D06's reverse-proxy and certificate trust model are deployed. The user
+explicitly approved the production identity migration and read-only rollout on
+2026-10-17, while declining a host firewall rule. The deployed Caddy source
+matcher is not equivalent to host firewall enforcement.
 D13 concerns a UI control, not a new attenuation layer or a change to calibration
 semantics. No independent mute control is assumed.
 
@@ -315,53 +317,78 @@ requests (three requests for the single initial health/capability/inventory
 poll). An eight-sample same-host HTTP fake-agent poll-to-cache measurement
 ranged from 2.031 to 2.057 seconds (nearest-rank p95 2.057 seconds), below the
 proposed five-second target in this local simulation. Local S05 acceptance is
-complete; healthy-LAN/Pi latency remains outstanding. No production web
-configuration or deployment has been changed; remote Docker-to-Pi use remains
-gated on reverse-proxy provisioning, certificate trust setup and firewall
-acceptance under D06.
+complete. At S05 completion, healthy-LAN/Pi latency remained outstanding and
+no production web configuration had been changed; the subsequent cross-host
+rollout and current status verification are recorded below.
 
 ### S06. Provision and verify read-only deployment
 
-**Deployment preparation (2026-10-15; not executed):** separate
+**Deployment preparation (2026-10-15–16):** separate
 [agent-only install](../ansible/playbooks/deploy-playback-agent.yml),
-[user service](../ansible/templates/playback-agent.service.j2) and
-[rollback](../ansible/playbooks/remove-playback-agent.yml) prepared.
-See [operator instructions](./playback-agent-deployment.md). Activation is
-opt-in; agent transport remains loopback-only until the D06 reverse proxy is
-provisioned. No production IDs are
-assigned by these scripts. S06 is not complete: migration, secure transport,
-web configuration and approved target acceptance still remain.
+[user service](../ansible/templates/playback-agent.service.j2),
+[TLS proxy play](../ansible/playbooks/deploy-playback-agent-proxy.yml),
+[Caddyfile](../ansible/templates/playback-agent.Caddyfile.j2),
+[proxy system service](../ansible/templates/playback-agent-proxy.service.j2)
+and [rollback](../ansible/playbooks/remove-playback-agent.yml) are prepared.
+See [operator instructions](./playback-agent-deployment.md). Agent and proxy
+activation are opt-in; the agent remains loopback-only. The proxy play
+generates a self-signed certificate on the Pi, copies only its public
+certificate to the ignored Docker secrets directory, limits routes to the
+read-only API, and enforces a source CIDR allowlist. Host firewall management
+is not automated.
 
-**Partial target acceptance (2026-10-15):** user approved deployment with a
+**Isolated target acceptance (2026-10-15):** user approved deployment with a
 separate private observation-test config during endurance. Agent running on
 Pi loopback; authenticated reads, real MPD metadata, routes/gains and unchanged
 production config/intentions/service lifecycle verified. Existing Radio 88.6
 faults continued; no zero-impact or uninterrupted-playback claim.
 See [target evidence](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15).
-D06 implementation, production migration and Docker/web reachability remain
-outstanding.
 
-1. Extend [Pi provisioning](../ansible/playbooks/setup-musicpi.yml) with a
-   separate **agent-only** installation path. Avoid its existing audio/MPD
-   restart steps for additive agent deployment.
-2. Generate an independent user service under the audio-owning user with
-   lingering, private runtime directory, D-Bus/Pulse environment, bounded
-   restarts and writable ledger/state locations.
-3. Provision Caddy on the Pi with the selected self-signed TLS certificate,
-   Docker-side `tls_ca_file` trust, scoped credentials and firewall; configure
-   the Docker endpoint/secret wiring without embedding secrets in the
-   [web image](../Dockerfile) or browser assets.
-4. Fix/test the known MPD binding-schema mismatch in the setup generator before
-   claiming loopback isolation. Applying regenerated MPD listeners is a later
-   approved maintenance action, not a prerequisite to local fake tests.
-5. After endurance completion/approval, back up operational files and capture
-   checksums, daemon PIDs, state, queues, routes and gains. Deploy read-only
-   agent; compare before/after without starting/stopping production playback.
+**Production read-only rollout (2026-10-17):** after explicit approval, the
+production config received stable IDs/labels (`radio_886`, `fm4_radio`,
+`oe3_radio`) while names, stream URLs, ports, sinks and gains were preserved.
+The legacy intentions file remained byte-identical. Only the playback
+supervisor and read-only agent were stopped/restarted; all three MPD service
+PIDs remained unchanged. The read-only agent now observes the production
+configuration. Caddy 2.6.2 terminates TLS on port 8443 and forwards only the
+read API to `127.0.0.1:8081`; the package `caddy.service` remains disabled and
+nginx on port 80 was not changed.
 
-**Acceptance:** agent authenticated and reachable from Docker; unauthorized
-requests rejected; per-output metadata/status verified; calibration/config/
-intentions unchanged and no MPD/PipeWire restart. Document actual listeners,
-not only intended config. If isolation needs changes, schedule them explicitly.
+The initial Docker source allowlist mistakenly used the Mac's Wi-Fi address,
+`192.168.1.56/32`. On 2026-10-17, an authenticated request from inside the web
+container returned 403. A temporary Pi-side TCP probe confirmed Docker
+Desktop's actual source as `192.168.1.142`, the Mac's Ethernet address
+(`en5`). The user explicitly approved Caddy's `192.168.1.0/24` source matcher
+for the trusted LAN; the dedicated proxy was updated and restarted. No host
+firewall rule was installed, so this application-level allowlist is the only
+source filter and assumes a trusted LAN with no external port forwarding.
+Authenticated Docker-to-Pi TLS health, capabilities and output reads now return
+200, the web cache reports the agent healthy, and the dashboard displays all
+three outputs. `/v1/start` remains unavailable. The Russound hardware warning
+on the local dashboard is independent of the playback integration.
+
+The Pi-to-Docker read path is deployed. A healthy-LAN p95 update-latency sample
+and all S07 write controls remain outstanding.
+
+**Historical preparation (2026-10-16):** a separate opt-in Caddy proxy play,
+Caddyfile and hardened systemd service are prepared. It keeps the agent on
+loopback, exposes only read endpoints over TLS on unprivileged TCP 8443,
+requires a Docker-host source CIDR, generates/verifies a self-signed
+hostname-bound certificate on the Pi, and fetches only its public cert into
+the ignored Docker secrets directory. Firewall management was left manual.
+Compose config validation and the focused preparation tests passed at that
+stage; the later production deployment and target acceptance are recorded above.
+
+**S06 read-only acceptance (2026-10-17):** authenticated Docker-to-Pi TLS reads,
+unauthenticated 401 rejection, source-filter 403, read-only route restriction,
+per-output metadata/status, healthy web cache and browser cards were verified.
+Production identity migration changed only IDs/labels; calibration, routes and
+legacy intentions were preserved, and no MPD/PipeWire service was restarted.
+The user explicitly declined a host firewall; the trusted-LAN assumption and
+Caddy `/24` source filter are recorded above. S06 read-only deployment is complete.
+The Pi-to-web healthy-LAN p95 latency target is met; measurement details and
+the maximum observed outlier are recorded in the deployment record. All S07
+write controls remain outstanding.
 
 ### S07. Add durable manual operations and calibration controls
 
@@ -496,22 +523,20 @@ credentials and operational files must have an explicit owner.
 
 ## 5. Current progress and next discussion
 
-- A01, A02, D01, D04 and D08 accepted.
-- S01 complete: read contract, component boundaries and fixtures documented.
-  S02 complete locally: collector and focused regression acceptance.
-  S03 complete locally: authenticated cached HTTP reads and scheduler acceptance.
-  S06 agent deployed/tested on loopback using an approved separate config copy;
-  full production acceptance remains outstanding. S04 prepared locally with
-  offline migration/revision tests; production migration is not executed.
-  S05 complete locally with browser smoke checks, eight-session cache
-  verification and same-host latency measurements; healthy-LAN/Pi acceptance
-  remains unverified.
-  Remote connectivity still requires D06 reverse-proxy provisioning and D07/D13
-  decisions. Next implementation work package is S07 after S06 transport and
-  D07/D13 decisions; Docker-to-agent production connectivity remains gated on
-  the proxy, certificate and firewall acceptance.
-- D02-D03, D05, D07 and D09-D16 open. No provider, physical mapping or demand rule has
-  been silently chosen.
+- A01, A02, D01, D04, D06 and D08 accepted.
+- S01-S06 read-only status are complete: contract, collector, authenticated
+  agent, production identities, dashboard and Pi-to-Docker deployment. The
+  live agent and dashboard are healthy. A 156-second Pi-to-web LAN sample
+  measured a conservative web-visible playback-age p95 of 4.819 seconds
+  against the proposed 5-second target; details and limitations are recorded
+  in the [deployment record](./playback-agent-deployment.md#s06-lan-latency-acceptance-2026-10-17).
+- D06 transport is deployed with Caddy's approved LAN-subnet `/24` filter. The user
+  declined host firewall changes; the deployment record documents the
+  trusted-LAN assumption and residual network exposure.
+- S07 remains the next implementation package, gated by D07 browser access
+  protection and D13 gain range decisions. D02-D03, D05, D07 and D09-D16
+  remain open; no provider, physical input mapping or automation demand rule
+  has been selected.
 - **Next question: D02, source-specific demand versus system-wide power.**
 
 After each answer, update its status/outcome above, amend affected architecture

@@ -1,0 +1,25 @@
+[Unit]
+Description=TLS reverse proxy for the read-only MPD playback agent
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=caddy
+Group=caddy
+Environment=XDG_DATA_HOME=/var/lib/caddy/playback-agent
+ExecStart={{ playback_proxy_caddy_binary }} run --config {{ playback_proxy_caddyfile }} --adapter caddyfile
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/caddy/playback-agent
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

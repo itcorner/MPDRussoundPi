@@ -107,6 +107,9 @@ class RussoundServerTests(unittest.TestCase):
             client = server.app.test_client()
             with client.get("/") as response:
                 self.assertEqual(response.status_code, 200)
+            with client.get("/playback") as response:
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b"MPD playback", response.data)
             with client.get("/config") as response:
                 self.assertEqual(response.status_code, 200)
             self.assertTrue(client.get("/api/config").json["config_required"])

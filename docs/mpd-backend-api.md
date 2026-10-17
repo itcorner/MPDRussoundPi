@@ -14,9 +14,11 @@ the current API below.
 
 The [S01 read API contract](./mpd-playback-read-api.md) specifies the remote
 observation interface and fixtures. S02 implements the local collector and S03
-the read-only HTTP adapter below. A loopback Pi test deployment uses a separate
-config copy; production migration/transport and web integration remain pending.
-Existing `status()` behavior remains unchanged.
+the read-only HTTP adapter below. Production stream identities were migrated
+on 2026-10-17, and the agent is reachable from the Docker web app through the
+Pi's TLS proxy. S05 exposes cached status/metadata only; existing `status()`
+behavior remains unchanged. Playback writes and source/provider controls remain
+future extensions.
 
 ## Opt-in USB hardware recovery
 

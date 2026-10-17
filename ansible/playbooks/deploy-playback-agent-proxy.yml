@@ -1,0 +1,275 @@
+---
+- name: Configure the TLS proxy for the loopback-only playback agent
+  hosts: musicpi
+  become: true
+  vars:
+    playback_agent_port: 8081
+    playback_proxy_port: 8443
+    playback_proxy_caddy_binary: /usr/bin/caddy
+    playback_proxy_caddyfile: /etc/caddy/mpdrussoundpi-playback-agent.Caddyfile
+    playback_proxy_unit: /etc/systemd/system/mpdrussoundpi-playback-agent-proxy.service
+    playback_proxy_certificate: /etc/caddy/certs/mpdrussoundpi-playback-agent.crt
+    playback_proxy_private_key: /etc/caddy/certs/mpdrussoundpi-playback-agent.key
+    playback_proxy_start: false
+  tasks:
+    - name: Require a DNS name or IPv4 address, a Docker source CIDR and proxy startup approval
+      ansible.builtin.assert:
+        that:
+          - playback_proxy_hostname is defined
+          - playback_proxy_hostname | length <= 253
+          - playback_proxy_hostname is match('^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$')
+          - "'..' not in playback_proxy_hostname"
+          - playback_proxy_allowed_cidr is defined
+          - playback_proxy_allowed_cidr is match('^[0-9A-Fa-f.:/]+$')
+          - playback_agent_port | int > 0
+          - playback_agent_port | int < 65536
+          - playback_proxy_port | int >= 1024
+          - playback_proxy_port | int <= 65535
+        fail_msg: >-
+          Supply playback_proxy_hostname matching the certificate SAN and
+          playback_proxy_allowed_cidr as the Docker host's source IP/CIDR.
+          The proxy listens on an unprivileged port by default.
+
+    - name: Require the preinstalled Caddy binary and service account
+      ansible.builtin.stat:
+        path: "{{ playback_proxy_caddy_binary }}"
+      register: playback_proxy_caddy
+
+    - name: Refuse to configure an absent Caddy installation
+      ansible.builtin.assert:
+        that:
+          - playback_proxy_caddy.stat.executable | default(false)
+        fail_msg: "Install and verify Caddy on the Pi before configuring the proxy."
+
+    - name: Inspect the Caddy service group
+      ansible.builtin.getent:
+        database: group
+        key: caddy
+
+    - name: Inspect the Caddy service user
+      ansible.builtin.getent:
+        database: passwd
+        key: caddy
+
+    - name: Ensure proxy certificate and data directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - path: /etc/caddy/certs
+          owner: root
+          group: caddy
+          mode: "0750"
+        - path: /var/lib/caddy/playback-agent
+          owner: caddy
+          group: caddy
+          mode: "0750"
+
+    - name: Inspect any existing proxy certificate
+      ansible.builtin.stat:
+        path: "{{ playback_proxy_certificate }}"
+      register: playback_proxy_certificate_stat
+
+    - name: Inspect any existing proxy private key
+      ansible.builtin.stat:
+        path: "{{ playback_proxy_private_key }}"
+      register: playback_proxy_private_key_stat
+
+    - name: Require certificate and private key to be provisioned together
+      ansible.builtin.assert:
+        that:
+          - playback_proxy_certificate_stat.stat.exists == playback_proxy_private_key_stat.stat.exists
+        fail_msg: "Provision the self-signed TLS certificate and matching private key together before continuing."
+
+    - name: Generate a self-signed certificate on the Pi when no pair exists
+      ansible.builtin.command:
+        argv: >-
+          {{
+            [
+              'openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes',
+              '-keyout', playback_proxy_private_key,
+              '-out', playback_proxy_certificate,
+              '-days', '365', '-subj', '/CN=' + playback_proxy_hostname,
+              '-addext',
+              'subjectAltName=' +
+                ('IP:' if playback_proxy_hostname is match('^[0-9.]+$') else 'DNS:') +
+                playback_proxy_hostname,
+              '-addext', 'basicConstraints=critical,CA:TRUE',
+              '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign',
+              '-addext', 'extendedKeyUsage=serverAuth'
+            ]
+          }}
+      args:
+        creates: "{{ playback_proxy_certificate }}"
+      when:
+        - not playback_proxy_certificate_stat.stat.exists
+        - not ansible_check_mode
+      no_log: true
+
+    - name: Set public certificate permissions
+      ansible.builtin.file:
+        path: "{{ playback_proxy_certificate }}"
+        owner: root
+        group: caddy
+        mode: "0640"
+      register: playback_proxy_certificate_file
+      when: not ansible_check_mode
+
+    - name: Restrict proxy private key permissions
+      ansible.builtin.file:
+        path: "{{ playback_proxy_private_key }}"
+        owner: root
+        group: caddy
+        mode: "0640"
+      register: playback_proxy_private_key_file
+      when: not ansible_check_mode
+
+    - name: Validate proxy certificate name
+      ansible.builtin.command:
+        argv: >-
+          {{
+            [
+              'openssl', 'x509', '-in', playback_proxy_certificate,
+              '-noout',
+              '-checkip' if playback_proxy_hostname is match('^[0-9.]+$') else '-checkhost',
+              playback_proxy_hostname
+            ]
+          }}
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Validate proxy certificate is not expired
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ playback_proxy_certificate }}"
+          - -noout
+          - -checkend
+          - "2592000"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Verify the public certificate is a self-signed trust anchor
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - verify
+          - -CAfile
+          - "{{ playback_proxy_certificate }}"
+          - "{{ playback_proxy_certificate }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Read the certificate public-key modulus
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - x509
+          - -in
+          - "{{ playback_proxy_certificate }}"
+          - -noout
+          - -modulus
+      register: playback_proxy_certificate_modulus
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Read the private-key modulus without displaying it
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - rsa
+          - -in
+          - "{{ playback_proxy_private_key }}"
+          - -noout
+          - -modulus
+      register: playback_proxy_private_key_modulus
+      changed_when: false
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Require the certificate and private key to match
+      ansible.builtin.assert:
+        that:
+          - playback_proxy_certificate_modulus.stdout == playback_proxy_private_key_modulus.stdout
+        fail_msg: "The configured Caddy certificate and private key do not match."
+      when: not ansible_check_mode
+
+    - name: Ensure the controller-side Docker trust directory exists
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../../docker/secrets"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Copy only the public proxy certificate to the Docker trust directory
+      ansible.builtin.fetch:
+        src: "{{ playback_proxy_certificate }}"
+        dest: "{{ playbook_dir }}/../../docker/secrets/musicpi-proxy.crt"
+        flat: true
+      when: not ansible_check_mode
+
+    - name: Make the public trust certificate readable by the Docker web user
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../../docker/secrets/musicpi-proxy.crt"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode
+
+    - name: Install the dedicated Caddy configuration
+      ansible.builtin.template:
+        src: ../templates/playback-agent.Caddyfile.j2
+        dest: "{{ playback_proxy_caddyfile }}"
+        owner: root
+        group: caddy
+        mode: "0640"
+      register: playback_proxy_configuration
+
+    - name: Install the dedicated Caddy system service
+      ansible.builtin.template:
+        src: ../templates/playback-agent-proxy.service.j2
+        dest: "{{ playback_proxy_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: playback_proxy_service
+
+    - name: Validate the dedicated Caddy configuration
+      ansible.builtin.command:
+        argv:
+          - "{{ playback_proxy_caddy_binary }}"
+          - validate
+          - --config
+          - "{{ playback_proxy_caddyfile }}"
+          - --adapter
+          - caddyfile
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Reload system service definitions
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Start and enable only the dedicated playback proxy when explicitly requested
+      ansible.builtin.systemd_service:
+        name: mpdrussoundpi-playback-agent-proxy.service
+        enabled: true
+        state: >-
+          {{
+            'restarted'
+            if playback_proxy_configuration.changed
+               or playback_proxy_service.changed
+               or playback_proxy_certificate_file.changed | default(false)
+               or playback_proxy_private_key_file.changed | default(false)
+            else 'started'
+          }}
+      when:
+        - playback_proxy_start | bool
+        - not ansible_check_mode

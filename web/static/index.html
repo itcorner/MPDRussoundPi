@@ -17,6 +17,7 @@
         </div>
         <nav class="page-menu" aria-label="Page navigation">
           <a class="page-menu-link is-active" href="/" aria-current="page">Controller</a>
+          <a class="page-menu-link" href="/playback">Playback</a>
           <a class="page-menu-link" href="/config">Configuration</a>
           <a class="page-menu-link" href="/status">Status</a>
         </nav>
@@ -26,17 +27,6 @@
         <div id="shortcuts" class="shortcuts" aria-label="Room shortcuts">
           <button id="systemPower" class="power-button system-shortcut-button" type="button">All off</button>
         </div>
-      </section>
-
-      <section id="playbackPanel" class="panel playback-panel" aria-live="polite" hidden>
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">MPD playback</p>
-            <h2 class="section-title">Streams</h2>
-          </div>
-          <span id="playbackHealth" class="playback-health"></span>
-        </div>
-        <div id="playbackOutputs" class="playback-grid"></div>
       </section>
 
       <section id="zones" class="zones-grid" aria-live="polite"></section>

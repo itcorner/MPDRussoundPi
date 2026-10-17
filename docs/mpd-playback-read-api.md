@@ -1,9 +1,9 @@
 # Playback read API v1: S01 contract
 
-Status: S01 read-contract baseline, 2026-10-14. S02 local observation collector
-and S03 read-only HTTP agent implemented/tested locally, plus an approved
-loopback Pi deployment with a separate test config. **Web endpoints and
-full production rollout remain unimplemented**.
+Status: S01 read-contract baseline, 2026-10-14. S02 collector and S03
+read-only HTTP agent are implemented. Production identities, the Pi TLS proxy,
+and the S05 web status gateway were deployed on 2026-10-17. The deployed
+integration remains read-only; write operations are not part of this contract.
 Changes to this baseline require updating this document and its
 [contract fixtures](../tests/fixtures/playback-read-v1.json) together.
 See the [implementation plan](./mpd-web-integration-implementation-plan.md).
@@ -236,6 +236,15 @@ playback/UI snapshot stale threshold 10 seconds. Audio diagnostics target
 10-second collection, stale threshold 30 seconds. These are implementation
 targets to verify, not guarantees. All probe ages are independent.
 
+The web client polls the Pi agent at this cadence to keep its cache and age
+measurements current, but emits `playback-change` only for semantic changes
+such as playback state, now-playing metadata, errors, configuration or
+freshness transitions. Observation timestamps, age counters, snapshot
+revisions, and elapsed playback counters alone do not invalidate browser
+content. The visible playback page retains a 5-second fallback poll; when only
+ages have changed, it updates freshness labels in place rather than rebuilding
+the stream cards.
+
 Web computes effective age from agent-reported age, full HTTP request duration
 (conservative), and elapsed time since receipt. For agent `stale` values the web
 never clears the flag. Same rule applies to probe/last-known ages. A successful
@@ -330,9 +339,11 @@ must match an already published cache. SSE is not durable/replayable.
 | New `web/playback_client.py` | Remote contract decoding, timeout/age handling |
 | Existing web server/frontend | Optional registry, cache publication, same-origin reads, SSE and cards |
 
-The S02 collector/helpers and S03 agent are implemented and tested on Pi
-loopback with a separate config copy; web modules and production transport/
-migration remain future work. Use
+At the S02/S03 local acceptance checkpoint, the collector/helpers and agent
+were tested on Pi loopback with a separate config copy, while web modules and
+production transport/migration were still future work. The later production
+deployment is recorded in the
+[implementation plan](./mpd-web-integration-implementation-plan.md). Use
 the Pi script directory's existing `lib` import layout initially; do not perform
 an unrelated package migration. Agent dependency manifest belongs with Pi
 scripts. Web client dependencies stay in web requirements; the Docker image
@@ -386,5 +397,6 @@ S02 acceptance (local, 2026-10-14):
 - 94 targeted agent/collector/backend/readiness/CLI/supervisor tests passed,
   including real collector integration with mocked MPD/audio failures.
   VS Code test discovery found no tests; validation used the repository's
-  `unittest` runner. Production migration/security and real-LAN latency remain
-  S04/S06 gates. Web routes remain S05 work.
+  `unittest` runner. At this local S03 checkpoint, production migration and
+  secure transport were still S04/S06 gates, and the web routes were still S05
+  work; the later deployment is recorded in the implementation plan.

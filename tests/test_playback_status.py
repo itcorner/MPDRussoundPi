@@ -202,6 +202,47 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertTrue(all(header is not None and header.startswith("Bearer ") for _, header, _ in request_headers))
         self.assertNotIn("mock-value", json.dumps(result))
 
+    def test_client_revision_ignores_observation_age_but_tracks_playback_and_stale_changes(self) -> None:
+        initial = self.fixture["healthy_inventory"]
+        elapsed_only = json.loads(json.dumps(initial))
+        elapsed_only["revision"] += 1
+        elapsed_only["snapshot_at"] = "2026-10-14T18:50:02Z"
+        elapsed_only["snapshot_age_ms"] = 0
+        for output in elapsed_only["outputs"]:
+            output["playback"]["attempted_at"] = "2026-10-14T18:50:02Z"
+            output["playback"]["observed_at"] = "2026-10-14T18:50:02Z"
+            output["playback"]["age_ms"] = 0
+            output["playback"]["value"]["elapsed_seconds"] = 1236.5
+            for probe in output["audio"].values():
+                probe["attempted_at"] = "2026-10-14T18:50:02Z"
+                probe["observed_at"] = "2026-10-14T18:50:02Z"
+                probe["age_ms"] = 0
+        metadata_changed = json.loads(json.dumps(elapsed_only))
+        metadata_changed["revision"] += 1
+        metadata_changed["outputs"][0]["playback"]["value"]["now_playing"]["title"] = "A different track"
+        stale_changed = json.loads(json.dumps(metadata_changed))
+        stale_changed["revision"] += 1
+        stale_changed["outputs"][0]["playback"]["stale"] = True
+
+        replies = [
+            reply
+            for inventory in (initial, elapsed_only, metadata_changed, stale_changed)
+            for reply in (self.health, self.capabilities, inventory)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.create_client(Path(directory) / "agent-token")
+            with patch("web.playback_status.build_opener", return_value=FakeOpener([
+                FakeResponse(reply) for reply in replies
+            ])):
+                self.assertTrue(client.poll_once())
+                self.assertEqual(client.snapshot()["revision"], 1)
+                self.assertTrue(client.poll_once())
+                self.assertEqual(client.snapshot()["revision"], 1)
+                self.assertTrue(client.poll_once())
+                self.assertEqual(client.snapshot()["revision"], 2)
+                self.assertTrue(client.poll_once())
+                self.assertEqual(client.snapshot()["revision"], 3)
+
     def test_agent_failure_preserves_last_snapshot_and_hides_upstream_details(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             client = self.create_client(Path(directory) / "agent-token")
@@ -224,6 +265,20 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertEqual(error["code"], "agent_unauthorized")
         self.assertEqual(error["message"], "Playback agent authentication failed.")
         self.assertEqual(snapshot["outputs"][0]["id"], "front")
+
+    def test_forbidden_agent_response_reports_http_403(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.create_client(Path(directory) / "agent-token")
+            forbidden = HTTPError(
+                "https://audio.example/v1/health", 403, "forbidden", HTTPMessage(), None,
+            )
+            with patch("web.playback_status.build_opener", return_value=FakeOpener([forbidden])):
+                self.assertFalse(client.poll_once())
+
+        agent = client.snapshot()["agents"][0]
+        self.assertEqual(agent["status"], "unavailable")
+        self.assertEqual(agent["error"]["code"], "agent_forbidden")
+        self.assertEqual(agent["error"]["message"], "Playback agent denied access (HTTP 403).")
 
     def test_identity_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

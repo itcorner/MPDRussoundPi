@@ -248,6 +248,10 @@ class RussoundHTTPServer:
         def index():
             return send_from_directory(WEB_STATIC, "index.html")
 
+        @app.get("/playback")
+        def playback_page():
+            return send_from_directory(WEB_STATIC, "playback.html")
+
         @app.get("/status")
         def status_page():
             return send_from_directory(WEB_STATIC, "status.html")

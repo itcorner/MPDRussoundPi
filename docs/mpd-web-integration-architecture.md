@@ -1,19 +1,20 @@
 # MPD integration with the Russound web interface
 
-Date: 2026-10-14. Status: solution D selected; read-only agent implemented,
-remaining controls/web integration still planned.
+Date: 2026-10-14; deployment status updated 2026-10-17. Solution D is selected;
+the read-only agent, production identities, Pi TLS proxy and Docker web status
+integration are deployed. Playback writes, source selection, volume controls
+and hardware-driven policy remain planned.
 
-Implementation progress: S01 read contracts, S02 local observation collector
-and S03 authenticated read-only HTTP agent are complete locally, with
-[isolated Pi target acceptance](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15).
-Production transport/migration and web integration remain future work;
-see the [implementation plan](./mpd-web-integration-implementation-plan.md)
-and [collector usage](./mpd-backend-api.md).
+Implementation progress: S01-S06 read-only status are complete, including the
+[production Pi-to-Docker rollout](./playback-agent-deployment.md#production-read-only-rollout-2026-10-17).
+See the [implementation plan](./mpd-web-integration-implementation-plan.md)
+for remaining decisions and [collector usage](./mpd-backend-api.md).
 
 ## 1. Selected architecture
 
-The user selected solution D. Add a small **Pi-local playback agent**, exposing a versioned HTTP/JSON API,
-and use the existing Flask web server as the browser's same-origin gateway.
+The user selected solution D. It uses a small **Pi-local playback agent**
+exposing a versioned HTTP/JSON API, with the existing Flask web server as the
+browser's same-origin gateway.
 The agent wraps and extends the existing Python MPD backend; it does not
 replace the existing tested route/gain helpers or add a competing recovery loop.
 

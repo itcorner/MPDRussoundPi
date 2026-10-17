@@ -178,7 +178,11 @@ class PlaybackStatusClient:
                     self._revision += 1
             return False
         with self._lock:
-            changed = self._status != "ok" or self._snapshot != snapshot or self._error is not None
+            changed = (
+                self._status != "ok"
+                or _meaningful_snapshot(self._snapshot) != _meaningful_snapshot(snapshot)
+                or self._error is not None
+            )
             self._status = "ok"
             self._error = None
             self._snapshot = snapshot
@@ -268,7 +272,9 @@ def _validate_output(output: Any) -> None:
 
 def _error_code(exc: Exception) -> str:
     if isinstance(exc, HTTPError):
-        return "agent_unauthorized" if exc.code == 401 else "agent_http_error"
+        if exc.code == 401:
+            return "agent_unauthorized"
+        return "agent_forbidden" if exc.code == 403 else "agent_http_error"
     if isinstance(exc, TimeoutError):
         return "agent_timeout"
     if isinstance(exc, URLError):
@@ -279,6 +285,7 @@ def _error_code(exc: Exception) -> str:
 def _error_message(code: str) -> str:
     messages = {
         "agent_unauthorized": "Playback agent authentication failed.",
+        "agent_forbidden": "Playback agent denied access (HTTP 403).",
         "agent_identity_mismatch": "Playback agent identity did not match configuration.",
         "agent_not_alive": "Playback agent is not alive.",
         "invalid_agent_response": "Playback agent returned an invalid response.",
@@ -290,3 +297,24 @@ def _error_message(code: str) -> str:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _meaningful_snapshot(snapshot: Any) -> Any:
+    volatile_fields = {
+        "age_ms",
+        "attempted_at",
+        "elapsed_seconds",
+        "observed_at",
+        "revision",
+        "snapshot_age_ms",
+        "snapshot_at",
+    }
+    if isinstance(snapshot, dict):
+        return {
+            key: _meaningful_snapshot(value)
+            for key, value in snapshot.items()
+            if key not in volatile_fields
+        }
+    if isinstance(snapshot, list):
+        return [_meaningful_snapshot(value) for value in snapshot]
+    return snapshot

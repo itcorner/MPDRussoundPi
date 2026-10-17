@@ -1,0 +1,22 @@
+{
+	admin 127.0.0.1:2020
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://{{ playback_proxy_hostname }}:{{ playback_proxy_port }} {
+	tls {{ playback_proxy_certificate }} {{ playback_proxy_private_key }}
+
+	@docker_host remote_ip {{ playback_proxy_allowed_cidr }}
+	handle @docker_host {
+		@read_api path /v1/health /v1/capabilities /v1/outputs /v1/outputs/*
+		handle @read_api {
+			reverse_proxy 127.0.0.1:{{ playback_agent_port }}
+		}
+		respond 404
+	}
+
+	respond 403
+}
