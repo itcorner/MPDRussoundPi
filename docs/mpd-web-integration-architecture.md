@@ -3,20 +3,25 @@
 Date: 2026-10-14; deployment status updated 2026-10-17. Solution D is selected;
 the read-only agent, production identities, Pi TLS proxy and Docker web status
 integration are deployed. S07 manual playback and calibration-gain controls
-are done, deployed and production-verified by the user on 2026-10-17. S08
-source changes are local-only; hardware-driven policy remains planned.
+are done, deployed and production-verified by the user on 2026-10-17.
+Hardware-driven policy remains planned.
 
 S08 managed station selection and S09 TuneIn search/resolution are implemented
-locally; station selection is not production-enabled. D09-D12 are accepted:
+and active in the approved trusted-LAN Pi test deployment. D09-D12 are accepted:
 no user-entered URLs, explicit one-source queue management, retain saved
 stations for supervisor retry, and selecting a station always starts playback.
 TuneIn station selection is enabled by default on agents with manual
-operations; `--disable-tunein-selection` turns it off. Pi-side
-egress controls remain a production prerequisite because stream hosts and
-redirects are provider-selected.
+operations; `--disable-tunein-selection` turns it off. Pi-side public-only
+egress enforcement now covers resolved destinations and redirects through
+connection-pinned Python fetching and an MPD-only cgroup packet filter; see the
+[egress plan and evidence](./playback-egress-hardening-plan.md). Live deployment
+is not full production/lifecycle sign-off.
 
 Implementation progress: S01-S07 are complete, including the
 [production Pi-to-Docker rollout](./playback-agent-deployment.md#production-read-only-rollout-2026-10-17).
+S08/S09 and the [configuration split](./config-split-plan.md) are deployed;
+remaining live checks and hardening are recorded in the
+[rollout record](./playback-agent-deployment.md#configuration-split-rollout-2026-10-17).
 See the [implementation plan](./mpd-web-integration-implementation-plan.md)
 for remaining decisions and [collector usage](./mpd-backend-api.md).
 
@@ -32,8 +37,8 @@ Keep MPD, PipeWire, WirePlumber and the playback supervisor on the audio host.
 The web application may run in Docker on another host, natively on the Pi, or
 in Docker on the Pi. Use the same agent API in every deployment.
 
-The read-only status, manual playback and volume steps are complete. S08 adds
-individual source replacement before any catalog provider. Introduce
+The read-only status, manual playback and volume steps are complete. S08/S09
+deliver individual station replacement using TuneIn and saved favorites. Introduce
 hardware-driven automation last, as an explicit opt-in.
 Do not deploy or mutate the production audio configuration while the current
 endurance test is running.
@@ -47,8 +52,10 @@ Accepted availability decision (D01): the web host owns hardware-demand policy.
 During a web-host outage the Pi preserves/reconciles its last playback intention,
 but does not make new hardware-driven start/stop decisions.
 
-Accepted S08 source behavior: accept only direct HTTP(S) feed URLs without
-embedded user-info or fragments; retain query values for tokenized feeds but
+Accepted S08 source behavior: the browser submits TuneIn station IDs or saved
+favorite keys, never arbitrary URLs. Admin configuration may seed URL favorites.
+Resolved feeds must be direct HTTP(S) URLs without embedded user-info or
+fragments; retain query values for tokenized feeds but
 never echo full URLs in status or errors. Each output may adopt an empty queue
 or a single song matching its prior configured source. Thereafter, remove only
 the tracked MPD song ID and refuse cleanup if the queue contains unowned items.
@@ -64,7 +71,7 @@ observed current source separately using redacted display values.
 | Web and MPD may run on different hosts | A network boundary independent of Python imports and shared files |
 | Live running state and now-playing information | Observe MPD state and dynamic metadata, not just configured station labels |
 | Independent stream replacement | Stable output identity independent of selected station, URL and display name |
-| Manual URLs and future external catalogs | A normalized source-selection contract with replaceable provider adapters |
+| Admin-configured URL stations and TuneIn | Saved favorite keys or validated TuneIn IDs; Pi-side stream resolution |
 | Web-adjustable stream volume | Directly edit the persisted output calibration gain; keep Russound zone volume separate |
 | Start/stop from hardware state | A headless policy controller consuming fresh power/source observations |
 | Recovery and maintainability | Reuse local backend semantics, explicit ownership, bounded failures and contract tests |
@@ -474,27 +481,37 @@ Structural output changes remain separate deployment/maintenance operations.
 
 ### 8.2 Normalized selection contract
 
+The deployed contract uses `set_tunein_station` with `station_id` and
+`station_name`, or `select_favorite` with a saved station `key`; see the
+[operation API](./mpd-playback-operations-api.md). TuneIn search runs in the
+web gateway; stream resolution runs on the Pi, not in the browser or web host.
+Favorites are capped at 20 and persisted with runtime state in `playback.json`.
+Admin station seeds live in `config.json`; runtime edits do not change them.
+
+Selection-specific fields (full requests also require expected config/control
+revisions and an idempotency key):
+
 ```json
-{"kind": "url", "url": "https://radio.example/live.mp3", "label": "My station"}
+{"action": "set_tunein_station", "station_id": "s8007", "station_name": "ORF Hitradio OE3"}
 ```
 
 ```json
-{"kind": "catalog", "provider_id": "radio-directory", "item_id": "station-123"}
+{"action": "select_favorite", "key": "tunein:s8007"}
 ```
 
-Put optional catalog adapters behind a small search/details/resolve interface
-in the web service. A manual URL needs no provider. Return normalized items
-with provider/item IDs, display label and format hints; resolve server-side
-to an approved playable URI and send the Pi both that URI and provenance.
-Do not make each provider implement MPD control.
+Search returns normalized station identities and bounded display metadata.
+The Pi resolves the selected station ID and persists its provenance and resolved
+URL privately; the web does not send a resolved stream URL. A URL favorite
+uses the same key-based selection operation without a catalog lookup.
 
-Maintain a small set of built-in adapters before designing a plugin loader.
+Future providers should reuse these boundaries rather than implement MPD control.
 Use timeouts, cache/rate limits and visible provider failures. An unavailable
 catalog must not stop an already-running stream. Keep provider credentials out
 of browser payloads and logs.
 
-Direct HTTP(S) internet radio is the initial playback scope. Playlist URL
-resolution, authentication, expiring URLs, local libraries, subscription
+Direct HTTP(S) internet radio is the initial playback scope. TuneIn's bounded
+M3U/PLS resolver extracts a direct stream before handing it to MPD. Arbitrary
+playlist entry, authentication, expiring URLs, local libraries, subscription
 services, DRM, Spotify-like integrations and casting are not interchangeable
 with an MPD-readable URL. Advertise supported capabilities and reject unsupported
 items rather than pretending they are playable. A provider with expiring URLs
@@ -511,11 +528,10 @@ Implement a backend operation, not raw queue edits from Flask:
   old URL. Report desired source separately from confirmed current playback.
   A successfully saved but unreachable source is a failed/degraded application,
   not a successfully playing station.
-- By default **selection preserves control mode/intention**. Playing outputs
-  switch through the existing mute/route/gain/unmute sequence; paused/stopped
-  outputs stay silent. A separate explicit "select and play" action is available.
-  Paused output with the old queued source remains silent and the new selection
-  becomes effective on start; expose that pending difference.
+- Per D12, **selection always sets the play intention and starts playback**,
+  including on paused/stopped outputs. Reuse the existing mute/route/gain/unmute
+  sequence; there is no silent-selection action. Persist the station, resolved
+  URL, managed song ID and play intention atomically in `playback.json`.
 - For dedicated radio outputs, introduce an explicit managed-queue mode.
   Keep one backend-owned selected URI after a successful switch, using song
   IDs and bounded cleanup. Unknown/pre-existing queues require explicit
@@ -719,8 +735,9 @@ and fenced ownership before automation resumes after reconnect.
   to configured output IDs, not arbitrary ports, paths, systemd units or shell
   commands.
 - Treat URLs/providers as untrusted network input. Initially permit approved
-  HTTP(S) feeds; reject file/device/unsupported schemes. Allow private-network
-  radio servers only through explicit policy. Validate redirects/resolution,
+  HTTP(S) feeds; reject file/device/unsupported schemes. The approved deployed
+  policy rejects private-network radio servers, including admin URL favorites.
+  There is no private-stream bypass. Validate redirects/resolution,
   and enforce Pi egress restrictions where MPD follows redirects itself:
   web-only validation cannot prevent later DNS/redirect access from the Pi.
 - Escape tags/labels as text in the UI, bound lengths, and redact URI secrets

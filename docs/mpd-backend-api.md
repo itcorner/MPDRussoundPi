@@ -5,11 +5,11 @@ API for configured local MPD instances. It runs no HTTP server and manages
 playback, not daemon services. The CLI now delegates to this backend. Both
 interfaces use the same persisted intentions, route/gain helpers and lock.
 
-For planned remote web access, see the
+For deployed remote web access, see the
 [MPD web integration architecture](./mpd-web-integration-architecture.md).
-It proposes a Pi-local agent around this backend. Web stream volume directly
-uses the existing `set_gain` calibration operation. S08 adds local-only manual
-source selection through the durable agent operation contract; hardware-driven
+It uses a Pi-local agent around this backend. Web stream volume directly
+uses the existing `set_gain` calibration operation. S08 adds manual station
+selection through the durable agent operation contract; hardware-driven
 policy remains a future extension.
 
 The [S01 read API contract](./mpd-playback-read-api.md) specifies the remote
@@ -20,9 +20,11 @@ Pi's TLS proxy. S05 exposes cached status/metadata only; existing `status()`
 behavior remains unchanged. S07 adds opt-in
 [durable manual operations](./mpd-playback-operations-api.md), implemented
 locally and deployed; S07 is done and production-verified by the user on
-2026-10-17. S08 managed station selection and S09 TuneIn integration are
-implemented locally but not activated in production; the Pi needs an egress
-policy for DNS and redirects before station writes can be enabled.
+2026-10-17. S08 managed station selection, S09 TuneIn integration and the
+config/state split with favorites are active in the approved trusted-LAN Pi
+test deployment. Public-only DNS/redirect egress enforcement is deployed;
+full lifecycle acceptance remains outstanding. See the
+[deployment record](./playback-agent-deployment.md#configuration-split-rollout-2026-10-17).
 
 ## Opt-in USB hardware recovery
 

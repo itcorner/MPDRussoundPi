@@ -3,17 +3,16 @@
 from collections import OrderedDict
 from contextlib import closing
 from dataclasses import dataclass
-import ipaddress
 import json
 import re
-import ssl
 import threading
 import time
-from typing import Any, cast
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
-from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
+from urllib.request import Request
 
+from .publicnetwork import public_opener, validate_public_url
 from .sourceurl import validate_source_url
 
 
@@ -56,14 +55,6 @@ class TuneInStation:
         }
 
 
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(
-        self, req: Request, fp: Any, code: int, msg: str, headers: Any, newurl: str,
-    ) -> Request | None:
-        del req, fp, code, msg, headers, newurl
-        return None
-
-
 def _clean_text(value: object, limit: int) -> str | None:
     if not isinstance(value, str):
         return None
@@ -76,14 +67,9 @@ def _valid_public_stream_url(value: object) -> str:
     parts = urlsplit(url)
     if parts.username is not None or parts.password is not None or not parts.hostname:
         raise TuneInError("TuneIn returned an unsupported station stream.")
-    hostname = parts.hostname.lower().rstrip(".")
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
-        raise TuneInError("TuneIn returned an unsupported station stream.")
     try:
-        address = ipaddress.ip_address(hostname)
+        validate_public_url(url)
     except ValueError:
-        address = None
-    if address is not None and not address.is_global:
         raise TuneInError("TuneIn returned an unsupported station stream.")
     return url
 
@@ -252,11 +238,9 @@ class TuneInCatalog:
 
     def _fetch_bytes(self, url: str, limit: int, accept: str = "*/*") -> bytes:
         request = Request(url, headers={"Accept": accept, "User-Agent": "MPDRussoundPi/1.0"})
-        opener = build_opener(
-            _NoRedirect(),
-            HTTPSHandler(context=ssl.create_default_context()),
-        )
+        opener = public_opener()
         try:
+            validate_public_url(url)
             with closing(opener.open(request, timeout=self.timeout_seconds)) as response:
                 raw = response.read(limit + 1)
         except (HTTPError, URLError, TimeoutError, OSError, ValueError):

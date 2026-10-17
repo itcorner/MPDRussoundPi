@@ -1,0 +1,141 @@
+---
+- name: Enforce public-only outbound MPD stream destinations
+  hosts: musicpi
+  become: true
+  vars:
+    playback_egress_user: musicpi
+    playback_egress_install: /usr/local/lib/mpdrussoundpi-egress
+    playback_egress_source: "{{ playbook_dir }}/../../mpdrussoundpi/russound"
+    playback_egress_activate: false
+  tasks:
+    - name: Require explicit activation approval and resolver addresses
+      ansible.builtin.assert:
+        that:
+          - playback_egress_activate | bool
+          - playback_egress_resolvers is defined
+          - playback_egress_resolvers | length > 0
+          - playback_egress_user is match('^[a-z_][a-z0-9_-]*$')
+        fail_msg: "Approve activation and supply the exact DNS resolver IPs before changing MPD egress."
+
+    - name: Read the playback account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ playback_egress_user }}"
+
+    - name: Record the playback account paths
+      ansible.builtin.set_fact:
+        playback_egress_uid: "{{ ansible_facts.getent_passwd[playback_egress_user][1] }}"
+        playback_egress_home: "{{ ansible_facts.getent_passwd[playback_egress_user][4] }}"
+
+    - name: Require the preinstalled nftables binary
+      ansible.builtin.stat:
+        path: /usr/sbin/nft
+      register: playback_egress_nft
+
+    - name: Refuse activation without nftables
+      ansible.builtin.assert:
+        that:
+          - playback_egress_nft.stat.executable | default(false)
+          - playback_egress_uid | int > 0
+        fail_msg: "Install nftables and select a non-root playback user first."
+
+    - name: Create root-owned filter source directory
+      ansible.builtin.file:
+        path: "{{ playback_egress_install }}/lib"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy the root-owned filter and shared address policy
+      ansible.builtin.copy:
+        src: "{{ playback_egress_source }}/{{ item }}"
+        dest: "{{ playback_egress_install }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [playbackegress.py, lib/publicnetwork.py, lib/sourceurl.py]
+
+    - name: Create the persistent MPD cgroup slice
+      ansible.builtin.copy:
+        dest: "{{ playback_egress_home }}/.config/systemd/user/mpdstreams.slice"
+        owner: "{{ playback_egress_user }}"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Public-only MPD stream processes
+          [Slice]
+
+    - name: Discover the existing MPD instance units
+      ansible.builtin.find:
+        paths: "{{ playback_egress_home }}/.config/systemd/user"
+        patterns: "mpd_*.service"
+        contains: 'ExecStart=/usr/bin/mpd .*'
+      register: playback_egress_units
+
+    - name: Require configured MPD instances
+      ansible.builtin.assert:
+        that:
+          - playback_egress_units.matched | int > 0
+
+    - name: Create MPD drop-in directories
+      ansible.builtin.file:
+        path: "{{ item.path }}.d"
+        state: directory
+        owner: "{{ playback_egress_user }}"
+        mode: "0755"
+      loop: "{{ playback_egress_units.files }}"
+
+    - name: Scope MPD to the protected slice and gate process startup
+      ansible.builtin.copy:
+        dest: "{{ item.path }}.d/50-egress.conf"
+        owner: "{{ playback_egress_user }}"
+        mode: "0644"
+        content: |
+          [Service]
+          Slice=mpdstreams.slice
+          ExecStartPre=/usr/bin/python3 {{ playback_egress_install }}/playbackegress.py --wait
+      loop: "{{ playback_egress_units.files }}"
+
+    - name: Install root-managed enforcement service
+      ansible.builtin.template:
+        src: ../templates/playback-egress.service.j2
+        dest: /etc/systemd/system/mpdrussoundpi-egress.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Reload playback user units
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - --user
+          - "--machine={{ playback_egress_user }}@.host"
+          - daemon-reload
+      changed_when: true
+
+    - name: Validate the enforcement unit before activation
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemd-analyze
+          - verify
+          - /etc/systemd/system/mpdrussoundpi-egress.service
+      changed_when: false
+
+    - name: Load and persist the dedicated MPD-only packet filter
+      ansible.builtin.systemd_service:
+        name: mpdrussoundpi-egress.service
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Restart only the configured MPD instances into the protected slice
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - --user
+          - "--machine={{ playback_egress_user }}@.host"
+          - restart
+          - "{{ item.path | basename }}"
+      loop: "{{ playback_egress_units.files }}"
+      changed_when: true

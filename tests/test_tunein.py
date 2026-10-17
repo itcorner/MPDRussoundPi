@@ -1,4 +1,5 @@
 import json
+import socket
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import URLError
@@ -27,6 +28,14 @@ class FakeResponse:
 
 
 class TuneInCatalogTests(unittest.TestCase):
+    def setUp(self):
+        resolver = patch(
+            "mpdrussoundpi.russound.lib.publicnetwork.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+        )
+        resolver.start()
+        self.addCleanup(resolver.stop)
+
     def test_search_normalizes_only_direct_station_results_and_caches(self):
         response = FakeResponse(feed([
             {
@@ -41,7 +50,7 @@ class TuneInCatalogTests(unittest.TestCase):
         opener = Mock()
         opener.open.return_value = response
         catalog = TuneInCatalog()
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             first = catalog.search("BBC Radio")
             second = catalog.search("bbc radio")
         self.assertEqual(first, [{
@@ -83,7 +92,7 @@ class TuneInCatalogTests(unittest.TestCase):
         opener = Mock()
         opener.open.return_value = response
         catalog = TuneInCatalog()
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             self.assertEqual(catalog.resolve("s231065"), "https://stream.example/live.aac")
         request = opener.open.call_args.args[0]
         self.assertEqual(request.full_url, "https://opml.radiotime.com/Tune.ashx?id=s231065&formats=mp3%2Caac%2Cogg&render=json")
@@ -99,7 +108,7 @@ class TuneInCatalogTests(unittest.TestCase):
             URLError("private-upstream-details"),
         ]
         catalog = TuneInCatalog()
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             for _ in range(3):
                 with self.assertRaises(TuneInError) as caught:
                     catalog.resolve("s123")
@@ -109,7 +118,7 @@ class TuneInCatalogTests(unittest.TestCase):
         opener = Mock()
         opener.open.return_value = FakeResponse(b"x" * (MAX_RESPONSE_BYTES + 1))
         catalog = TuneInCatalog()
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             with self.assertRaisesRegex(TuneInError, "size"):
                 catalog.search("BBC")
 
@@ -127,7 +136,7 @@ class TuneInCatalogTests(unittest.TestCase):
         opener = Mock()
         opener.open.side_effect = [describe, tune]
         catalog = TuneInCatalog()
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             first = catalog.search(" S296247 ")
             second = catalog.search("s296247")
         self.assertEqual(first, [{
@@ -158,7 +167,7 @@ class TuneInCatalogTests(unittest.TestCase):
         for responses in cases:
             opener = Mock()
             opener.open.side_effect = responses
-            with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+            with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
                 self.assertEqual(TuneInCatalog().search("s1"), [])
             self.assertEqual(opener.open.call_count, len(responses))
 
@@ -166,7 +175,7 @@ class TuneInCatalogTests(unittest.TestCase):
         describe = FakeResponse(feed([{"element": "station", "guide_id": "s1", "name": "Station"}]))
         opener = Mock()
         opener.open.side_effect = [describe, URLError("private-upstream-details")]
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             with self.assertRaisesRegex(TuneInError, "unavailable") as caught:
                 TuneInCatalog().search("s1")
         self.assertNotIn("private-upstream-details", str(caught.exception))
@@ -186,7 +195,7 @@ class TuneInCatalogTests(unittest.TestCase):
         )
         opener = Mock()
         opener.open.side_effect = [tune, pls]
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             self.assertEqual(TuneInCatalog().resolve("s260655"), "http://stream.example/live")
         self.assertEqual(opener.open.call_args_list[1].args[0].full_url, "http://stream.example/station.pls")
 
@@ -208,7 +217,7 @@ class TuneInCatalogTests(unittest.TestCase):
             URLError("private-upstream-details"),
             FakeResponse(b"#EXTM3U\n#EXTINF:-1,Station\nhttps://stream.example/live\n"),
         ]
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             self.assertEqual(TuneInCatalog().resolve("s1"), "https://stream.example/live")
         self.assertEqual(opener.open.call_count, 4)
 
@@ -219,7 +228,7 @@ class TuneInCatalogTests(unittest.TestCase):
         ]))
         opener = Mock()
         opener.open.side_effect = [tune, FakeResponse(b"#EXTM3U\nftp://stream.example/live\n")]
-        with patch(f"{TUNEIN_MODULE}.build_opener", return_value=opener):
+        with patch(f"{TUNEIN_MODULE}.public_opener", return_value=opener):
             with self.assertRaisesRegex(TuneInError, "supported stream"):
                 TuneInCatalog().resolve("s1")
 

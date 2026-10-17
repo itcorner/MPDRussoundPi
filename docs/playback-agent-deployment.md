@@ -3,16 +3,24 @@
 Status: read-only S06 deployment completed on 2026-10-17. The initial isolated
 agent rollout is recorded below; production IDs, the TLS proxy and the Docker
 web status integration are now active. S07 write controls were subsequently
-accepted; the approved S08 TuneIn test deployment is recorded below.
+accepted; S08/S09 TuneIn selection and the config/state split with favorites
+are active in the approved trusted-LAN Pi test deployment. Public-only egress
+enforcement is now deployed; full lifecycle acceptance remains outstanding.
 
 ## Scope and prerequisites
 
 ### Active TuneIn test deployment (2026-10-17)
 
+The initial activation sequence below is historical. The subsequent
+[configuration split rollout](#configuration-split-rollout-2026-10-17) replaces
+the supervisor test drop-in with units running the updated Pi checkout.
+
 The user explicitly approved testing against the real Pi on the trusted LAN,
 including the temporary TuneIn opt-in despite the outstanding Pi-side
 DNS/redirect egress policy. This is test acceptance of that risk, not completion
-of the production egress requirement. Since then TuneIn selection defaults on
+of the production egress requirement at that checkpoint. The
+[egress rollout](#public-only-stream-egress-2026-10-17) below subsequently
+implemented the three approved destination restrictions. Since then TuneIn selection defaults on
 whenever manual operations are enabled (`playback_agent_enable_tunein_selection`
 defaults to `true`; the agent's old `--enable-tunein-selection` flag is still
 accepted). Manual operations themselves remain opt-in.
@@ -48,12 +56,13 @@ accepted). Manual operations themselves remain opt-in.
   deployment verification. Actual station-change/audio acceptance is left to
   the user.
 
-To end the test, rerun the dedicated agent play with operations enabled but
+To disable new TuneIn selections, rerun the dedicated agent play with operations enabled but
 `playback_agent_enable_tunein_selection=false` and
 `playback_agent_start=true`. This disables new selections while retaining saved
 stations and the compatible backend. It does not restore the previous station.
-Keep the supervisor's compatible test backend until any TuneIn-selected outputs
-have been explicitly restored or a coordinated permanent rollout replaces it.
+Keep a compatible supervisor/backend for persisted TuneIn selections. The
+config-split rollout now supplies it through the updated Pi checkout; do not
+recreate the retired test drop-in.
 Do not blindly restore old config, queues or the operation database over changes
 made during testing; the private backup and previous image support a separately
 reviewed full rollback.
@@ -124,6 +133,65 @@ Verified:
 - the `config.json` SHA-256 (`353969e8…`) was unchanged after all operations;
 - the dashboard dialog shows the favorites and a disabled Play button for the
   current station.
+
+Remaining acceptance: live URL-type favorite selection; an output without a
+default station (silent/stopped, Play visible but disabled); persistence of
+edited favorites, gains and selections across restarts; approved Pi reboot and
+outage/fault tests. The rollout's successful restarts are not comprehensive
+lifecycle or analog-output acceptance. The destination restrictions are now
+covered by the egress rollout below.
+
+### Public-only stream egress (2026-10-17)
+
+The user approved only three rules: permit public internet streams, block
+loopback/private LAN/link-local destinations, and check DNS results and redirects.
+The [implementation plan and verification evidence](./playback-egress-hardening-plan.md)
+record the exact scope and backup. This is an MPD-only outbound filter, not an
+inbound firewall, provider allowlist or network restriction on SSH/Docker/Russound.
+
+- Python TuneIn API/playlist requests use DNS-checked, connection-pinned HTTP(S).
+  Every redirect is revalidated; mixed public/private answers are rejected,
+  TLS hostname validation is retained and environment proxies are ignored.
+- Actual MPD traffic is protected by the dedicated
+  `inet mpdrussoundpi_egress` nftables table. The three MPD services run in
+  `mpdstreams.slice`; the root-owned loader installs rules before MPD startup.
+  Replies to local control connections and Unix-socket audio remain working.
+- Only UDP DNS to the configured resolver (`192.168.1.1:53`) is excepted.
+  HTTP streams to that address, including TCP port 53, are not allowed.
+  If DNS resolver addresses change, redeploy with the new literal resolver IPs.
+- Startup fails closed if the filter service is unavailable or the current
+  slice inode differs from the root-owned record of the loaded rules.
+  If the slice is recreated, restart `mpdrussoundpi-egress.service` before
+  starting MPD. Stopping the root oneshot does not delete its loaded rules;
+  that avoids silently unprotecting already-running MPD processes.
+
+Approved activation command (briefly restarts configured MPD instances):
+
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/deploy-playback-egress.yml \
+  -e playback_egress_activate=true \
+  -e '{"playback_egress_resolvers":["192.168.1.1"]}'
+```
+
+The play requires preinstalled nftables and leaves all existing host tables
+unchanged. It installs root-owned helpers under
+`/usr/local/lib/mpdrussoundpi-egress/`, the system
+`mpdrussoundpi-egress.service`, the user `mpdstreams.slice`, and
+`mpd_*.service.d/50-egress.conf` drop-ins. Regenerating MPD base units retains
+these drop-ins. Update the root-owned helpers with this play as well as updating
+the normal agent/checkout helpers when changing the address policy.
+
+Verified public playback, blocked direct/DNS/private-redirect connections with
+both curl and an isolated real MPD, zero requests to the private fixture,
+successful filter restart and unchanged normal stations, gains and routes.
+Whole-Pi reboot and live IPv6 transport acceptance remain unperformed.
+
+Rollback: stop the supervisor and MPD instances first, disable the root service,
+restore the backed-up helpers/units, remove the three egress drop-ins and reload
+systemd. Only then explicitly delete `inet mpdrussoundpi_egress` if reverting to
+the pre-hardening policy. Never flush other firewall tables or overwrite edited
+runtime station/favorite/gain state as part of ordinary rollback.
 
 ### Channel-based output identities (2026-10-17)
 

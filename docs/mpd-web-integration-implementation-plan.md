@@ -1,10 +1,13 @@
 # MPD web integration: stepwise implementation plan
 
-Date: 2026-10-14; updated 2026-10-17. Status: S01-S08 local implementation
-complete; S08 production activation and acceptance remain pending. S04
-production identities and the S06 Pi-to-Docker deployment are complete; the
-healthy-LAN update-latency target is met. S07 write controls are done, deployed
-and production-verified by the user on 2026-10-17.
+Date: 2026-10-14; updated 2026-10-17. Status: S01-S07 complete; S08 managed
+station selection and S09 TuneIn catalog are implemented and active on the Pi
+under the approved trusted-LAN test deployment. The configuration split and
+favorites are deployed. S08/S09 live checks passed and the three approved
+public-only egress restrictions are deployed; full lifecycle acceptance remains
+outstanding. S10 automation is
+not implemented; S11 acceptance is incomplete. The healthy-LAN update-latency
+target is met, and S07 has user production sign-off.
 
 ## 1. Confirmed scope and working rules
 
@@ -21,7 +24,8 @@ Confirmed requirements:
 - Provide per-output start/stop, source selection and stream volume controls.
 - **Stream volume directly changes output calibration `gain_db`** through the
   existing backend; no separate user attenuation or combined-gain calculation.
-- Support manual stream URLs and a later external source-provider integration.
+- Support admin-configured URL stations and TuneIn station search/selection;
+  the browser does not accept arbitrary stream URLs.
 - Support optional hardware-state-driven playback using the web application's
   existing Russound interfaces.
 
@@ -50,7 +54,7 @@ and the architecture document. Do not silently turn a recommendation into scope.
 | A01 | Deployment architecture | Solution D: local HTTP agent; browser talks only to existing web application |
 | A02 | Meaning of stream volume | Direct output calibration gain; reuse persisted `gain_db` and `set_gain` |
 | D01 | Automation availability during web-host outage | Web owns hardware-demand policy. Pi preserves/reconciles the last playback intention; it does not make new hardware-driven decisions while the web host is offline. |
-| D08 | Stable output identity | Immutable IDs persisted in Pi operational config; editable labels separate. Preserve legacy names, ports, sinks and systemd units during coordinated migration. |
+| D08 | Stable output identity | Outputs are keyed by immutable channel-based `id` in `config.json`, independent of the station. Admin-editable `label` is the only display-name field; ports, sinks and units remain tied to the output. The earlier offline migration is historical. |
 | D04 | Manual playback precedence | Manual play/pause/stop switches that output to manual mode until explicitly returned to automatic. Accepted 2026-10-16 during S04 preparation; automation is not enabled by this decision. |
 | D07 | Browser access protection | Trusted-environment access without browser login, user permissions or roles for now. Lightweight admin authentication may be added later, but is out of current scope. Preserve existing request protections and web-to-agent authentication. Accepted 2026-10-17. |
 | D13 | Calibration-gain UI range and step | Slider normally -60 to 0 dB, step 0.1 dB; extend its minimum to include existing lower gains without clamping. Slider only, with number + dB display, inside the stream card's Config dialog alongside play/pause/stop. Use existing `gain_db` semantics. Accepted and refined 2026-10-17. |
@@ -58,6 +62,7 @@ and the architecture document. Do not silently turn a recommendation into scope.
 | D10 | Permission to adopt/manage MPD queues | Adopt an explicitly managed one-selected-source queue per output. Remove only identified managed song IDs; never silently clear unmanaged entries. Accepted 2026-10-17. |
 | D11 | Source-switch failure behavior | Keep the newly saved desired source visible and let normal recovery retry; restoring the prior source is an explicit user operation. Accepted 2026-10-17. |
 | D12 | Does source selection change playback intention? | Selecting a source always starts playback. Accepted 2026-10-17. |
+| D14 | First external catalog provider | TuneIn OPML station search and Pi-side direct-stream resolution. Accepted 2026-10-17; S09 is implemented and active in the approved Pi test deployment. |
 
 ### Open decisions, in discussion order
 
@@ -69,7 +74,6 @@ read-only status; the gate column states when the answer becomes necessary.
 | D02 | Which hardware demand rule should automatic mode use? | Any powered zone selecting the mapped input. Alternative: any powered zone starts all managed outputs. | S10 |
 | D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
 | D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
-| D14 | First external catalog provider | TuneIn OPML station search and direct-stream resolution. Accepted 2026-10-17. | S09 only |
 | D15 | Automatic-mode stop delay | Suggested 30 seconds of continuously confirmed no-demand; alternative immediate stop or another interval. | S10 |
 | D16 | Freshness and lease timing | Suggested hardware stale/lease thresholds 30 seconds at 10-second poll/renew cadence; adjust to measured full-poll duration. | S10 |
 
@@ -127,8 +131,15 @@ Future module/test names below are illustrative, not existing files.
 
 S04 and S05 can proceed independently after their prerequisites. S09 and S10
 are independent; catalog availability must not delay manual control/automation.
-If D14 is deferred, mark S09 deferred and S11's catalog acceptance out of scope,
-not falsely completed.
+D14 is accepted and S09 is included. Its remaining hardening and lifecycle
+acceptance must not be confused with local implementation or deployment.
+
+The deployed [configuration split](./config-split-plan.md) supersedes the
+legacy configuration/migration details in the historical S04/S07 records:
+`config.json` holds outputs, optional defaults and station seeds;
+`playback.json` holds runtime selections, gains, intentions and favorites.
+`config_revision` tracks admin configuration; `control_revision` tracks runtime
+state. Old formats are rejected; no compatibility migration is required.
 
 ### S01. Freeze boundaries and read contracts
 
@@ -392,8 +403,8 @@ The user explicitly declined a host firewall; the trusted-LAN assumption and
 Caddy `/24` source filter are recorded above. S06 read-only deployment is complete.
 The Pi-to-web healthy-LAN p95 latency target is met; measurement details and
 the maximum observed outlier are recorded in the deployment record. S07's
-subsequent local implementation is recorded below; production writes remain
-disabled.
+subsequent implementation and production write activation are recorded below.
+Writes were disabled at the S06 read-only checkpoint.
 
 ### S07. Add durable manual operations and calibration controls
 
@@ -447,14 +458,25 @@ route/gain startup gating and saved intentions; restart restores changed gain.
 
 ### S08. Add manual source replacement
 
-1. D09 accepts only direct HTTP(S) feed URLs. Validate in the web gateway and
-   again on the Pi; never echo the URL in errors or logs. Status shows only a
-   redacted scheme/host display. Production writes additionally require a Pi-side
-   egress policy that covers DNS and redirects; the application validator alone
-   does not constrain the destination reached by MPD.
-2. Persist the selected URL and queue ownership metadata atomically under the
-   shared backend lock. Update only the selected output; do not regenerate
-   service/audio configuration.
+**Implemented and active in the approved Pi test deployment (2026-10-17).**
+TuneIn selection, managed queues and recovery are deployed together with S09.
+The [deployment record](./playback-agent-deployment.md#active-tunein-test-deployment-2026-10-17)
+records live station changes, contention and playlist-resolution fixes. The
+[configuration split rollout](./playback-agent-deployment.md#configuration-split-rollout-2026-10-17)
+records favorites, preserved stations/gains and service restarts.
+The [public-only egress plan](./playback-egress-hardening-plan.md) records the
+subsequently deployed DNS/redirect restrictions. Full lifecycle sign-off remains
+outstanding.
+
+1. D09 accepts a TuneIn station ID/name, not a browser-supplied URL.
+   `select_favorite` also accepts a saved favorite key, including an
+   admin-configured URL station. Validate resolved HTTP(S) feeds on the Pi;
+   never echo full URLs in errors or logs. Status uses redacted source displays.
+   Pi-side DNS/redirect restrictions now enforce public-only destinations;
+   the earlier trusted-LAN test-risk exception is historical.
+2. Persist station identity, resolved URL, managed song ID and play intention
+   atomically in `playback.json` under the shared backend lock. Update only the
+   selected output; do not rewrite `config.json` or regenerate services/audio.
 3. D10 authorizes one managed queue item per output. Adopt only an empty queue
    or a single queue item matching the prior configured source. Delete only the
    persisted managed song ID; refuse queues with unowned entries.
@@ -463,7 +485,8 @@ route/gain startup gating and saved intentions; restart restores changed gain.
    playback. Report source-save, intention and actual-application outcomes
    separately; show desired and observed current source separately.
 5. Reuse startup mute/route/gain checks when replacing active playback.
-6. Add per-output source entry and explicit durable operation outcomes to the UI.
+6. Provide TuneIn search, favorites and explicit durable operation outcomes
+   in each output's Config dialog; do not add arbitrary URL entry.
 
 **Tests:** repeated same/new selections, no queue accumulation, URL/persistence/
 cleanup failure, stop racing a switch, paused/stopped outputs, process restart
@@ -474,23 +497,38 @@ to play.
 
 ### S09. Integrate the TuneIn station catalog
 
+**Implemented and active in the approved Pi test deployment (2026-10-17).**
+Search, exact station-ID lookup, Pi-side resolution and favorites are wired
+through the dashboard. Live checks covered TuneIn selection, playlist-backed
+station `s260655`, and favorites add/move/remove. The config-split regression
+baseline is 532 Python tests (one skipped) and 27 JavaScript tests passing.
+URL-type favorite selection and no-default-station behavior still need live
+acceptance; their local coverage is not a substitute for target checks.
+
 1. Use TuneIn OPML search server-side; return only normalized station identity,
    title and bounded display metadata to the browser. Do not expose the provider
    stream URL or accept user-entered URLs.
 2. Resolve an `s<digits>` station identity on the Pi using the fixed TuneIn
-   endpoint; accept only direct MP3/AAC/Ogg public stream URLs.
+   endpoint. Bounded M3U/PLS resolution may extract a direct HTTP(S) stream;
+   playlists are not handed to MPD as the managed source.
 3. Store the resolved URL privately with the TuneIn station provenance. Refresh
    it during supervisor reconciliation so a changed provider URL can recover.
 4. Use bounded request timeouts, response sizes, result counts and short-lived
    search caching. Show provider failures without interrupting active playback.
-5. Keep the station operation separately opt-in; Pi-side egress policy remains
-   necessary because TuneIn-selected stream hosts and their redirects vary.
+5. Manual operations remain opt-in. TuneIn selection defaults on when those
+   operations are enabled; `--disable-tunein-selection` or Ansible
+   `playback_agent_enable_tunein_selection=false` disables new selections.
+   Pi-side egress policy is deployed because provider stream hosts and redirects
+   vary: DNS-checked/pinned Python fetching plus MPD cgroup packet filtering.
 
 **Acceptance:** catalog outage does not affect running audio or manual URLs;
 unsupported entries rejected, labels escaped and arbitrary browser-supplied
 stream URLs rejected.
 
 ### S10. Implement hardware-driven automation
+
+**Not implemented.** D02, D03, D05, D15 and D16 remain open. Confirm physical
+mappings and fresh hardware observations before enabling any automatic policy.
 
 1. Follow accepted D01; resolve D02-D05 and D15-D16, and confirm physical mappings
    before enabling rules.
@@ -524,6 +562,13 @@ stop cannot be undone by delayed policy; stale state follows the accepted
 outage policy and is visibly degraded.
 
 ### S11. Lifecycle acceptance, rollback and operational handover
+
+**Incomplete.** Config-split rollout verified live TuneIn favorites operations,
+unchanged admin-config bytes and playback after MPD/supervisor/agent restarts.
+Still outstanding: live URL-type favorite and no-default-station checks,
+restart persistence of edited favorites/gains/selections, approved Pi reboot
+and outage/fault tests, and S10 automation acceptance. Earlier S06 latency
+measurements are not a new S08/S09 lifecycle or analog-audio guarantee.
 
 1. Run focused tests for touched components; then full regression/contract
    suites before live rollout. Syntax-check provisioning separately.
@@ -564,7 +609,7 @@ credentials and operational files must have an explicit owner.
 
 ## 5. Current progress and next discussion
 
-- A01, A02, D01, D04, D06, D07, D08 and D13 accepted.
+- A01, A02, D01, D04, D06-D14 accepted.
 - S01-S06 read-only status are complete: contract, collector, authenticated
   agent, production identities, dashboard and Pi-to-Docker deployment. The
   live agent and dashboard are healthy. A 156-second Pi-to-web LAN sample
@@ -580,28 +625,37 @@ credentials and operational files must have an explicit owner.
   out-of-range values without clamping by extending the slider minimum.
   Controls live in a per-stream Config dialog with slider-only gain editing.
   S07 is done, deployed and production-verified (user sign-off, 2026-10-17).
-- D02-D03, D05 and D14-D16 remain open; no provider, physical input
-  mapping or automation demand rule has been selected.
+- D02-D03, D05 and D15-D16 remain open; physical input mapping, automation
+  demand rule, stale-state policy and timing still need decisions.
 - D09 accepts TuneIn station selection only: the browser submits a validated
   TuneIn station identity, and the playback agent resolves a direct MP3, AAC or
-  Ogg stream from TuneIn. Arbitrary browser-supplied URLs, playlists and other
-  MPD URI schemes are out of scope.
+  Ogg stream from TuneIn. Bounded provider M3U/PLS resolution is supported;
+  arbitrary browser-supplied URLs/playlists and other MPD URI schemes are
+  out of scope. Admin-configured URL favorites are supported separately.
 - D10 accepts a managed one-selected-source queue per output, with cleanup
   limited to identified managed song IDs.
 - D11 keeps newly saved desired source on failure for recovery retry; restoring
   the previous source is an explicit selection.
 - D12 means selecting a source explicitly changes that output's intention to
   play; there is no separate silent selection action.
-- **S08 local implementation uses TuneIn station search/selection.** D09-D12
-  are accepted; a Pi-side DNS/redirect egress policy, explicit
-  `playback_agent_enable_tunein_selection` opt-in, and separate target
-  acceptance remain deployment gates. The opt-in stays disabled until those
-  deployment gates are resolved.
+- **S08/S09 are implemented and active in the approved trusted-LAN Pi test.**
+  Manual operations are enabled; TuneIn defaults on with manual operations.
+  The three approved public-only DNS/redirect egress restrictions are now
+  deployed and live-checked. No full lifecycle sign-off is claimed.
 - Because outputs now switch stations, output names, IDs and labels follow the
   audio channel (`stereo_front`/Stereo Front, `stereo_centerlfe`/Stereo
   CenterLFE, `stereo_rear`/Stereo Rear) and amend D08. Existing installations
   migrated offline with the since-removed `outputrename.py`; the dashboard shows the selected
   station next to the playback state. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
+- The config/state split, optional default station/gain and favorites (maximum
+  20) are implemented and deployed. No station means initially silent/stopped,
+  with Play visible but disabled; omitted gain means 0 dB. Live no-station and
+  URL-favorite acceptance remain pending. O12 is closed by hardcoded loopback
+  MPD generation and the verified Pi listeners.
+
+Next: finish the outstanding manual-playback acceptance,
+then resolve D02 before implementing S10. Schedule reboot/fault tests explicitly;
+do not infer approval from this status update.
 
 After each answer, update its status/outcome above, amend affected architecture
 sections/steps and discuss only the next unresolved decision.

@@ -1,0 +1,14 @@
+[Unit]
+Description=Public-only MPD outbound stream enforcement
+Requires=user@{{ playback_egress_uid }}.service
+After=user@{{ playback_egress_uid }}.service network-online.target
+Wants=network-online.target
+PartOf=user@{{ playback_egress_uid }}.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 {{ playback_egress_install }}/playbackegress.py --user {{ playback_egress_user }} --uid {{ playback_egress_uid }}{% for resolver in playback_egress_resolvers %} --resolver {{ resolver }}{% endfor %}
+
+[Install]
+WantedBy=multi-user.target

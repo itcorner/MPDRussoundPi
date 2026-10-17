@@ -5,6 +5,12 @@ Status: all phases implemented and rolled out to the Pi on 2026-10-17
 The rollout record is in `playback-agent-deployment.md`. Decisions C1-C6 are
 settled (see below).
 
+Implementation and rollout are complete, not full lifecycle acceptance.
+Remaining live checks: URL-type favorite selection, no-default-station
+behavior, persistence of edited runtime state across restarts and an approved
+Pi reboot/outage test. O12's loopback-binding fix is now recorded as closed in
+the [hardware audit](./musicpi-hardware-audit-2026-10-11.md).
+
 Implementation deviations from this plan:
 
 - Favorites have no `logo` field; the dashboard derives TuneIn logos from the

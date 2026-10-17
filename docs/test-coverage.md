@@ -176,6 +176,24 @@ control-state replacement or production rollback was performed for S04.
   sampling advanced. Existing Radio 88.6 (now Stereo Front) faults continued. No fault injection,
   playback repair, Docker transport or p95 update-latency acceptance was performed.
 
+## Public-only playback egress
+
+[Public network tests](../tests/test_publicnetwork.py) cover IPv4/IPv6 public
+classification, mixed/empty/private DNS answers, rebinding between validation
+and connection, pinned socket addresses, original HTTP Host/TLS hostname,
+certificate validation, redirect revalidation and disabled environment proxies.
+[Filter tests](../tests/test_playbackegress.py) cover cgroup-only scoping,
+control replies, exact UDP DNS exceptions, shared address sets, input rejection,
+fail-closed startup, cgroup identity changes and persistent unit configuration.
+[TuneIn tests](../tests/test_tunein.py) retain search/cache and bounded
+playlist/error coverage with deterministic DNS.
+
+Local baseline: 551 Python tests, one skipped; 27 JavaScript tests passed.
+The [egress rollout evidence](./playback-egress-hardening-plan.md#rollout-evidence-2026-10-17)
+separately records real Pi public playback and direct/DNS/redirect blocking,
+including an isolated MPD and zero private fixture requests. Live IPv6 transport,
+user-manager restart and whole-Pi reboot were not tested.
+
 ## Manual MPD Stream Control
 
 A reusable [Python MPD backend API](./mpd-backend-api.md) also provides
