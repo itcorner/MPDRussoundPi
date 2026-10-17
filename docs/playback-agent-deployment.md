@@ -75,6 +75,56 @@ deployed the same way (previous copies in
 failures now report `station_unavailable`. Selecting `s260655` on Stereo Rear
 was then applied in about 3 seconds and played.
 
+### Configuration split rollout (2026-10-17)
+
+Moved the Pi to the split format (`docs/config-split-plan.md`):
+- `config.json`: outputs keyed by `id`, plus a stations list;
+- `playback.json`: agent-owned runtime state;
+- MPD bound to loopback.
+
+Procedure:
+
+1. Recorded stations, gains and intentions. All three outputs were playing:
+   - front: TuneIn `s25744` Radio 88.6, -7.2 dB;
+   - centerlfe: `s8007` ORF Hitradio OE3, -1.6 dB;
+   - rear: `s260655` EROTICA LOUNGE, -0.6 dB.
+2. Stopped the agent and supervisor. Made a private backup, with `SHA256SUMS`,
+   in `~/.local/state/mpdrussoundpi/config-split-backup-20261017-205452/`:
+   - `~/.config/mpdrussoundpi/`, `playback.json` and the operation store;
+   - `~/.config/mpd/`, the user units and the agent sources;
+   - the checkout's `mpdrussoundpi/russound/` directory.
+3. Wrote a new `config.json` (mode 0600):
+   - the `outputmappers` block is unchanged;
+   - each output has its recorded station as `default_station` and its
+     recorded gain as `default_gain_db`;
+   - the stations list holds those three plus `s8235` ORF Radio FM4.
+4. Deleted the old `playback.json` and the operation store.
+5. Synced the repository's `mpdrussoundpi/russound/` scripts and `lib/`
+   into the Pi checkout. The checkout already carried earlier manual syncs.
+   Removed `outputrename.py` and `lib/stream.py` from both installs.
+6. Synced the agent sources (`playbackagent.py`, `lib/`) into
+   `~/.local/share/mpdrussoundpi-agent/`.
+7. Ran the checkout's `mpdsetup.py --install` with `~/russound-venv`. The
+   MPD confs now have `bind_to_address "127.0.0.1"`.
+8. Removed the `90-tunein-test.conf` supervisor drop-in. The regenerated
+   supervisor unit runs the updated checkout.
+9. Pointed `playback_audit.service` at the checkout again (still inactive).
+10. Restarted the MPD units, the supervisor and the agent.
+11. Redeployed the Caddy proxy with the favorites routes.
+
+Verified:
+- `ss -ltn` shows only `127.0.0.1:6601-6603`, and 6601 is unreachable on the
+  LAN address;
+- the agent seeded `playback.json` from the defaults, and all three outputs
+  play their previous stations at their previous gains;
+- `/v1/favorites` lists the four configured stations;
+- through the dashboard API:
+  - `select_favorite` switched rear to FM4 and back;
+  - `add_favorite`, `move_favorite` and `remove_favorite` round-tripped;
+- the `config.json` SHA-256 (`353969e8…`) was unchanged after all operations;
+- the dashboard dialog shows the favorites and a disabled Play button for the
+  current station.
+
 ### Channel-based output identities (2026-10-17)
 
 Because outputs now switch stations, the station-named outputs were renamed to
@@ -183,8 +233,8 @@ The play verifies the self-signed trust anchor, SAN, key match and at least
 certificate/key pair or renews it automatically; rotation requires a separately
 backed-up, approved replacement procedure and coordinated proxy/web restart.
 
-The Caddy route forwards only `/v1/health`, `/v1/capabilities`, `/v1/outputs`
-and `/v1/outputs/*` to the loopback agent. It applies a source CIDR allowlist,
+The Caddy route forwards only `/v1/health`, `/v1/capabilities`, `/v1/outputs`,
+`/v1/outputs/*` and `/v1/favorites` to the loopback agent. It applies a source CIDR allowlist,
 listens on an unprivileged port, disables HTTP/3 and keeps its administrative
 endpoint on loopback. A host/network firewall is normally an additional
 boundary. For this deployment the user explicitly declined a host firewall
@@ -320,7 +370,8 @@ The agent play creates a private
 `~/.local/state/mpdrussoundpi-agent/operations.sqlite3` ledger directory,
 passes `--operations-db` only when enabled, and still restarts only the agent.
 The proxy's default read matcher allows GET/HEAD only; the second opt-in adds
-POST for `/v1/outputs/*/operations` and GET/HEAD for `/v1/operations/*`.
+POST for `/v1/outputs/*/operations` and `/v1/favorites/operations`, and GET/HEAD
+for `/v1/operations/*`.
 No MPD/PipeWire/Russound service restart is required for these deployments.
 The existing service token authorizes configured-output operations when enabled;
 the agent does not gain arbitrary command or filesystem APIs.

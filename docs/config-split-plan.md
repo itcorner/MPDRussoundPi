@@ -1,7 +1,9 @@
 # Plan: split output configuration from station selection
 
-Status: phases 1-4 implemented (loopback MPD, `id` keys, config/state split,
-favorites backend and web UI); phase 5 (Pi rollout) pending. Decisions C1-C6 are settled (see below).
+Status: all phases implemented and rolled out to the Pi on 2026-10-17
+(loopback MPD, `id` keys, config/state split, favorites backend and web UI).
+The rollout record is in `playback-agent-deployment.md`. Decisions C1-C6 are
+settled (see below).
 
 Implementation deviations from this plan:
 
@@ -15,6 +17,13 @@ Implementation deviations from this plan:
   inventory and publishes it as `snapshot.favorites`, so SSE updates cover it.
 - The dashboard's gain-change wait now keys on `control_revision`, because
   gain no longer changes `config_revision`.
+- Rollout: the Caddy proxy needed `/v1/favorites` (read) and
+  `/v1/favorites/operations` (opt-in write) in its allowlist.
+- Rollout step 6: instead of generating the supervisor unit from the agent
+  install, the Pi checkout was brought up to date. The supervisor, MPD and audit
+  units run from it again, so the `90-tunein-test.conf` drop-in was removed. The
+  agent playbook deliberately ships no setup or supervisor scripts, so the
+  agent install stays agent-only.
 
 ## Problem
 

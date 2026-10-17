@@ -143,6 +143,7 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         self.assertIn("remote_ip 192.168.1.20/32", caddyfile)
         self.assertIn("reverse_proxy 127.0.0.1:8081", caddyfile)
         self.assertIn("/v1/outputs/*", caddyfile)
+        self.assertIn("/v1/favorites", caddyfile)
         self.assertIn("respond 403", caddyfile)
         self.assertNotIn("--allow-remote", caddyfile)
         named_services = [
@@ -200,9 +201,11 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         readonly = caddy.render(**variables)
         self.assertIn("method GET HEAD", readonly)
         self.assertNotIn("method POST", readonly)
+        self.assertNotIn("/v1/favorites/operations", readonly)
         enabled = caddy.render(**variables, playback_proxy_enable_operations=True)
         self.assertIn("/v1/outputs/*/operations", enabled)
         self.assertIn("/v1/operations/*", enabled)
+        self.assertIn("/v1/outputs/*/operations /v1/favorites/operations", enabled)
         self.assertIn("method POST", enabled)
 
     def test_proxy_play_never_restarts_agent_or_audio_services(self):
