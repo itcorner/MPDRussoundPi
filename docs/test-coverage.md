@@ -169,12 +169,21 @@ control-state replacement or production rollback was performed for S04.
   isolated sources/venv, private credentials, no audio/MPD service operations
   and limited rollback. They execute no deployment or target commands.
   Six static tests and both Ansible syntax checks passed (2026-10-15).
-- [Isolated target acceptance](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15)
+- [Isolated target acceptance](./playback-deployment-evidence.md#approved-isolated-target-test-2026-10-15)
   verifies real Pi cached reads, metadata, routes/gain and HTTP authentication
   with a separate private config copy. Production config/intentions hashes and
   existing audio/MPD/supervisor/recorder PIDs/restarts were unchanged; recorder
   sampling advanced. Existing Radio 88.6 (now Stereo Front) faults continued. No fault injection,
   playback repair, Docker transport or p95 update-latency acceptance was performed.
+
+## Deployment workflows
+
+[Workflow tests](../tests/test_deployment_workflows.py) check non-forcing Git
+updates, external-gateway mode, writable mounts/private secret directories,
+playback agent environment rendering, native persistent state and isolated
+dependencies, and staging audio without starting/enabling playback.
+All deployment playbooks are separately syntax-checked. These are controller
+checks, not execution of the native/Docker provisioning paths on a new Pi.
 
 ## Public-only playback egress
 

@@ -1,171 +1,77 @@
-# Raspberry Pi playback agent deployment
+# Playback deployment
 
-Status: read-only S06 deployment completed on 2026-10-17. The initial isolated
-agent rollout is recorded below; production IDs, the TLS proxy and the Docker
-web status integration are now active. S07 write controls were subsequently
-accepted; S08/S09 TuneIn selection and the config/state split with favorites
-are active in the approved trusted-LAN Pi test deployment. Public-only egress
-enforcement is now deployed; full lifecycle acceptance remains outstanding.
+This guide installs or updates the current Pi playback stack and connects it
+to the web dashboard. Run Ansible commands from the repository root on the
+deployment controller. Replace example addresses, paths and DNS resolver IPs
+with your installation values.
 
-## Scope and prerequisites
+For a web-only start, see the [README](../README.md#quick-start-local-development).
+For MPD hardware/configuration details, see
+[headless playback](./mpd-headless-deployment.md).
+Historical checks and outstanding acceptance are in
+[deployment evidence](./playback-deployment-evidence.md), not in the procedure.
 
-### Active TuneIn test deployment (2026-10-17)
+## Components and prerequisites
 
-The initial activation sequence below is historical. The subsequent
-[configuration split rollout](#configuration-split-rollout-2026-10-17) replaces
-the supervisor test drop-in with units running the updated Pi checkout.
+| Component | Host / listener | Purpose |
+| --- | --- | --- |
+| MPD, PipeWire, supervisor | Pi; MPD `127.0.0.1:6601-6603` in the seed | Decode, route and recover audio |
+| Playback agent | Pi; `127.0.0.1:8081` | Authenticated observations and optional durable commands |
+| Caddy proxy | Pi; TLS `8443` | Restricted web-to-agent access |
+| Web application | Docker host or native Linux host; HTTP `8000` | Browser UI and same-origin gateway |
+| Egress filter | Pi; no listener | Block non-public MPD stream destinations |
 
-The user explicitly approved testing against the real Pi on the trusted LAN,
-including the temporary TuneIn opt-in despite the outstanding Pi-side
-DNS/redirect egress policy. This is test acceptance of that risk, not completion
-of the production egress requirement at that checkpoint. The
-[egress rollout](#public-only-stream-egress-2026-10-17) below subsequently
-implemented the three approved destination restrictions. Since then TuneIn selection defaults on
-whenever manual operations are enabled (`playback_agent_enable_tunein_selection`
-defaults to `true`; the agent's old `--enable-tunein-selection` flag is still
-accepted). Manual operations themselves remain opt-in.
+Required:
 
-- Test dashboard: `http://127.0.0.1:8000/playback` on the Docker host. Open an
-  output's Config dialog, search TuneIn (Enter or **Search**), then choose **Select and play**.
-  Selection changes the saved station and starts real playback for that output.
-- Rebuilt/recreated only `russound-web`. The web image now includes the two
-  TuneIn provider modules, without including the Pi setup scripts or private
-  runtime data. The previous image is retained as
-  `mpdrussoundpi-web:pre-tunein-test-20261017`.
-- Deployed the current checkout through the dedicated agent play with
-  `playback_agent_start=true`, `playback_agent_enable_operations=true` and
-  `playback_agent_enable_tunein_selection=true`, using the existing private
-  token file without changing or logging its value.
-- The existing supervisor used an older backend. A test-only user-unit drop-in,
-  `~/.config/systemd/user/mpd_playback_supervisor.service.d/90-tunein-test.conf`,
-  points its ExecStart to `mpdsupervisor.py` and the venv in
-  `~/.local/share/mpdrussoundpi-agent/`. This keeps supervisor and agent source
-  handling aligned without modifying the shared Pi checkout. Restarted the
-  supervisor and agent only.
-- Private pre-test agent sources/unit, operational config, intentions, an
-  online SQLite operation-store backup and service/inventory baseline are
-  retained on the Pi under
-  `~/.local/state/mpdrussoundpi/s08-tunein-test-20261017/`.
-- Verified authenticated agent health/inventory and advertised
-  `set_tunein_station` capability, live TuneIn search through the web API and
-  browser, and stream resolution on the Pi. The dashboard is healthy and its
-  station-selection buttons are enabled.
-- Deployment checks confirmed byte-identical operational config/intentions and
-  unchanged MPD PIDs (`65286`, `65283`, `65284`), audio PIDs and restart counts.
-  No station selection, gain change or transport command was issued during
-  deployment verification. Actual station-change/audio acceptance is left to
-  the user.
+- Linux Pi with systemd user services/cgroup v2, a supported USB audio device,
+  network access and a non-root audio account (`musicpi` in the inventory).
+- Ansible on the controller, SSH access and sudo on the Pi. Review
+  [inventory.yaml](../ansible/inventory.yaml) before running any play.
+- Matching source revisions on the controller and Pi checkout. Agent/proxy/
+  egress plays copy files from the controller checkout; audio setup normally
+  pulls Git. Commit/publish reviewed code before remote Git deployment.
+  Never force/reset a dirty Pi checkout.
+- On the Pi, preinstall `caddy`, `openssl` and `nftables` through your normal
+  package-management procedure. The proxy requires the `caddy` account and
+  `/usr/bin/caddy`; the filter requires `/usr/sbin/nft` with cgroup-v2 matching.
+- A trusted LAN. The browser UI has no login. Caddy restricts HTTP source CIDRs,
+  not incoming packets. Do not expose either listener by router port forwarding.
 
-To disable new TuneIn selections, rerun the dedicated agent play with operations enabled but
-`playback_agent_enable_tunein_selection=false` and
-`playback_agent_start=true`. This disables new selections while retaining saved
-stations and the compatible backend. It does not restore the previous station.
-Keep a compatible supervisor/backend for persisted TuneIn selections. The
-config-split rollout now supplies it through the updated Pi checkout; do not
-recreate the retired test drop-in.
-Do not blindly restore old config, queues or the operation database over changes
-made during testing; the private backup and previous image support a separately
-reviewed full rollback.
+Capture a private backup before changing a running installation: admin config,
+runtime state, user/system units, source revision and agent credentials. Stop
+writers before copying the operation SQLite database, or use SQLite's backup
+API. Full audio deployment and egress activation interrupt playback.
 
-Station-switch fix (2026-10-17, after the channel rename): user selections
-failed with `audio_failed` while the supervisor re-resolved every TuneIn output
-every 2 s under the shared lock. The fixed `lib/mpdbackend.py`,
-`lib/streamroute.py` and `lib/playbackoperations.py` were copied into the agent
-checkout (previous copies in
-`~/.local/state/mpdrussoundpi/route-timeout-backup-174754/`) and only the
-supervisor and agent were restarted. Afterwards the lock contention stopped
-and dashboard selections were applied in 3–6 seconds.
+## 1. Prepare the Pi audio stack
 
-Playlist fallback (2026-10-17): stations that TuneIn lists only via M3U/PLS
-playlists (e.g. `s260655`) failed with `mpd_failed`. The updated
-`lib/tunein.py`, `lib/mpdbackend.py` and `lib/playbackoperations.py` were
-deployed the same way (previous copies in
-`~/.local/state/mpdrussoundpi/playlist-resolve-backup-182056/`); resolve
-failures now report `station_unavailable`. Selecting `s260655` on Stereo Rear
-was then applied in about 3 seconds and played.
+Review the seed's USB hardware selector, profile, sinks, output IDs/ports,
+station defaults and gains first. The first install seeds
+`~/.config/mpdrussoundpi/config.json`; later runs preserve it. Edit that
+persistent file for an existing installation.
 
-### Configuration split rollout (2026-10-17)
+Stage the audio/MPD units without starting playback:
 
-Moved the Pi to the split format (`docs/config-split-plan.md`):
-- `config.json`: outputs keyed by `id`, plus a stations list;
-- `playback.json`: agent-owned runtime state;
-- MPD bound to loopback.
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/setup-musicpi.yml --tags init,new \
+  -e mpd_russoundpi_start_playback=false
+```
 
-Procedure:
+This prepares the user manager, audio services, native ser2net, MPD units and
+runtime defaults. It leaves MPD/supervision stopped and their meta/supervisor
+autostart disabled so egress can be installed
+before streams start. If audio-group membership was newly added to an already
+running user manager, reboot in a maintenance window before continuing.
 
-1. Recorded stations, gains and intentions. All three outputs were playing:
-   - front: TuneIn `s25744` Radio 88.6, -7.2 dB;
-   - centerlfe: `s8007` ORF Hitradio OE3, -1.6 dB;
-   - rear: `s260655` EROTICA LOUNGE, -0.6 dB.
-2. Stopped the agent and supervisor. Made a private backup, with `SHA256SUMS`,
-   in `~/.local/state/mpdrussoundpi/config-split-backup-20261017-205452/`:
-   - `~/.config/mpdrussoundpi/`, `playback.json` and the operation store;
-   - `~/.config/mpd/`, the user units and the agent sources;
-   - the checkout's `mpdrussoundpi/russound/` directory.
-3. Wrote a new `config.json` (mode 0600):
-   - the `outputmappers` block is unchanged;
-   - each output has its recorded station as `default_station` and its
-     recorded gain as `default_gain_db`;
-   - the stations list holds those three plus `s8235` ORF Radio FM4.
-4. Deleted the old `playback.json` and the operation store.
-5. Synced the repository's `mpdrussoundpi/russound/` scripts and `lib/`
-   into the Pi checkout. The checkout already carried earlier manual syncs.
-   Removed `outputrename.py` and `lib/stream.py` from both installs.
-6. Synced the agent sources (`playbackagent.py`, `lib/`) into
-   `~/.local/share/mpdrussoundpi-agent/`.
-7. Ran the checkout's `mpdsetup.py --install` with `~/russound-venv`. The
-   MPD confs now have `bind_to_address "127.0.0.1"`.
-8. Removed the `90-tunein-test.conf` supervisor drop-in. The regenerated
-   supervisor unit runs the updated checkout.
-9. Pointed `playback_audit.service` at the checkout again (still inactive).
-10. Restarted the MPD units, the supervisor and the agent.
-11. Redeployed the Caddy proxy with the favorites routes.
+Runtime defaults: an output with `default_station` initially intends to play;
+without it, it stays silent/stopped. Missing `default_gain_db` means 0 dB.
+Existing runtime station/gain/intention/favorites are preserved. Do not delete
+`playback.json` during an update.
 
-Verified:
-- `ss -ltn` shows only `127.0.0.1:6601-6603`, and 6601 is unreachable on the
-  LAN address;
-- the agent seeded `playback.json` from the defaults, and all three outputs
-  play their previous stations at their previous gains;
-- `/v1/favorites` lists the four configured stations;
-- through the dashboard API:
-  - `select_favorite` switched rear to FM4 and back;
-  - `add_favorite`, `move_favorite` and `remove_favorite` round-tripped;
-- the `config.json` SHA-256 (`353969e8…`) was unchanged after all operations;
-- the dashboard dialog shows the favorites and a disabled Play button for the
-  current station.
+## 2. Install public-only stream enforcement
 
-Remaining acceptance: live URL-type favorite selection; an output without a
-default station (silent/stopped, Play visible but disabled); persistence of
-edited favorites, gains and selections across restarts; approved Pi reboot and
-outage/fault tests. The rollout's successful restarts are not comprehensive
-lifecycle or analog-output acceptance. The destination restrictions are now
-covered by the egress rollout below.
-
-### Public-only stream egress (2026-10-17)
-
-The user approved only three rules: permit public internet streams, block
-loopback/private LAN/link-local destinations, and check DNS results and redirects.
-The [implementation plan and verification evidence](./playback-egress-hardening-plan.md)
-record the exact scope and backup. This is an MPD-only outbound filter, not an
-inbound firewall, provider allowlist or network restriction on SSH/Docker/Russound.
-
-- Python TuneIn API/playlist requests use DNS-checked, connection-pinned HTTP(S).
-  Every redirect is revalidated; mixed public/private answers are rejected,
-  TLS hostname validation is retained and environment proxies are ignored.
-- Actual MPD traffic is protected by the dedicated
-  `inet mpdrussoundpi_egress` nftables table. The three MPD services run in
-  `mpdstreams.slice`; the root-owned loader installs rules before MPD startup.
-  Replies to local control connections and Unix-socket audio remain working.
-- Only UDP DNS to the configured resolver (`192.168.1.1:53`) is excepted.
-  HTTP streams to that address, including TCP port 53, are not allowed.
-  If DNS resolver addresses change, redeploy with the new literal resolver IPs.
-- Startup fails closed if the filter service is unavailable or the current
-  slice inode differs from the root-owned record of the loaded rules.
-  If the slice is recreated, restart `mpdrussoundpi-egress.service` before
-  starting MPD. Stopping the root oneshot does not delete its loaded rules;
-  that avoids silently unprotecting already-running MPD processes.
-
-Approved activation command (briefly restarts configured MPD instances):
+Inspect the Pi's DNS resolver addresses (`cat /etc/resolv.conf`). Supply exact
+resolver IP literals, not names:
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -174,514 +80,200 @@ ansible-playbook -i ansible/inventory.yaml \
   -e '{"playback_egress_resolvers":["192.168.1.1"]}'
 ```
 
-The play requires preinstalled nftables and leaves all existing host tables
-unchanged. It installs root-owned helpers under
-`/usr/local/lib/mpdrussoundpi-egress/`, the system
-`mpdrussoundpi-egress.service`, the user `mpdstreams.slice`, and
-`mpd_*.service.d/50-egress.conf` drop-ins. Regenerating MPD base units retains
-these drop-ins. Update the root-owned helpers with this play as well as updating
-the normal agent/checkout helpers when changing the address policy.
+The play installs root-owned helpers, `mpdrussoundpi-egress.service`, the user
+`mpdstreams.slice` and per-MPD `50-egress.conf` drop-ins, then restarts configured
+MPD instances into the protected slice. It leaves existing host firewall tables
+unchanged. UDP DNS is excepted only to the supplied resolver IPs on port 53;
+HTTP streams to those IPs remain blocked.
 
-Verified public playback, blocked direct/DNS/private-redirect connections with
-both curl and an isolated real MPD, zero requests to the private fixture,
-successful filter restart and unchanged normal stations, gains and routes.
-Whole-Pi reboot and live IPv6 transport acceptance remain unperformed.
+MPD startup fails if the root service is unavailable or its recorded cgroup
+inode no longer matches. Restart the root service after recreating the slice.
+Stopping the root service does not remove its loaded rules. Private/LAN URL
+stations are deliberately unsupported. See the
+[egress policy](./playback-egress-hardening-plan.md) for details.
 
-Rollback: stop the supervisor and MPD instances first, disable the root service,
-restore the backed-up helpers/units, remove the three egress drop-ins and reload
-systemd. Only then explicitly delete `inet mpdrussoundpi_egress` if reverting to
-the pre-hardening policy. Never flush other firewall tables or overwrite edited
-runtime station/favorite/gain state as part of ordinary rollback.
-
-### Channel-based output identities (2026-10-17)
-
-Because outputs now switch stations, the station-named outputs were renamed to
-their audio channels with the one-off `outputrename.py` tool (copied into the
-agent directory; removed from the repository by the configuration split):
-
-| Former name / ID | New name and label / ID | MPD unit |
-| --- | --- | --- |
-| `Radio 88.6` / `radio_886` | `Stereo Front` / `stereo_front` | `mpd_stereo_front.service` |
-| `FM4 Radio` / `fm4_radio` | `Stereo CenterLFE` / `stereo_centerlfe` | `mpd_stereo_centerlfe.service` |
-| `OE3 Radio` / `oe3_radio` | `Stereo Rear` / `stereo_rear` | `mpd_stereo_rear.service` |
-
-Procedure: private backup of config, intentions, `mpd_*` units/configs and an
-online operation-store copy to
-`~/.local/state/mpdrussoundpi/s08-channel-rename-20261017/` (with
-`SHA256SUMS`); stop agent, supervisor, meta unit and the three MPD units; run
-`outputrename.py --dry-run`, then for real with `--intentions` and
-`--operations-db` (refuses pending operations); delete the three old
-`mpd_*.service`/`.conf` files; run the Pi checkout's `mpdsetup.py --install`
-with `~/russound-venv`; start `mpd_meta_control`, the supervisor and the agent.
-Regenerated units/configs differ from the backups only in names; the supervisor
-unit and test drop-in were unchanged. Verified all three outputs play their
-previous stations with one queue entry, correct sinks and unchanged gains.
-Historical operations retain their former output IDs.
-
-Rollback: stop the agent, supervisor, meta and `mpd_stereo_*` units; restore
-`config.json`, `playback.json`, `units/*` and `mpd/*` from the backup; remove
-the `mpd_stereo_*` units/configs; `systemctl --user daemon-reload`; start
-`mpd_meta_control`, the supervisor and the agent. Rebuild the dashboard image
-from the previous UI if the old card layout is required.
-
-Use [deploy-playback-agent.yml](../ansible/playbooks/deploy-playback-agent.yml),
-not the full [music Pi setup](../ansible/playbooks/setup-musicpi.yml). The latter
-regenerates audio/MPD and restarts playback; it is not an additive agent rollout.
-The dedicated play copies the current controller checkout's agent entry point,
-dependency manifest and Python helpers into a separate directory. It does not
-pull/reset the Pi's repository or modify its shared playback virtual environment.
-Uncommitted local agent sources are therefore included; review them before use.
-
-Prerequisites for a later approved run:
-
-- Ansible on the controller, the existing inventory/SSH account and sudo
-  permission for `loginctl enable-linger` if lingering is not already enabled.
-  Run as the existing non-root audio user, not with global `--become`.
-- Existing Pi Python 3 with `venv`/pip support and `pactl`; existing MPD/audio
-  services. The agent-only play deliberately performs no apt upgrades or audio
-  package installation.
-- A live user manager with the audio user's owned mode-0700 `/run/user/<uid>`
-  and D-Bus socket. The play refuses to bootstrap it: starting a missing user
-  manager could implicitly activate existing enabled playback services.
-- An operational config whose stream entries already have the approved S04
-  persisted IDs/labels. The play validates with the read-only collector but
-  does not migrate, seed or overwrite configuration. The production migration
-  and assigned IDs are recorded in the production rollout section below.
-- A controller-side private token file outside the repository, preferably in
-  a private directory with mode 0600. Use a cryptographically random token
-  of at least 32 non-whitespace ASCII characters; one trailing newline is fine.
-  Supply only its path. Do not put the token in CLI arguments, inventory,
-  source files or browser assets.
-- Explicit deployment approval, normally a maintenance window after endurance testing. Capture config/
-  intention checksums, daemon PIDs, queues, routes and gain before activation.
-  These scripts do not replace that approval or the S06 acceptance procedure.
-
-## Agent-only install and activation
-
-The initial agent-only installation is complete. These commands remain
-operator examples for a reviewed reinstall or token rotation. From the
-repository root:
+On the Pi, initialize/reconcile once, then enable supervision:
 
 ```sh
-# Static controller-only validation; no target tasks.
-ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/deploy-playback-agent.yml --syntax-check
+cd ~/MPDRussoundPi/mpdrussoundpi/russound
+~/russound-venv/bin/python mpdsupervisor.py --once ~/.config/mpdrussoundpi/config.json
+systemctl --user enable --now mpd_meta_control.service mpd_playback_supervisor.service
+```
 
-# Later: install files/dependencies/unit without starting or enabling the agent.
+Do not start supervision after a failed reconciliation; inspect diagnostics.
+
+## 3. Create a service token and activate the agent
+
+Generate the token once on the controller, outside Git, in a private directory.
+Use the same file when redeploying; replacing it is credential rotation.
+
+```sh
+install -d -m 700 "$HOME/.config/mpdrussoundpi-deploy"
+(umask 077; set -C; openssl rand -hex 32 > "$HOME/.config/mpdrussoundpi-deploy/musicpi-token")
+```
+
+Do not rerun generation over an existing token. Keep its contents out of shell
+arguments, inventory, logs and browser code. Activate:
+
+```sh
 ansible-playbook -i ansible/inventory.yaml \
   ansible/playbooks/deploy-playback-agent.yml \
-  -e playback_agent_token_source=/private/path/playback-agent-token
-
-# Later, only after migration and deployment approval: activate the agent.
-ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/deploy-playback-agent.yml \
-  -e playback_agent_token_source=/private/path/playback-agent-token \
+  -e playback_agent_token_source="$HOME/.config/mpdrussoundpi-deploy/musicpi-token" \
+  -e playback_agent_enable_operations=true \
   -e playback_agent_start=true
 ```
 
-## Prepare the Caddy TLS proxy
+Omit `playback_agent_enable_operations=true` for a read-only agent. TuneIn
+selection defaults on with manual operations; use
+`playback_agent_enable_tunein_selection=false` to disable new TuneIn selections.
+The agent-only play does not regenerate or restart MPD/audio and requires an
+existing user manager. Without `playback_agent_start=true`, it installs files
+but does not activate/reload a running process.
 
-The selected D06 design keeps the agent bound to `127.0.0.1:8081` and uses a
-separate Caddy service on the Pi, listening on TCP port `8443` by default.
-`deploy-playback-agent-proxy.yml` does not install or upgrade Caddy: install it
-through the Pi's approved package-management process first. The play requires
-the `caddy` user/group, Caddy binary at `/usr/bin/caddy`, and OpenSSL. It writes
-an isolated Caddyfile and systemd unit; it does not edit or restart the
-package-provided `caddy.service`.
+## 4. Activate the TLS proxy
 
-The play generates a self-signed certificate on the Pi with the configured DNS
-name or IPv4 address as its subject alternative name. The private key remains
-on the Pi with root/caddy-only access. It copies only the public certificate to
-the controller's ignored `docker/secrets/musicpi-proxy.crt`; normal TLS
-hostname verification remains enabled. The Docker URL host must exactly match
-the certificate SAN and resolve from inside the web container. Do not use
-`.local` unless it is actually resolvable inside Docker.
-The play verifies the self-signed trust anchor, SAN, key match and at least
-30 days of remaining certificate validity. It never overwrites an existing
-certificate/key pair or renews it automatically; rotation requires a separately
-backed-up, approved replacement procedure and coordinated proxy/web restart.
-
-The Caddy route forwards only `/v1/health`, `/v1/capabilities`, `/v1/outputs`,
-`/v1/outputs/*` and `/v1/favorites` to the loopback agent. It applies a source CIDR allowlist,
-listens on an unprivileged port, disables HTTP/3 and keeps its administrative
-endpoint on loopback. A host/network firewall is normally an additional
-boundary. For this deployment the user explicitly declined a host firewall
-rule; Caddy's source allowlist is the only ingress filter and must not be
-treated as firewall enforcement. Keep this deployment on a trusted LAN and do
-not add router port forwarding.
-
-The Pi endpoint is `192.168.1.105` (also the inventory address). The initial
-web rollout mistakenly used the Mac's Wi-Fi address, `192.168.1.56`, as the
-proxy source. A later live probe showed that Docker Desktop's traffic reaches
-the Pi from the Mac's Ethernet address, `192.168.1.142` (`en5`). On
-2026-10-17, the user explicitly approved expanding Caddy's source allowlist to
-the trusted LAN subnet `192.168.1.0/24`; this is the active matcher. The Pi
-has no host INPUT firewall policy (`iptables INPUT` is ACCEPT); the nftables
-service is disabled and its stock config flushes the ruleset. The user chose
-not to install a host firewall rule. Caddy is therefore the sole source-address
-filter. The TLS listener accepts handshakes on its interfaces; HTTP requests
-from outside the allowed subnet are rejected.
-
-The production proxy was initially installed with an exact-source matcher.
-The current approved LAN-subnet policy can be applied with:
+Choose a DNS name or IPv4 address reachable from the web host and a source CIDR
+that matches traffic as the Pi actually sees it (Docker/NAT may change it).
+Prefer an exact host `/32`; broaden only intentionally.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
   ansible/playbooks/deploy-playback-agent-proxy.yml \
   -e playback_proxy_hostname=192.168.1.105 \
-  -e playback_proxy_allowed_cidr=192.168.1.0/24 \
+  -e playback_proxy_allowed_cidr=192.168.1.142/32 \
+  -e playback_proxy_enable_operations=true \
   -e playback_proxy_start=true
 ```
 
-The play still defaults to `playback_proxy_start=false`. The production
-activation above uses `true` only after the agent is healthy and the user's
-trusted-LAN/no-host-firewall choice is recorded. Caddy's `/v1/start` request
-returned 404; only the read API is proxied. The proxy rollout did not restart
-the agent or any MPD, PipeWire, Russound, or serial-gateway service.
+Omit `playback_proxy_enable_operations=true` for read-only transport. Both agent
+and proxy must allow commands for dashboard controls to work.
 
-For the web container, create a private `docker/secrets/musicpi-playback-token`
-file containing the same bearer token provisioned to the agent. The compose
-mount exposes this directory read-only at `/run/secrets`. Set `RUSSOUND_UID`
-and `RUSSOUND_GID` so the web process can read the token without making it
-world-readable, and configure `RUSSOUND_PLAYBACK_AGENTS` in the untracked local
-`.env` file:
+The dedicated service does not change the package's `caddy.service`. It creates
+a one-year self-signed certificate with a matching SAN on first install,
+validates the pair and fetches only the public certificate to
+`docker/secrets/musicpi-proxy.crt` on the controller. The private key stays on
+the Pi. Existing certificates must match the host and have at least 30 days'
+validity; the play does not automatically renew/replace them.
+
+Reads cover health, capabilities, outputs, favorites and operation lookup.
+Writes are limited to output/favorites operations. All agent requests require
+the bearer token; Caddy's source filter does not replace authentication.
+
+## 5. Connect the web application
+
+For Docker, copy the token into `docker/secrets/musicpi-playback-token` on the
+web host; copy the fetched public certificate there if the web host is separate
+from the deployment controller. Ensure the container's configured UID/GID can
+traverse the directory and read the token without making it world-readable.
+
+When the controller checkout is also the web host checkout:
+
+```sh
+install -d -m 700 docker/secrets
+install -m 600 "$HOME/.config/mpdrussoundpi-deploy/musicpi-token" docker/secrets/musicpi-playback-token
+export RUSSOUND_UID="$(id -u)"
+export RUSSOUND_GID="$(id -g)"
+```
+
+Persist the resulting numeric `RUSSOUND_UID`/`RUSSOUND_GID` values in the local
+`.env` for later Compose runs. In an Ansible-managed Docker deployment, the play
+sets them to the deployment user's IDs.
+
+Add this single line to the web host's private `.env`:
 
 ```dotenv
 RUSSOUND_PLAYBACK_AGENTS=[{"agent_id":"musicpi","url":"https://192.168.1.105:8443","token_file":"/run/secrets/musicpi-playback-token","tls_ca_file":"/run/secrets/musicpi-proxy.crt"}]
 ```
 
-Do not commit `.env`, the bearer token, the Caddy private key, or any generated
-operational configuration. A local Compose configuration check is not proof
-of Pi reachability, firewall enforcement, or agent health.
+The URL host must match the certificate SAN. Never disable TLS verification.
+For native web, set `RUSSOUND_PLAYBACK_AGENTS` with absolute local token/cert
+paths, or use the `russound_playback_agents` Ansible variable.
+`.env`, private tokens, runtime config/state and TLS private keys stay outside Git.
 
-Default locations:
+Rebuild/recreate only the web service when using an existing external gateway:
 
-| Resource | Location relative to the audio user's home |
+```sh
+docker compose build russound-web
+docker compose up -d --no-deps --no-build russound-web
+```
+
+Open `http://<web-host>:8000/playback`. A stream's Config dialog contains
+transport controls, station favorites/search and calibration gain. Favorites
+are capped at 20. Selecting a station starts playback. With no station, Play
+is visible but disabled.
+
+## Updating an existing installation
+
+1. Back up, review source changes and schedule interruption if audio changes.
+2. For agent-only changes, repeat step 3 with the existing token. Proxy-only
+   changes use step 4. Neither play updates the Pi checkout/supervisor.
+3. For shared backend/audio changes, stop the agent during the update; rerun
+   step 1 to update the Pi checkout and regenerate units while stopped.
+   For an explicitly staged clean source tree, Git fetching can be skipped with
+   `-e mpd_russoundpi_update_repo=false`. Rerun step 2 after adding outputs,
+   changing resolver IPs or changing the shared destination policy.
+4. Restart supervision only after successful verification; update/reactivate
+   the agent from the matching controller revision, then recreate web as needed.
+5. Check the gates below. No deployment command is evidence of successful audio
+   or persistence by itself.
+
+New outputs must receive the egress drop-in before they start. Regenerating base
+units preserves existing drop-ins; staging without playback avoids starting
+new unprotected instances.
+
+## Health checks and troubleshooting
+
+On the Pi:
+
+```sh
+systemctl --user status mpd_playback_supervisor mpdrussoundpi-playback-agent --no-pager
+systemctl status mpdrussoundpi-egress mpdrussoundpi-playback-agent-proxy --no-pager
+ss -ltn | grep -E ':(660[1-3]|8081|8443)\b'
+journalctl --user -u mpdrussoundpi-playback-agent -u mpd_playback_supervisor -n 60 --no-pager
+sudo nft list table inet mpdrussoundpi_egress
+```
+
+MPD/agent must bind loopback only. The proxy is the network-facing listener.
+From the web host, `GET /api/playback` must report the agent `ok`, fresh playback
+and correct routes/gains. The HTTP/container healthcheck checks web availability,
+not audio or Russound readiness.
+
+| Symptom | Check |
 | --- | --- |
-| Agent entry point/helpers | `.local/share/mpdrussoundpi-agent/` |
-| Isolated agent venv | `.local/share/mpdrussoundpi-agent/venv/` |
-| Private token | `.config/mpdrussoundpi-agent/token` |
-| User unit | `.config/systemd/user/mpdrussoundpi-playback-agent.service` |
-| Existing config, read only | `.config/mpdrussoundpi/config.json` |
+| TLS error | SAN matches URL, pinned cert mounted/readable, certificate not expired |
+| Proxy 403 | Actual source IP belongs to configured Caddy CIDR |
+| Agent 401 | Same private token installed on Pi and readable by web |
+| Controls unavailable | Agent and proxy operation opt-ins; agent capabilities |
+| MPD refuses startup | Root filter active; cgroup inode matches; exact resolver IPs |
+| Station unavailable | Public DNS/redirect policy, provider availability, MPD journal |
+| Russound warning but playback healthy | Serial/TCP gateway and physical controller; independent of MPD |
 
-Override `playback_agent_id`, `playback_agent_port`, `playback_agent_config`
-or installation path variables as necessary. Paths must be absolute and
-systemd-safe (no spaces, traversal or `%` specifiers). The fixed listener is
-**127.0.0.1:8081** by default and must stay loopback-only. The selected D06 design places Caddy on the Pi as a TLS-terminating reverse
-proxy in front of this listener. Docker connects to Caddy using a self-signed
-certificate trusted via the web agent's `tls_ca_file`; hostname validation
-remains enabled, so the Docker-reachable DNS name must match the certificate
-subject alternative name. Caddy forwards the bearer token and only the read API.
-Firewall proxy ingress to the Docker host. Do not configure
-agent remote binding, expose an unprotected HTTP proxy, or treat this as
-browser access protection (D07). Proxy software/configuration, certificate
-provisioning and firewall rules are not configured by this agent play. The
-certificate may be mounted read-only at `/run/secrets/musicpi-proxy.crt`;
-the private key must remain on the Pi. Keep both files out of version control.
+Default Pi paths:
 
-The installation validates config without MPD/audio commands, preserves token
-privacy in task output and enables lingering without restarting the user manager.
-It reloads user unit definitions only. On explicit activation it enables/starts
-only the agent, restarting it if its sources, unit, token or dependencies changed.
-It checks authenticated health/identity and inventory, plus unauthenticated
-401 rejection on the Pi's loopback interface.
-Inventory HTTP 200 can contain failed or pending probes; these checks do not
-prove successful MPD reads, fresh metadata or correct audio routes.
+| Resource | Path under the audio user's home |
+| --- | --- |
+| Admin config | `.config/mpdrussoundpi/config.json` |
+| Runtime state | `.local/state/mpdrussoundpi/playback.json` |
+| Agent sources/venv | `.local/share/mpdrussoundpi-agent/` |
+| Token | `.config/mpdrussoundpi-agent/token` |
+| Operations ledger | `.local/state/mpdrussoundpi-agent/operations.sqlite3` |
+| User units / MPD configs | `.config/systemd/user/` / `.config/mpd/` |
 
-Install-only reruns do not stop/restart an already running agent, but can update
-its files/token/unit. Use explicit activation to load those changes. Token
-rotation is an explicit operator replacement of the private source file followed
-by activation; tokens are never silently regenerated.
-Check mode is incomplete for a new install: dependency installation, runtime
-config validation, daemon reload and HTTP checks are skipped. Do not treat
-`--check` as proof of target readiness; use syntax/static tests and subsequent
-approved target acceptance.
+## Removal and rollback
 
-The [user service template](../ansible/templates/playback-agent.service.j2)
-has no `Wants`/`Requires` dependency on MPD/audio services. It supplies the
-existing D-Bus/Pulse environment, a private umask and bounded on-failure
-restarts. It creates no playback ledger/state files; future write support needs
-its own reviewed writable-state provisioning. SIGTERM shutdown is allowed
-90 seconds to finish bounded reads before systemd terminates its control group.
-Journal output uses the agent's sanitized observation/status logging.
-
-## Rollback later
-
-### S07 manual-command activation (2026-10-17)
-
-The [S07 operation contract](./mpd-playback-operations-api.md) is implemented
-locally and enabled on production with explicit user approval. D07 accepts trusted-environment web
-access without login or user permissions; anyone who can access the web UI can
-use controls once enabled. Existing request protections and agent TLS/bearer
-authentication remain. Lightweight admin authentication is deferred.
-
-The web image was rebuilt from the current S07 checkout and both independent
-opt-ins below were enabled. These commands are also the reviewed reactivation
-procedure:
+To retire only the API while preserving local playback:
 
 ```sh
-ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/deploy-playback-agent.yml \
-  -e playback_agent_token_source=/private/path/playback-agent-token \
-  -e playback_agent_enable_operations=true \
-  -e playback_agent_start=true
-
-ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/deploy-playback-agent-proxy.yml \
-  -e playback_proxy_hostname=192.168.1.105 \
-  -e playback_proxy_allowed_cidr=192.168.1.0/24 \
-  -e playback_proxy_enable_operations=true \
-  -e playback_proxy_start=true
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/remove-playback-agent.yml
+sudo systemctl disable --now mpdrussoundpi-playback-agent-proxy
 ```
 
-The agent play creates a private
-`~/.local/state/mpdrussoundpi-agent/operations.sqlite3` ledger directory,
-passes `--operations-db` only when enabled, and still restarts only the agent.
-The proxy's default read matcher allows GET/HEAD only; the second opt-in adds
-POST for `/v1/outputs/*/operations` and `/v1/favorites/operations`, and GET/HEAD
-for `/v1/operations/*`.
-No MPD/PipeWire/Russound service restart is required for these deployments.
-The existing service token authorizes configured-output operations when enabled;
-the agent does not gain arbitrary command or filesystem APIs.
+The first command runs on the controller; the second on the Pi. Agent removal
+keeps code, credentials, configuration, runtime state and local supervision.
+It does not stop persisted playback intentions.
 
-Capture intentions/config, queue/route/gain and MPD process IDs first. Verify
-advertised write capabilities, then exercise one output's explicit
-play/pause/stop and gain, confirming the others are unchanged. Check paused/
-stopped gain is saved for next play without starting audio, and perform the
-separately approved agent-restart/retained-gain check. Agent restart is not
-permission to restart MPD or the entire Pi during endurance testing.
-
-To return to read-only, rerun both plays with their respective
-`*_enable_operations=false` and `*_start=true` flags. Preserve the ledger and
-inspect pending/unknown operations before changing or deleting it. Disabling
-writes is not cancellation of a persisted playback intention.
-
-Deployment completed with agent play `ok=21 changed=5 failed=0` and proxy play
-`ok=26 changed=2 failed=0`. The rebuilt web container is healthy; the cache
-reports `musicpi: ok` and advertises play/pause/stop/set-gain. Browser checks
-verified the production Config dialog, enabled transport buttons and slider-only
-gain readout without sending any mutations. The private ledger directory is
-mode 0700 and the SQLite database is mode 0600.
-
-All three streams remained playing. MPD PIDs remained 65283, 65284 and 65286;
-the supervisor, agent and proxy are active. Configuration SHA-256 remained
-`74d75070d1473ee962a7145be483420112b9b255d87048353fded71175639c96`
-and intentions SHA-256 remained
-`e8ecf227527c83470812de2757e96ecb0355ce8b79d717fb900afde730740875`.
-No MPD/audio, Russound or serial-gateway service was restarted. Live playback/
-gain mutation acceptance and retained-gain restart testing are still pending;
-deployment approval was not used to interrupt audio for those tests.
-
-Follow-up on 2026-10-17: production logs identified repeated gain-command
-rejections as `backend_busy`, not revision conflicts. The supervisor also uses
-the shared mutation lock. Submission now validates without taking that lock;
-the durable worker waits for transient contention within its original start
-deadline, rechecking revisions before applying anything. Regression coverage
-includes an actual held/released kernel lock, consecutive gain edits, deadline
-exhaustion and revision changes while waiting. All 144 playback tests and 48
-existing MPD tests passed. The agent-only redeployment completed
-`ok=21 changed=2 failed=0`; MPD PIDs were unchanged and the user's current
-configuration checksum remained
-`87476ee578094294621c90760365ca7b9b256615bfa603ef23e4ab1c3315aba7`.
-No live gain edits were sent by deployment verification.
-
-### S07 completion and production sign-off (2026-10-17)
-
-**S07 is done and production-verified.** The user confirmed that production
-testing worked well after the contention fix and dialog refinements. This is
-user acceptance, not a claim that the deployment checks independently exercised
-every live command or a dedicated restart/endurance test.
-
-Final verification passed 144 playback, 48 MPD/backend/CLI/supervisor/setup,
-49 existing web-server and 19 frontend tests (260 total). Agent and proxy
-Ansible check-mode reconciliation reported zero changes and zero failures.
-SHA-256 checks of the deployed web entry point, playback gateway, HTML,
-JavaScript and stylesheet matched this checkout. Docker health and the
-authenticated playback status gateway were healthy. Agent, proxy, supervisor
-and all three MPD units were active; MPD PIDs remained 65283/65284/65286.
-No additional audio mutations or service restarts were needed for this final
-verification. The earlier pending-acceptance statements above describe the
-initial rollout, before this user sign-off.
-
-### Remove the agent
-
-```sh
-ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/remove-playback-agent.yml
-```
-
-[remove-playback-agent.yml](../ansible/playbooks/remove-playback-agent.yml)
-stops/disables only the agent, removes only its unit and reloads user definitions.
-It preserves code, venv, private token, lingering, operational config/intentions
-and all MPD/audio services. Keeping files allows deliberate reinstallation;
-credential deletion/revocation is a separate operator action. It requires the
-same existing audio user manager; it is not a general Pi teardown.
-
-## Preparation validation
-
-[Static deployment tests](../tests/test_playback_agent_deployment.py) parse
-the playbooks and render the unit, checking opt-in activation, agent-only service
-operations, isolated dependencies, private credentials, loopback binding,
-non-mutating config validation and limited rollback. They never execute Ansible
-tasks or target commands. Ansible `--syntax-check` is controller-only.
-Preparation validation passed: six static tests and syntax checks for both
-playbooks. No target execution or systemd acceptance is claimed.
-
-## Approved isolated target test (2026-10-15)
-
-The user explicitly approved deploying during the endurance run using a
-separate private config copy. The agent-only play completed with no failures
-and started `mpdrussoundpi-playback-agent.service` at 01:02:29 CEST. The service
-is enabled and remains running. No full Pi setup or rollback play was executed.
-
-- Installed the isolated venv and current committed agent sources; existing
-  playback checkout/venv were not updated.
-- Copied the current operational config to
-  `~/.config/mpdrussoundpi-agent/observation-test-config.json`, adding test
-  IDs `front`, `centerlfe`, `rear` and test labels only in that copy.
-  This is not the S04 production migration. The copy does not follow edits
-  to the original config; use the approved operational config after migration.
-- Generated a private random service credential outside the checkout; target
-  token/config are mode 0600 under a mode-0700 directory. No credential values
-  were logged or committed.
-- At the time of this test, the actual listener was **127.0.0.1:8081**, not a
-  LAN listener; the D06 reverse proxy and Docker/web integration were still
-  unimplemented. SSH carried the test commands.
-- Verified authenticated health/capabilities/inventory, per-output HEAD,
-  unknown-output 404, unauthenticated 401 and unsupported POST 405.
-  `write_operations` is empty.
-- Three cached HTTP reads measured approximately 41.35, 3.19 and 6.44 ms on
-  the Pi. These are a small smoke sample, not p95 LAN or metadata-update latency.
-- At the successful verification around 02:13 CEST all streams were playing,
-  with one queue entry, fresh title metadata, ready audio and correct routes.
-  Measured stereo gain units were `[49905, 49905]`, `[65536, 65536]` and
-  `[64044, 64044]`, matching -7.1, 0 and -0.6 dB respectively.
-- Before/after SHA-256 checks confirmed byte-unchanged production config and
-  intentions. PIDs, start times and restart counts were unchanged for all
-  three MPDs, supervisor, recorder, PipeWire, PipeWire-Pulse and WirePlumber.
-  The recorder remained sampling and its summary timestamp advanced.
-- Radio 88.6's pre-existing faults continued: state problem samples rose
-  from 9 to 17, route measurement problems from 11 to 17 and suspected-silence
-  samples from 22 to 34 across the deployment/verification interval.
-  FM4 counters remained 10 state/4 route; OE3 remained unflagged.
-  This proves neither uninterrupted playback nor absence of polling/load
-  effects. No playback repairs or fault injection were performed.
-- One verification SSH connection reset; the read-only check was retried with
-  keepalive and completed. No service restart was used to recover the test.
-- At 02:14:50 CEST the agent still had zero restarts after approximately
-  72 minutes, about 35 MiB resident memory and lifetime average CPU of 0.7%
-  (one `ps` sample, not a load benchmark). Recorder and supervisor remained
-  active with zero restarts; the recorder was still sampling before its deadline.
-
-Private baseline evidence is retained on the Pi at
-`~/.config/mpdrussoundpi-agent/deployment-baseline.json`. The separate config
-and service remained in place for read-only tests. At this historical
-checkpoint, full S06 acceptance still required production IDs, the D06 proxy
-and Docker reachability; those were addressed in the production rollout below.
-
-## USB maintenance update (2026-10-16)
-
-The user approved the coordinated USB recovery maintenance deployment described
-in [the recovery record](./usb-audio-recovery-fix.md#approved-maintenance-deployment-2026-10-16).
-The separate observation-test config now explicitly includes the same USB
-model selector as the operational config; its test IDs/labels and every other
-field were preserved. Relevant observer helpers were updated together, and the
-agent was intentionally stopped during replacement and resumed at 20:46:03 CEST.
-
-Post-maintenance authenticated inventory is fresh and reports playing streams,
-ready downstream audio, correct routes and expected gains for all three outputs.
-Unauthenticated inventory remains 401, write capabilities remain empty, and the
-listener remains loopback-only. At this checkpoint production IDs and D06/web transport were still
-outstanding; they were addressed in the production rollout below. Physical
-USB-reconnect acceptance remains outstanding. The original Oct 15
-uninterrupted agent-lifetime sample is historical; the Oct 16 agent restart
-was an explicit maintenance event.
-
-## Production read-only rollout (2026-10-17)
-
-After explicit approval, prepared a private offline S04 bundle from exact
-copies of the production config and intentions. Applied only these identities:
-
-| Legacy stream name | Stable ID | Display label |
-| --- | --- | --- |
-| `Radio 88.6` | `radio_886` | `Radio 88.6` |
-| `FM4 Radio` | `fm4_radio` | `FM4 Radio` |
-| `OE3 Radio` | `oe3_radio` | `OE3 Radio` |
-
-These identities were superseded by
-[channel-based identities](#channel-based-output-identities-2026-10-17);
-this section records the state at the time.
-
-The migration tool verified all non-identity stream fields were unchanged.
-The original config SHA-256 was
-`965b6a7819465d818695d61b1c0dddc10e10c3c6882467388503fb7d637bea4b`; the
-prepared config SHA-256 is
-`74d75070d1473ee962a7145be483420112b9b255d87048353fded71175639c96`. The
-intentions file stayed byte-identical at SHA-256
-`e8ecf227527c83470812de2757e96ecb0355ce8b79d717fb900afde730740875`.
-The protected rollback bundle is retained under
-`~/.local/state/mpdrussoundpi/s04-production-migration/` on the Pi and in the
-session's private state directory. The playback supervisor was stopped only
-for the atomic config replacement and then restored. All three MPD unit PIDs
-remained `65286`, `65283` and `65284`; statuses remained `play`, configured
-gains remained `-7.1`, `0` and `-0.6` dB, and all routes remained correct.
-The read-only agent was aligned to the prepared production config and
-restarted; no MPD, PipeWire, Russound or serial-gateway service was restarted.
-
-Caddy 2.6.2 is installed. The package-provided `caddy.service` is disabled and
-inactive; the dedicated `mpdrussoundpi-playback-agent-proxy.service` is enabled
-and active. Nginx still owns port 80; the agent remains on `127.0.0.1:8081`,
-Caddy's admin API is on `127.0.0.1:2020`, and Caddy serves TLS on port 8443.
-The self-signed certificate's IP SAN, trust anchor, key match and validity
-passed the playbook checks. Only the public certificate is in the ignored
-`docker/secrets/musicpi-proxy.crt`; the private key remains on the Pi.
-
-The initial source restriction used `192.168.1.56/32`, but this was the Mac's
-Wi-Fi address, not the source used by Docker Desktop. During error
-investigation on 2026-10-17, a temporary Pi-side TCP probe confirmed the
-Docker-originated connection source as `192.168.1.142`, the Mac's Ethernet
-interface (`en5`). The web container's authenticated requests consequently
-received HTTP 403 from Caddy. After the user's explicit approval, the proxy
-matcher was updated to `192.168.1.0/24` and the dedicated proxy was restarted;
-no agent, MPD, audio, or Russound service was restarted. This is still only an
-application-level source filter, not host firewall enforcement. The deployment
-assumes a trusted LAN and no router port forwarding.
-
-The local `russound-web` container was rebuilt/recreated with the private bearer
-token and pinned certificate mounted read-only at `/run/secrets`; its health
-check is healthy. During the initial `/32` rollout, authenticated TLS health
-returned 200, unauthenticated health returned 401, and a request from the Pi's
-then non-allowed source returned 403. `/v1/start` returned 404. The existing
-Russound hardware warning on the local dashboard is independent of this
-playback integration.
-
-After the allowlist correction, authenticated Docker-to-Pi TLS health,
-capability and output reads returned HTTP 200; the web cache reported
-`musicpi: ok` and the local playback page displayed all three output cards.
-The web integration is read-only: no per-output playback, source or gain
-controls are exposed.
-
-## S06 LAN latency acceptance (2026-10-17)
-
-A 156-second sample ran on the Raspberry Pi (`musicpi`) against the Docker
-host's LAN address, `http://192.168.1.56:8000/api/playback`, with a 500 ms
-delay between API fetches. It completed 240 fetches and collected 720 healthy
-per-output observations (three outputs per fetch), with zero stale or error
-observations.
-All three outputs reported 64 metadata observation changes; their measured
-change intervals were p50 2.458 s, p95 2.971 s and max 3.394 s.
-
-The conservative web-visible age estimate was p50 2.978 s, p95 4.819 s and
-max 5.806 s. It adds each agent-reported playback age to elapsed time since
-the web cache's `last_success_at` and the HTTP request duration. The cache
-timestamp is second-precision, so the estimate can overstate age by almost a
-second. The proposed healthy-LAN p95 target of 5 seconds is met; the maximum
-is an observed outlier above that target, not a p95 failure. This is a
-Pi-to-web-host LAN-path sample, not an independent phone/desktop browser
-measurement. An earlier loopback sample was provisional and is not used for
-acceptance.
-
-Immediately after this sample, the agent, proxy, supervisor and all three MPD
-units were active. The MPD process IDs remained 65283 (FM4), 65284 (OE3) and
-65286 (Radio 88.6), unchanged by the agent deployment. No MPD/audio,
-Russound or serial-gateway service was restarted for this acceptance.
+For an audio/schema rollback, stop the supervisor, agent and MPD writers first,
+then restore matching code/config/state/units from a private backup. Never
+overwrite newer station/favorite/gain edits without explicitly choosing to
+restore them. Keep egress protection unless deliberately reverting that policy.
+Its removal procedure is in the [egress guide](./playback-egress-hardening-plan.md#deployment-and-rollback).

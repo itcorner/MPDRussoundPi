@@ -10,6 +10,7 @@ The repository currently includes:
 - A controller dashboard with flip-card advanced sound controls and a visible hardware warning banner.
 - A configuration editor for zones and sources.
 - A status monitor for connected clients and recent frontend actions.
+- Per-output MPD playback, TuneIn station selection, favorites and calibration.
 
 ## UI Demonstration
 
@@ -43,7 +44,7 @@ The repository currently includes:
 - `web/`: Python web server, controller logic, JSON config/state, and frontend assets.
 - `tests/`: unit tests for controller logic, backend abstraction, server routing, and zone model.
 - `ansible/`: provisioning and setup playbooks/tasks for deployment targets.
-- `mpdrussoundpi/`: legacy/runtime Russound and MPD setup/control scripts.
+- `mpdrussoundpi/`: Pi audio setup, MPD backend/supervisor and playback agent.
 - `AI_USAGE_DISCLAIMER.md`: policy statement on AI-assisted development.
 
 ## Architecture Overview
@@ -75,29 +76,24 @@ The repository currently includes:
 - `web/static/styles.css`
   - Shared visual styling across all pages.
 
-### Planned MPD web integration
+### MPD playback integration
 
-See the [MPD web integration architecture](docs/mpd-web-integration-architecture.md)
-for deployment alternatives, the recommended Pi-local playback agent, live
-status/metadata contracts, source providers, volume controls and hardware-driven
-automation. Solution D (Pi-local HTTP agent) has been selected; the
-[stepwise implementation plan](docs/mpd-web-integration-implementation-plan.md)
-tracks work packages and open decisions. The web application currently provides an optional, read-only MPD playback
-dashboard; it does not expose playback controls. S02's collector, S03's
-authenticated [read-only HTTP agent](docs/mpd-backend-api.md), the S04
-production identity migration, and the S05/S06 Pi-to-Docker status path are
-implemented and deployed. The dashboard reports each output's live playback
-state and available now-playing metadata. S07 manual playback and calibration
-gain controls are implemented/tested locally as an
-[opt-in extension](docs/mpd-playback-operations-api.md) and enabled on production.
-S07 is done and production-verified by the user on 2026-10-17. Source selection
-and hardware-driven playback policy remain future work.
-See the [deployment record](docs/playback-agent-deployment.md).
+The Pi-local agent provides live playback/metadata, optional play/pause/stop,
+calibration gain, TuneIn search/selection and station favorites. The browser
+talks only to the web application; MPD remains loopback-only on the Pi.
+Admin configuration and runtime selections/gains/favorites are separate.
+Public-only stream enforcement checks DNS/redirect destinations.
+Hardware-driven automatic playback is not implemented.
+
+Start with the [playback deployment guide](docs/playback-agent-deployment.md).
+The [architecture](docs/mpd-web-integration-architecture.md) and
+[implementation roadmap](docs/mpd-web-integration-implementation-plan.md) cover
+design and outstanding acceptance, not installation instructions.
 
 ## Requirements
 
 - macOS/Linux environment.
-- Python 3.11+ recommended.
+- Python 3.11+ for the Python services.
 - Virtual environment support (`venv`).
 - Access to Russound gateway/network where applicable.
 
@@ -111,19 +107,38 @@ See the [deployment record](docs/playback-agent-deployment.md).
 Example:
 
 ```bash
-git clone <your-fork-or-origin-url>
+git clone https://github.com/itcorner/MPDRussoundPi.git
 cd MPDRussoundPi
 python3 -m venv .venv
 source .venv/bin/activate
-pip install russound flask
-python web/russound_server.py --config web/russound_config.json --state web/russound_state.json --port 8000
+python -m pip install -r web/requirements.txt
+python -m web.russound_server --config web/russound_config.json --state web/russound_state.json --host 127.0.0.1 --port 8000
 ```
 
 Then open:
 
 - `http://127.0.0.1:8000/` (Controller)
 - `http://127.0.0.1:8000/config` (Configuration)
+- `http://127.0.0.1:8000/playback` (Playback; configure an agent to populate it)
 - `http://127.0.0.1:8000/status` (Status)
+
+With no valid config, the browser opens setup. Configure the serial/TCP gateway,
+controllers, zones and sources. No hardware is needed to save configuration.
+For a fully hardware-free test use the [dummy stack](#dummy-backend-container-no-hardware).
+An offline hardware warning is separate from web service health.
+
+## Choose a deployment
+
+| Goal | Procedure |
+| --- | --- |
+| Run locally from source | Quick start above |
+| Web container with an existing Pi/LAN serial gateway | [Web-only Docker](#first-run-setup-and-recovery) |
+| Web plus a USB serial gateway container on Linux | [Serial gateway](#serial-gateway-container-ser2net) |
+| Native Linux web service | [Native web deployment](#native-web-deployment) |
+| Pi playback, agent, TLS and outbound enforcement | [Playback deployment](docs/playback-agent-deployment.md) |
+
+Web deployment does not install MPD/audio. Pi playback setup is separate and
+can interrupt audio. Do not run two serial gateways against the same device.
 
 ## Configuration
 
@@ -165,10 +180,12 @@ Common endpoints:
 
 ## Testing
 
-Run the test suite with:
+Install the test dependencies in your development environment, then run:
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py' -q
+python -m pip install -r web/requirements.txt -r mpdrussoundpi/russound/requirements-agent.txt pyyaml
+PYTHONPATH=tests python -m unittest discover -s tests -p 'test_*.py'
+node --test tests/*.js
 ```
 
 Or run focused modules:
@@ -181,7 +198,9 @@ See [the module-by-module coverage review](docs/test-coverage.md) for requiremen
 
 ## Docker
 
-> **⚠️ Untested.** The container setup, the ser2net gateway container, and the `deploy-russound-docker.yml` playbook have not yet been run against real hardware. The images have never been built and serial device passthrough is unverified. Treat this as a starting point and validate before relying on it.
+The web image is built and deployed. The full USB serial-container provisioning
+path still needs target acceptance; do not treat web health as proof of serial
+device access or physical controller communication.
 
 Each part runs in its own container:
 
@@ -193,9 +212,21 @@ Each part runs in its own container:
 
 Two stacks combine them: `docker-compose.yml` runs the web application with the ser2net gateway (hardware), `docker-compose.dummy.yml` runs it with the dummy backend (no hardware).
 
+For the hardware stack, use a Linux USB host with no other gateway holding the
+serial device. Create bind-mount directories as your deployment user before
+Compose starts, and set matching ownership and serial-group IDs:
+
 ```bash
-docker compose up -d
+mkdir -p docker/config docker/data docker/logs
+install -d -m 700 docker/secrets
+export RUSSOUND_UID="$(id -u)"
+export RUSSOUND_GID="$(id -g)"
+export RUSSOUND_SERIAL_GID="$(stat -c '%g' /dev/ttyUSB0)"
+docker compose up -d --build
 ```
+
+Persist the numeric IDs in the local `.env` for future Compose runs. Existing
+root-owned mount directories need ownership correction before starting.
 
 The UI is then available on `http://<host>:8000/`. With no valid configuration,
 the browser opens setup. Set the TCP gateway to `russound-ser2net`, port `6666`,
@@ -254,22 +285,30 @@ Set `RUSSOUND_SERIAL_GID` to the group owning the device on the host (`stat -c '
 To use a ser2net instance on the host or another machine instead, point the web container elsewhere and skip the gateway service:
 
 ```bash
-RUSSOUND_BACKEND_HOST=host.docker.internal docker compose up -d --no-deps russound-web
+RUSSOUND_BACKEND_HOST=192.168.1.105 docker compose up -d --build --no-deps russound-web
 ```
+
+This skips the serial container on startup. If a gateway container is already
+running, explicitly stop it only when switching away from that device.
+`host.docker.internal` can be used when the gateway runs on the Docker host.
 
 ### Dummy backend container (no hardware)
 
 `docker-compose.dummy.yml` starts the dummy backend together with the web container, which is pointed at `russound-dummy:6666`:
 
 ```bash
-docker compose -f docker-compose.dummy.yml up -d
+mkdir -p docker/config docker/data docker/dummy-data
+export RUSSOUND_UID="$(id -u)"
+export RUSSOUND_GID="$(id -g)"
+docker compose -f docker-compose.dummy.yml up -d --build
 ```
-
-The curses TUI runs inside a `tmux` session in the container and can be attached to at any time:
 
 On first run, configure the controller/zone/source layout in the web setup page.
 The dummy stack overrides the TCP backend to `russound-dummy:6666`; the editor
 shows these environment overrides explicitly.
+
+The curses TUI runs inside a `tmux` session in the container and can be attached
+to at any time:
 
 ```bash
 docker exec -it russound-dummy tmux attach -t dummy
@@ -313,7 +352,10 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to send API writes, e.g. `https://music.example` | empty |
 | `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |
 
-Every web variable has an equivalent command-line flag (`--host`, `--port`, `--config`, `--state`, `--debug`), and the flag wins when both are provided.
+Core server settings also have command-line flags (`--host`, `--port`,
+`--config`, `--state`, `--debug`); an explicit flag wins over its environment
+default. `RUSSOUND_PLAYBACK_AGENTS` is an optional JSON list of agent URLs and
+token/certificate file paths; see the [playback guide](docs/playback-agent-deployment.md).
 
 On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the container may write the bind-mounted directories.
 
@@ -334,7 +376,43 @@ ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-doc
   -e russound_serial_device=/dev/ttyUSB1 -e russound_publish_port=8080
 ```
 
-The playbook detects the serial device's group and the deployment user's UID/GID, so device access and the bind mounts work without manual tuning.
+The playbook detects the serial device's group and the deployment user's UID/GID
+and creates writable config/data/log directories. Target serial passthrough
+still needs verification. Existing runtime configuration is preserved and a
+dirty Git checkout is not forcibly reset.
+
+For an existing host/LAN gateway, keep its host ser2net service and start only web:
+
+```bash
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml \
+  -e russound_manage_serial_gateway=false \
+  -e russound_backend_host=192.168.1.105
+```
+
+This mode does not stop an already-running serial container. Stop a previous
+container explicitly if it is no longer wanted. The play rewrites `.env`;
+manage playback integration through its `russound_playback_agents` variable
+rather than hand-editing that file after each run. Provision the referenced
+token and certificate files under `docker/secrets` on the target web host first.
+
+### Native web deployment
+
+Use this instead of Docker, not alongside another web process on port 8000:
+
+```bash
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-web.yml
+```
+
+The play installs a separate web venv under `~/.local/share/russound-web/venv`,
+starts native ser2net and installs `russound-web.service`. It retains configuration
+in `~/.config/russound-web/russound_config.json` and runtime state in
+`~/.local/state/russound-web/russound_state.json`, outside the Git checkout.
+On first launch, open `http://<pi>:8000/config` to configure the gateway/layout.
+Configure `russound_playback_agents` with native token/certificate paths when
+adding playback integration. Changing deployment type does not automatically
+copy a previous web config/state; back up and copy those files explicitly.
+For an external gateway, set `russound_manage_serial_gateway=false`; the native
+web play then leaves ser2net configuration and service state untouched.
 
 ## Deployment Notes
 

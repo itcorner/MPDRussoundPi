@@ -18,10 +18,10 @@ connection-pinned Python fetching and an MPD-only cgroup packet filter; see the
 is not full production/lifecycle sign-off.
 
 Implementation progress: S01-S07 are complete, including the
-[production Pi-to-Docker rollout](./playback-agent-deployment.md#production-read-only-rollout-2026-10-17).
+[production Pi-to-Docker rollout](./playback-deployment-evidence.md#production-read-only-rollout-2026-10-17).
 S08/S09 and the [configuration split](./config-split-plan.md) are deployed;
 remaining live checks and hardening are recorded in the
-[rollout record](./playback-agent-deployment.md#configuration-split-rollout-2026-10-17).
+[rollout record](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17).
 See the [implementation plan](./mpd-web-integration-implementation-plan.md)
 for remaining decisions and [collector usage](./mpd-backend-api.md).
 

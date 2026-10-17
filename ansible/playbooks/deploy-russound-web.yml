@@ -5,7 +5,13 @@
   vars:
     deploy_user: "{{ ansible_user | default('musicpi') }}"
     app_dir: "/home/{{ deploy_user }}/MPDRussoundPi"
-    venv_dir: "/home/{{ deploy_user }}/russound-venv"
+    venv_dir: "/home/{{ deploy_user }}/.local/share/russound-web/venv"
+    russound_config_dir: "/home/{{ deploy_user }}/.config/russound-web"
+    russound_state_dir: "/home/{{ deploy_user }}/.local/state/russound-web"
+    russound_playback_agents: []
+    russound_manage_serial_gateway: true
+    repo_url: https://github.com/itcorner/MPDRussoundPi.git
+    repo_version: main
     russound_host: "0.0.0.0"
     russound_port: 8000
     ansible_python_interpreter: /usr/bin/python3
@@ -19,9 +25,14 @@
           - python3-venv
           - python3-dev
           - build-essential
-          - ser2net
         state: present
         update_cache: true
+
+    - name: Install the native serial gateway when requested
+      ansible.builtin.apt:
+        name: ser2net
+        state: present
+      when: russound_manage_serial_gateway | bool
 
     - name: Ensure target deployment directory exists
       file:
@@ -32,11 +43,12 @@
         mode: "0755"
 
     - name: Clone or update repository
+      become_user: "{{ deploy_user }}"
       git:
-        repo: https://github.com/itcorner/MPDRussoundPi.git
+        repo: "{{ repo_url }}"
         dest: "{{ app_dir }}"
-        version: main
-        force: true
+        version: "{{ repo_version }}"
+        force: false
         update: true
 
     - name: Ensure the application files are owned by the deployment user
@@ -47,31 +59,29 @@
         group: "{{ deploy_user }}"
         recurse: true
 
+    - name: Create persistent web configuration, state and environment directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0700"
+      loop:
+        - "{{ russound_config_dir }}"
+        - "{{ russound_state_dir }}"
+        - "{{ venv_dir | dirname }}"
+
     - name: Create Python virtual environment
+      become_user: "{{ deploy_user }}"
       command: "{{ ansible_python_interpreter }} -m venv {{ venv_dir }}"
       args:
         creates: "{{ venv_dir }}/bin/python"
 
     - name: Install Python dependencies
+      become_user: "{{ deploy_user }}"
       pip:
         requirements: "{{ app_dir }}/web/requirements.txt"
         virtualenv: "{{ venv_dir }}"
-
-    - name: Copy web config example if config missing
-      copy:
-        src: "{{ app_dir }}/web/config_example.json"
-        dest: "{{ app_dir }}/web/russound_config.json"
-        remote_src: true
-        force: false
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
-        mode: "0644"
-
-    - name: Ensure temporary state directory exists
-      file:
-        path: /tmp
-        state: directory
-        mode: "1777"
 
     - name: Copy ser2net configuration file
       copy:
@@ -79,6 +89,7 @@
         dest: /etc/ser2net.yaml
         remote_src: true
         mode: "0644"
+      when: russound_manage_serial_gateway | bool
 
     - name: Install systemd service file
       template:
@@ -95,9 +106,19 @@
         name: ser2net
         enabled: true
         state: restarted
+      when: russound_manage_serial_gateway | bool
 
     - name: Enable and start russound web service
       systemd:
         name: russound-web
         enabled: true
         state: restarted
+
+    - name: Verify the web service responds
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ russound_port }}/"
+        status_code: 200
+      register: russound_web_check
+      retries: 15
+      delay: 2
+      until: russound_web_check.status == 200

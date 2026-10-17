@@ -8,7 +8,7 @@ Naming note: this is a dated record. Stream names (Radio 88.6, FM4 Radio,
 OE3 Radio) and observer IDs (`front`, `centerlfe`, `rear`) are as they were at
 the time. The outputs are now Stereo Front (`stereo_front`), Stereo CenterLFE
 (`stereo_centerlfe`) and Stereo Rear (`stereo_rear`); see
-[channel-based identities](./playback-agent-deployment.md#channel-based-output-identities-2026-10-17).
+[channel-based identities](./playback-deployment-evidence.md#channel-based-output-identities-2026-10-17).
 
 ## Observed failure
 

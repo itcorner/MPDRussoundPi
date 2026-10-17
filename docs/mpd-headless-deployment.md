@@ -4,9 +4,20 @@ The [setup playbook](../ansible/playbooks/setup-musicpi.yml) provisions
 PipeWire, its Pulse server, WirePlumber, FFmpeg and python-mpd2. Run it as the
 audio-owning user with passwordless sudo:
 
+For a fresh network-enabled playback installation, follow the ordered
+[deployment guide](./playback-agent-deployment.md): stage units without playback,
+install public-only egress enforcement, then start/reconcile. The audio-only
+play can regenerate and restart running services; it is not a web or agent
+update command.
+
 ```sh
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/setup-musicpi.yml --tags init,new
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/setup-musicpi.yml \
+  --tags init,new -e mpd_russoundpi_start_playback=false
 ```
+
+The staging option leaves MPD and supervision stopped, but still prepares and
+restarts audio services. `--tags update` explicitly requests an OS package
+upgrade; it is not part of the normal `init,new` procedure.
 
 It enables lingering, starts the persistent user manager, grants audio-group
 access without a graphical seat, and supplies the user runtime directory and
@@ -66,9 +77,7 @@ Stations (at most 20) seed the dashboard favorites:
   `tunein:<station_id>`. The backend resolves the playable stream when it
   starts the station and re-resolves whenever the cached URL is not playing.
 
-A configuration that still uses the old `streams` list is rejected with
-"old config format; see docs/mpd-headless-deployment.md": rewrite it in the
-format above (there is no automatic migration).
+Only the schema above is supported; there is no compatibility/migration mode.
 
 ## Runtime state: `playback.json` (agent-owned)
 
@@ -87,7 +96,12 @@ defaults.
 
 Use the operational configuration for **all** control and calibration commands:
 
+Run the following commands on the Pi as the audio user, from the script
+directory with its playback environment activated:
+
 ```sh
+cd ~/MPDRussoundPi/mpdrussoundpi/russound
+. ~/russound-venv/bin/activate
 python mpdctrl.py --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
@@ -111,13 +125,15 @@ unmutes to software volume 100. It verifies final playback state. Stopped and
 paused intentions remain silent after reboot; an empty paused queue is left
 stopped. This is playback recovery, not retired Russound power polling.
 
-Deployment stops an existing supervisor, regenerates/restarts audio and MPD,
+With `mpd_russoundpi_start_playback=true` (the audio play's default),
+deployment stops an existing supervisor, regenerates/restarts audio and MPD,
 then runs one reconciliation/verification pass before enabling supervision.
 Failures stop deployment with diagnostics. Review a failed deployment before
 re-enabling the supervisor; it is intentionally not started after unsuccessful
 configuration changes. Git updates can be skipped for an explicitly staged
 local deployment with `-e mpd_russoundpi_update_repo=false`; normally keep this
-enabled. No `force` checkout/reset is used.
+enabled. No `force` checkout/reset is used. For new outputs, stage with playback
+disabled and rerun the egress play before allowing them to start.
 
 ```sh
 loginctl show-user "$USER" -p Linger
@@ -157,12 +173,6 @@ defaults. Repeated installs do not duplicate the block. Cleanup removes only
 the managed include and fragment; it deletes the wrapper only if it has no
 additional user content. Modified/malformed include blocks are refused.
 
-Older generated PulseAudio `default.pa` files lack a safe ownership boundary.
-Install/cleanup refuses to overwrite or delete them. Back up such a file,
-manually migrate any custom settings into a normal user configuration, then
-rerun the command. No automatic migration can establish which edits were yours.
-Explicit PipeWire-only cleanup does not inspect or alter this legacy Pulse file.
-
 Affected running user audio services are restarted with checked
 `systemctl --user try-restart`; inactive services are not deliberately started.
 Repeated cleanup with nothing left does not restart services. Restart failure
@@ -190,14 +200,6 @@ generated service policies. Ansible syntax is checked separately. These do
 not prove analog output, startup transients, USB unplug or network recovery;
 hardware lifecycle acceptance must be recorded in the hardware audit.
 
-On 2026-10-12 the updated playbook was executed successfully on musicpi,
-including a repeat deployment preserving calibration and nonplaying choices.
-All 78 focused target tests passed. A forced MPD crash and an active audio-stack
-restart recovered intended playback, routes and calibrated gain while a
-deliberately stopped stream remained stopped. A root pre-login reboot snapshot
-showed lingering audio/MPD services and intended playback without console,
-graphical or SSH login; stopped and paused intentions stayed silent.
-Two-channel digital measurements were exactly zero during muted startup before
-gain verification and nonzero for every playing stream afterward.
-Analog transient behavior, network outage and physical USB unplug remain
-unverified. The audit retains raw evidence and backup locations.
+Historical target checks and remaining current-version acceptance are
+separate from these setup instructions; see
+[deployment evidence](./playback-deployment-evidence.md).

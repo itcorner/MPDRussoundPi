@@ -1,5 +1,5 @@
 ---
-# UNTESTED: this playbook has not been run against a real Raspberry Pi yet.
+# Full serial-container provisioning still needs target acceptance.
 - name: Set up a Raspberry Pi to run the Russound web interface in Docker
   hosts: musicpi
   become: true
@@ -12,13 +12,21 @@
     russound_serial_device: /dev/ttyUSB0
     russound_serial_options: 19200n81
     russound_ser2net_bind: 0.0.0.0
+    russound_manage_serial_gateway: true
     # Defaults to the ser2net container of the stack; override when using an external gateway.
     russound_backend_host: russound-ser2net
     russound_backend_port: 6666
     russound_debug: false
+    russound_playback_agents: []
     ansible_python_interpreter: /usr/bin/python3
 
   tasks:
+    - name: Require an explicit external endpoint when not managing the serial gateway
+      ansible.builtin.assert:
+        that:
+          - russound_manage_serial_gateway | bool or russound_backend_host != 'russound-ser2net'
+        fail_msg: "Set russound_backend_host to the existing gateway when russound_manage_serial_gateway=false."
+
     - name: Install base packages
       ansible.builtin.apt:
         name:
@@ -87,7 +95,9 @@
         name: ser2net
         enabled: false
         state: stopped
-      when: "'ser2net.service' in ansible_facts.services"
+      when:
+        - russound_manage_serial_gateway | bool
+        - "'ser2net.service' in ansible_facts.services"
 
     - name: Disable the non-container russound-web service
       ansible.builtin.systemd:
@@ -96,12 +106,21 @@
         state: stopped
       when: "'russound-web.service' in ansible_facts.services"
 
+    - name: Ensure the checkout directory belongs to the deployment user
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0755"
+
     - name: Clone or update the repository
+      become_user: "{{ deploy_user }}"
       ansible.builtin.git:
         repo: "{{ repo_url }}"
         dest: "{{ app_dir }}"
         version: "{{ repo_version }}"
-        force: true
+        force: false
         update: true
 
     - name: Ensure the repository is owned by the deployment user
@@ -122,6 +141,15 @@
       loop:
         - config
         - data
+        - logs
+
+    - name: Create the private playback secret directory without copying credentials
+      ansible.builtin.file:
+        path: "{{ app_dir }}/docker/secrets"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0700"
 
     - name: Seed the configuration file when it does not exist yet
       ansible.builtin.copy:
@@ -142,24 +170,28 @@
       ansible.builtin.getent:
         database: group
         key: dialout
+      when: russound_manage_serial_gateway | bool
 
     - name: Check whether the serial device is present
       ansible.builtin.stat:
         path: "{{ russound_serial_device }}"
       register: serial_device
+      when: russound_manage_serial_gateway | bool
 
     - name: Resolve container user and serial device ids
       ansible.builtin.set_fact:
         russound_uid: "{{ ansible_facts.getent_passwd[deploy_user][1] }}"
         russound_gid: "{{ ansible_facts.getent_passwd[deploy_user][2] }}"
-        russound_serial_gid: "{{ serial_device.stat.gid if serial_device.stat.exists else ansible_facts.getent_group['dialout'][1] }}"
+        russound_serial_gid: "{{ (serial_device.stat.gid if serial_device.stat.exists else ansible_facts.getent_group['dialout'][1]) if russound_manage_serial_gateway | bool else 20 }}"
 
     - name: Warn when the serial device is missing
       ansible.builtin.debug:
         msg: >-
           {{ russound_serial_device }} was not found. Attach the USB serial adapter and re-run,
           or set russound_backend_host to an external gateway.
-      when: not serial_device.stat.exists
+      when:
+        - russound_manage_serial_gateway | bool
+        - not serial_device.stat.exists
 
     - name: Write the compose environment file
       ansible.builtin.template:
@@ -168,10 +200,12 @@
         owner: "{{ deploy_user }}"
         group: "{{ deploy_user }}"
         mode: "0640"
+      no_log: true
+      diff: false
 
     - name: Build and start the containers
       ansible.builtin.command:
-        cmd: docker compose -f docker-compose.yml up -d --build
+        cmd: "docker compose -f docker-compose.yml up -d --build {{ '' if russound_manage_serial_gateway | bool else '--no-deps russound-web' }}"
         chdir: "{{ app_dir }}"
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Recreated' in compose_up.stderr"

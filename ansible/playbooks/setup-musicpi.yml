@@ -7,27 +7,31 @@
     mpd_russoundpi_config: "{{ ansible_facts['user_dir'] }}/.config/mpdrussoundpi/config.json"
     venv_dir: "{{ ansible_facts['user_dir'] }}/russound-venv"
     mpd_russoundpi_update_repo: true
+    mpd_russoundpi_start_playback: true
   tasks:
-    # Run apt-get update and apt-get upgrade 
-    - include_tasks: ../tasks/update.yml
-      tags: 
+    - name: Upgrade OS packages only when explicitly requested
+      include_tasks:
+        file: ../tasks/update.yml
+        apply:
+          tags: update
+      tags:
+        - never
         - update
-        - init
 
-    # Install dependencies from apt
     - name: Install dependencies from apt
       become: true
-      apt: name={{item}} state=present
+      apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: true
       with_items:
         - git
         - python3
         - python3-pip
         - python3-venv
-        - python3-mpd
         - ser2net
         - mpd
         - mpc
-        - timidity
         - pipewire
         - pipewire-pulse
         - wireplumber
@@ -48,6 +52,7 @@
         - init
 
     - name: Ensure ser2net is running
+      become: true
       systemd:
         name: ser2net
         state: started
@@ -55,24 +60,17 @@
       tags:
         - init
 
-    - name: Run a module inside a virtual environment
+    - name: Prepare the isolated playback virtual environment
       block:
         - name: Ensure the virtual environment exists
-          pip:
-            name: psutil
-            virtualenv: "{{ venv_dir }}"
-            # On Debian-based systems the correct python*-venv package must be installed to use the `venv` module.
-            virtualenv_command: "{{ ansible_python_interpreter }} -m venv --system-site-packages"
-        - name: Install russound lib and dependencies
+          ansible.builtin.command:
+            argv: [/usr/bin/python3, -m, venv, "{{ venv_dir }}"]
+            creates: "{{ venv_dir }}/bin/python"
+        - name: Install playback dependencies
           ansible.builtin.pip:
             name:
-              - russound
-              - flask
               - python-mpd2
             virtualenv: "{{ venv_dir }}"
-      vars:
-        ansible_python_interpreter: /usr/bin/python3
-        venv_python: "{{ venv_dir }}/bin/python3"
       tags:
         - init
         - new
@@ -161,30 +159,34 @@
             state: stopped
           when: existing_supervisor.stat.exists
 
+        - name: Stop configured MPD services when staging without playback
+          ansible.builtin.command:
+            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --stop, "{{ mpd_russoundpi_config }}"]
+          when: not (mpd_russoundpi_start_playback | bool)
+
         - name: Setup audio system
-          #setup audio system
           ansible.builtin.command:
             argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/audiosetup.py", --install, --audio-processor, pipewire, "{{ mpd_russoundpi_config }}"]
         - name: Setup MPD services
-          #setup MPD services configuration and auto-start and start services
           ansible.builtin.command:
             argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --install, "{{ mpd_russoundpi_config }}"]
 
-        - name: Initialize missing playback intentions as playing
+        - name: Initialize missing runtime state from optional station and gain defaults
           ansible.builtin.command:
             argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsupervisor.py", --initialize, "{{ mpd_russoundpi_config }}"]
 
-        - name: Enable MPD meta service
+        - name: Set MPD meta service activation according to deployment mode
           ansible.builtin.systemd_service:
             name: mpd_meta_control.service
             scope: user
             daemon_reload: true
-            enabled: true
-            state: started
+            enabled: "{{ mpd_russoundpi_start_playback | bool }}"
+            state: "{{ 'started' if mpd_russoundpi_start_playback | bool else 'stopped' }}"
 
         - name: Restart configured MPD instances
           ansible.builtin.command:
             argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --restart, "{{ mpd_russoundpi_config }}"]
+          when: mpd_russoundpi_start_playback | bool
 
         - name: Verify restored playback, routes and gains before enabling supervision
           ansible.builtin.command:
@@ -193,13 +195,14 @@
           retries: 3
           delay: 5
           until: playback_verification.rc == 0
+          when: mpd_russoundpi_start_playback | bool
 
-        - name: Enable and start playback reconciliation
+        - name: Set playback reconciliation activation according to deployment mode
           ansible.builtin.systemd_service:
             name: mpd_playback_supervisor.service
             scope: user
-            enabled: true
-            state: started
+            enabled: "{{ mpd_russoundpi_start_playback | bool }}"
+            state: "{{ 'started' if mpd_russoundpi_start_playback | bool else 'stopped' }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}"
         DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['user_uid'] }}/bus"
@@ -208,6 +211,7 @@
 
   handlers:
     - name: Restart ser2net
+      become: true
       systemd:
         name: ser2net
         state: restarted

@@ -267,7 +267,7 @@ manual-mode control-v1 preview. Missing, corrupt, partial or unknown intentions
 fail rather than defaulting to play. Existing persisted IDs cannot be reassigned.
 The tool does not install files, regenerate units, contact MPD or restart services. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 
-The [backend API migration procedure](./mpd-backend-api.md#offline-identity-and-control-preparation-s04)
+The [current config/state contract](./mpd-backend-api.md#configuration-runtime-state-and-revisions)
 records the reader/writer inventory, revision contract, rollout and rollback.
 The preview is deliberately **not** a live schema migration: runtime readers
 continue using legacy intentions and reject the preview. S10 must coordinate
@@ -353,14 +353,14 @@ separate private observation-test config during endurance. Agent running on
 Pi loopback; authenticated reads, real MPD metadata, routes/gains and unchanged
 production config/intentions/service lifecycle verified. Existing Radio 88.6
 faults continued; no zero-impact or uninterrupted-playback claim.
-See [target evidence](./playback-agent-deployment.md#approved-isolated-target-test-2026-10-15).
+See [target evidence](./playback-deployment-evidence.md#approved-isolated-target-test-2026-10-15).
 
 **Production read-only rollout (2026-10-17):** after explicit approval, the
 production config received stable IDs/labels (`radio_886`, `fm4_radio`,
 `oe3_radio`) while names, stream URLs, ports, sinks and gains were preserved.
 These were later renamed to channel identities (`stereo_front`,
 `stereo_centerlfe`, `stereo_rear`); see
-[channel-based identities](./playback-agent-deployment.md#channel-based-output-identities-2026-10-17).
+[channel-based identities](./playback-deployment-evidence.md#channel-based-output-identities-2026-10-17).
 The legacy intentions file remained byte-identical. Only the playback
 supervisor and read-only agent were stopped/restarted; all three MPD service
 PIDs remained unchanged. The read-only agent now observes the production
@@ -460,9 +460,9 @@ route/gain startup gating and saved intentions; restart restores changed gain.
 
 **Implemented and active in the approved Pi test deployment (2026-10-17).**
 TuneIn selection, managed queues and recovery are deployed together with S09.
-The [deployment record](./playback-agent-deployment.md#active-tunein-test-deployment-2026-10-17)
+The [deployment record](./playback-deployment-evidence.md#manual-controls-and-tunein-2026-10-17)
 records live station changes, contention and playlist-resolution fixes. The
-[configuration split rollout](./playback-agent-deployment.md#configuration-split-rollout-2026-10-17)
+[configuration split rollout](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17)
 records favorites, preserved stations/gains and service restarts.
 The [public-only egress plan](./playback-egress-hardening-plan.md) records the
 subsequently deployed DNS/redirect restrictions. Full lifecycle sign-off remains
@@ -615,7 +615,7 @@ credentials and operational files must have an explicit owner.
   live agent and dashboard are healthy. A 156-second Pi-to-web LAN sample
   measured a conservative web-visible playback-age p95 of 4.819 seconds
   against the proposed 5-second target; details and limitations are recorded
-  in the [deployment record](./playback-agent-deployment.md#s06-lan-latency-acceptance-2026-10-17).
+  in the [deployment record](./playback-deployment-evidence.md#s06-lan-latency-acceptance-2026-10-17).
 - D06 transport is deployed with Caddy's approved LAN-subnet `/24` filter. The user
   declined host firewall changes; the deployment record documents the
   trusted-LAN assumption and residual network exposure.

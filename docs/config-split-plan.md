@@ -2,7 +2,7 @@
 
 Status: all phases implemented and rolled out to the Pi on 2026-10-17
 (loopback MPD, `id` keys, config/state split, favorites backend and web UI).
-The rollout record is in `playback-agent-deployment.md`. Decisions C1-C6 are
+The rollout record is in [deployment evidence](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17). Decisions C1-C6 are
 settled (see below).
 
 Implementation and rollout are complete, not full lifecycle acceptance.

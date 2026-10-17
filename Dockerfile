@@ -1,4 +1,3 @@
-# UNTESTED: this image has not been built or run against real Russound hardware yet.
 # Web application only. The serial gateway lives in Dockerfile.ser2net and the
 # hardware-free backend in Dockerfile.dummy.
 FROM python:3.12-slim

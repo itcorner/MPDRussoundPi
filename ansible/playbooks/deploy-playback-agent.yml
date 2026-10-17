@@ -1,5 +1,5 @@
 ---
-- name: Install the read-only playback agent without regenerating audio or MPD
+- name: Install the playback agent without regenerating audio or MPD
   hosts: musicpi
   become: false
   vars:
@@ -128,7 +128,7 @@
       diff: false
       register: playback_agent_token_installed
 
-    - name: Validate migrated inventory without connecting to MPD or audio
+    - name: Validate configured inventory without connecting to MPD or audio
       ansible.builtin.command:
         argv:
           - "{{ playback_agent_venv }}/bin/python"

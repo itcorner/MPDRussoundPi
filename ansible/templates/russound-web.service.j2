@@ -6,10 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={{ app_dir }}
-ExecStart={{ venv_dir }}/bin/python {{ app_dir }}/web/russound_server.py --config {{ app_dir }}/web/russound_config.json --state /tmp/russound_state.json --host {{ russound_host }} --port {{ russound_port }}
+ExecStart={{ venv_dir }}/bin/python -m web.russound_server --config {{ russound_config_dir }}/russound_config.json --state {{ russound_state_dir }}/russound_state.json --host {{ russound_host }} --port {{ russound_port }}
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment='RUSSOUND_PLAYBACK_AGENTS={{ russound_playback_agents | to_json }}'
 User={{ deploy_user }}
 Group={{ deploy_user }}
 

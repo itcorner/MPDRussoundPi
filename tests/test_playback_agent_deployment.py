@@ -100,7 +100,7 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         for task in copies:
             self.assertNotEqual(task["ansible.builtin.copy"]["dest"], "{{ playback_agent_config }}")
         check = next(task for task in self.tasks(self.deploy, "ansible.builtin.command")
-                     if "Validate migrated inventory" in task["name"])
+                     if "Validate configured inventory" in task["name"])
         code = check["ansible.builtin.command"]["argv"][2]
         compile(code, "<deployment-config-validation>", "exec")
         self.assertNotIn("refresh", code)

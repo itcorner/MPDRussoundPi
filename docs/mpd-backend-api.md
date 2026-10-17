@@ -24,7 +24,7 @@ locally and deployed; S07 is done and production-verified by the user on
 config/state split with favorites are active in the approved trusted-LAN Pi
 test deployment. Public-only DNS/redirect egress enforcement is deployed;
 full lifecycle acceptance remains outstanding. See the
-[deployment record](./playback-agent-deployment.md#configuration-split-rollout-2026-10-17).
+[deployment record](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17).
 
 ## Opt-in USB hardware recovery
 
@@ -259,7 +259,7 @@ backend.stop("stereo_front")
 | `stop(id=None)` | Stop playback and verify state without clearing the queue. |
 | `get_gain(id)` | Read persisted gain. |
 | `set_gain(id, gain_db)` | Persist per-output attenuation in `playback.json`. When playing, recover/verify route and apply/read-verify gain before saving. When stopped or paused, save without starting audio; next `start` applies it. |
-| Durable `set_tunein_station` / `select_favorite` operations | Select a TuneIn station or a favorite (URL or TuneIn), save station, resolved URL and play intention in one atomic write, and replace the output's one-item managed queue under the shared lock. See [station-selection semantics](./mpd-playback-operations-api.md#tunein-station-selection-request). |
+| Durable `set_tunein_station` / `select_favorite` operations | Select a TuneIn station or a favorite (URL or TuneIn), save station, resolved URL and play intention in one atomic write, and replace the output's one-item managed queue under the shared lock. See [station-selection semantics](./mpd-playback-operations-api.md#s08-source-selection-semantics). |
 | `favorites()` / `favorites_operation(action, ...)` | Read the favorites list with both revisions; add (TuneIn only, duplicate is a no-op, at most 20), remove or move a favorite. |
 | `check_route(id)` | Return `StreamRoute` including actual/expected sink, current client ID and `correct`. Missing/ambiguous clients raise an error. |
 | `recover_route(id=None)` | Return tuple of verified `StreamRoute` objects; move only incorrectly routed matching MPD clients. |
