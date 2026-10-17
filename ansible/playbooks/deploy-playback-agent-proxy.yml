@@ -93,7 +93,7 @@
               'openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes',
               '-keyout', playback_proxy_private_key,
               '-out', playback_proxy_certificate,
-              '-days', '365', '-subj', '/CN=' + playback_proxy_hostname,
+              '-days', '3650', '-subj', '/CN=' + playback_proxy_hostname,
               '-addext',
               'subjectAltName=' +
                 ('IP:' if playback_proxy_hostname is match('^[0-9.]+$') else 'DNS:') +

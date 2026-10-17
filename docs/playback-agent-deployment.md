@@ -149,7 +149,7 @@ Omit `playback_proxy_enable_operations=true` for read-only transport. Both agent
 and proxy must allow commands for dashboard controls to work.
 
 The dedicated service does not change the package's `caddy.service`. It creates
-a one-year self-signed certificate with a matching SAN on first install,
+a ten-year (3650-day) self-signed certificate with a matching SAN on first install,
 validates the pair and fetches only the public certificate to
 `docker/secrets/musicpi-proxy.crt` on the controller. The private key stays on
 the Pi. Existing certificates must match the host and have at least 30 days'

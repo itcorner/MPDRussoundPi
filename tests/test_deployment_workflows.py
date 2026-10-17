@@ -31,6 +31,13 @@ def render(text, **variables):
 
 
 class DeploymentWorkflowTests(unittest.TestCase):
+    def test_proxy_generates_ten_year_certificate_without_replacing_existing_pair(self):
+        tasks = playbook("deploy-playback-agent-proxy.yml")["tasks"]
+        generate = next(task for task in tasks if task["name"].startswith("Generate a self-signed certificate"))
+        self.assertIn("'-days', '3650'", generate["ansible.builtin.command"]["argv"])
+        self.assertIn("not playback_proxy_certificate_stat.stat.exists", generate["when"])
+        self.assertEqual(generate["args"]["creates"], "{{ playback_proxy_certificate }}")
+
     def test_repository_deployments_do_not_force_dirty_checkouts(self):
         for name in ("setup-musicpi.yml", "deploy-russound-web.yml", "deploy-russound-docker.yml"):
             with self.subTest(playbook=name):
