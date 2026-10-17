@@ -3,7 +3,12 @@
 Status: S01 read-contract baseline, 2026-10-14. S02 collector and S03
 read-only HTTP agent are implemented. Production identities, the Pi TLS proxy,
 and the S05 web status gateway were deployed on 2026-10-17. The deployed
-integration remains read-only; write operations are not part of this contract.
+read API remains read-only; write operations are not part of this contract.
+S07 manual commands are an opt-in extension implemented locally in the
+[operations contract](./mpd-playback-operations-api.md). Its capability and
+control-revision fields are additive; existing read-only agents/fixtures remain
+valid. Production S07 writes were enabled with approval on 2026-10-17;
+S07 is done and production-verified by the user on that date.
 Changes to this baseline require updating this document and its
 [contract fixtures](../tests/fixtures/playback-read-v1.json) together.
 See the [implementation plan](./mpd-web-integration-implementation-plan.md).

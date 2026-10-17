@@ -17,7 +17,10 @@ observation interface and fixtures. S02 implements the local collector and S03
 the read-only HTTP adapter below. Production stream identities were migrated
 on 2026-10-17, and the agent is reachable from the Docker web app through the
 Pi's TLS proxy. S05 exposes cached status/metadata only; existing `status()`
-behavior remains unchanged. Playback writes and source/provider controls remain
+behavior remains unchanged. S07 adds opt-in
+[durable manual operations](./mpd-playback-operations-api.md), implemented
+locally and deployed; S07 is done and production-verified by the user on
+2026-10-17. Source/provider controls remain
 future extensions.
 
 ## Opt-in USB hardware recovery

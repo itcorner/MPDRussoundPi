@@ -2,10 +2,11 @@
 
 Date: 2026-10-14; deployment status updated 2026-10-17. Solution D is selected;
 the read-only agent, production identities, Pi TLS proxy and Docker web status
-integration are deployed. Playback writes, source selection, volume controls
-and hardware-driven policy remain planned.
+integration are deployed. S07 manual playback and calibration-gain controls
+are done, deployed and production-verified by the user on 2026-10-17. Source
+selection and hardware-driven policy remain planned.
 
-Implementation progress: S01-S06 read-only status are complete, including the
+Implementation progress: S01-S07 are complete, including the
 [production Pi-to-Docker rollout](./playback-agent-deployment.md#production-read-only-rollout-2026-10-17).
 See the [implementation plan](./mpd-web-integration-implementation-plan.md)
 for remaining decisions and [collector usage](./mpd-backend-api.md).
@@ -271,7 +272,9 @@ Use an `/v1` boundary and advertise schema/capabilities. S01 freezes initial
 read routes, fields and error/freshness semantics in the
 [Playback read API v1 contract](./mpd-playback-read-api.md). That contract and its
 fixtures take precedence over the longer-term illustrative snapshot below.
-Write endpoints and later control/provider fields remain proposed, not implemented.
+S07 manual write endpoints are defined in the
+[operations contract](./mpd-playback-operations-api.md); later source,
+automation and provider fields below remain proposed.
 
 | Endpoint | Purpose / semantics |
 | --- | --- |
@@ -286,7 +289,8 @@ Write endpoints and later control/provider fields remain proposed, not implement
 
 The web exposes same-origin `/api/playback/*` routes forwarding typed,
 allowlisted operations, not a generic proxy to arbitrary agent URLs/paths.
-Provider search/resolution can use `/api/stream-catalogs/*`. None exists today.
+Provider search/resolution can later use `/api/stream-catalogs/*`; catalog
+routes do not exist today.
 
 Example cached output:
 
@@ -494,6 +498,13 @@ atomic file replacement does not make MPD and config one transaction.
 
 ## 9. Volume architecture
 
+D13 (accepted 2026-10-17) sets the calibration-gain slider range to -60 to
+0 dB with 0.1 dB steps. The minimum extends to include existing gains below
+-60 dB without clamping. Each stream card's Config dialog holds play/pause/stop
+and the slider, with a number + dB readout and no text/numeric gain input.
+This edits the existing
+`gain_db`, not a separate attenuation layer.
+
 **User stream volume is the output gain calibration itself**, not an additional
 attenuation layer. A web edit replaces the same persisted `gain_db` used by the
 backend, CLI and supervisor. There is no separate user-volume field, offset or
@@ -515,7 +526,7 @@ Keep MPD's software mixer reserved for startup gating (0 while verifying,
 100 after success). Raw MPD `setvol` is not an acceptable shortcut.
 
 Label the UI control **Stream volume (output gain)** and display dB so users
-know edits change calibration. Prefer a dB slider/numeric input; define and
+know edits change calibration. Use the accepted slider-only Config dialog; define and
 advertise its finite attenuation range and step before UI implementation.
 The current backend permits attenuation only (`gain_db <= 0`); 0 dB is unity.
 Do not imply a separate mute capability or encode `-Infinity` as JSON.
@@ -650,9 +661,12 @@ and fenced ownership before automation resumes after reconnect.
 ### Security boundary
 
 - Current web CSRF/DNS-rebinding protections are not login/authentication.
-  Protect browser access with an authenticated reverse proxy or add user
-  authentication/authorization before exposing powerful source-edit controls
-  beyond a trusted network.
+  D07 (accepted 2026-10-17) uses trusted-environment browser access without
+  login, user permissions or roles for now. Lightweight admin authentication
+  may be added later, but is not part of the current implementation. Preserve
+  existing request protections and web-to-agent authentication. Anyone able
+  to access the web interface can use its exposed controls; reassess browser
+  access protection before exposing it beyond the trusted environment.
 - Agent control requires service authentication independently of browser
   origin checks. The selected D06 design terminates TLS at Caddy on the Pi and
   forwards to the loopback-only agent. Docker trusts the proxy's self-signed
@@ -661,7 +675,9 @@ and fenced ownership before automation resumes after reconnect.
   firewall the proxy to the Docker host. A LAN/IP allowlist alone is not identity.
 - Keep agent credentials in mounted secrets/environment configuration, never
   JavaScript, ordinary configuration payloads, request history or log URLs.
-  Separate read-only and control scopes; rotate credentials.
+  S07 explicitly enables the existing service credential for the four
+  allowlisted manual actions on configured outputs; separate read-only/control
+  credentials remain a future hardening option. Rotate credentials explicitly.
 - Bind MPD to loopback and limit agent ingress to authorized web/admin hosts
   after fixing/testing the known binding-schema mismatch. Do not change current
   listeners during the endurance test. Do not publish all MPD ports from Docker.
@@ -759,13 +775,15 @@ output IDs with separate labels (D08), are already accepted.
    hold-last versus fail-stop during stale hardware/web connectivity.
 3. Resolved by D01: no new hardware-driven decisions during web-host outage;
    the Pi preserves/recovers its last intention.
-4. Calibration-gain slider range/step and who may edit it. Stream volume directly
-   changes output calibration; a separate user-attenuation layer is not required.
+4. Resolved by D13/D07: calibration-gain slider -60 to 0 dB, step 0.1 dB;
+   trusted-environment access without user permissions for now. Stream volume
+   directly changes output calibration, not a separate attenuation layer.
 5. First external catalog provider and supported playback formats/authentication;
    expiring or non-MPD sources require separate capability work.
 6. Managed-queue adoption and source-switch failure behavior; this proposal
    preserves the new desired selection rather than silently reverting it.
-7. Authentication/TLS deployment and who may read/control/edit configuration.
+7. D06 TLS is deployed; D07 accepts trusted-environment browser access without
+   login for now. Lightweight admin authentication is deferred.
 
 These are product/deployment choices, not reasons to duplicate control logic.
 The HTTP agent boundary remains valid whichever policy/provider choices are made.

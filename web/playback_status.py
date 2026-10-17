@@ -5,6 +5,7 @@ from http.client import HTTPException
 import ipaddress
 import json
 import logging
+import math
 import re
 import ssl
 import threading
@@ -18,6 +19,40 @@ from web.config_types import env_str
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
 AGENT_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
+WRITE_ACTIONS = {"play", "pause", "stop", "set_gain"}
+
+
+class PlaybackCommandError(Exception):
+    def __init__(self, code: str, message: str, status: int) -> None:
+        super().__init__(message)
+        self.code, self.message, self.status = code, message, status
+
+
+def validate_operation_request(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise PlaybackCommandError("invalid_request", "A playback operation object is required.", 400)
+    value = cast(dict[str, Any], payload)
+    fields = {"action", "expected_config_revision", "expected_control_revision", "idempotency_key"}
+    action = value.get("action")
+    if not isinstance(action, str) or action not in WRITE_ACTIONS:
+        raise PlaybackCommandError("invalid_request", "Unsupported playback action.", 400)
+    if action == "set_gain":
+        fields.add("gain_db")
+        gain = value.get("gain_db")
+        try:
+            valid_gain = not isinstance(gain, bool) and isinstance(gain, (int, float)) and math.isfinite(gain) and gain <= 0
+        except OverflowError:
+            valid_gain = False
+        if not valid_gain:
+            raise PlaybackCommandError("invalid_request", "Gain must be finite and at or below 0 dB.", 400)
+    if set(value) != fields:
+        raise PlaybackCommandError("invalid_request", "Operation fields are missing or unsupported.", 400)
+    for name in ("expected_config_revision", "expected_control_revision"):
+        if not isinstance(value[name], str) or re.fullmatch(r"[a-f0-9]{64}", value[name]) is None:
+            raise PlaybackCommandError("invalid_request", "Current playback revisions are required.", 400)
+    if not isinstance(value["idempotency_key"], str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value["idempotency_key"]) is None:
+        raise PlaybackCommandError("invalid_request", "Invalid operation idempotency key.", 400)
+    return value
 
 
 class PlaybackAgentConfig:
@@ -123,6 +158,11 @@ class PlaybackStatusClient:
             "retryable": True,
         }
         self._revision = 0
+        self._write_operations: list[str] = []
+
+    @property
+    def agent_id(self) -> str:
+        return self._config.agent_id
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -137,6 +177,7 @@ class PlaybackStatusClient:
                     "last_success_at": self._last_success_at,
                     "error": self._error,
                     "snapshot": self._snapshot,
+                    "write_operations": list(self._write_operations),
                 }],
             }
 
@@ -151,8 +192,7 @@ class PlaybackStatusClient:
                 raise ValueError("agent_not_alive")
             capabilities = self._get_json("/v1/capabilities")
             _validate_identity(capabilities, self._config.agent_id)
-            if capabilities.get("write_operations") != []:
-                raise ValueError("invalid_agent_response")
+            writes = _write_capabilities(capabilities.get("write_operations"))
             inventory = self._get_json("/v1/outputs")
             _validate_identity(inventory, self._config.agent_id)
             if not isinstance(inventory.get("outputs"), list):
@@ -180,12 +220,14 @@ class PlaybackStatusClient:
         with self._lock:
             changed = (
                 self._status != "ok"
+                or self._write_operations != writes
                 or _meaningful_snapshot(self._snapshot) != _meaningful_snapshot(snapshot)
                 or self._error is not None
             )
             self._status = "ok"
             self._error = None
             self._snapshot = snapshot
+            self._write_operations = list(writes)
             self._last_success_at = _timestamp()
             if changed:
                 self._revision += 1
@@ -236,6 +278,75 @@ class PlaybackStatusClient:
             raise ValueError("invalid_agent_response")
         return cast(dict[str, Any], payload)
 
+    def submit_operation(self, output_id: str, payload: Any) -> dict[str, Any]:
+        if AGENT_ID_PATTERN.fullmatch(output_id) is None:
+            raise PlaybackCommandError("invalid_request", "Invalid output identity.", 400)
+        value = validate_operation_request(payload)
+        with self._lock:
+            if self._status != "ok" or value["action"] not in self._write_operations:
+                raise PlaybackCommandError("writes_unavailable", "Playback commands are unavailable or not enabled on this agent.", 503)
+        response = self._operation_request(f"/v1/outputs/{output_id}/operations", value)
+        if response["operation"].get("output_id") != output_id or response["operation"].get("action") != value["action"]:
+            raise PlaybackCommandError("invalid_agent_response", "Agent returned a mismatched operation; its outcome is unknown.", 502)
+        return response
+
+    def get_operation(self, operation_id: str) -> dict[str, Any]:
+        if re.fullmatch(r"[a-f0-9]{32}", operation_id) is None:
+            raise PlaybackCommandError("invalid_request", "Invalid operation identity.", 400)
+        response = self._operation_request(f"/v1/operations/{operation_id}")
+        if response["operation"]["id"] != operation_id:
+            raise PlaybackCommandError("invalid_agent_response", "Agent returned a mismatched operation.", 502)
+        return response
+
+    def _operation_request(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = Request(
+            f"{self._config.base_url}{path}",
+            data=json.dumps(payload, allow_nan=False).encode() if payload is not None else None,
+            headers={"Authorization": f"Bearer {self._token}", "Accept": "application/json", "Content-Type": "application/json"},
+            method="POST" if payload is not None else "GET",
+        )
+        try:
+            with build_opener(NoRedirectHandler(), HTTPSHandler(context=self._ssl_context)).open(
+                request, timeout=REQUEST_TIMEOUT_SECONDS,
+            ) as response:
+                if response.status != (202 if payload is not None else 200):
+                    raise ValueError("invalid_agent_response")
+                result = json.loads(response.read(65537))
+            if not isinstance(result, dict):
+                raise ValueError("invalid_agent_response")
+            result = cast(dict[str, Any], result)
+            _validate_identity(result, self.agent_id)
+            raw_operation = result.get("operation")
+            if not isinstance(raw_operation, dict):
+                raise ValueError("invalid_agent_response")
+            operation = cast(dict[str, Any], raw_operation)
+            if (
+                not isinstance(operation.get("id"), str)
+                or re.fullmatch(r"[a-f0-9]{32}", operation["id"]) is None
+                or operation.get("status") not in {"queued", "running", "applied", "failed", "expired", "superseded", "outcome_unknown"}
+            ):
+                raise ValueError("invalid_agent_response")
+            return result
+        except HTTPError as exc:
+            upstream_status = exc.code
+            exc.close()
+            messages = {
+                400: "Playback operation was rejected as invalid.",
+                401: "Playback agent authentication failed.",
+                403: "Playback agent denied the operation.",
+                404: "Playback output or operation was not found; a missing operation does not prove it never executed.",
+                409: "Playback revisions changed, the backend is busy, or the idempotency key conflicts. Refresh before issuing a new command.",
+                429: "Playback operation capacity is exhausted; retry the same operation later.",
+            }
+            status = upstream_status if upstream_status in messages else 503
+            raise PlaybackCommandError("agent_operation_rejected", messages.get(status, "Playback agent could not accept the operation."), status) from None
+        except (URLError, TimeoutError, OSError, HTTPException, ValueError, TypeError, AttributeError):
+            raise PlaybackCommandError(
+                "operation_outcome_unknown",
+                "Playback agent response was unavailable or invalid. The command may have been accepted; retry only with the same fields and idempotency key.",
+                503,
+            ) from None
+
 
 class NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(
@@ -249,6 +360,17 @@ class NoRedirectHandler(HTTPRedirectHandler):
     ) -> None:
         _ = (req, fp, code, msg, headers, newurl)
         return None
+
+
+def _write_capabilities(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("invalid_agent_response")
+    result: list[str] = []
+    for item in cast(list[object], value):
+        if not isinstance(item, str) or item not in WRITE_ACTIONS:
+            raise ValueError("invalid_agent_response")
+        result.append(item)
+    return result
 
 
 def _validate_identity(response: dict[str, Any], agent_id: str) -> None:
@@ -312,9 +434,9 @@ def _meaningful_snapshot(snapshot: Any) -> Any:
     if isinstance(snapshot, dict):
         return {
             key: _meaningful_snapshot(value)
-            for key, value in snapshot.items()
+            for key, value in cast(dict[str, Any], snapshot).items()
             if key not in volatile_fields
         }
     if isinstance(snapshot, list):
-        return [_meaningful_snapshot(value) for value in snapshot]
+        return [_meaningful_snapshot(value) for value in cast(list[Any], snapshot)]
     return snapshot

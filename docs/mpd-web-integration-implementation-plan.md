@@ -3,7 +3,8 @@
 Date: 2026-10-14; updated 2026-10-17. Status: S01-S06 implemented for
 read-only playback status. S04 production identities and the S06 Pi-to-Docker
 deployment are complete; the healthy-LAN update-latency target is met. S07
-write controls remain outstanding.
+write controls are done, deployed and production-verified by the user on
+2026-10-17.
 
 ## 1. Confirmed scope and working rules
 
@@ -51,6 +52,8 @@ and the architecture document. Do not silently turn a recommendation into scope.
 | D01 | Automation availability during web-host outage | Web owns hardware-demand policy. Pi preserves/reconciles the last playback intention; it does not make new hardware-driven decisions while the web host is offline. |
 | D08 | Stable output identity | Immutable IDs persisted in Pi operational config; editable labels separate. Preserve legacy names, ports, sinks and systemd units during coordinated migration. |
 | D04 | Manual playback precedence | Manual play/pause/stop switches that output to manual mode until explicitly returned to automatic. Accepted 2026-10-16 during S04 preparation; automation is not enabled by this decision. |
+| D07 | Browser access protection | Trusted-environment access without browser login, user permissions or roles for now. Lightweight admin authentication may be added later, but is out of current scope. Preserve existing request protections and web-to-agent authentication. Accepted 2026-10-17. |
+| D13 | Calibration-gain UI range and step | Slider normally -60 to 0 dB, step 0.1 dB; extend its minimum to include existing lower gains without clamping. Slider only, with number + dB display, inside the stream card's Config dialog alongside play/pause/stop. Use existing `gain_db` semantics. Accepted and refined 2026-10-17. |
 
 ### Open decisions, in discussion order
 
@@ -63,12 +66,10 @@ read-only status; the gate column states when the answer becomes necessary.
 | D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
 | D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
 | D06 | Web-to-agent transport security | **Selected:** Caddy terminates TLS on the Pi and forwards to the loopback agent. Use a self-signed certificate trusted by the Docker web client through `tls_ca_file` and retain the scoped bearer credential. The user explicitly declined a host firewall and approved Caddy's `192.168.1.0/24` source allowlist for trusted-LAN operation on 2026-10-17. | Agent deployment in S06; write access in S07 |
-| D07 | Browser access protection | Existing or new authenticated reverse proxy. Alternatives: application login or explicitly trusted-LAN-only access. | Live write rollout in S07 |
 | D09 | Initial source URL scope | Direct HTTP(S) radio feeds only. Alternative: explicitly supported playlist resolution or additional MPD URI schemes. | Source validation in S08 |
 | D10 | Permission to adopt/manage MPD queues | Explicit per-output adoption of a one-selected-source managed queue. Alternative: preserve unmanaged entries and expose that limitation. | S08 |
 | D11 | Source-switch failure behavior | Keep newly saved desired source visible and retry; explicit user operation restores old selection. Alternative: revision-safe rollback to old source. | S08 |
 | D12 | Does source selection change playback intention? | Preserve play/pause/stop and mode; provide separate select-and-play. Alternative: every selection explicitly starts playback. | S08 |
-| D13 | Calibration-gain UI range and step | Suggested UI range -60 to 0 dB, step 0.1 dB; finite backend values below the UI range remain valid and visible without clamping. | S07 |
 | D14 | First external catalog provider | Choose one provider with MPD-playable radio URLs; defer catalog implementation until chosen. | S09 only |
 | D15 | Automatic-mode stop delay | Suggested 30 seconds of continuously confirmed no-demand; alternative immediate stop or another interval. | S10 |
 | D16 | Freshness and lease timing | Suggested hardware stale/lease thresholds 30 seconds at 10-second poll/renew cadence; adjust to measured full-poll duration. | S10 |
@@ -367,8 +368,9 @@ Authenticated Docker-to-Pi TLS health, capabilities and output reads now return
 three outputs. `/v1/start` remains unavailable. The Russound hardware warning
 on the local dashboard is independent of the playback integration.
 
-The Pi-to-Docker read path is deployed. A healthy-LAN p95 update-latency sample
-and all S07 write controls remain outstanding.
+At this initial rollout checkpoint the Pi-to-Docker read path was deployed,
+while the healthy-LAN latency sample and S07 controls were still outstanding.
+The later S06 acceptance and local S07 implementation are recorded below.
 
 **Historical preparation (2026-10-16):** a separate opt-in Caddy proxy play,
 Caddyfile and hardened systemd service are prepared. It keeps the agent on
@@ -387,10 +389,31 @@ legacy intentions were preserved, and no MPD/PipeWire service was restarted.
 The user explicitly declined a host firewall; the trusted-LAN assumption and
 Caddy `/24` source filter are recorded above. S06 read-only deployment is complete.
 The Pi-to-web healthy-LAN p95 latency target is met; measurement details and
-the maximum observed outlier are recorded in the deployment record. All S07
-write controls remain outstanding.
+the maximum observed outlier are recorded in the deployment record. S07's
+subsequent local implementation is recorded below; production writes remain
+disabled.
 
 ### S07. Add durable manual operations and calibration controls
+
+**Done and production-verified (2026-10-17, user sign-off):** typed
+play/pause/stop/set-gain submissions, a bounded persistent SQLite ledger and
+single worker, idempotency/revision checks, explicit partial/unknown outcomes,
+web gateway routes and capability-gated Playback controls. D07/D13 are accepted.
+The [S07 operation contract](./mpd-playback-operations-api.md) records request
+shapes, retention/deadline/restart semantics and gain behavior. Agent and proxy
+activation each require a separate opt-in; defaults remain read-only.
+Fake-backed HTTP, backend/CLI/supervisor regressions and dependency-free
+frontend tests validate local behavior: 144 playback tests, 48 MPD/backend/
+CLI/supervisor/setup tests, 49 existing Russound server tests and 19 Node DOM
+tests passed. Both deployment plays pass Ansible syntax checks; changed
+production Python modules have no Pylance errors. Isolated browser checks
+verified explicit Stop completion and unchanged submission of -65.1 dB with
+the saved-for-next-play message. No production MPD/audio service was
+modified or restarted. Agent/proxy and Docker web activation succeeded;
+production capabilities, fresh status and Config dialog controls were verified
+without issuing commands. The user subsequently confirmed production testing
+worked well and accepted S07 as done. Individual user test cases were not
+enumerated; this is not a separately measured restart/endurance result.
 
 1. Add typed play/pause/stop/set-gain operations, output lookup and validation.
    Delegate to existing backend methods; preserve requested-versus-applied state.
@@ -403,11 +426,15 @@ write controls remain outstanding.
 4. Apply state/revision checks at execution as well as submission. Supersede
    queued outdated targets; explicitly report partial persistence/application
    failures and existing gain-save rollback behavior.
-5. Add web submission/status routes, operation progress/error UX and D07
-   authorization. UI play/pause/stop are explicit actions, not toggles.
-6. Expose D13 dB slider/numeric input through `set_gain`. Read/persist the same
-   `gain_db`; keep existing values outside UI range visible/editable without
-   silent clamping. Debounce/supersede unsent slider changes.
+5. Add web submission/status routes and operation progress/error UX. Per D07,
+   use trusted-environment browser access without login or user permissions;
+   retain existing request protections and web-to-agent authentication.
+   UI play/pause/stop are explicit actions, not toggles.
+6. Expose D13's slider-only calibration control in a per-stream Config dialog
+   alongside play/pause/stop, with a number + dB readout and no text input.
+   Read/persist the same `gain_db`; extend the slider minimum for existing
+   values below -60 dB without clamping. Supersede unsent slider drafts and
+   submit only on Apply gain.
 
 **Tests:** lost responses, retries, duplicate payload conflict, ledger restart,
 busy lock, stale revisions, queue saturation, stopped/paused gain updates,
@@ -523,7 +550,7 @@ credentials and operational files must have an explicit owner.
 
 ## 5. Current progress and next discussion
 
-- A01, A02, D01, D04, D06 and D08 accepted.
+- A01, A02, D01, D04, D06, D07, D08 and D13 accepted.
 - S01-S06 read-only status are complete: contract, collector, authenticated
   agent, production identities, dashboard and Pi-to-Docker deployment. The
   live agent and dashboard are healthy. A 156-second Pi-to-web LAN sample
@@ -533,11 +560,15 @@ credentials and operational files must have an explicit owner.
 - D06 transport is deployed with Caddy's approved LAN-subnet `/24` filter. The user
   declined host firewall changes; the deployment record documents the
   trusted-LAN assumption and residual network exposure.
-- S07 remains the next implementation package, gated by D07 browser access
-  protection and D13 gain range decisions. D02-D03, D05, D07 and D09-D16
-  remain open; no provider, physical input mapping or automation demand rule
-  has been selected.
-- **Next question: D02, source-specific demand versus system-wide power.**
+- D07 accepts trusted-environment browser access without login or user
+  permissions for now; lightweight admin authentication is deferred.
+- D13 accepts a -60 to 0 dB slider with 0.1 dB steps, preserving visible/editable
+  out-of-range values without clamping by extending the slider minimum.
+  Controls live in a per-stream Config dialog with slider-only gain editing.
+  S07 is done, deployed and production-verified (user sign-off, 2026-10-17).
+- D02-D03, D05, D09-D12 and D14-D16 remain open; no provider, physical input
+  mapping or automation demand rule has been selected.
+- **Next gate: resolve S08 manual source-replacement decisions D09-D12.**
 
 After each answer, update its status/outcome above, amend affected architecture
 sections/steps and discuss only the next unresolved decision.

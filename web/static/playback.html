@@ -22,7 +22,7 @@
           <a class="page-menu-link" href="/config">Configuration</a>
           <a class="page-menu-link" href="/status">Status</a>
         </nav>
-        <p class="panel-copy">See whether each stream is running and what it is currently playing.</p>
+        <p class="panel-copy">Select Config on a stream to control playback and calibration gain where the agent permits writes. Gain edits are drafts until you select Apply gain.</p>
       </section>
 
       <section class="panel playback-panel" aria-live="polite">
@@ -33,6 +33,14 @@
         <div id="playbackOutputs" class="playback-grid"></div>
       </section>
     </main>
+
+    <dialog id="playbackConfigDialog" class="playback-config-dialog" aria-labelledby="playbackConfigTitle">
+      <div class="panel-header">
+        <h2 id="playbackConfigTitle" class="section-title">Stream configuration</h2>
+        <button id="playbackConfigClose" type="button">Close</button>
+      </div>
+      <div id="playbackConfigControls"></div>
+    </dialog>
 
     <script src="/static/playback.js"></script>
   </body>

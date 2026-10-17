@@ -168,6 +168,34 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         self.assertIn("ReadWritePaths=/var/lib/caddy/playback-agent", proxy_unit)
         self.assertNotIn("CAP_NET_BIND_SERVICE", proxy_unit)
 
+    def test_manual_operations_require_explicit_agent_and_proxy_opt_in(self):
+        self.assertFalse(self.deploy["vars"]["playback_agent_enable_operations"])
+        proxy = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
+        self.assertFalse(proxy["vars"]["playback_proxy_enable_operations"])
+        service = Environment(undefined=StrictUndefined, trim_blocks=True).from_string(SERVICE.read_text())
+        unit = service.render(
+            playback_agent_dir="/home/musicpi/agent", playback_agent_venv="/home/musicpi/agent/venv",
+            playback_agent_config="/home/musicpi/config.json", playback_agent_secret_dir="/home/musicpi/secrets",
+            playback_agent_id="musicpi", playback_agent_port=8081,
+            playback_agent_enable_operations=True, playback_agent_state_dir="/home/musicpi/agent-state",
+            ansible_facts={"user_uid": 1000},
+        )
+        self.assertIn("--operations-db /home/musicpi/agent-state/operations.sqlite3", unit)
+        self.assertIn("\nEnvironment=PYTHONUNBUFFERED", unit)
+        caddy = Environment(undefined=StrictUndefined).from_string(PROXY_CADDYFILE.read_text())
+        variables = dict(
+            playback_proxy_hostname="192.168.1.105", playback_proxy_port=8443,
+            playback_proxy_certificate="/cert", playback_proxy_private_key="/key",
+            playback_proxy_allowed_cidr="192.168.1.0/24", playback_agent_port=8081,
+        )
+        readonly = caddy.render(**variables)
+        self.assertIn("method GET HEAD", readonly)
+        self.assertNotIn("method POST", readonly)
+        enabled = caddy.render(**variables, playback_proxy_enable_operations=True)
+        self.assertIn("/v1/outputs/*/operations", enabled)
+        self.assertIn("/v1/operations/*", enabled)
+        self.assertIn("method POST", enabled)
+
     def test_proxy_play_never_restarts_agent_or_audio_services(self):
         play = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
         services = [

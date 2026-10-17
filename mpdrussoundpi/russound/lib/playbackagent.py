@@ -13,6 +13,7 @@ from werkzeug.exceptions import HTTPException
 
 from lib.mpdbackend import BackendError, MPDBackend
 from lib.playbackstatus import OutputObservation, PlaybackCollector
+from lib.playbackoperations import ACTIONS, OperationError, OperationManager
 
 
 @dataclass(frozen=True)
@@ -23,12 +24,16 @@ class CachedInventory:
     monotonic: float = 0
     outputs: tuple[OutputObservation, ...] | None = None
     error_code: str = "snapshot_unavailable"
+    controls: tuple[tuple[str, str, str | None], ...] = ()
 
 
 class AgentObserver:
     """Background reads only; HTTP readers take one immutable publication."""
 
-    def __init__(self, config_path: str | Path, *, backend: MPDBackend | None = None) -> None:
+    def __init__(
+        self, config_path: str | Path, *, backend: MPDBackend | None = None,
+        controls_enabled: bool = False,
+    ) -> None:
         self.config_path = config_path
         self.backend = backend
         self._lock = threading.Lock()
@@ -42,6 +47,8 @@ class AgentObserver:
         self._due: dict[str, float] = {}
         self._delays: dict[str, float] = {}
         self._failed = False
+        self.controls_enabled = controls_enabled
+        self._controls: tuple[tuple[str, str, str | None], ...] = ()
 
     def snapshot(self) -> CachedInventory:
         with self._lock:
@@ -53,14 +60,14 @@ class AgentObserver:
     ) -> None:
         with self._lock:
             previous = self._cache
-            if (outputs, config_revision, error_code) == (
-                previous.outputs, previous.config_revision, previous.error_code,
+            if (outputs, config_revision, error_code, self._controls) == (
+                previous.outputs, previous.config_revision, previous.error_code, previous.controls,
             ):
                 return
             self._cache = CachedInventory(
                 previous.revision + 1, config_revision,
                 datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                time.monotonic(), outputs, error_code,
+                time.monotonic(), outputs, error_code, self._controls,
             )
         if previous.error_code != error_code or previous.config_revision != config_revision:
             logging.info("Agent inventory transition: %s", error_code)
@@ -80,6 +87,8 @@ class AgentObserver:
                 if self.backend is None:
                     self.backend = MPDBackend(self.config_path)
                 _, _, revision = self.backend.configuration_snapshot()
+                if self.controls_enabled:
+                    revision, self._controls = self.backend.operation_inventory()
                 if self._collector is None or revision != self._collector.config_revision:
                     replacement = PlaybackCollector(self.backend)
             except (BackendError, OSError, ValueError):
@@ -153,12 +162,16 @@ class AgentObserver:
             raise RuntimeError("Agent observer failed unexpectedly")
 
 
-def create_app(observer: AgentObserver, agent_id: str, token: str) -> Flask:
+def create_app(
+    observer: AgentObserver, agent_id: str, token: str,
+    operations: OperationManager | None = None,
+) -> Flask:
     if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", agent_id) is None:
         raise ValueError("Invalid agent identity")
     if len(token) < 32 or not token.isascii() or any(character.isspace() for character in token):
         raise ValueError("Service token must be at least 32 ASCII characters without whitespace")
     app = Flask(__name__)
+    app.config["MAX_CONTENT_LENGTH"] = 2048
     epoch = uuid4().hex
     identity: dict[str, object] = {"api_version": 1, "agent_id": agent_id, "epoch": epoch}
     messages = {
@@ -177,7 +190,10 @@ def create_app(observer: AgentObserver, agent_id: str, token: str) -> Flask:
             "code": code, "message": messages[code], "retryable": status >= 500,
         })
         if status == 405:
-            response.headers["Allow"] = "GET, HEAD"
+            response.headers["Allow"] = (
+                "POST" if operations is not None and request.path.endswith("/operations")
+                and request.path.startswith("/v1/outputs/") else "GET, HEAD"
+            )
         return response, status
 
     @app.before_request
@@ -187,7 +203,9 @@ def create_app(observer: AgentObserver, agent_id: str, token: str) -> Flask:
             response, status = error("unauthorized", 401)
             response.headers["WWW-Authenticate"] = "Bearer"
             return response, status
-        if request.query_string or request.content_length or request.headers.get("Transfer-Encoding"):
+        if request.query_string:
+            return error("invalid_request", 400)
+        if request.method != "POST" and (request.content_length or request.headers.get("Transfer-Encoding")):
             return error("invalid_request", 400)
         return None
 
@@ -216,9 +234,13 @@ def create_app(observer: AgentObserver, agent_id: str, token: str) -> Flask:
 
     @app.get("/v1/capabilities", provide_automatic_options=False)
     def capabilities() -> Response:
-        return jsonify(**identity, read_features=[
+        response: dict[str, object] = dict(identity, read_features=[
             "inventory", "playback", "now_playing", "audio_diagnostics",
-        ], write_operations=[])
+        ], write_operations=list(ACTIONS) if operations is not None else [])
+        if operations is not None:
+            response["operation_retention_seconds"] = 86400
+            response["gain_limits"] = {"slider_min_db": -60, "max_db": 0, "step_db": 0.1}
+        return jsonify(response)
 
     def inventory(output_id: str | None = None) -> Response | tuple[Response, int]:
         if output_id is not None and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", output_id) is None:
@@ -228,6 +250,13 @@ def create_app(observer: AgentObserver, agent_id: str, token: str) -> Flask:
             return error(cached.error_code, 503)
         now = time.monotonic()
         outputs = [output.to_dict(now) for output in cached.outputs]
+        controls = {key: (revision, state) for key, revision, state in cached.controls}
+        for output in outputs:
+            key = str(output["id"])
+            if key in controls:
+                revision, state = controls[key]
+                output["control_revision"] = revision
+                output["control"] = {"mode": "manual", "desired_state": state}
         age = max(0, int((now - cached.monotonic) * 1000))
         envelope: dict[str, object] = {
             **identity, "revision": cached.revision, "config_revision": cached.config_revision,
@@ -243,4 +272,22 @@ def create_app(observer: AgentObserver, agent_id: str, token: str) -> Flask:
     app.add_url_rule("/v1/outputs", view_func=inventory, methods=["GET"], provide_automatic_options=False)
     app.add_url_rule("/v1/outputs/<output_id>", view_func=inventory, methods=["GET"],
                      provide_automatic_options=False)
+    if operations is not None:
+        @app.errorhandler(OperationError)
+        def operation_error(exception: OperationError) -> tuple[Response, int]:
+            logging.warning("Agent operation request rejected: %s", exception.code)
+            return jsonify(api_version=1, error=exception.payload()), exception.status
+
+        @app.post("/v1/outputs/<output_id>/operations", provide_automatic_options=False)
+        def submit_operation(output_id: str) -> tuple[Response, int]:
+            if not request.is_json:
+                return error("invalid_request", 400)
+            operation = operations.submit(output_id, request.get_json())
+            response = jsonify(**identity, operation=operation)
+            response.headers["Location"] = f"/v1/operations/{operation['id']}"
+            return response, 202
+
+        @app.get("/v1/operations/<operation_id>", provide_automatic_options=False)
+        def get_operation(operation_id: str) -> Response:
+            return jsonify(**identity, operation=operations.get(operation_id))
     return app

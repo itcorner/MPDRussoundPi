@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
@@ -29,6 +29,26 @@ class BackendError(RuntimeError):
 
 class RevisionConflict(BackendError):
     """The configuration changed since the caller read it."""
+
+
+class BackendBusy(BackendError):
+    """Another backend mutation owns the shared lock."""
+
+
+class MPDOperationError(BackendError):
+    """An MPD protocol/readback operation failed."""
+
+
+class AudioOperationError(BackendError):
+    """Audio readiness, routing or gain application failed."""
+
+
+class GainPersistenceError(BackendError):
+    """Saving gain failed, possibly also failing to restore the live gain."""
+
+    def __init__(self, message: str, *, rollback_failed: bool = False) -> None:
+        super().__init__(message)
+        self.rollback_failed = rollback_failed
 
 
 class MPDConnection(Protocol):
@@ -170,7 +190,7 @@ class MPDBackend:
             with setup_lock("mpd_control.lock"):
                 yield
         except SystemExit as error:
-            raise BackendError("MPD control lock is busy") from error
+            raise BackendBusy("MPD control lock is busy") from error
         except BackendError:
             raise
         except (OSError, RuntimeError) as error:
@@ -188,8 +208,8 @@ class MPDBackend:
             yield client
         except (mpd.MPDError, OSError) as error:
             if redact_errors:
-                raise BackendError("MPD read failed") from error
-            raise BackendError(f"{stream.name}: MPD operation failed: {error}") from error
+                raise MPDOperationError("MPD read failed") from error
+            raise MPDOperationError(f"{stream.name}: MPD operation failed: {error}") from error
         finally:
             failing = sys.exc_info()[0] is not None
             try:
@@ -225,9 +245,23 @@ class MPDBackend:
         with self._mutation():
             streams = self._select(name)
             self._record_intention(streams, "play")
+            self._start_selected(streams)
+
+    def _start_selected(self, streams: list[StreamSettings]) -> None:
+        try:
             wait_for_audio(self.config_path)
-            for stream in streams:
-                self._start_stream(stream)
+        except (OSError, RuntimeError) as error:
+            raise AudioOperationError(str(error)) from error
+        for stream in streams:
+            self._start_stream(stream)
+
+    @staticmethod
+    def _prepare_route_and_gain(stream: StreamSettings, gain: float) -> None:
+        try:
+            recover_route(stream.sink)
+            set_sink_gain(stream.sink, gain)
+        except (OSError, RuntimeError) as error:
+            raise AudioOperationError(str(error)) from error
 
     def _start_stream(self, stream: StreamSettings) -> None:
         with self._connection(stream) as client:
@@ -245,12 +279,11 @@ class MPDBackend:
                     client.setvol(0)
                     client.clearerror()
                     client.playid(songid)
-                recover_route(stream.sink)
-                set_sink_gain(stream.sink, stream.gain_db)
+                self._prepare_route_and_gain(stream, stream.gain_db)
                 client.setvol(100)
                 final = client.status()
                 if final.get("state") != "play" or "error" in final:
-                    raise BackendError(f"{stream.name}: playback did not start: {final}")
+                    raise MPDOperationError(f"{stream.name}: playback did not start: {final}")
             except (mpd.MPDError, OSError, RuntimeError) as error:
                 try:
                     client.stop()
@@ -270,15 +303,18 @@ class MPDBackend:
         with self._mutation():
             streams = self._select(name)
             self._record_intention(streams, "pause" if pause else "stop")
-            for stream in streams:
-                with self._connection(stream) as client:
-                    if pause:
-                        client.pause(1)
-                    else:
-                        client.stop()
-                    expected = "pause" if pause else "stop"
-                    if client.status().get("state") != expected:
-                        raise BackendError(f"{stream.name}: playback did not enter {expected}")
+            self._stop_selected(streams, pause=pause)
+
+    def _stop_selected(self, streams: list[StreamSettings], *, pause: bool) -> None:
+        for stream in streams:
+            with self._connection(stream) as client:
+                if pause:
+                    client.pause(1)
+                else:
+                    client.stop()
+                expected = "pause" if pause else "stop"
+                if client.status().get("state") != expected:
+                    raise MPDOperationError(f"{stream.name}: playback did not enter {expected}")
 
     def check_route(self, name: str) -> StreamRoute:
         stream = self._select(name)[0]
@@ -299,32 +335,113 @@ class MPDBackend:
             stream = next((item for item in settings if item.name == name), None)
             if stream is None:
                 raise ValueError(f"Unknown stream name: {name!r}")
-            with self._connection(stream) as client:
+            self._set_gain(config, stream, gain)
+
+    def _set_gain(self, config: dict[str, JSONValue], stream: StreamSettings, gain: float) -> bool:
+        with self._connection(stream) as client:
+            state = client.status().get("state")
+            if state not in ("play", "pause", "stop"):
+                raise BackendError(f"{stream.name}: invalid MPD state {state}")
+        active = state == "play"
+        if active:
+            self._prepare_route_and_gain(stream, gain)
+        entries = config["streams"]
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get("name") == stream.name:
+                    entry["gain_db"] = gain
+        try:
+            self._save(config)
+        except (OSError, ValueError) as error:
+            if active:
+                try:
+                    set_sink_gain(stream.sink, stream.gain_db)
+                except (OSError, RuntimeError) as rollback_error:
+                    raise GainPersistenceError(
+                        f"{stream.name}: saving gain failed ({error}); gain rollback also failed ({rollback_error})",
+                        rollback_failed=True,
+                    ) from rollback_error
+            raise GainPersistenceError(f"{stream.name}: cannot persist gain: {error}") from error
+        return active
+
+    def control_revision(self) -> str:
+        """Include file identity/time so repeated legacy intention writes invalidate edits."""
+        try:
+            with self.state_path.open("rb") as source:
+                raw = source.read()
+                stat = os.fstat(source.fileno())
+        except FileNotFoundError:
+            return hashlib.sha256(b"no-intentions").hexdigest()
+        version = f"{stat.st_ino}:{stat.st_mtime_ns}:".encode()
+        return hashlib.sha256(version + raw).hexdigest()
+
+    def operation_inventory(self) -> tuple[str, tuple[tuple[str, str, str | None], ...]]:
+        config, _, revision = self.configuration_snapshot()
+        known = identities(config["streams"], required=True)
+        intentions = self._intentions()
+        control = self.control_revision()
+        return revision, tuple((identity, control, intentions.get(name)) for name, (identity, _) in known.items())
+
+    def operation_observation(self, identity: str) -> dict[str, object]:
+        """Fresh recovery evidence, not proof that an interrupted command completed."""
+        with self._mutation():
+            config, settings, revision = self.configuration_snapshot()
+            known = identities(config["streams"], required=True)
+            name = next((name for name, (key, _) in known.items() if key == identity), None)
+            if name is None:
+                raise KeyError(identity)
+            stream = next(item for item in settings if item.name == name)
+            with self.observation_connection(stream) as client:
                 state = client.status().get("state")
                 if state not in ("play", "pause", "stop"):
-                    raise BackendError(f"{stream.name}: invalid MPD state {state}")
-            if state not in ("play", "pause", "stop"):
-                raise BackendError(f"{name}: invalid playback state")
-            active = state == "play"
-            if active:
-                recover_route(stream.sink)
-                set_sink_gain(stream.sink, gain)
-            entries = config["streams"]
-            if isinstance(entries, list):
-                for entry in entries:
-                    if isinstance(entry, dict) and entry.get("name") == name:
-                        entry["gain_db"] = gain
-            try:
-                self._save(config)
-            except (OSError, ValueError) as error:
-                if active:
-                    try:
-                        set_sink_gain(stream.sink, stream.gain_db)
-                    except (OSError, RuntimeError) as rollback_error:
-                        raise BackendError(
-                            f"{name}: saving gain failed ({error}); gain rollback also failed ({rollback_error})"
-                        ) from rollback_error
-                raise BackendError(f"{name}: cannot persist gain: {error}") from error
+                    raise MPDOperationError("Invalid MPD state during recovery")
+            return {
+                "config_revision": revision, "control_revision": self.control_revision(),
+                "desired_state": self._intentions().get(name), "observed_state": state,
+                "configured_gain_db": stream.gain_db,
+            }
+
+    def validate_operation(self, identity: str, config_revision: str, control_revision: str) -> None:
+        # Submission is read-only; execution revalidates under the mutation lock.
+        self._operation_target(identity, config_revision, control_revision)
+
+    def _operation_target(
+        self, identity: str, config_revision: str, control_revision: str,
+    ) -> tuple[dict[str, JSONValue], StreamSettings]:
+        config, settings, actual = self.configuration_snapshot()
+        self._check_revision(config_revision, actual)
+        self._check_revision(control_revision, self.control_revision())
+        known = identities(config["streams"], required=True)
+        name = next((name for name, (key, _) in known.items() if key == identity), None)
+        if name is None:
+            raise KeyError(identity)
+        return config, next(stream for stream in settings if stream.name == name)
+
+    def manual_operation(
+        self, identity: str, action: str, gain_db: float | None, *,
+        expected_config_revision: str, expected_control_revision: str,
+        progress: Callable[[str], None],
+    ) -> None:
+        if action not in ("play", "pause", "stop", "set_gain"):
+            raise ValueError("Unsupported manual action")
+        gain = validate_gain_db(gain_db) if action == "set_gain" else None
+        with self._mutation():
+            config, stream = self._operation_target(
+                identity, expected_config_revision, expected_control_revision,
+            )
+            if gain is not None:
+                progress("gain_applying")
+                active = self._set_gain(config, stream, gain)
+                progress("gain_saved")
+                progress("gain_live" if active else "gain_deferred")
+            else:
+                progress("intention_saving")
+                self._record_intention([stream], action)
+                progress("intention_persisted")
+                if action == "play":
+                    self._start_selected([stream])
+                else:
+                    self._stop_selected([stream], pause=action == "pause")
 
     def _save(self, config: dict[str, JSONValue]) -> None:
         write_json(self.config_path, config)

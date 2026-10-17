@@ -87,8 +87,11 @@ dashboard; it does not expose playback controls. S02's collector, S03's
 authenticated [read-only HTTP agent](docs/mpd-backend-api.md), the S04
 production identity migration, and the S05/S06 Pi-to-Docker status path are
 implemented and deployed. The dashboard reports each output's live playback
-state and available now-playing metadata. Write controls, source selection,
-volume changes, and hardware-driven playback policy remain future work.
+state and available now-playing metadata. S07 manual playback and calibration
+gain controls are implemented/tested locally as an
+[opt-in extension](docs/mpd-playback-operations-api.md) and enabled on production.
+S07 is done and production-verified by the user on 2026-10-17. Source selection
+and hardware-driven playback policy remain future work.
 See the [deployment record](docs/playback-agent-deployment.md).
 
 ## Requirements

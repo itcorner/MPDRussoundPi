@@ -11,6 +11,7 @@
     playback_proxy_certificate: /etc/caddy/certs/mpdrussoundpi-playback-agent.crt
     playback_proxy_private_key: /etc/caddy/certs/mpdrussoundpi-playback-agent.key
     playback_proxy_start: false
+    playback_proxy_enable_operations: false
   tasks:
     - name: Require a DNS name or IPv4 address, a Docker source CIDR and proxy startup approval
       ansible.builtin.assert:

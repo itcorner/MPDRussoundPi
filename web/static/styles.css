@@ -253,6 +253,35 @@ h1 {
   text-transform: capitalize;
 }
 
+.playback-track {
+  overflow: hidden;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.playback-track > span {
+  display: inline-block;
+}
+
+.playback-track[data-overflow="true"] > span {
+  animation: playback-track-scroll var(--track-duration) ease-in-out infinite alternate;
+}
+
+@keyframes playback-track-scroll {
+  0%, 15% { transform: translateX(0); }
+  85%, 100% { transform: translateX(var(--track-offset)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playback-track {
+    overflow-x: auto;
+  }
+
+  .playback-track[data-overflow="true"] > span {
+    animation: none;
+  }
+}
+
 .playback-meta,
 .playback-message {
   color: var(--muted);
@@ -262,6 +291,163 @@ h1 {
 .playback-error {
   color: #ffd9e2;
   font-size: 0.9rem;
+}
+
+.playback-controls {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.playback-transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.playback-controls button,
+.playback-config-button,
+.playback-config-dialog .panel-header button {
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid rgba(91, 185, 255, 0.4);
+  border-radius: 8px;
+  background: var(--panel-accent);
+  color: var(--text);
+}
+
+.playback-controls button,
+.playback-config-button,
+.playback-config-dialog .panel-header button {
+  cursor: pointer;
+}
+
+.playback-controls button:disabled,
+.playback-controls input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.playback-controls :focus-visible,
+.playback-config-button:focus-visible,
+.playback-config-dialog .panel-header button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.playback-gain {
+  color: var(--muted);
+}
+
+.playback-config-dialog {
+  width: min(32rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow-y: auto;
+  padding: 1.25rem;
+  border: 1px solid rgba(91, 185, 255, 0.4);
+  border-radius: 16px;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.playback-config-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.playback-command-feedback {
+  height: 3rem;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.playback-config-dialog .panel-header {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.playback-config-dialog .panel-header button {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+
+.playback-config-dialog .playback-transport button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  flex: 1;
+}
+
+.playback-config-dialog .playback-transport button[hidden] {
+  display: none;
+}
+
+.playback-transport button::before {
+  content: "";
+  width: 0.85rem;
+  height: 0.85rem;
+  background: currentColor;
+}
+
+.playback-transport button[data-action="play"]::before {
+  clip-path: polygon(10% 0, 100% 50%, 10% 100%);
+}
+
+.playback-transport button[data-action="pause"]::before {
+  background: linear-gradient(to right, currentColor 35%, transparent 35%, transparent 65%, currentColor 65%);
+}
+
+.playback-command-feedback > :not([hidden]) + :not([hidden]) {
+  margin-top: 0.5rem;
+}
+
+.playback-config-dialog .section-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.playback-config-button {
+  margin-top: 0.85rem;
+}
+
+.playback-gain-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.playback-controls > input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.playback-gain-hint,
+.playback-command-status,
+.playback-command-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
+.playback-command-feedback .playback-meta {
+  margin: 0;
+}
+
+.playback-gain-hint {
+  color: var(--muted);
+}
+
+.playback-command-error {
+  padding: 0.65rem;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: #ffd9e2;
+  background: rgba(241, 92, 123, 0.12);
 }
 
 .playback-health {

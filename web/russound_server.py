@@ -27,7 +27,7 @@ from web.config_types import coerce_russound_config, env_port, env_str, resolve_
 from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
-from web.playback_status import PlaybackAgentConfig, PlaybackStatusClient
+from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 
 WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"
@@ -267,6 +267,29 @@ class RussoundHTTPServer:
         @app.get("/api/playback")
         def api_playback():
             return jsonify(self._read_playback_snapshot())
+
+        @app.errorhandler(PlaybackCommandError)
+        def playback_command_error(error: PlaybackCommandError):
+            logging.warning("Playback operation request failed: %s", error.code)
+            return jsonify(api_version=1, error={
+                "code": error.code, "message": error.message, "retryable": error.status in (429, 503),
+            }), error.status
+
+        def playback_client(agent_id: str) -> PlaybackStatusClient:
+            client = next((item for item in self._playback_clients if item.agent_id == agent_id), None)
+            if client is None:
+                raise PlaybackCommandError("agent_not_found", "Playback agent is not configured.", 404)
+            return client
+
+        @app.post("/api/playback/agents/<agent_id>/outputs/<output_id>/operations")
+        def api_playback_submit(agent_id: str, output_id: str):
+            if request.content_length is None or request.content_length > 2048:
+                raise PlaybackCommandError("invalid_request", "A bounded JSON operation body is required.", 400)
+            return jsonify(playback_client(agent_id).submit_operation(output_id, request.get_json(silent=True))), 202
+
+        @app.get("/api/playback/agents/<agent_id>/operations/<operation_id>")
+        def api_playback_operation(agent_id: str, operation_id: str):
+            return jsonify(playback_client(agent_id).get_operation(operation_id))
 
         @app.get("/api/playback/health")
         def api_playback_health():

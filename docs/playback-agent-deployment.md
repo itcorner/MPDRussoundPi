@@ -190,6 +190,103 @@ Journal output uses the agent's sanitized observation/status logging.
 
 ## Rollback later
 
+### S07 manual-command activation (2026-10-17)
+
+The [S07 operation contract](./mpd-playback-operations-api.md) is implemented
+locally and enabled on production with explicit user approval. D07 accepts trusted-environment web
+access without login or user permissions; anyone who can access the web UI can
+use controls once enabled. Existing request protections and agent TLS/bearer
+authentication remain. Lightweight admin authentication is deferred.
+
+The web image was rebuilt from the current S07 checkout and both independent
+opt-ins below were enabled. These commands are also the reviewed reactivation
+procedure:
+
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/deploy-playback-agent.yml \
+  -e playback_agent_token_source=/private/path/playback-agent-token \
+  -e playback_agent_enable_operations=true \
+  -e playback_agent_start=true
+
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/deploy-playback-agent-proxy.yml \
+  -e playback_proxy_hostname=192.168.1.105 \
+  -e playback_proxy_allowed_cidr=192.168.1.0/24 \
+  -e playback_proxy_enable_operations=true \
+  -e playback_proxy_start=true
+```
+
+The agent play creates a private
+`~/.local/state/mpdrussoundpi-agent/operations.sqlite3` ledger directory,
+passes `--operations-db` only when enabled, and still restarts only the agent.
+The proxy's default read matcher allows GET/HEAD only; the second opt-in adds
+POST for `/v1/outputs/*/operations` and GET/HEAD for `/v1/operations/*`.
+No MPD/PipeWire/Russound service restart is required for these deployments.
+The existing service token authorizes configured-output operations when enabled;
+the agent does not gain arbitrary command or filesystem APIs.
+
+Capture intentions/config, queue/route/gain and MPD process IDs first. Verify
+advertised write capabilities, then exercise one output's explicit
+play/pause/stop and gain, confirming the others are unchanged. Check paused/
+stopped gain is saved for next play without starting audio, and perform the
+separately approved agent-restart/retained-gain check. Agent restart is not
+permission to restart MPD or the entire Pi during endurance testing.
+
+To return to read-only, rerun both plays with their respective
+`*_enable_operations=false` and `*_start=true` flags. Preserve the ledger and
+inspect pending/unknown operations before changing or deleting it. Disabling
+writes is not cancellation of a persisted playback intention.
+
+Deployment completed with agent play `ok=21 changed=5 failed=0` and proxy play
+`ok=26 changed=2 failed=0`. The rebuilt web container is healthy; the cache
+reports `musicpi: ok` and advertises play/pause/stop/set-gain. Browser checks
+verified the production Config dialog, enabled transport buttons and slider-only
+gain readout without sending any mutations. The private ledger directory is
+mode 0700 and the SQLite database is mode 0600.
+
+All three streams remained playing. MPD PIDs remained 65283, 65284 and 65286;
+the supervisor, agent and proxy are active. Configuration SHA-256 remained
+`74d75070d1473ee962a7145be483420112b9b255d87048353fded71175639c96`
+and intentions SHA-256 remained
+`e8ecf227527c83470812de2757e96ecb0355ce8b79d717fb900afde730740875`.
+No MPD/audio, Russound or serial-gateway service was restarted. Live playback/
+gain mutation acceptance and retained-gain restart testing are still pending;
+deployment approval was not used to interrupt audio for those tests.
+
+Follow-up on 2026-10-17: production logs identified repeated gain-command
+rejections as `backend_busy`, not revision conflicts. The supervisor also uses
+the shared mutation lock. Submission now validates without taking that lock;
+the durable worker waits for transient contention within its original start
+deadline, rechecking revisions before applying anything. Regression coverage
+includes an actual held/released kernel lock, consecutive gain edits, deadline
+exhaustion and revision changes while waiting. All 144 playback tests and 48
+existing MPD tests passed. The agent-only redeployment completed
+`ok=21 changed=2 failed=0`; MPD PIDs were unchanged and the user's current
+configuration checksum remained
+`87476ee578094294621c90760365ca7b9b256615bfa603ef23e4ab1c3315aba7`.
+No live gain edits were sent by deployment verification.
+
+### S07 completion and production sign-off (2026-10-17)
+
+**S07 is done and production-verified.** The user confirmed that production
+testing worked well after the contention fix and dialog refinements. This is
+user acceptance, not a claim that the deployment checks independently exercised
+every live command or a dedicated restart/endurance test.
+
+Final verification passed 144 playback, 48 MPD/backend/CLI/supervisor/setup,
+49 existing web-server and 19 frontend tests (260 total). Agent and proxy
+Ansible check-mode reconciliation reported zero changes and zero failures.
+SHA-256 checks of the deployed web entry point, playback gateway, HTML,
+JavaScript and stylesheet matched this checkout. Docker health and the
+authenticated playback status gateway were healthy. Agent, proxy, supervisor
+and all three MPD units were active; MPD PIDs remained 65283/65284/65286.
+No additional audio mutations or service restarts were needed for this final
+verification. The earlier pending-acceptance statements above describe the
+initial rollout, before this user sign-off.
+
+### Remove the agent
+
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
   ansible/playbooks/remove-playback-agent.yml
