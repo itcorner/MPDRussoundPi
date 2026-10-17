@@ -30,6 +30,13 @@ PROGRESS = "out_time_us=900000000\nprogress=end\n"
 
 
 class StreamLevelTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        patcher = patch.object(levels, "state_path", return_value=Path(directory.name) / "playback.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_real_summary_and_duration_parsing(self):
         result = levels.parse_measurement("Radio", SUMMARY, PROGRESS, 900)
         self.assertEqual(result.integrated_lufs, -18.2)
@@ -144,7 +151,11 @@ class StreamLevelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "config.json"
             destination = Path(directory) / "balanced.json"
-            original = '{"streams":[{"name":"a","stream":"https://example.com/a","gain_db":-5}],"other":42}'
+            config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            config["outputs"] = [dict(config["outputs"][0], id="a", default_station="radio", default_gain_db=-5)]
+            config["stations"] = [{"key": "radio", "name": "Radio", "type": "url", "url": "https://example.com/a"}]
+            config["other"] = 42
+            original = json.dumps(config)
             source.write_text(original)
             measurement = levels.Measurement("a", -18.2, 4.3, -2.5, 900, [])
             with patch.object(levels.shutil, "which", return_value="ffmpeg"):
@@ -153,7 +164,10 @@ class StreamLevelTests(unittest.TestCase):
                         levels.main([str(source), "--output-config", str(destination)])
                     report = json.loads(stdout.getvalue())
                     self.assertEqual(report["streams"][0]["gain_db"], 0)
-                    self.assertEqual(json.loads(destination.read_text())["other"], 42)
+                    balanced = json.loads(destination.read_text())
+                    self.assertEqual(balanced["other"], 42)
+                    self.assertEqual(balanced["outputs"][0]["default_gain_db"], 0)
+                    self.assertNotIn("gain_db", balanced["outputs"][0])
                     self.assertEqual(source.read_text(), original)
                     with self.assertRaises(SystemExit):
                         levels.main([str(source), "--output-config", str(source)])
@@ -163,10 +177,10 @@ class StreamLevelTests(unittest.TestCase):
     def test_cli_resolves_tunein_entries_without_stream_url(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "config.json"
-            source.write_text(json.dumps({"streams": [
-                {"name": "a", "source_provider": "tunein", "source_station_id": "s8007",
-                 "source_station_name": "ORF Hitradio OE3"},
-            ]}))
+            config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            config["outputs"] = [dict(config["outputs"][0], id="a", default_station="tunein:s8007")]
+            config["stations"] = [{"key": "tunein:s8007", "name": "ORF Hitradio OE3", "type": "tunein", "station_id": "s8007"}]
+            source.write_text(json.dumps(config))
             measurement = levels.Measurement("a", -18.2, 4.3, -2.5, 900, [])
             with patch.object(levels.shutil, "which", return_value="ffmpeg"), \
                     patch.object(levels.TuneInCatalog, "resolve", return_value="https://example.com/oe3") as resolve, \
@@ -179,8 +193,13 @@ class StreamLevelTests(unittest.TestCase):
     def test_cli_invalid_inputs_and_missing_ffmpeg_fail_explicitly(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "config.json"
-            for config in ({"streams": []}, {"streams": [{"name": "a", "stream": "file:///tmp/a"}]},
-                           {"streams": [{"name": "a", "stream": "https://example.com"}] * 2}):
+            empty = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            empty["outputs"] = []
+            invalid_url = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            invalid_url["stations"][0]["url"] = "file:///radio"
+            duplicate = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            duplicate["outputs"][1]["id"] = duplicate["outputs"][0]["id"]
+            for config in (empty, invalid_url, duplicate):
                 source.write_text(json.dumps(config))
                 with patch.object(levels.shutil, "which", return_value="ffmpeg"):
                     with self.assertRaises(SystemExit) as error:
@@ -188,6 +207,45 @@ class StreamLevelTests(unittest.TestCase):
                     self.assertEqual(error.exception.code, 1)
             with patch.object(levels.shutil, "which", return_value=None), self.assertRaises(SystemExit):
                 levels.main([str(source)])
+
+    def test_cli_measures_current_runtime_station_and_skips_stationless_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "config.json"
+            config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            for output in config["outputs"]:
+                output.pop("default_station", None)
+            source.write_text(json.dumps(config))
+            configuration = levels.parse_configuration(source.read_bytes())
+            state = levels.read_state(levels.state_path(), configuration)[0]
+            from lib.stations import Station
+            station = Station.tunein("s99", "Current Radio")
+            state = state.with_output(config["outputs"][0]["id"], station=station, intention="play")
+            from lib.playbackstate import write_state
+            write_state(levels.state_path(), state)
+            measurement = levels.Measurement(config["outputs"][0]["id"], -18.2, 4.3, -2.5, 900, [])
+            with patch.object(levels.shutil, "which", return_value="ffmpeg"), \
+                    patch.object(levels.TuneInCatalog, "resolve", return_value="https://example.com/current") as resolve, \
+                    patch.object(levels, "measure_streams", return_value=[measurement]) as measure, \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                levels.main([str(source)])
+            resolve.assert_called_once_with("s99")
+            self.assertEqual(measure.call_args.args[0], [
+                {"name": config["outputs"][0]["id"], "stream": "https://example.com/current"},
+            ])
+
+    def test_cli_without_any_selected_station_fails_without_measurement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "config.json"
+            config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+            for output in config["outputs"]:
+                output.pop("default_station", None)
+            source.write_text(json.dumps(config))
+            with patch.object(levels.shutil, "which", return_value="ffmpeg"), \
+                    patch.object(levels, "measure_streams") as measure, \
+                    self.assertRaises(SystemExit) as error:
+                levels.main([str(source)])
+            self.assertEqual(error.exception.code, 1)
+            measure.assert_not_called()
 
     @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg not installed")
     def test_ffmpeg_equal_reference_tones_with_known_gain(self):

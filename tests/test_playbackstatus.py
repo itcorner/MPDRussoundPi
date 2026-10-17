@@ -1,5 +1,5 @@
 from concurrent.futures import wait
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import hashlib
 import importlib
 import json
@@ -31,10 +31,10 @@ class PlaybackStatusTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "config.json"
         self.config = json.loads((SCRIPTS / "config.json").read_text())
-        for entry, identity in zip(self.config["streams"], ("front", "centerlfe", "rear")):
+        for entry, identity in zip(self.config["outputs"], ("front", "centerlfe", "rear")):
             entry.update(id=identity, label=identity.title() + " stream")
         self.save()
-        self.api = backend.MPDBackend(self.path)
+        self.api = backend.MPDBackend(self.path, self.path.parent / "playback.json")
         self.clients = []
         self.factory = self.patch(backend, "mpd", fake_mpd)
         self.patch(fake_mpd, "MPDClient", side_effect=self.client)
@@ -440,23 +440,26 @@ class PlaybackStatusTests(unittest.TestCase):
     def test_invalid_inventory_does_not_guess_ids_or_contact_mpd(self):
         for field, value in (("id", None), ("id", "Upper"), ("label", ""),
                              ("label", "\x00"), ("id", "rear")):
-            original = self.config["streams"][0][field]
-            self.config["streams"][0][field] = value
+            original = self.config["outputs"][0][field]
+            self.config["outputs"][0][field] = value
             self.save()
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                 status.PlaybackCollector(self.api)
-            self.config["streams"][0][field] = original
+            self.config["outputs"][0][field] = original
         self.assertEqual(self.clients, [])
 
     def test_config_revision_and_settings_use_same_read(self):
         raw = self.path.read_bytes()
-        with patch.object(Path, "read_bytes", return_value=raw) as read:
+        read_bytes = Path.read_bytes
+        def read_configuration(path):
+            return raw if path == self.api.config_path else read_bytes(path)
+        with patch.object(Path, "read_bytes", autospec=True, side_effect=read_configuration) as read:
             config, streams, revision = self.api.configuration_snapshot()
-        read.assert_called_once()
+        self.assertEqual([call.args for call in read.call_args_list].count((self.api.config_path,)), 1)
         self.assertEqual(revision, hashlib.sha256(raw).hexdigest())
-        self.assertEqual(streams[0].gain_db, config["streams"][0]["gain_db"])
+        self.assertEqual(streams[0].gain_db, config.outputs[0].default_gain_db)
         original_revision = self.collector.config_revision
-        self.config["streams"][0]["gain_db"] = -9
+        self.config["outputs"][0]["default_gain_db"] = -9
         self.save()
         self.assertNotEqual(self.api.configuration_snapshot()[2], original_revision)
         self.assertEqual(self.output().configured_db, -7.1)
@@ -470,6 +473,34 @@ class PlaybackStatusTests(unittest.TestCase):
         self.collector._jobs.clear()
         with self.assertRaisesRegex(RuntimeError, "closed"):
             self.collector.refresh()
+
+
+    def test_apply_runtime_state_preserves_all_existing_probes(self):
+        self.refresh()
+        self.refresh(audio=True)
+        previous = self.output()
+        streams = self.api.list_outputs()
+        station = backend.Station.tunein("s99", "New Radio")
+        selected = replace(streams[0], station=station, gain_db=-12, url="https://private.example/live?secret=1")
+        self.collector.apply_state((selected,))
+        updated = self.output()
+        self.assertEqual(updated.station, station)
+        self.assertEqual(updated.configured_db, -12)
+        self.assertEqual(updated.selected_source, "https://private.example/...")
+        for kind in ("playback", "readiness", "route", "gain"):
+            self.assertIs(getattr(updated, kind), getattr(previous, kind))
+        public = updated.to_dict(0)
+        self.assertEqual(public["selection"]["key"], "tunein:s99")
+        self.assertNotIn(selected.url, json.dumps(public))
+        self.assertEqual(self.output("rear").configured_db, streams[2].gain_db)
+
+    def test_clear_station_selection_has_only_null_values(self):
+        stream = self.api.list_outputs()[0]
+        self.collector.apply_state((replace(stream, station=None, url="", intention="stop"),))
+        self.assertEqual(self.output().to_dict(0)["selection"], {
+            "key": None, "label": None, "source": None, "provider": None,
+            "station_id": None, "station_name": None,
+        })
 
 
 class GainInspectionTests(unittest.TestCase):

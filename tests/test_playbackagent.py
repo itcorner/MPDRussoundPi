@@ -24,9 +24,10 @@ TOKEN = "test-service-token-" + "x" * 32
 class FakeCollector:
     def __init__(self, revision="a" * 64):
         self.config_revision = revision
-        self.outputs = (status.OutputObservation("front", "Front stream", "Stereo Front", -7.1),)
+        self.outputs = (status.OutputObservation("front", "Front stream", -7.1, None, None),)
         self.refresh = Mock()
         self.close = Mock()
+        self.apply_state = Mock()
 
     def snapshot(self):
         return self.outputs
@@ -36,6 +37,7 @@ class PlaybackAgentTests(unittest.TestCase):
     def setUp(self):
         self.backend = Mock()
         self.backend.configuration_snapshot.return_value = ({}, (), "a" * 64)
+        self.backend.favorites.return_value = ((), "a" * 64, "b" * 64)
         self.observer = agent.AgentObserver("unused.json", backend=self.backend)
         self.addCleanup(self.observer.close)
         self.collector = FakeCollector()
@@ -279,11 +281,12 @@ class PlaybackAgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             config = json.loads((SCRIPTS / "config.json").read_text())
-            for entry, identity in zip(config["streams"], ("front", "centerlfe", "rear")):
+            for entry, identity in zip(config["outputs"], ("front", "centerlfe", "rear")):
                 entry.update(id=identity, label=identity)
             path.write_text(json.dumps(config))
             original = path.read_bytes()
-            observer = agent.AgentObserver(path)
+            backend = agent.MPDBackend(path, path.parent / "playback.json")
+            observer = agent.AgentObserver(path, backend=backend)
             client = agent.create_app(observer, "musicpi", TOKEN).test_client()
             with patch.object(agent, "PlaybackCollector", status.PlaybackCollector):
                 with patch.object(agent.MPDBackend, "observation_connection",
@@ -394,6 +397,160 @@ class PlaybackAgentTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0, stdout + stderr)
             self.assertNotIn(TOKEN, stdout + stderr)
             self.assertNotIn(str(Path(directory) / "missing.json"), stdout + stderr)
+
+class PlaybackFavoritesAgentTests(unittest.TestCase):
+    def setUp(self):
+        import test_mpdbackend as backend_tests
+        from lib.playbackoperations import OperationManager
+        backend_tests.MPDBackendTests.setUp(self)
+        self.config["outputs"][1].pop("default_station")
+        self.path.write_text(json.dumps(self.config))
+        self.manager = OperationManager(self.api, self.path.parent / "operations.sqlite3")
+        self.addCleanup(self.manager.close)
+        self.observer = agent.AgentObserver(self.path, backend=self.api, controls_enabled=True)
+        self.addCleanup(self.observer.close)
+        refresh = patch.object(agent.PlaybackCollector, "refresh", return_value=())
+        refresh.start()
+        self.addCleanup(refresh.stop)
+        self.client_http = agent.create_app(self.observer, "musicpi", TOKEN, self.manager).test_client()
+        self.auth = {"Authorization": "Bearer " + TOKEN}
+
+    def request(self, action, **kwargs):
+        return {
+            "action": action, "expected_config_revision": self.api.configuration_snapshot()[2],
+            "expected_control_revision": self.api.control_revision(),
+            "idempotency_key": "favorite-agent-request-key", **kwargs,
+        }
+
+    def get(self, path):
+        return self.client_http.get(path, headers=self.auth)
+
+    def test_favorites_unavailable_until_tick_then_public_cached_snapshot(self):
+        response = self.get("/v1/favorites")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["error"]["code"], "favorites_unavailable")
+        self.observer.tick()
+        with patch.object(self.api, "favorites", side_effect=AssertionError("handler must use cache")):
+            response = self.get("/v1/favorites")
+        value = response.json
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(value["api_version"], 1)
+        self.assertEqual(value["agent_id"], "musicpi")
+        self.assertEqual(value["epoch"], self.get("/v1/health").json["epoch"])
+        self.assertEqual(value["config_revision"], self.api.configuration_snapshot()[2])
+        self.assertEqual(value["control_revision"], self.api.control_revision())
+        self.assertEqual(value["favorites"], [station.public() for station in self.api.favorites()[0]])
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn("url", value["favorites"][0])
+        self.assertEqual(self.client_http.head("/v1/favorites", headers=self.auth).data, b"")
+
+    def test_favorites_routes_require_auth_and_json_and_validate_payload(self):
+        self.assertEqual(self.client_http.get("/v1/favorites").status_code, 401)
+        payload = self.request("add_favorite", station_id="s42", station_name="Radio")
+        self.assertEqual(self.client_http.post("/v1/favorites/operations", json=payload).status_code, 401)
+        self.assertEqual(self.client_http.post("/v1/favorites/operations", data="{}", headers=self.auth).status_code, 400)
+        self.assertEqual(self.client_http.post("/v1/favorites/operations", json={**payload, "url": "https://evil.example"}, headers=self.auth).status_code, 400)
+        self.assertEqual(self.get("/v1/favorites?unexpected=1").status_code, 400)
+
+    def test_post_favorite_returns_accepted_location_and_durable_result(self):
+        original = self.path.read_bytes()
+        response = self.client_http.post("/v1/favorites/operations", json=self.request(
+            "add_favorite", station_id="s42", station_name="New Favorite",
+        ), headers=self.auth)
+        self.assertEqual(response.status_code, 202)
+        accepted = response.json["operation"]
+        self.assertIsNone(accepted["output_id"])
+        self.assertEqual(accepted["status"], "queued")
+        self.assertEqual(response.headers["Location"], "/v1/operations/" + accepted["id"])
+        self.manager.run_once()
+        result = self.get(response.headers["Location"]).json["operation"]
+        self.assertEqual(result["status"], "applied")
+        self.observer._config_due = 0
+        self.observer.tick()
+        self.assertEqual(self.get("/v1/favorites").json["favorites"][-1]["key"], "tunein:s42")
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_disabled_tunein_rejects_favorites_edits_but_allows_select_favorite(self):
+        self.manager.tunein_selection_enabled = False
+        for payload in (
+            self.request("add_favorite", station_id="s42", station_name="Radio"),
+            self.request("remove_favorite", key="front-radio"),
+            self.request("move_favorite", key="front-radio", index=0),
+        ):
+            response = self.client_http.post("/v1/favorites/operations", json=payload, headers=self.auth)
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json["error"]["code"], "station_selection_disabled")
+        writes = self.get("/v1/capabilities").json["write_operations"]
+        self.assertIn("select_favorite", writes)
+        for action in ("set_tunein_station", "add_favorite", "remove_favorite", "move_favorite"):
+            self.assertNotIn(action, writes)
+        response = self.client_http.post("/v1/outputs/output_0/operations", json=self.request(
+            "select_favorite", key="front-radio",
+        ), headers=self.auth)
+        self.assertEqual(response.status_code, 202)
+        self.manager.run_once()
+        self.assertEqual(self.get(response.headers["Location"]).json["operation"]["status"], "applied")
+
+    def test_inventory_has_station_and_empty_selection_contract(self):
+        self.observer.tick()
+        outputs = {item["id"]: item for item in self.get("/v1/outputs").json["outputs"]}
+        self.assertEqual(outputs["output_0"]["control"], {
+            "mode": "manual", "desired_state": "play", "has_station": True,
+        })
+        self.assertEqual(outputs["output_1"]["control"], {
+            "mode": "manual", "desired_state": "stop", "has_station": False,
+        })
+        self.assertEqual(outputs["output_1"]["selection"], {
+            "key": None, "label": None, "source": None, "provider": None,
+            "station_id": None, "station_name": None,
+        })
+        selection = outputs["output_0"]["selection"]
+        self.assertEqual(selection["key"], "front-radio")
+        self.assertEqual(selection["label"], "Front Radio")
+        self.assertEqual(selection["provider"], "url")
+
+    def test_no_configured_or_resolved_stream_urls_in_any_agent_response(self):
+        import test_mpdbackend as backend_tests
+        backend_tests.MPDBackendTests.prepare_source_operation(self)
+        self.observer.tick()
+        responses = [self.get(path).json for path in (
+            "/v1/outputs", "/v1/outputs/output_0", "/v1/favorites", "/v1/capabilities", "/v1/health",
+        )]
+        response = self.client_http.post("/v1/outputs/output_0/operations", json=self.request(
+            "select_favorite", key="front-radio",
+        ), headers=self.auth)
+        responses.append(response.json)
+        self.manager.run_once()
+        responses.append(self.get(response.headers["Location"]).json)
+        response = self.client_http.post("/v1/outputs/output_0/operations", json=self.request(
+            "select_favorite", key="tunein:s8007", idempotency_key="tunein-public-result-key",
+        ), headers=self.auth)
+        responses.append(response.json)
+        self.manager.run_once()
+        result = self.get(response.headers["Location"]).json
+        self.assertEqual(result["operation"]["status"], "applied")
+        responses.append(result)
+        self.observer._config_due = 0
+        self.observer.tick()
+        responses.extend(self.get(path).json for path in ("/v1/outputs", "/v1/favorites"))
+        public = json.dumps(responses)
+        for url in [s["url"] for s in self.config["stations"] if "url" in s] + [self.tunein_resolve.return_value]:
+            self.assertNotIn(url, public)
+        self.assertNotIn('"url":', public)
+        self.assertNotIn('"resolved_url":', public)
+
+    def test_runtime_state_tick_reuses_collector_and_probes(self):
+        self.observer.tick()
+        collector = self.observer._collector
+        original = collector.snapshot()[0]
+        self.api._write_outputs({"output_0": {"gain_db": -12}})
+        self.observer._config_due = 0
+        self.observer.tick()
+        self.assertIs(self.observer._collector, collector)
+        updated = next(item for item in collector.snapshot() if item.id == "output_0")
+        self.assertEqual(updated.configured_db, -12)
+        self.assertIs(updated.playback, original.playback)
+        self.assertEqual(self.get("/v1/outputs/output_0").json["output"]["gain"]["configured_db"], -12)
 
 
 if __name__ == "__main__":

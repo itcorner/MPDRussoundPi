@@ -63,23 +63,22 @@ class MPDInstance:
 def config2mpd(config: dict, available_sinks: dict[str, Sink], ignore_missing_sinks: bool=False) -> MPDInstance | None:
     """Convert config dict to MPDInstance object."""
 
-    name = config.get('name')
+    name = config.get('id')
     port = config.get('port')
     instance = MPDInstance(name, port)
 
-    # process audio output and sink information if provided
-    audio_output = config.get('audio_output', {})
-    sink_name = str(audio_output.get('sink'))
-    sink_type = str(audio_output.get('type'))
+    # Every output plays through its own PulseAudio sink.
+    sink_name = str(config.get('sink'))
+    sink_type = "pulse"
 
     if sink_name: 
         if sink_name not in available_sinks:
             if not ignore_missing_sinks:
-                logging.error(f"Sink '{sink_name}' specified for stream '{name}' not found in config sinks.")
+                logging.error(f"Sink '{sink_name}' specified for output '{name}' not found in config sinks.")
                 return None
-            logging.warning(f"Continuing without existing sink '{sink_name}' for stream '{name}'.")
+            logging.warning(f"Continuing without existing sink '{sink_name}' for output '{name}'.")
         else:
-            logging.info(f"Sink '{sink_name}' found for stream '{name}'.")
+            logging.info(f"Sink '{sink_name}' found for output '{name}'.")
             audio_output_obj = AudioOutput(sink_type, available_sinks[sink_name])
             instance.add_audio_output(audio_output_obj)
 

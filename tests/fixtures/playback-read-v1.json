@@ -23,11 +23,12 @@
         "id": "front",
         "label": "Front stream",
         "selection": {
+          "key": "radio886",
           "label": "Stereo Front",
           "source": "https://edge85.streamonkey.net/...",
-          "provider": null,
+          "provider": "url",
           "station_id": null,
-          "station_name": null
+          "station_name": "Stereo Front"
         },
         "gain": {"configured_db": -7.1},
         "playback": {

@@ -82,9 +82,9 @@ through TuneIn's fixed OPML endpoint and accepts only MP3/AAC/Ogg stream URLs
 with public-literal hosts. Direct entries are preferred; otherwise the Pi reads
 TuneIn-listed M3U/PLS playlists (at most 16 KB, no redirects) and uses the
 first valid HTTP(S) entry that is not itself a playlist. A station without such
-a stream fails with `station_unavailable` before any config, intention or MPD
+a stream fails with `station_unavailable` before any state, intention or MPD
 change, and the previous station keeps playing. Resolved stream URLs are stored only in the private
-MPD config and the mode-0600 operation ledger does not contain them. Status
+runtime state (`playback.json`) and the mode-0600 operation ledger does not contain them. Status
 shows the selected TuneIn station name and a redacted current host, never the
 stream path or query.
 
@@ -97,13 +97,29 @@ seconds; steady-state route checks keep the 5-second window. `audio_failed`
 operation results log the underlying readiness/route/gain reason in the
 agent journal.
 
+Favorite selection request (any favorite, including `url` stations from
+`config.json`; the browser only sends the key):
+
+```json
+{
+  "action": "select_favorite",
+  "key": "tunein:s8007",
+  "expected_config_revision": "...",
+  "expected_control_revision": "...",
+  "idempotency_key": "a-client-generated-unique-key"
+}
+```
+
+An output without a station (no `default_station` and never selected) cannot
+play: `play` fails with `no_station`, `pause` is treated like `stop`.
+
 Inventory exposes the config content revision and, when writes are enabled,
-each output's `control_revision` and `control: {mode: "manual", desired_state}`.
-The control revision hashes the legacy intentions file's bytes, inode and
-nanosecond modification time. It is host-wide: even a same-value CLI intention
-write or another output's intention edit conservatively invalidates an old
-revision. Existing CLI/supervisor/audit JSON remains unchanged; no automation
-mode/schema migration occurs. Config revisions retain S04 content semantics.
+each output's `control_revision` and
+`control: {mode: "manual", desired_state, has_station}`.
+The control revision hashes the runtime state file's (`playback.json`) bytes,
+inode and nanosecond modification time. It is host-wide: any station, gain,
+intention or favorites write conservatively invalidates an old revision.
+The config revision changes only when the admin edits `config.json`.
 Both revisions are checked on submission and again under the shared backend
 mutation lock immediately before execution.
 Submission validation is read-only and does not compete for that lock.
@@ -160,21 +176,44 @@ later fulfills. Failure is not cancellation. Gain-save and gain-rollback
 failures have distinct codes. Error messages are sanitized; upstream URLs,
 credentials and raw backend exceptions are not returned.
 
+## Favorites
+
+The favorites list (at most 20 stations, seeded from `config.json` `stations`)
+is stored in `playback.json` and shared by all outputs.
+
+- `GET /v1/favorites` (web: `GET /api/playback/agents/{agent_id}/favorites`)
+  returns `{api_version, agent_id, config_revision, control_revision,
+  favorites: [{key, name, type, station_id}]}`. Stream URLs are never returned.
+  `503 favorites_unavailable` before the first observation.
+- `POST /v1/favorites/operations`
+  (web: `POST /api/playback/agents/{agent_id}/favorites/operations`) queues one
+  durable favorites edit with the same revision, idempotency and envelope rules
+  as output operations (the operation's `output_id` is `null`):
+  - `add_favorite` with `station_id` and `station_name` (TuneIn only; adding an
+    existing key is a no-op; a 21st entry fails with `favorites_full`);
+  - `remove_favorite` with `key` (outputs playing it keep their own copy);
+  - `move_favorite` with `key` and `index` (0-19).
+  Unknown keys fail with `favorite_not_found`.
+
+Favorites actions and `set_tunein_station` are listed in capabilities only when
+TuneIn selection is enabled; `select_favorite` is always available with writes.
+
 ## S08 source selection semantics
 
-- Source selection saves the new desired URL, changes that output's persisted
-  intention to `play`, and attempts playback. Selecting the same URL is safe
+- Source selection saves the station, its resolved URL and the `play`
+  intention in one atomic `playback.json` write, and attempts playback. Selecting the same URL is safe
   and does not add another queue entry.
 - The managed queue contains at most one selected source. Initial adoption is
-  allowed only for an empty queue or one song matching the previously configured
+  allowed only for an empty queue or one song matching the selected station's
   URL. Subsequent cleanup deletes only the persisted managed song ID; an
   unowned queue entry causes an explicit failure without clearing the queue.
   Queue inspection is limited to 64 entries.
-- The selected URL and queue ownership flag/song ID are atomically written to
-  the existing MPD config under the shared mutation lock. No MPD, PipeWire,
+- The station, resolved URL and managed song ID are atomically written to
+  `playback.json` under the shared mutation lock; `config.json` is never
+  written. No MPD, PipeWire,
   systemd or audio config regeneration is performed.
 - If the URL was saved but MPD or audio application fails, the result reports
-  `requested_source_persisted: true`; the selected URL remains visible and the
+  `requested_source_persisted: true`; the selected station remains visible and the
   supervisor can retry through its normal reconciliation path. Restoring an
   earlier source is another explicit selection.
 - Desired and current MPD source are reported separately. Display strings omit

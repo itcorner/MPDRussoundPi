@@ -13,7 +13,8 @@ from werkzeug.exceptions import HTTPException
 
 from lib.mpdbackend import BackendError, MPDBackend
 from lib.playbackstatus import OutputObservation, PlaybackCollector
-from lib.playbackoperations import ACTIONS, OperationError, OperationManager
+from lib.playbackoperations import ACTIONS, FAVORITE_ACTIONS, OperationError, OperationManager
+from lib.stations import Station
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,9 @@ class CachedInventory:
     monotonic: float = 0
     outputs: tuple[OutputObservation, ...] | None = None
     error_code: str = "snapshot_unavailable"
-    controls: tuple[tuple[str, str, str | None], ...] = ()
+    controls: tuple[tuple[str, str, str, bool], ...] = ()
+    favorites: tuple[Station, ...] | None = None
+    control_revision: str | None = None
 
 
 class AgentObserver:
@@ -48,7 +51,9 @@ class AgentObserver:
         self._delays: dict[str, float] = {}
         self._failed = False
         self.controls_enabled = controls_enabled
-        self._controls: tuple[tuple[str, str, str | None], ...] = ()
+        self._controls: tuple[tuple[str, str, str, bool], ...] = ()
+        self._favorites: tuple[Station, ...] | None = None
+        self._control_revision: str | None = None
 
     def snapshot(self) -> CachedInventory:
         with self._lock:
@@ -60,14 +65,17 @@ class AgentObserver:
     ) -> None:
         with self._lock:
             previous = self._cache
-            if (outputs, config_revision, error_code, self._controls) == (
+            current = (outputs, config_revision, error_code, self._controls, self._favorites, self._control_revision)
+            if current == (
                 previous.outputs, previous.config_revision, previous.error_code, previous.controls,
+                previous.favorites, previous.control_revision,
             ):
                 return
             self._cache = CachedInventory(
                 previous.revision + 1, config_revision,
                 datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 time.monotonic(), outputs, error_code, self._controls,
+                self._favorites, self._control_revision,
             )
         if previous.error_code != error_code or previous.config_revision != config_revision:
             logging.info("Agent inventory transition: %s", error_code)
@@ -86,12 +94,17 @@ class AgentObserver:
             try:
                 if self.backend is None:
                     self.backend = MPDBackend(self.config_path)
-                _, _, revision = self.backend.configuration_snapshot()
+                _, streams, revision = self.backend.configuration_snapshot()
+                self._favorites, _, self._control_revision = self.backend.favorites()
                 if self.controls_enabled:
                     revision, self._controls = self.backend.operation_inventory()
                 if self._collector is None or revision != self._collector.config_revision:
                     replacement = PlaybackCollector(self.backend)
+                else:
+                    # Station, gain and intention live in playback.json; keep probes across those edits.
+                    self._collector.apply_state(streams)
             except (BackendError, OSError, ValueError):
+                self._favorites = self._control_revision = None
                 self._publish(None, error_code="configuration_invalid")
                 old, self._collector = self._collector, None
                 if old is not None:
@@ -179,6 +192,7 @@ def create_app(
         "invalid_request": "Request is malformed.",
         "route_not_found": "Route does not exist.",
         "output_not_found": "Output is not configured.",
+        "favorites_unavailable": "Station favorites are unavailable.",
         "method_not_allowed": "Method is not supported.",
         "configuration_invalid": "Playback configuration is invalid or unavailable.",
         "snapshot_unavailable": "Playback snapshot is unavailable.",
@@ -192,7 +206,8 @@ def create_app(
         if status == 405:
             response.headers["Allow"] = (
                 "POST" if operations is not None and request.path.endswith("/operations")
-                and request.path.startswith("/v1/outputs/") else "GET, HEAD"
+                and (request.path.startswith("/v1/outputs/") or request.path == "/v1/favorites/operations")
+                else "GET, HEAD"
             )
         return response, status
 
@@ -239,7 +254,10 @@ def create_app(
         ], write_operations=[
             action for action in ACTIONS
             if operations is not None
-            and (action != "set_tunein_station" or operations.tunein_selection_enabled)
+            and (
+                action not in ("set_tunein_station", *FAVORITE_ACTIONS)
+                or operations.tunein_selection_enabled
+            )
         ])
         if operations is not None:
             response["operation_retention_seconds"] = 86400
@@ -254,13 +272,13 @@ def create_app(
             return error(cached.error_code, 503)
         now = time.monotonic()
         outputs = [output.to_dict(now) for output in cached.outputs]
-        controls = {key: (revision, state) for key, revision, state in cached.controls}
+        controls = {key: (revision, state, has_station) for key, revision, state, has_station in cached.controls}
         for output in outputs:
             key = str(output["id"])
             if key in controls:
-                revision, state = controls[key]
+                revision, state, has_station = controls[key]
                 output["control_revision"] = revision
-                output["control"] = {"mode": "manual", "desired_state": state}
+                output["control"] = {"mode": "manual", "desired_state": state, "has_station": has_station}
         age = max(0, int((now - cached.monotonic) * 1000))
         envelope: dict[str, object] = {
             **identity, "revision": cached.revision, "config_revision": cached.config_revision,
@@ -272,6 +290,17 @@ def create_app(
             if output["id"] == output_id:
                 return jsonify(**envelope, output=output)
         return error("output_not_found", 404)
+
+    @app.get("/v1/favorites", provide_automatic_options=False)
+    def favorites() -> Response | tuple[Response, int]:
+        cached = observer.snapshot()
+        if cached.favorites is None:
+            return error("favorites_unavailable", 503)
+        return jsonify(
+            **identity, config_revision=cached.config_revision,
+            control_revision=cached.control_revision,
+            favorites=[station.public() for station in cached.favorites],
+        )
 
     app.add_url_rule("/v1/outputs", view_func=inventory, methods=["GET"], provide_automatic_options=False)
     app.add_url_rule("/v1/outputs/<output_id>", view_func=inventory, methods=["GET"],
@@ -287,6 +316,15 @@ def create_app(
             if not request.is_json:
                 return error("invalid_request", 400)
             operation = operations.submit(output_id, request.get_json())
+            response = jsonify(**identity, operation=operation)
+            response.headers["Location"] = f"/v1/operations/{operation['id']}"
+            return response, 202
+
+        @app.post("/v1/favorites/operations", provide_automatic_options=False)
+        def submit_favorites_operation() -> tuple[Response, int]:
+            if not request.is_json:
+                return error("invalid_request", 400)
+            operation = operations.submit_favorites(request.get_json())
             response = jsonify(**identity, operation=operation)
             response.headers["Location"] = f"/v1/operations/{operation['id']}"
             return response, 202

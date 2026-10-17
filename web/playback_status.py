@@ -21,6 +21,7 @@ POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
 AGENT_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 WRITE_ACTIONS = {"play", "pause", "stop", "set_gain", "set_tunein_station"}
+AGENT_WRITE_ACTIONS = WRITE_ACTIONS | {"select_favorite", "add_favorite", "remove_favorite", "move_favorite"}
 
 
 class PlaybackCommandError(Exception):
@@ -382,7 +383,7 @@ def _write_capabilities(value: object) -> list[str]:
         raise ValueError("invalid_agent_response")
     result: list[str] = []
     for item in cast(list[object], value):
-        if not isinstance(item, str) or item not in WRITE_ACTIONS:
+        if not isinstance(item, str) or item not in AGENT_WRITE_ACTIONS:
             raise ValueError("invalid_agent_response")
         result.append(item)
     return result

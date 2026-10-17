@@ -25,8 +25,6 @@ class PlaybackOperationTests(unittest.TestCase):
     setUp = backend_tests.MPDBackendTests.setUp
 
     def prepare(self, **kwargs):
-        for index, stream in enumerate(self.config["streams"]):
-            stream.update(id=f"output_{index}", label=stream["name"])
         self.path.write_text(json.dumps(self.config))
         self.manager = operations.OperationManager(self.api, self.path.parent / "operations.sqlite3", **kwargs)
         self.addCleanup(self.manager.close)
@@ -63,7 +61,7 @@ class PlaybackOperationTests(unittest.TestCase):
 
     def test_tunein_selection_uses_durable_operation_without_transmitting_stream_url(self):
         manager = self.prepare(tunein_selection_enabled=True)
-        queue = [{"file": self.config["streams"][0]["stream"], "id": "7"}]
+        queue = [{"file": self.config["stations"][0]["url"], "id": "7"}]
         state = {"state": "play", "songid": "7"}
         self.client.playlistinfo.side_effect = lambda: [dict(song) for song in queue]
         self.client.status.side_effect = lambda: dict(state)
@@ -86,16 +84,16 @@ class PlaybackOperationTests(unittest.TestCase):
         accepted = manager.submit("output_0", request)
         self.assertEqual(accepted["status"], "queued")
         self.assertFalse(accepted["requested_source_persisted"])
-        self.assertEqual(self.config["streams"][0]["stream"],
-                         json.loads(self.path.read_text())["streams"][0]["stream"])
+        self.assertEqual(self.config["stations"][0]["url"],
+                         self.api.list_outputs()[0].url)
         manager.run_once()
         result = manager.get(accepted["id"])
         self.assertEqual(result["status"], "applied")
         self.assertTrue(result["requested_source_persisted"])
         self.assertTrue(result["requested_intention_persisted"])
         self.assertNotIn(source_url, json.dumps(result))
-        self.assertEqual(json.loads(self.path.read_text())["streams"][0]["stream"], source_url)
-        self.assertEqual(json.loads(self.path.read_text())["streams"][0]["source_station_id"], "s231065")
+        self.assertEqual(self.api.list_outputs()[0].url, source_url)
+        self.assertEqual(self.api.list_outputs()[0].station.station_id, "s231065")
         self.assertEqual(queue, [{"file": source_url, "id": "8"}])
 
     def test_unresolvable_tunein_station_reports_station_unavailable_without_changes(self):
@@ -134,8 +132,8 @@ class PlaybackOperationTests(unittest.TestCase):
         self.client.status.return_value = {"state": "stop"}
         manager.run_once()
         self.assertEqual(manager.get(stop["id"])["status"], "applied")
-        self.assertEqual(json.loads(self.path.read_text())["streams"][0]["stream"],
-                         self.config["streams"][0]["stream"])
+        self.assertEqual(self.api.list_outputs()[0].url,
+                         self.config["stations"][0]["url"])
         self.client.addid.assert_not_called()
 
     def test_lost_response_retry_uses_same_id_even_after_execution(self):
@@ -196,7 +194,7 @@ class PlaybackOperationTests(unittest.TestCase):
         manager = self.prepare()
         request = self.request()
         accepted = manager.submit("output_0", request)
-        self.config["streams"][1]["gain_db"] = -4
+        self.config["outputs"][1]["default_gain_db"] = -4
         self.path.write_text(json.dumps(self.config))
         with self.assertRaises(operations.OperationError) as caught:
             manager.submit("output_1", request)
@@ -208,9 +206,9 @@ class PlaybackOperationTests(unittest.TestCase):
     def test_cli_intention_write_even_same_value_invalidates_queued_operation(self):
         manager = self.prepare()
         self.client.status.return_value = {"state": "stop"}
-        self.api.stop("Stereo CenterLFE")
+        self.api.stop("output_1")
         accepted = manager.submit("output_0", self.request())
-        self.api.stop("Stereo CenterLFE")
+        self.api.stop("output_1")
         self.client.stop.reset_mock()
         manager.run_once()
         self.assertEqual(manager.get(accepted["id"])["error"]["code"], "revision_conflict")
@@ -279,7 +277,7 @@ class PlaybackOperationTests(unittest.TestCase):
             with patch.object(self.api, "manual_operation", side_effect=execute):
                 manager.run_once()
             self.assertEqual(manager.get(record["id"])["status"], "applied")
-            self.assertEqual(self.api.get_gain("Stereo Front"), gain)
+            self.assertEqual(self.api.get_gain("output_0"), gain)
             self.assertEqual(len(attempts), 2)
         self.assertEqual(self.set_sink_gain.call_count, 2)
 
@@ -292,7 +290,7 @@ class PlaybackOperationTests(unittest.TestCase):
         def execute(*args, **kwargs):
             attempts.append(1)
             if len(attempts) == 1:
-                self.config["streams"][1]["gain_db"] = -4
+                self.config["outputs"][1]["default_gain_db"] = -4
                 self.path.write_text(json.dumps(self.config))
                 raise backend.BackendBusy("supervisor")
             return actual(*args, **kwargs)
@@ -321,7 +319,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertTrue(result["requested_intention_persisted"])
         self.assertIsNone(result["applied"])
         self.assertNotIn("private-stream-url", json.dumps(result))
-        self.assertEqual(json.loads(self.api.state_path.read_text()), {"Stereo Front": "stop"})
+        self.assertEqual(self.api.list_outputs()[0].intention, "stop")
 
     def test_failed_audio_readiness_preserves_play_intention(self):
         manager = self.prepare()
@@ -336,7 +334,7 @@ class PlaybackOperationTests(unittest.TestCase):
     def test_intention_save_failure_never_sends_mpd_command(self):
         manager = self.prepare()
         record = manager.submit("output_0", self.request())
-        with patch.object(backend, "write_json", side_effect=OSError("read only")):
+        with patch.object(backend, "write_state", side_effect=OSError("read only")):
             manager.run_once()
         result = manager.get(record["id"])
         self.assertEqual(result["error"]["code"], "intention_save_failed")
@@ -352,10 +350,10 @@ class PlaybackOperationTests(unittest.TestCase):
         manager.run_once()
         self.assertEqual(manager.get(record["id"])["status"], "applied")
         self.assertEqual(self.path.read_bytes(), config_before)
-        self.assertEqual(json.loads(self.api.state_path.read_text()), {
-            "Stereo Front": "stop", "Stereo CenterLFE": "play", "Stereo Rear": "play",
+        self.assertEqual({s.id: s.intention for s in self.api.list_outputs()}, {
+            "output_0": "stop", "output_1": "play", "output_2": "play",
         })
-        self.client.connect.assert_called_once_with("127.0.0.1", self.config["streams"][0]["port"])
+        self.client.connect.assert_called_once_with("127.0.0.1", self.config["outputs"][0]["port"])
         self.set_sink_gain.assert_not_called()
 
     def test_gain_while_paused_is_persisted_without_starting_and_reapplied_later(self):
@@ -369,9 +367,9 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertTrue(result["gain_persisted"])
         self.set_sink_gain.assert_not_called()
         self.client.playid.assert_not_called()
-        self.assertEqual(self.api.get_gain("Stereo Front"), -65.1)
+        self.assertEqual(self.api.get_gain("output_0"), -65.1)
         self.client.status.return_value = {"state": "play", "songid": "7"}
-        self.api.start("Stereo Front")
+        self.api.start("output_0")
         self.set_sink_gain.assert_called_once_with("stereo_front", -65.1)
 
     def test_active_gain_application_failure_is_explicit_and_does_not_save(self):
@@ -391,7 +389,7 @@ class PlaybackOperationTests(unittest.TestCase):
             request = self.request("set_gain", gain_db=-6, idempotency_key=f"gain-save-key-{rollback_failed}")
             record = manager.submit("output_0", request)
             self.set_sink_gain.side_effect = [None, RuntimeError("rollback")] if rollback_failed else None
-            with patch.object(self.api, "_save", side_effect=OSError("read only")):
+            with patch.object(self.api, "_write_outputs", side_effect=OSError("read only")):
                 manager.run_once()
             result = manager.get(record["id"])
             self.assertEqual(result["error"]["code"], "gain_rollback_failed" if rollback_failed else "gain_save_failed")
@@ -410,14 +408,10 @@ class PlaybackOperationTests(unittest.TestCase):
                 station_name="Radio Example",
             ),
         )
-        config = json.loads(self.path.read_text())
-        config["streams"][1].update(
-            stream=source_url, queue_managed=True, managed_song_id=None,
-            source_provider="tunein", source_station_id="s231065",
-            source_station_name="Radio Example",
-        )
-        self.api._save(config)
-        self.api._record_intention([self.api.list_streams()[1]], "play")
+        self.api._write_outputs({"output_1": {
+            "station": backend.Station.tunein("s231065", "Radio Example"),
+            "resolved_url": source_url, "intention": "play",
+        }})
         manager._update(
             interrupted,
             status="running",
@@ -437,7 +431,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertTrue(result["requested_intention_persisted"])
         self.assertIsNone(result["applied"])
         self.assertEqual(result["recovery_observation"]["observed_state"], "play")
-        self.assertEqual(json.loads(self.path.read_text())["streams"][1]["stream"], source_url)
+        self.assertEqual(self.api.list_outputs()[1].url, source_url)
         self.client.stop.assert_not_called()
 
     def test_only_one_worker_can_own_ledger(self):
@@ -484,7 +478,7 @@ class PlaybackOperationTests(unittest.TestCase):
         record = response.json["operation"]
         self.assertEqual(client.get("/v1/operations/" + record["id"], headers=auth).json["operation"], record)
         actions = client.get("/v1/capabilities", headers=auth).json["write_operations"]
-        self.assertEqual(actions, [action for action in operations.ACTIONS if action != "set_tunein_station"])
+        self.assertEqual(actions, [action for action in operations.OUTPUT_ACTIONS if action != "set_tunein_station"])
         station_request = self.request(
             "set_tunein_station",
             idempotency_key="station-selection-is-disabled-explicitly",
@@ -544,4 +538,148 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(completed.status_code, 200)
         self.assertEqual(completed.json["operation"]["status"], "applied")
         self.assertTrue(completed.json["operation"]["requested_intention_persisted"])
-        self.assertEqual(json.loads(self.api.state_path.read_text()), {"Stereo Front": "stop"})
+        self.assertEqual(self.api.list_outputs()[0].intention, "stop")
+
+    def test_stationless_play_maps_to_no_station_and_pause_maps_to_stop(self):
+        self.config["outputs"][0].pop("default_station")
+        manager = self.prepare()
+        record = manager.submit("output_0", self.request("play"))
+        manager.run_once()
+        result = manager.get(record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], "no_station")
+        self.client.playid.assert_not_called()
+        self.assertFalse(self.api.state_path.exists())
+        self.client.status.return_value = {"state": "stop"}
+        paused = manager.submit("output_0", self.request("pause", idempotency_key="stationless-pause-key"))
+        manager.run_once()
+        self.assertEqual(manager.get(paused["id"])["status"], "applied")
+        self.assertEqual(self.api.list_outputs()[0].intention, "stop")
+        self.client.stop.assert_called_once()
+        self.client.pause.assert_not_called()
+
+    def test_favorite_operations_use_global_lane_and_nullable_output(self):
+        manager = self.prepare()
+        original = self.path.read_bytes()
+        accepted = manager.submit_favorites(self.request(
+            "add_favorite", station_id="s42", station_name="Favorite",
+        ))
+        self.assertIsNone(accepted["output_id"])
+        with closing(sqlite3.connect(manager.path)) as db:
+            lane = db.execute("SELECT output_id FROM operations WHERE id=?", (accepted["id"],)).fetchone()[0]
+        self.assertEqual(lane, "@favorites")
+        manager.run_once()
+        self.assertEqual(manager.get(accepted["id"])["status"], "applied")
+        self.assertEqual(self.api.favorites()[0][-1].key, "tunein:s42")
+        moved = manager.submit_favorites(self.request(
+            "move_favorite", key="tunein:s42", index=0, idempotency_key="favorite-move-request",
+        ))
+        manager.run_once()
+        self.assertEqual(manager.get(moved["id"])["status"], "applied")
+        self.assertEqual(self.api.favorites()[0][0].key, "tunein:s42")
+        removed = manager.submit_favorites(self.request(
+            "remove_favorite", key="tunein:s42", idempotency_key="favorite-remove-request",
+        ))
+        manager.run_once()
+        self.assertEqual(manager.get(removed["id"])["status"], "applied")
+        self.assertNotIn("tunein:s42", [s.key for s in self.api.favorites()[0]])
+        self.assertEqual(self.path.read_bytes(), original)
+        self.client.connect.assert_not_called()
+
+    def test_favorites_duplicate_is_noop_and_full_maps_to_favorites_full(self):
+        manager = self.prepare()
+        for index in range(17):
+            self.api.favorites_operation(
+                "add_favorite", station_id=f"s{100 + index}", station_name=f"Radio {index}",
+                expected_config_revision=self.api.configuration_snapshot()[2],
+                expected_control_revision=self.api.control_revision(),
+            )
+        duplicate = manager.submit_favorites(self.request(
+            "add_favorite", station_id="s8007", station_name="Duplicate",
+        ))
+        original = self.api.state_path.read_bytes()
+        manager.run_once()
+        self.assertEqual(manager.get(duplicate["id"])["status"], "applied")
+        self.assertEqual(self.api.state_path.read_bytes(), original)
+        overflow = manager.submit_favorites(self.request(
+            "add_favorite", station_id="s999", station_name="Overflow", idempotency_key="favorites-overflow-key",
+        ))
+        manager.run_once()
+        result = manager.get(overflow["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], "favorites_full")
+        self.assertEqual(self.api.state_path.read_bytes(), original)
+
+    def test_unknown_favorites_map_to_favorite_not_found(self):
+        manager = self.prepare()
+        for index, action in enumerate(("select_favorite", "remove_favorite", "move_favorite")):
+            payload = self.request(action, key="missing", idempotency_key=f"missing-favorite-{index:02}")
+            if action == "move_favorite":
+                payload["index"] = 0
+            accepted = (manager.submit("output_0", payload) if action == "select_favorite"
+                        else manager.submit_favorites(payload))
+            manager.run_once()
+            self.assertEqual(manager.get(accepted["id"])["error"]["code"], "favorite_not_found")
+        self.client.connect.assert_not_called()
+
+    def test_url_favorite_request_contains_only_key_and_works_when_tunein_disabled(self):
+        self.config["outputs"][0].pop("default_station")
+        manager = self.prepare(tunein_selection_enabled=False)
+        self.client.playlistinfo.return_value = []
+        self.client.status.return_value = {"state": "play", "songid": "8"}
+        payload = self.request("select_favorite", key="front-radio")
+        original = self.path.read_bytes()
+        accepted = manager.submit("output_0", payload)
+        manager.run_once()
+        result = manager.get(accepted["id"])
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(self.api.list_outputs()[0].station.key, "front-radio")
+        self.assertEqual(self.api.list_outputs()[0].intention, "play")
+        self.client.addid.assert_called_once_with(self.config["stations"][0]["url"])
+        self.tunein_resolve.assert_not_called()
+        self.assertNotIn(self.config["stations"][0]["url"], json.dumps([payload, accepted, result]))
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_tunein_opt_out_forbids_all_favorites_edits(self):
+        manager = self.prepare(tunein_selection_enabled=False)
+        payloads = (
+            self.request("add_favorite", station_id="s42", station_name="Radio"),
+            self.request("remove_favorite", key="front-radio"),
+            self.request("move_favorite", key="front-radio", index=0),
+        )
+        for payload in payloads:
+            with self.subTest(action=payload["action"]), self.assertRaises(operations.OperationError) as caught:
+                manager.submit_favorites(payload)
+            self.assertEqual(caught.exception.status, 403)
+            self.assertEqual(caught.exception.code, "station_selection_disabled")
+        self.assertFalse(self.api.state_path.exists())
+
+    def test_favorite_validation_rejects_urls_wrong_lane_and_bad_indices(self):
+        manager = self.prepare()
+        invalid = (
+            self.request("select_favorite", key="front-radio", url="https://evil.example"),
+            self.request("select_favorite", key="https://evil.example"),
+            self.request("select_favorite", key=""),
+            self.request("select_favorite"),
+            self.request("add_favorite", station_id="s42", station_name="Radio"),
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload), self.assertRaises(operations.OperationError) as caught:
+                manager.submit("output_0", payload)
+            self.assertEqual(caught.exception.code, "invalid_request")
+        for index in (True, -1, 20, 1.5, "0", None):
+            with self.subTest(index=index), self.assertRaises(operations.OperationError):
+                manager.submit_favorites(self.request("move_favorite", key="front-radio", index=index))
+        with self.assertRaises(operations.OperationError):
+            manager.submit_favorites(self.request("select_favorite", key="front-radio"))
+
+    def test_favorites_lane_supersedes_only_favorites_and_preserves_output_lane(self):
+        manager = self.prepare()
+        output = manager.submit("output_0", self.request("stop"))
+        first = manager.submit_favorites(self.request("add_favorite", station_id="s42", station_name="Radio"))
+        newer = manager.submit_favorites(self.request(
+            "remove_favorite", key="front-radio", idempotency_key="newer-favorite-edit-key",
+        ))
+        self.assertEqual(manager.get(first["id"])["status"], "superseded")
+        self.assertEqual(manager.get(output["id"])["status"], "queued")
+        self.assertEqual(manager.get(newer["id"])["status"], "queued")

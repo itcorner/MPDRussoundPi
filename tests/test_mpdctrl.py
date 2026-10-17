@@ -17,7 +17,7 @@ class MPDControlTests(unittest.TestCase):
         self.factory = patcher.start()
         self.addCleanup(patcher.stop)
         self.api = self.factory.return_value
-        self.api.list_streams.return_value = [Mock(name="unused")]
+        self.api.list_outputs.return_value = [Mock(name="unused")]
 
     def test_shared_backend_selected_and_all_actions(self):
         for option in ("start", "stop", "pause", "apply-gain", "recover-route"):
@@ -29,7 +29,7 @@ class MPDControlTests(unittest.TestCase):
                     method.reset_mock()
                     argv = [f"--{option}", "config.json"]
                     if name:
-                        argv[1:1] = ["--stream", name]
+                        argv[1:1] = ["--output", name]
                     mpdctrl.main(argv)
                     method.assert_called_once_with(name)
 
@@ -39,15 +39,11 @@ class MPDControlTests(unittest.TestCase):
         self.api.status.assert_called_once_with(None)
         self.api.start.assert_not_called()
 
-    def test_revision_guarded_gain_and_label(self):
-        mpdctrl.main(["--set-gain", "-6.1", "--stream", "Stereo CenterLFE",
-                      "--expected-revision", "revision", "config.json"])
-        self.api.set_gain.assert_called_once_with("Stereo CenterLFE", -6.1, expected_revision="revision")
-        mpdctrl.main(["--set-label", "Kitchen", "--stream", "Stereo CenterLFE",
-                      "--expected-revision", "revision", "config.json"])
-        self.api.set_label.assert_called_once_with("Stereo CenterLFE", "Kitchen", expected_revision="revision")
-        for argv in (["--set-gain", "-6"], ["--set-label", "Kitchen", "--stream", "Stereo CenterLFE"],
-                     ["--status", "--expected-revision", "revision"]):
+    def test_gain_requires_output_and_removed_options_are_rejected(self):
+        mpdctrl.main(["--set-gain", "-6.1", "--output", "center", "config.json"])
+        self.api.set_gain.assert_called_once_with("center", -6.1)
+        for argv in (["--set-gain", "-6"], ["--set-label", "Kitchen"],
+                     ["--status", "--expected-revision", "revision"], ["--status", "--stream", "front"]):
             with self.assertRaises(SystemExit):
                 mpdctrl.main([*argv, "config.json"])
 
@@ -62,9 +58,9 @@ class MPDControlTests(unittest.TestCase):
         streams = []
         for name in ("one", "two", "three"):
             stream = Mock()
-            stream.name = name
+            stream.id = name
             streams.append(stream)
-        self.api.list_streams.return_value = streams
+        self.api.list_outputs.return_value = streams
         self.api.check_route.side_effect = [
             mpdctrl.BackendError("unavailable"), Mock(correct=False), Mock(correct=True),
         ]
@@ -76,6 +72,6 @@ class MPDControlTests(unittest.TestCase):
 
     def test_unknown_stream_rejected_and_actions_mutually_exclusive(self):
         with self.assertRaises(SystemExit):
-            mpdctrl.main(["--check-route", "--stream", "unknown", "config.json"])
+            mpdctrl.main(["--check-route", "--output", "unknown", "config.json"])
         with self.assertRaises(SystemExit):
             mpdctrl.main(["--start", "--stop", "config.json"])

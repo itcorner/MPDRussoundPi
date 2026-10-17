@@ -16,56 +16,96 @@ supplementary groups are refreshed.
 
 The first deployment copies the repository seed into
 `~/.config/mpdrussoundpi/config.json`. Redeployment preserves that file and
-`~/.local/state/mpdrussoundpi/playback.json`, including calibrated gains and
-pause/stop intentions. Initially all configured streams are intended playing.
-New streams default playing when intentions are initialized again.
+the runtime state `~/.local/state/mpdrussoundpi/playback.json`.
 
-Each `streams` entry selects its source in one of two ways (the
-[seed configuration](../mpdrussoundpi/russound/config.json) contains both):
+## Configuration: `config.json` (admin-owned)
 
-```json
-{ "name": "Stereo Front", "stream": "https://radio.example/live.mp3", ... }
-```
+`config.json` describes the hardware, the MPD instances (outputs) and the seed
+station list. The agent and supervisor only read it, so `config_revision`
+changes only when an admin edits it. The
+[seed configuration](../mpdrussoundpi/russound/config.json) shows every option:
 
 ```json
 {
-  "name": "Stereo Rear",
-  "source_provider": "tunein",
-  "source_station_id": "s8007",
-  "source_station_name": "ORF Hitradio OE3",
-  "queue_managed": true,
-  ...
+  "outputmappers": { "audio_devices": [ "..." ] },
+  "outputs": [
+    { "id": "stereo_front", "label": "Stereo Front", "port": 6601, "sink": "stereo_front",
+      "default_station": "radio886", "default_gain_db": -7.1 },
+    { "id": "stereo_centerlfe", "label": "Stereo CenterLFE", "port": 6602, "sink": "stereo_centerlfe" },
+    { "id": "stereo_rear", "label": "Stereo Rear", "port": 6603, "sink": "stereo_rear",
+      "default_station": "tunein:s8007", "default_gain_db": -0.6 }
+  ],
+  "stations": [
+    { "key": "radio886", "name": "Radio 88.6", "type": "url",
+      "url": "https://edge85.streamonkey.net/radio886-onair/stream/mp3?aggregator=886Website" },
+    { "key": "tunein:s8235", "name": "ORF Radio FM4", "type": "tunein", "station_id": "s8235" },
+    { "key": "tunein:s8007", "name": "ORF Hitradio OE3", "type": "tunein", "station_id": "s8007" }
+  ]
 }
 ```
 
-A direct entry needs an HTTP(S) `stream` URL. A TuneIn entry needs a station
-ID (`s` + digits) and a display name; `stream` may be omitted. On the next
-start the supervisor resolves the station through TuneIn and saves the
-resolved URL in `stream`; it re-resolves whenever that saved URL is not
-already playing. `queue_managed` lets later re-resolutions replace the queued URL
-instead of adding a second entry. Dashboard station selection writes the same
-fields. `streamlevels.py` resolves TuneIn entries without `stream` before
-measuring.
+Outputs:
+
+- `id` (`[a-z][a-z0-9_-]{0,63}`) is the only identity. It names the MPD unit
+  (`mpd_<id>.service`) and its config (`~/.config/mpd/mpd_<id>.conf`), and it is
+  the output ID in the agent and dashboard APIs. `label` is display text only.
+- `port` and `sink` must be unique; `sink` must exist in `outputmappers`. MPD
+  always listens on `127.0.0.1` only.
+- `default_station` (optional) names a `stations` key. It applies while the
+  output has no runtime selection yet: the output starts on that station,
+  intended playing. Without it the output starts with no station, stopped and
+  silent; the dashboard shows Play disabled until a station is selected.
+- `default_gain_db` (optional, `<= 0`, default `0`) seeds the runtime gain
+  the same way.
+
+Stations (at most 20) seed the dashboard favorites:
+
+- `type: "url"`: a direct HTTP(S) stream. These can only come from
+  `config.json`; the dashboard never sends or receives stream URLs.
+- `type: "tunein"`: a TuneIn station ID (`s` + digits). The key must be
+  `tunein:<station_id>`. The backend resolves the playable stream when it
+  starts the station and re-resolves whenever the cached URL is not playing.
+
+A configuration that still uses the old `streams` list is rejected with
+"old config format; see docs/mpd-headless-deployment.md": rewrite it in the
+format above (there is no automatic migration).
+
+## Runtime state: `playback.json` (agent-owned)
+
+`~/.local/state/mpdrussoundpi/playback.json` holds everything that changes at
+run time: the favorites list and, per output ID, the selected station (a copy,
+so removing a favorite never breaks a playing output), the cached resolved
+URL, the managed MPD song ID, the gain and the play/pause/stop intention. The
+backend writes it atomically under the control lock; `control_revision` is
+derived from it. Missing entries take the `config.json` defaults, unknown
+output IDs are dropped on the next write, and a missing `favorites` key is
+initialized from `stations`. Deleting the file resets every output to its
+defaults.
+
+`streamlevels.py` measures each output's current (or default) station and
+`--output-config` writes the recommendations as `default_gain_db`.
 
 Use the operational configuration for **all** control and calibration commands:
 
 ```sh
-python mpdctrl.py --stop --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --pause --stream "Stereo Front" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --check-route ~/.config/mpdrussoundpi/config.json
 ```
+
+`--start` without `--output` starts every output that has a station.
 
 Generated MPD units want/order after the audio services. Their readiness
 command actually queries cards/sinks and enforces the configured 5.1 profile,
 retrying for 30 seconds. Daemons restart on failure after five seconds, with
 ten starts per minute. Missing hardware is a visible failure, not a successful
-start. The supervisor makes later attempts with per-stream backoff, so an
+start. The supervisor makes later attempts with per-output backoff, so an
 absent device/network does not permanently consume the restart budget.
 
 The supervisor honors saved intentions, never treating an audio-induced pause
-as a user pause. For playing streams it restores the configured URL without
-duplicating matching queue entries, clears errors, starts with the software
+as a user pause. For playing outputs it restores the selected station's URL as the
+single managed queue entry, clears errors, starts with the software
 mixer muted, verifies routes, reapplies/read-verifies absolute gains, and
 unmutes to software volume 100. It verifies final playback state. Stopped and
 paused intentions remain silent after reboot; an empty paused queue is left
@@ -94,7 +134,7 @@ explicit, including a failure to save an intention or gain.
 
 Cleanup is separate from MPD service removal. Stop the playback supervisor and
 MPD instances first during an approved maintenance window; otherwise they will
-keep trying to restore streams whose virtual sinks you are removing:
+keep trying to restore outputs whose virtual sinks you are removing:
 
 ```sh
 python mpdsetup.py --stop ~/.config/mpdrussoundpi/config.json
@@ -145,7 +185,7 @@ the normal deployment playbook.
 
 Focused tests cover first-boot defaults, preserving intentions, audio-error
 recovery, mute/route/gain/unmute ordering, failed readiness, atomic persistence,
-queue idempotence, per-stream failure isolation/backoff, CLI delegation and
+queue idempotence, per-output failure isolation/backoff, CLI delegation and
 generated service policies. Ansible syntax is checked separately. These do
 not prove analog output, startup transients, USB unplug or network recovery;
 hardware lifecycle acceptance must be recorded in the hardware audit.

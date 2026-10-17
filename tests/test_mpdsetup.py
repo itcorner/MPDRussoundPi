@@ -53,7 +53,7 @@ class MPDSetupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as runtime:
             config = Path(home) / "config.json"
-            config.write_text(json.dumps({"streams": []}))
+            config.write_text((SCRIPTS_DIR / "config.json").read_text())
             with self.assertRaises(subprocess.CalledProcessError):
                 self.run_cli("--install", home, runtime, reload, str(config))
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
@@ -62,10 +62,13 @@ class MPDSetupTests(unittest.TestCase):
 
     def test_invalid_config_releases_install_lock(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as runtime:
-            with patch.object(mpdsetup.readconfig, "read_and_parse_json", return_value=None):
-                with self.assertRaises(SystemExit) as error:
-                    self.run_cli("--install", home, runtime, Mock())
-                self.assertEqual(error.exception.code, 1)
+            config = Path(home) / "invalid.json"
+            config.write_text('{"streams": []}')
+            run = Mock()
+            with self.assertRaises(SystemExit) as error:
+                self.run_cli("--install", home, runtime, run, str(config))
+            self.assertEqual(error.exception.code, 2)
+            run.assert_not_called()
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
                 with mpdsetup.setup_lock("mpd_setup.lock"):
                     pass
@@ -147,7 +150,7 @@ class MPDSetupTests(unittest.TestCase):
             for device in config["outputmappers"]["audio_devices"]
             for entry in device["sinks"]
         }
-        for entry in config["streams"]:
+        for entry in config["outputs"]:
             instance = mpdsetup.config2mpd(entry, sinks)
             self.assertIsNotNone(instance)
             assert instance is not None
@@ -157,8 +160,8 @@ class MPDSetupTests(unittest.TestCase):
         sinks = {"stereo_front": mpdsetup.sink.config2sink({"name": "stereo_front", "master_channel_map": "[ FL FR ]"})}
         for requested in ({}, {"bind_to_address": "0.0.0.0"}, {"bind_to_addr": "0.0.0.0"}):
             with self.subTest(requested=requested):
-                entry = {"name": "Stereo Front", "port": 6601,
-                         "audio_output": {"type": "pulse", "sink": "stereo_front"}, **requested}
+                entry = {"id": "stereo_front", "port": 6601,
+                         "sink": "stereo_front", **requested}
                 instance = mpdsetup.config2mpd(entry, sinks)
                 assert instance is not None
                 config = instance.to_mpd_config()

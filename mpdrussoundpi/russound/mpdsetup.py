@@ -1,4 +1,4 @@
-import lib.readconfig as readconfig
+from lib.outputconfig import parse_configuration
 from lib.mpdinstance import MPDInstance, config2mpd
 from lib.setuplock import setup_lock
 import argparse
@@ -236,6 +236,14 @@ def cleanup_all():
         os.remove(supervisor)
 
 
+def load_configuration(path: str, parser: argparse.ArgumentParser) -> dict:
+    """Validate the output configuration strictly before generating or restarting units."""
+    try:
+        return parse_configuration(Path(path).read_bytes()).raw
+    except (OSError, ValueError) as error:
+        parser.error(f"Invalid configuration {path}: {error}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Setup multiple MPD instances')
     parser.add_argument('--install', action='store_true', help='Install MPD configuration')
@@ -273,11 +281,7 @@ if __name__ == "__main__":
         exit(0)
     elif args.install:
         with setup_lock('mpd_setup.lock'):
-            config = readconfig.read_and_parse_json(args.json)
-            if not config:
-                logging.error("Failed to read configuration. Exiting.")
-                parser.print_help()
-                exit(1)
+            config = load_configuration(args.json, parser)
 
             sink_dict: dict[str, sink.Sink] = {}
             for audio_device in config.get('outputmappers', {}).get('audio_devices', []):
@@ -286,8 +290,8 @@ if __name__ == "__main__":
                     sink_dict[sink_element.get('name')] = sink.config2sink(sink_element)
 
             mpd_instances: list[MPDInstance] = []
-            for stream_config in config.get('streams', []):
-                inst = config2mpd(stream_config, sink_dict, ignore_missing_sinks=False)
+            for output_config in config.get('outputs', []):
+                inst = config2mpd(output_config, sink_dict, ignore_missing_sinks=False)
                 if inst:
                     mpd_instances.append(inst)
                     logging.debug(f"Found valid configuration for MPD instance: {inst.name} on port {inst.port}")
@@ -311,11 +315,9 @@ if __name__ == "__main__":
         stop_all_mpd_services()
         exit(0)
     elif args.restart:
-        config = readconfig.read_and_parse_json(args.json)
-        if not config or not config.get("streams"):
-            parser.error("A nonempty stream configuration is required")
+        config = load_configuration(args.json, parser)
         subprocess.run(["systemctl", "--user", "restart", *[
-            mpd_service_filename(entry["name"]) for entry in config["streams"]
+            mpd_service_filename(entry["id"]) for entry in config["outputs"]
         ]], check=True)
         exit(0)
 

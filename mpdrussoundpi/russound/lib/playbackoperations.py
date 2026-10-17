@@ -16,14 +16,18 @@ from typing import Any, cast
 from uuid import uuid4
 
 from lib.mpdbackend import (
-    AudioOperationError, BackendBusy, BackendError, GainPersistenceError,
-    MPDBackend, MPDOperationError, RevisionConflict, StationUnavailableError,
+    FAVORITE_ACTIONS, OUTPUT_ACTIONS, AudioOperationError, BackendBusy, BackendError,
+    FavoriteNotFound, FavoritesFullError, GainPersistenceError, MPDBackend, MPDOperationError,
+    NoStationError, RevisionConflict, StationUnavailableError,
 )
 from lib.playbackidentity import output_id
-from lib.tunein import TuneInCatalog
+from lib.stations import MAX_STATIONS, Station
 
 
-ACTIONS = ("play", "pause", "stop", "set_gain", "set_tunein_station")
+ACTIONS = OUTPUT_ACTIONS + FAVORITE_ACTIONS
+TUNEIN_ACTIONS = ("set_tunein_station", *FAVORITE_ACTIONS)
+FAVORITES_LANE = "@favorites"
+FAVORITE_KEY_PATTERN = re.compile(r"(tunein:s[0-9]{1,12}|[a-z0-9][a-z0-9_-]{0,63})")
 TERMINAL = ("applied", "failed", "expired", "superseded", "outcome_unknown")
 RETENTION_SECONDS = 86400
 
@@ -37,14 +41,24 @@ class OperationError(Exception):
         return {"code": self.code, "message": self.message, "retryable": self.status in (429, 503)}
 
 
-def validate_request(value: object) -> dict[str, Any]:
+def validate_request(value: object, *, favorites: bool = False) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise OperationError("invalid_request", "An operation object is required.", 400)
     payload = cast(dict[str, Any], value)
     allowed = {"action", "expected_config_revision", "expected_control_revision", "idempotency_key"}
     action = payload.get("action")
-    if not isinstance(action, str) or action not in ACTIONS:
+    if not isinstance(action, str) or action not in (FAVORITE_ACTIONS if favorites else OUTPUT_ACTIONS):
         raise OperationError("invalid_request", "Unsupported playback action.", 400)
+    if action in ("select_favorite", "remove_favorite", "move_favorite"):
+        allowed.add("key")
+        key = payload.get("key")
+        if not isinstance(key, str) or FAVORITE_KEY_PATTERN.fullmatch(key) is None:
+            raise OperationError("invalid_request", "A valid favorite key is required.", 400)
+    if action == "move_favorite":
+        allowed.add("index")
+        index = payload.get("index")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < MAX_STATIONS:
+            raise OperationError("invalid_request", "A valid favorite index is required.", 400)
     if action == "set_gain":
         allowed.add("gain_db")
         gain = payload.get("gain_db")
@@ -54,20 +68,12 @@ def validate_request(value: object) -> dict[str, Any]:
             valid_gain = False
         if not valid_gain:
             raise OperationError("invalid_request", "Gain must be a finite number at or below 0 dB.", 400)
-    if action == "set_tunein_station":
+    if action in ("set_tunein_station", "add_favorite"):
         allowed.update(("station_id", "station_name"))
         try:
-            TuneInCatalog.validate_station_id(payload.get("station_id"))
+            Station.tunein(payload.get("station_id"), payload.get("station_name"))
         except ValueError:
             raise OperationError("invalid_request", "A valid TuneIn station selection is required.", 400) from None
-        station_name = payload.get("station_name")
-        if (
-            not isinstance(station_name, str)
-            or not station_name
-            or len(station_name) > 120
-            or not station_name.isprintable()
-        ):
-            raise OperationError("invalid_request", "A valid TuneIn station selection is required.", 400)
     if set(payload) != allowed:
         raise OperationError("invalid_request", "Operation fields are missing or unsupported.", 400)
     for field in ("expected_config_revision", "expected_control_revision"):
@@ -127,7 +133,10 @@ class OperationManager:
                     "retryable": False,
                 })
                 try:
-                    result["recovery_observation"] = self.backend.operation_observation(result["output_id"])
+                    result["recovery_observation"] = (
+                        None if result["output_id"] is None
+                        else self.backend.operation_observation(result["output_id"])
+                    )
                 except (BackendError, OSError, ValueError, KeyError):
                     result["recovery_observation"] = None
                     logging.warning("Interrupted operation %s cannot yet be re-observed", identity)
@@ -156,8 +165,15 @@ class OperationManager:
             output_id(identity)
         except ValueError:
             raise OperationError("invalid_request", "Invalid output identity.", 400) from None
-        value = validate_request(payload)
-        if value["action"] == "set_tunein_station" and not self.tunein_selection_enabled:
+        return self._submit(identity, validate_request(payload))
+
+    def submit_favorites(self, payload: object) -> dict[str, Any]:
+        """Favorites edits share one global lane so a newer edit supersedes queued ones."""
+        return self._submit(FAVORITES_LANE, validate_request(payload, favorites=True))
+
+    def _submit(self, identity: str, value: dict[str, Any]) -> dict[str, Any]:
+        favorites = identity == FAVORITES_LANE
+        if value["action"] in TUNEIN_ACTIONS and not self.tunein_selection_enabled:
             raise OperationError("station_selection_disabled", "TuneIn station selection is not enabled on this agent.", 403)
         canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
         with self._lock, self._connect() as db:
@@ -177,7 +193,14 @@ class OperationManager:
             if count >= self.ledger_limit or pending >= self.capacity:
                 raise OperationError("capacity_exceeded", "Playback operation capacity is exhausted; retry later.", 429)
             try:
-                self.backend.validate_operation(identity, value["expected_config_revision"], value["expected_control_revision"])
+                if favorites:
+                    self.backend.validate_favorites_operation(
+                        value["expected_config_revision"], value["expected_control_revision"],
+                    )
+                else:
+                    self.backend.validate_operation(
+                        identity, value["expected_config_revision"], value["expected_control_revision"],
+                    )
             except BackendBusy:
                 raise OperationError("backend_busy", "Playback backend is busy; refresh and retry.", 409) from None
             except RevisionConflict:
@@ -195,7 +218,7 @@ class OperationManager:
                 })
                 db.execute("UPDATE operations SET status='superseded', result=? WHERE id=?", (json.dumps(old), old_id))
             operation: dict[str, Any] = {
-                "id": uuid4().hex, "output_id": identity, "action": value["action"],
+                "id": uuid4().hex, "output_id": None if favorites else identity, "action": value["action"],
                 "status": "queued", "phase": "accepted", "created_at": now,
                 "deadline_at": now + self.deadline_seconds, "requested_intention_persisted": False,
                 "gain_persisted": False, "requested_source_persisted": False,
@@ -252,13 +275,24 @@ class OperationManager:
         try:
             while True:
                 try:
-                    self.backend.manual_operation(
-                        operation["output_id"], payload["action"], payload.get("gain_db"),
-                        station_id=payload.get("station_id"),
-                        station_name=payload.get("station_name"),
-                        expected_config_revision=payload["expected_config_revision"],
-                        expected_control_revision=payload["expected_control_revision"], progress=progress,
-                    )
+                    if operation["output_id"] is None:
+                        progress("favorites_saving")
+                        self.backend.favorites_operation(
+                            payload["action"], key=payload.get("key"), index=payload.get("index"),
+                            station_id=payload.get("station_id"),
+                            station_name=payload.get("station_name"),
+                            expected_config_revision=payload["expected_config_revision"],
+                            expected_control_revision=payload["expected_control_revision"],
+                        )
+                    else:
+                        self.backend.manual_operation(
+                            operation["output_id"], payload["action"], payload.get("gain_db"),
+                            station_id=payload.get("station_id"),
+                            station_name=payload.get("station_name"),
+                            favorite_key=payload.get("key"),
+                            expected_config_revision=payload["expected_config_revision"],
+                            expected_control_revision=payload["expected_control_revision"], progress=progress,
+                        )
                     break
                 except BackendBusy:
                     if self._stop.is_set() or time.time() >= operation["deadline_at"]:
@@ -277,6 +311,12 @@ class OperationManager:
                 code = "gain_rollback_failed" if exc.rollback_failed else "gain_save_failed"
                 text = ("Gain persistence and live rollback failed; inspect the output before retrying."
                         if exc.rollback_failed else "Gain could not be saved; the previous live gain was restored if changed.")
+            elif isinstance(exc, NoStationError):
+                code, text = "no_station", "No station is selected for this output; select a station first."
+            elif isinstance(exc, FavoriteNotFound):
+                code, text = "favorite_not_found", "The favorite is no longer in the list; refresh and retry."
+            elif isinstance(exc, FavoritesFullError):
+                code, text = "favorites_full", f"The favorites list is full ({MAX_STATIONS} stations); remove one first."
             elif isinstance(exc, StationUnavailableError):
                 code, text = "station_unavailable", f"{exc} The previous station remains selected."
             elif isinstance(exc, MPDOperationError):

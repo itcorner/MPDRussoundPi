@@ -1,77 +1,77 @@
 {
-  "outputmappers": {
-    "audio_devices": [
-      {
-        "name": "usb-0d8c_USB_Sound_Device-00",
-        "card-profile": "analog-surround-51",
-        "sinks": [
-          {
-            "name": "stereo_front",
-            "master_channel_map": "[ FL FR ]",
-            "channel_map": "[ FL FR ]",
-            "remix": "no",
-            "sink_description": "Stereo Front"
-          },
-          {
-            "name": "stereo_centerlfe",
-            "master_channel_map": "[ FC LFE ]",
-            "channel_map": "[ FL FR ]",
-            "remix": "no",
-            "sink_description": "Stereo CenterLFE"
-          },
-          {
-            "name": "stereo_rear",
-            "master_channel_map": "[ RL RR ]",
-            "channel_map": "[ FL FR ]",
-            "remix": "no",
-            "sink_description": "Stereo Rear"
-          }
+    "outputmappers": {
+        "audio_devices": [
+            {
+                "name": "usb-0d8c_USB_Sound_Device-00",
+                "card-profile": "analog-surround-51",
+                "sinks": [
+                    {
+                        "name": "stereo_front",
+                        "master_channel_map": "[ FL FR ]",
+                        "channel_map": "[ FL FR ]",
+                        "remix": "no",
+                        "sink_description": "Stereo Front"
+                    },
+                    {
+                        "name": "stereo_centerlfe",
+                        "master_channel_map": "[ FC LFE ]",
+                        "channel_map": "[ FL FR ]",
+                        "remix": "no",
+                        "sink_description": "Stereo CenterLFE"
+                    },
+                    {
+                        "name": "stereo_rear",
+                        "master_channel_map": "[ RL RR ]",
+                        "channel_map": "[ FL FR ]",
+                        "remix": "no",
+                        "sink_description": "Stereo Rear"
+                    }
+                ]
+            }
         ]
-      }
+    },
+    "outputs": [
+        {
+            "id": "stereo_front",
+            "label": "Stereo Front",
+            "port": 6601,
+            "sink": "stereo_front",
+            "default_station": "radio886",
+            "default_gain_db": -7.1
+        },
+        {
+            "id": "stereo_centerlfe",
+            "label": "Stereo CenterLFE",
+            "port": 6602,
+            "sink": "stereo_centerlfe"
+        },
+        {
+            "id": "stereo_rear",
+            "label": "Stereo Rear",
+            "port": 6603,
+            "sink": "stereo_rear",
+            "default_station": "tunein:s8007",
+            "default_gain_db": -0.6
+        }
+    ],
+    "stations": [
+        {
+            "key": "radio886",
+            "name": "Radio 88.6",
+            "type": "url",
+            "url": "https://edge85.streamonkey.net/radio886-onair/stream/mp3?aggregator=886Website"
+        },
+        {
+            "key": "tunein:s8235",
+            "name": "ORF Radio FM4",
+            "type": "tunein",
+            "station_id": "s8235"
+        },
+        {
+            "key": "tunein:s8007",
+            "name": "ORF Hitradio OE3",
+            "type": "tunein",
+            "station_id": "s8007"
+        }
     ]
-  },
-  "streams": [
-    {
-      "name": "Stereo Front",
-      "id": "stereo_front",
-      "label": "Stereo Front",
-      "gain_db": -7.1,
-      "stream": "https://edge85.streamonkey.net/radio886-onair/stream/mp3?aggregator=886Website",
-      "port": 6601,
-      "audio_output": {
-        "type": "pulse",
-        "sink": "stereo_front"
-      }
-    },
-    {
-      "name": "Stereo CenterLFE",
-      "id": "stereo_centerlfe",
-      "label": "Stereo CenterLFE",
-      "gain_db": 0.0,
-      "source_provider": "tunein",
-      "source_station_id": "s8235",
-      "source_station_name": "ORF Radio FM4",
-      "queue_managed": true,
-      "port": 6602,
-      "audio_output": {
-        "type": "pulse",
-        "sink": "stereo_centerlfe"
-      }
-    },
-    {
-      "name": "Stereo Rear",
-      "id": "stereo_rear",
-      "label": "Stereo Rear",
-      "gain_db": -0.6,
-      "source_provider": "tunein",
-      "source_station_id": "s8007",
-      "source_station_name": "ORF Hitradio OE3",
-      "queue_managed": true,
-      "port": 6603,
-      "audio_output": {
-        "type": "pulse",
-        "sink": "stereo_rear"
-      }
-    }
-  ]
 }

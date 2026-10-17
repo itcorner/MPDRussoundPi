@@ -248,13 +248,13 @@ Backend/CLI calibration writes support SHA-256 revision preconditions checked
 under the existing mutation lock, and label edits require a revision. Legacy
 gain edits still work and invalidate old revisions. No ID mutation API exists.
 
-[playbackmigrate.py](../mpdrussoundpi/russound/playbackmigrate.py) creates an
+A since-removed `playbackmigrate.py` tool created an
 offline-only private bundle from local config/intention copies and an explicit
 name-to-ID/label mapping. It preserves exact originals and every nonidentity
 config field, retains legacy intentions, and generates a strictly validated
 manual-mode control-v1 preview. Missing, corrupt, partial or unknown intentions
 fail rather than defaulting to play. Existing persisted IDs cannot be reassigned.
-The tool does not install files, regenerate units, contact MPD or restart services.
+The tool does not install files, regenerate units, contact MPD or restart services. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 
 The [backend API migration procedure](./mpd-backend-api.md#offline-identity-and-control-preparation-s04)
 records the reader/writer inventory, revision contract, rollout and rollback.
@@ -600,8 +600,8 @@ credentials and operational files must have an explicit owner.
 - Because outputs now switch stations, output names, IDs and labels follow the
   audio channel (`stereo_front`/Stereo Front, `stereo_centerlfe`/Stereo
   CenterLFE, `stereo_rear`/Stereo Rear) and amend D08. Existing installations
-  migrate offline with `outputrename.py`; the dashboard shows the selected
-  station next to the playback state.
+  migrated offline with the since-removed `outputrename.py`; the dashboard shows the selected
+  station next to the playback state. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 
 After each answer, update its status/outcome above, amend affected architecture
 sections/steps and discuss only the next unresolved decision.

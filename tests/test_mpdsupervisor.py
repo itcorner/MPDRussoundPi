@@ -18,11 +18,11 @@ class SupervisorTests(unittest.TestCase):
         self.api = patcher.start().return_value
         self.addCleanup(patcher.stop)
         self.streams = []
-        for name in ("Stereo Front", "Stereo CenterLFE", "Stereo Rear"):
+        for name in ("stereo_front", "stereo_centerlfe", "stereo_rear"):
             stream = Mock()
-            stream.name = name
+            stream.id = name
             self.streams.append(stream)
-        self.api.list_streams.return_value = self.streams
+        self.api.list_outputs.return_value = self.streams
 
     def run_once(self):
         with patch.object(sys, "argv", ["mpdsupervisor.py", "--once", "config.json"]):

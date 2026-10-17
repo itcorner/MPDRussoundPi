@@ -93,7 +93,7 @@ proof that the proposed integration already exists.
 | `POST /api/system/power`, `/api/source`, zone power/source/volume, shortcuts | Hardware commands publish state; keypad updates also refresh state | Feed policy from resulting hardware observations, not only HTTP command handlers |
 | [Controller](../web/russound_controller.py): `backend_health_snapshot()` | Cached `connected`/`message`; at least one responding zone can mark the backend connected | Add per-zone successful-read timestamps and explicit unknown/partial health |
 | [State](../web/russound_state.py): `sync_system_power()` | `system_power = any(zone.power)` across represented zones | This is aggregate zone demand, not a measurement of controller mains/standby power |
-| [MPDBackend](../mpdrussoundpi/russound/lib/mpdbackend.py): `list_streams()` | Immutable settings: exact name, URL, port, sink, persisted gain | Initial inventory; later add stable output IDs and source-selection provenance |
+| [MPDBackend](../mpdrussoundpi/russound/lib/mpdbackend.py): `list_outputs()` | Immutable settings: output ID, label, port, sink, runtime gain, selected station, intention | Inventory keyed by output ID (after the [configuration split](./config-split-plan.md)) |
 | `status(name=None)` | State, configured gain and expected sink only; sequential, first error aborts | Add per-output detailed observations and failure isolation; metadata is missing today |
 | `start`, `pause`, `stop` | Persist intention before MPD commands; use the common mutation lock | Reuse for manual control; report requested versus actually applied state separately |
 | `set_gain`, `check_route`, `recover_route` | Pi-local `pactl`, route verification and atomic gain persistence | Keep on the audio host; expose measured versus configured values honestly |
@@ -459,14 +459,14 @@ as `front`, `centerlfe`, `rear` to existing exact-name entries; do not rename
 existing entries to station names supplied by a catalog.
 
 Amended 2026-10-17: because outputs now switch stations, station-named outputs
-were renamed to their audio channel. [outputrename.py](../mpdrussoundpi/russound/outputrename.py)
-derives the stream name, output ID and label from the configured sink (for
+were renamed to their audio channel. A one-off `outputrename.py` tool
+derived the stream name, output ID and label from the configured sink (for
 example `stereo_front` / `Stereo Front`) and renames intention keys. It is an
 offline maintenance step: stop the agent, supervisor and MPD units, run it,
 remove the old `mpd_*` units/configs and regenerate them with
 `mpdsetup.py --install`. Ports, sinks, gain and selected sources are unchanged;
 historical operations keep their former output IDs. The dashboard shows the
-selected station (TuneIn name, else MPD's ICY station name) next to the state.
+selected station (TuneIn name, else MPD's ICY station name) next to the state. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 
 A single-host stable ID is sufficient initially; multi-host identity is
 `(agent_id, output_id)`. Selection edits never regenerate systemd units/audio.

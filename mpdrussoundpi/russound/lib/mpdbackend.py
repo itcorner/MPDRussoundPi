@@ -2,7 +2,6 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import hashlib
-import json
 import logging
 import os
 from pathlib import Path
@@ -12,12 +11,13 @@ from typing import Protocol, TypeAlias, TypeGuard, Union, cast
 import mpd  # pyright: ignore[reportMissingTypeStubs]
 
 from lib.setuplock import setup_lock
-from lib.atomicjson import write_json
 from lib.audioready import wait_for_audio
-from lib.audioidentity import validate_hardware_devices
 from lib.mpdinstance import MPD_HOST
-from lib.playbackidentity import identities, output_label
-from lib.sourceurl import validate_source_url
+from lib.outputconfig import Configuration, parse_configuration
+from lib.playbackstate import (
+    FavoritesFull, OutputState, PlaybackState, read_state, write_state,
+)
+from lib.stations import Station
 from lib.tunein import TuneInCatalog, TuneInError
 from lib.streamgain import set_sink_gain, validate_gain_db
 from lib.streamroute import StreamRoute, inspect_route, recover_route
@@ -27,6 +27,8 @@ JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dic
 
 # MPD opens its Pulse client only after a newly started internet stream has buffered.
 STARTUP_ROUTE_TIMEOUT = 12.0
+OUTPUT_ACTIONS = ("play", "pause", "stop", "set_gain", "set_tunein_station", "select_favorite")
+FAVORITE_ACTIONS = ("add_favorite", "remove_favorite", "move_favorite")
 
 
 class BackendError(RuntimeError):
@@ -47,6 +49,18 @@ class MPDOperationError(BackendError):
 
 class StationUnavailableError(BackendError):
     """The selected station could not be resolved to a supported stream."""
+
+
+class NoStationError(BackendError):
+    """Playback was requested for an output without a selected station."""
+
+
+class FavoriteNotFound(BackendError):
+    """The named favorite is not in the favorites list."""
+
+
+class FavoritesFullError(BackendError):
+    """The favorites list already holds the maximum number of stations."""
 
 
 class AudioOperationError(BackendError):
@@ -79,29 +93,32 @@ class MPDConnection(Protocol):
 
 
 @dataclass(frozen=True)
-class StreamSettings:
-    name: str
-    url: str
+class OutputSettings:
+    """One configured output merged with its runtime station, gain and intention."""
+    id: str
+    label: str
     port: int
     sink: str
     gain_db: float
-    queue_managed: bool = False
+    station: Station | None = None
+    url: str = ""
     managed_song_id: str | None = None
-    source_provider: str | None = None
-    source_station_id: str | None = None
-    source_station_name: str | None = None
+    intention: str = "stop"
 
 
 @dataclass(frozen=True)
 class PlaybackStatus:
-    name: str
+    id: str
     state: str
     gain_db: float
     sink: str
 
 
 class MPDBackend:
-    """Control configured local MPD instances without running a server."""
+    """Control configured local MPD instances without running a server.
+
+    config.json is admin-owned and never written; all runtime changes go to playback.json.
+    """
 
     def __init__(self, config_path: str | Path, state_path: str | Path | None = None) -> None:
         self.config_path = Path(config_path).resolve()
@@ -110,143 +127,62 @@ class MPDBackend:
             / "mpdrussoundpi/playback.json"
         )
         self._tunein = TuneInCatalog()
-        self.list_streams()
+        self.list_outputs()
 
-    def _load(self) -> tuple[dict[str, JSONValue], list[StreamSettings]]:
-        try:
-            raw = self.config_path.read_bytes()
-        except (OSError, ValueError) as error:
-            raise BackendError(f"Cannot read configuration: {error}") from error
-        return self._parse_configuration(raw)
-
-    def configuration_snapshot(self) -> tuple[dict[str, JSONValue], tuple[StreamSettings, ...], str]:
-        """Validate settings and revision from the same configuration bytes."""
+    def _configuration(self) -> tuple[Configuration, str]:
         try:
             raw = self.config_path.read_bytes()
         except OSError as error:
-            raise BackendError("Cannot read observation configuration") from error
-        config, streams = self._parse_configuration(raw)
-        return config, tuple(streams), hashlib.sha256(raw).hexdigest()
+            raise BackendError(f"Cannot read configuration: {error}") from error
+        return parse_configuration(raw), hashlib.sha256(raw).hexdigest()
 
-    def _parse_configuration(self, raw: bytes) -> tuple[dict[str, JSONValue], list[StreamSettings]]:
-        try:
-            config: JSONValue = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeError) as error:
-            raise BackendError("Cannot read configuration: invalid JSON") from error
-        if not isinstance(config, dict):
-            raise ValueError("Configuration must be an object")
-        entries = config.get("streams")
-        if not isinstance(entries, list) or not entries:
-            raise ValueError("Configuration requires a nonempty streams list")
-        identities(entries)
-        mappers = config.get("outputmappers")
-        if not isinstance(mappers, dict):
-            raise ValueError("Configuration requires outputmappers")
-        devices = mappers.get("audio_devices")
-        if not isinstance(devices, list):
-            raise ValueError("Configuration requires audio_devices")
-        validate_hardware_devices(devices)
-        sinks: set[str] = set()
-        for device in devices:
-            if not isinstance(device, dict) or not isinstance(device.get("sinks"), list):
-                raise ValueError("Invalid audio device")
-            device_sinks = device["sinks"]
-            if isinstance(device_sinks, list):
-                for sink in device_sinks:
-                    if not isinstance(sink, dict) or not isinstance(sink.get("name"), str):
-                        raise ValueError("Invalid sink name")
-                    name = sink["name"]
-                    if isinstance(name, str):
-                        sinks.add(name)
-        settings: list[StreamSettings] = []
-        names: set[str] = set()
-        ports: set[int] = set()
-        used_sinks: set[str] = set()
-        for entry in entries:
-            if not isinstance(entry, dict):
-                raise ValueError("Invalid stream entry")
-            name, url, port = entry.get("name"), entry.get("stream"), entry.get("port")
-            output = entry.get("audio_output")
-            if not isinstance(name, str) or not name or name in names:
-                raise ValueError("Stream names must be nonempty and unique")
-            if url is None and entry.get("source_provider") == "tunein":
-                # TuneIn entries may omit the URL; it is resolved and saved on the next start.
-                url = ""
-            else:
-                try:
-                    url = validate_source_url(url)
-                except ValueError:
-                    raise ValueError(f"{name}: stream must be a direct HTTP(S) URL") from None
-            if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 or port in ports:
-                raise ValueError(f"{name}: invalid or duplicate MPD port")
-            if not isinstance(output, dict) or output.get("type") != "pulse":
-                raise ValueError(f"{name}: only configured PulseAudio outputs are supported")
-            sink_name = output.get("sink")
-            if not isinstance(sink_name, str) or sink_name not in sinks or sink_name in used_sinks:
-                raise ValueError(f"{name}: sink must exist and be exclusive to this stream")
-            gain = validate_gain_db(entry.get("gain_db", 0))
-            queue_managed = entry.get("queue_managed", False)
-            managed_song_id = entry.get("managed_song_id")
-            if not isinstance(queue_managed, bool):
-                raise ValueError(f"{name}: invalid managed queue flag")
-            if managed_song_id is not None and (
-                not isinstance(managed_song_id, str)
-                or not managed_song_id.isascii()
-                or not managed_song_id.isdigit()
-                or len(managed_song_id) > 10
-            ):
-                raise ValueError(f"{name}: invalid managed song ID")
-            if not queue_managed and managed_song_id is not None:
-                raise ValueError(f"{name}: managed song ID requires a managed queue")
-            source_provider_value = entry.get("source_provider")
-            source_station_id_value = entry.get("source_station_id")
-            source_station_name_value = entry.get("source_station_name")
-            source_provider: str | None = None
-            source_station_id: str | None = None
-            source_station_name: str | None = None
-            if source_provider_value is None:
-                if source_station_id_value is not None or source_station_name_value is not None:
-                    raise ValueError(f"{name}: TuneIn station metadata requires a source provider")
-            elif source_provider_value == "tunein":
-                try:
-                    source_station_id = TuneInCatalog.validate_station_id(source_station_id_value)
-                except ValueError:
-                    raise ValueError(f"{name}: invalid TuneIn station identity") from None
-                if (
-                    not isinstance(source_station_name_value, str)
-                    or not source_station_name_value
-                    or len(source_station_name_value) > 120
-                    or not source_station_name_value.isprintable()
-                ):
-                    raise ValueError(f"{name}: invalid TuneIn station name")
-                source_provider = "tunein"
-                source_station_name = source_station_name_value
-            else:
-                raise ValueError(f"{name}: unsupported source provider")
-            settings.append(StreamSettings(
-                name, url, port, sink_name, gain, queue_managed, managed_song_id,
-                source_provider, source_station_id, source_station_name,
+    def _read(self) -> tuple[Configuration, PlaybackState]:
+        configuration, _ = self._configuration()
+        return configuration, read_state(self.state_path, configuration)[0]
+
+    @staticmethod
+    def _settings(configuration: Configuration, state: PlaybackState) -> tuple[OutputSettings, ...]:
+        result: list[OutputSettings] = []
+        for output in configuration.outputs:
+            current = state.outputs[output.id]
+            result.append(OutputSettings(
+                output.id, output.label, output.port, output.sink, current.gain_db,
+                current.station, current.resolved_url or "", current.managed_song_id, current.intention,
             ))
-            names.add(name)
-            ports.add(port)
-            used_sinks.add(sink_name)
-        return config, settings
+        return tuple(result)
 
-    def list_streams(self) -> tuple[StreamSettings, ...]:
-        return tuple(self._load()[1])
+    def configuration_snapshot(self) -> tuple[Configuration, tuple[OutputSettings, ...], str]:
+        """Outputs merged with runtime state, plus the revision of config.json alone."""
+        configuration, revision = self._configuration()
+        state = read_state(self.state_path, configuration)[0]
+        return configuration, self._settings(configuration, state), revision
 
-    def get_gain(self, name: str) -> float:
+    def list_outputs(self) -> tuple[OutputSettings, ...]:
+        return self.configuration_snapshot()[1]
+
+    def get_gain(self, identity: str) -> float:
         """Return persisted gain, not the current mixer reading."""
-        return self._select(name)[0].gain_db
+        return self._select(identity)[0].gain_db
 
-    def _select(self, name: str | None) -> list[StreamSettings]:
-        settings = self._load()[1]
-        if name is None:
-            return settings
-        selected = [item for item in settings if item.name == name]
+    def _select(self, identity: str | None) -> list[OutputSettings]:
+        outputs = list(self.list_outputs())
+        if identity is None:
+            return outputs
+        selected = [item for item in outputs if item.id == identity]
         if not selected:
-            raise ValueError(f"Unknown stream name: {name!r}")
+            raise ValueError(f"Unknown output ID: {identity!r}")
         return selected
+
+    def _write_outputs(
+        self, changes: dict[str, dict[str, object]],
+        check: Callable[[OutputState], bool] | None = None,
+    ) -> None:
+        state = self._read()[1]
+        for identity, values in changes.items():
+            if check is not None and not check(state.outputs[identity]):
+                raise RevisionConflict("Playback source changed while saving its state")
+            state = state.with_output(identity, **values)
+        write_state(self.state_path, state)
 
     @contextmanager
     def _mutation(self) -> Generator[None, None, None]:
@@ -262,7 +198,7 @@ class MPDBackend:
 
     @contextmanager
     def _connection(
-        self, stream: StreamSettings, *, timeout: float = 5, redact_errors: bool = False,
+        self, stream: OutputSettings, *, timeout: float = 5, redact_errors: bool = False,
     ) -> Generator[MPDConnection, None, None]:
         # python-mpd2 exposes protocol commands dynamically through __getattr__.
         client = cast(MPDConnection, mpd.MPDClient())
@@ -273,7 +209,7 @@ class MPDBackend:
         except (mpd.MPDError, OSError) as error:
             if redact_errors:
                 raise MPDOperationError("MPD read failed") from error
-            raise MPDOperationError(f"{stream.name}: MPD operation failed: {error}") from error
+            raise MPDOperationError(f"{stream.id}: MPD operation failed: {error}") from error
         finally:
             failing = sys.exc_info()[0] is not None
             try:
@@ -283,35 +219,40 @@ class MPDBackend:
                     if redact_errors:
                         logging.error("MPD observation disconnect failed during error cleanup")
                     else:
-                        logging.error("%s: disconnect failed during error cleanup: %s", stream.name, error)
+                        logging.error("%s: disconnect failed during error cleanup: %s", stream.id, error)
                 else:
                     if redact_errors:
                         raise BackendError("MPD observation disconnect failed") from error
-                    raise BackendError(f"{stream.name}: disconnect failed: {error}") from error
+                    raise BackendError(f"{stream.id}: disconnect failed: {error}") from error
 
     @contextmanager
-    def observation_connection(self, stream: StreamSettings) -> Generator[MPDConnection, None, None]:
+    def observation_connection(self, stream: OutputSettings) -> Generator[MPDConnection, None, None]:
         """An independent bounded connection with sanitized operational errors."""
         with self._connection(stream, timeout=3, redact_errors=True) as client:
             yield client
 
-    def status(self, name: str | None = None) -> tuple[PlaybackStatus, ...]:
+    def status(self, identity: str | None = None) -> tuple[PlaybackStatus, ...]:
         statuses: list[PlaybackStatus] = []
-        for stream in self._select(name):
+        for stream in self._select(identity):
             with self._connection(stream) as client:
                 state = client.status().get("state")
             if state not in ("play", "pause", "stop"):
-                raise BackendError(f"{stream.name}: invalid MPD playback state: {state!r}")
-            statuses.append(PlaybackStatus(stream.name, state, stream.gain_db, f"sink.{stream.sink}"))
+                raise BackendError(f"{stream.id}: invalid MPD playback state: {state!r}")
+            statuses.append(PlaybackStatus(stream.id, state, stream.gain_db, f"sink.{stream.sink}"))
         return tuple(statuses)
 
-    def start(self, name: str | None = None) -> None:
+    def start(self, identity: str | None = None) -> None:
+        """Start one output, or every output that has a station."""
         with self._mutation():
-            streams = self._select(name)
+            streams = self._select(identity)
+            if identity is None:
+                streams = [stream for stream in streams if stream.station is not None]
+            elif streams[0].station is None:
+                raise NoStationError(f"{identity}: no station selected")
             self._record_intention(streams, "play")
             self._start_selected(streams)
 
-    def _start_selected(self, streams: list[StreamSettings], *, resolved: bool = False) -> None:
+    def _start_selected(self, streams: list[OutputSettings], *, resolved: bool = False) -> None:
         try:
             wait_for_audio(self.config_path)
         except (OSError, RuntimeError) as error:
@@ -320,7 +261,7 @@ class MPDBackend:
             self._start_stream(stream, resolve=not resolved)
 
     @staticmethod
-    def _prepare_route_and_gain(stream: StreamSettings, gain: float, *, starting: bool = False) -> None:
+    def _prepare_route_and_gain(stream: OutputSettings, gain: float, *, starting: bool = False) -> None:
         try:
             if starting:
                 recover_route(stream.sink, timeout=STARTUP_ROUTE_TIMEOUT)
@@ -330,7 +271,7 @@ class MPDBackend:
         except (OSError, RuntimeError) as error:
             raise AudioOperationError(str(error)) from error
 
-    def _playing_source(self, stream: StreamSettings) -> bool:
+    def _playing_source(self, stream: OutputSettings) -> bool:
         with self._connection(stream, redact_errors=True) as client:
             state = client.status()
             if state.get("state") != "play" or "error" in state:
@@ -341,48 +282,23 @@ class MPDBackend:
                 for song in client.playlistinfo()
             )
 
-    def _start_stream(self, stream: StreamSettings, *, resolve: bool = True) -> None:
+    def _start_stream(self, stream: OutputSettings, *, resolve: bool = True) -> None:
+        station = stream.station
+        if station is None:
+            raise NoStationError(f"{stream.id}: no station selected")
+        if station.type == "url" and station.url is not None:
+            if stream.url != station.url:
+                stream = self._persist_resolution(stream, station.url)
         # Re-resolve only when the saved URL is not already playing; resolution is a network call under the lock.
-        if stream.source_provider == "tunein" and resolve and not self._playing_source(stream):
-            if stream.source_station_id is None:
-                raise BackendError("Selected TuneIn station has no saved identity")
+        elif resolve and station.station_id is not None and (not stream.url or not self._playing_source(stream)):
             try:
-                resolved_url = self._tunein.resolve(stream.source_station_id)
+                resolved_url = self._tunein.resolve(station.station_id)
             except TuneInError:
                 raise MPDOperationError("TuneIn station could not be resolved") from None
             if resolved_url != stream.url:
-                stream = self._persist_tunein_resolution(stream, resolved_url)
-        with self._connection(stream, redact_errors=stream.queue_managed) as client:
-            playlist = client.playlistinfo()
-            if stream.queue_managed:
-                self._start_managed_stream(stream, client, playlist)
-                return
-            songid = next((song.get("id") for song in playlist if song.get("file") == stream.url), None)
-            if songid is None:
-                songid = client.addid(stream.url)
-            if not songid:
-                raise BackendError(f"{stream.name}: MPD returned no song ID")
-            state = client.status()
-            restarting = state.get("state") != "play" or state.get("songid") != songid or "error" in state
-            try:
-                if restarting:
-                    # Software mixer gates new playback before the Pulse sink is active.
-                    client.setvol(0)
-                    client.clearerror()
-                    client.playid(songid)
-                self._prepare_route_and_gain(stream, stream.gain_db, starting=restarting)
-                client.setvol(100)
-                final = client.status()
-                if final.get("state") != "play" or "error" in final:
-                    raise MPDOperationError(f"{stream.name}: playback did not start: {final}")
-            except (mpd.MPDError, OSError, RuntimeError) as error:
-                try:
-                    client.stop()
-                except (mpd.MPDError, OSError) as stop_error:
-                    raise BackendError(
-                        f"{stream.name}: route/gain failed ({error}); stop also failed ({stop_error})"
-                    ) from stop_error
-                raise
+                stream = self._persist_resolution(stream, resolved_url)
+        with self._connection(stream, redact_errors=True) as client:
+            self._start_managed_stream(stream, client, client.playlistinfo())
 
     @staticmethod
     def _valid_song_id(value: object) -> TypeGuard[str]:
@@ -417,26 +333,16 @@ class MPDBackend:
             seen.add(song_id)
         return entries
 
-    def _persist_tunein_resolution(self, stream: StreamSettings, url: str) -> StreamSettings:
-        config, settings = self._load()
-        current = next((item for item in settings if item.name == stream.name), None)
-        if (
-            current is None
-            or current.source_provider != "tunein"
-            or current.source_station_id != stream.source_station_id
-            or current.url != stream.url
-        ):
-            raise RevisionConflict("TuneIn station changed while refreshing its stream")
-        entries = config["streams"]
-        if isinstance(entries, list):
-            for entry in entries:
-                if isinstance(entry, dict) and entry.get("name") == stream.name:
-                    entry["stream"] = url
-        self._save(config)
+    def _persist_resolution(self, stream: OutputSettings, url: str) -> OutputSettings:
+        station = stream.station
+        self._write_outputs(
+            {stream.id: {"resolved_url": url}},
+            lambda current: current.station == station,
+        )
         return replace(stream, url=url)
 
     def _start_managed_stream(
-        self, stream: StreamSettings, client: MPDConnection, playlist: object,
+        self, stream: OutputSettings, client: MPDConnection, playlist: object,
     ) -> None:
         entries = self._queue_entries(playlist)
         managed_id = stream.managed_song_id
@@ -494,28 +400,27 @@ class MPDBackend:
                 logging.error("Managed playback cleanup stop failed")
             raise
 
-    def _persist_managed_song_id(self, stream: StreamSettings, song_id: str) -> None:
+    def _persist_managed_song_id(self, stream: OutputSettings, song_id: str) -> None:
         if stream.managed_song_id == song_id:
             return
-        config, settings = self._load()
-        current = next((item for item in settings if item.name == stream.name), None)
-        if current is None or current.url != stream.url or not current.queue_managed:
-            raise RevisionConflict("Playback source changed while saving managed queue state")
-        entries = config["streams"]
-        if isinstance(entries, list):
-            for entry in entries:
-                if isinstance(entry, dict) and entry.get("name") == stream.name:
-                    entry["managed_song_id"] = song_id
-        self._save(config)
+        station, url = stream.station, stream.url
+        self._write_outputs(
+            {stream.id: {"managed_song_id": song_id}},
+            lambda current: current.station == station and current.resolved_url == url,
+        )
 
-    def _set_tunein_station(
-        self, config: dict[str, JSONValue], stream: StreamSettings, station_id: str,
-        station_name: str, progress: Callable[[str], None],
+    def _set_station(
+        self, stream: OutputSettings, station: Station, progress: Callable[[str], None],
     ) -> None:
-        try:
-            source_url = self._tunein.resolve(station_id)
-        except TuneInError as exc:
-            raise StationUnavailableError(str(exc)) from None
+        if station.type == "tunein" and station.station_id is not None:
+            try:
+                source_url = self._tunein.resolve(station.station_id)
+            except TuneInError as exc:
+                raise StationUnavailableError(str(exc)) from None
+        elif station.url is not None:
+            source_url = station.url
+        else:
+            raise StationUnavailableError("Station has no playable source")
         with self._connection(stream, redact_errors=True) as client:
             queue = self._queue_entries(client.playlistinfo())
         managed_id = stream.managed_song_id
@@ -527,47 +432,38 @@ class MPDBackend:
                 managed_id = queue[0][0]
             else:
                 raise MPDOperationError("MPD queue contains unmanaged entries; source was not changed")
-        entry_list = config["streams"]
-        if isinstance(entry_list, list):
-            for entry in entry_list:
-                if isinstance(entry, dict) and entry.get("name") == stream.name:
-                    entry["stream"] = source_url
-                    entry["queue_managed"] = True
-                    entry["source_provider"] = "tunein"
-                    entry["source_station_id"] = station_id
-                    entry["source_station_name"] = station_name
-                    if managed_id is None:
-                        entry.pop("managed_song_id", None)
-                    else:
-                        entry["managed_song_id"] = managed_id
         progress("source_saving")
         try:
-            self._save(config)
+            # Station, cache and play intention are one atomic state write.
+            self._write_outputs({stream.id: {
+                "station": station, "resolved_url": source_url,
+                "managed_song_id": managed_id, "intention": "play",
+            }})
         except (OSError, ValueError) as error:
             raise BackendError("Cannot persist selected source") from error
         progress("source_persisted")
-        progress("intention_saving")
-        self._record_intention([stream], "play")
         progress("intention_persisted")
-        selected = StreamSettings(
-            stream.name, source_url, stream.port, stream.sink, stream.gain_db, True, managed_id,
-            "tunein", station_id, station_name,
+        selected = replace(
+            stream, station=station, url=source_url, managed_song_id=managed_id, intention="play",
         )
         self._start_selected([selected], resolved=True)
 
-    def stop(self, name: str | None = None) -> None:
-        self._playback_action(name, pause=False)
+    def stop(self, identity: str | None = None) -> None:
+        self._playback_action(identity, pause=False)
 
-    def pause(self, name: str | None = None) -> None:
-        self._playback_action(name, pause=True)
+    def pause(self, identity: str | None = None) -> None:
+        self._playback_action(identity, pause=True)
 
-    def _playback_action(self, name: str | None, *, pause: bool) -> None:
+    def _playback_action(self, identity: str | None, *, pause: bool) -> None:
         with self._mutation():
-            streams = self._select(name)
+            streams = self._select(identity)
+            if pause:
+                # An output without a station has nothing to pause and stays stopped.
+                streams = [stream for stream in streams if stream.station is not None]
             self._record_intention(streams, "pause" if pause else "stop")
             self._stop_selected(streams, pause=pause)
 
-    def _stop_selected(self, streams: list[StreamSettings], *, pause: bool) -> None:
+    def _stop_selected(self, streams: list[OutputSettings], *, pause: bool) -> None:
         for stream in streams:
             with self._connection(stream) as client:
                 if pause:
@@ -576,58 +472,48 @@ class MPDBackend:
                     client.stop()
                 expected = "pause" if pause else "stop"
                 if client.status().get("state") != expected:
-                    raise MPDOperationError(f"{stream.name}: playback did not enter {expected}")
+                    raise MPDOperationError(f"{stream.id}: playback did not enter {expected}")
 
-    def check_route(self, name: str) -> StreamRoute:
-        stream = self._select(name)[0]
+    def check_route(self, identity: str) -> StreamRoute:
+        stream = self._select(identity)[0]
         try:
             return inspect_route(stream.sink)
         except (OSError, RuntimeError) as error:
-            raise BackendError(f"{name}: route inspection failed: {error}") from error
+            raise BackendError(f"{identity}: route inspection failed: {error}") from error
 
-    def recover_route(self, name: str | None = None) -> tuple[StreamRoute, ...]:
+    def recover_route(self, identity: str | None = None) -> tuple[StreamRoute, ...]:
         with self._mutation():
-            return tuple(recover_route(stream.sink) for stream in self._select(name))
+            return tuple(recover_route(stream.sink) for stream in self._select(identity))
 
-    def set_gain(self, name: str, gain_db: float, *, expected_revision: str | None = None) -> None:
+    def set_gain(self, identity: str, gain_db: float) -> None:
         gain = validate_gain_db(gain_db)
         with self._mutation():
-            config, settings, revision = self.configuration_snapshot()
-            self._check_revision(expected_revision, revision)
-            stream = next((item for item in settings if item.name == name), None)
-            if stream is None:
-                raise ValueError(f"Unknown stream name: {name!r}")
-            self._set_gain(config, stream, gain)
+            self._set_gain(self._select(identity)[0], gain)
 
-    def _set_gain(self, config: dict[str, JSONValue], stream: StreamSettings, gain: float) -> bool:
+    def _set_gain(self, stream: OutputSettings, gain: float) -> bool:
         with self._connection(stream) as client:
             state = client.status().get("state")
             if state not in ("play", "pause", "stop"):
-                raise BackendError(f"{stream.name}: invalid MPD state {state}")
+                raise BackendError(f"{stream.id}: invalid MPD state {state}")
         active = state == "play"
         if active:
             self._prepare_route_and_gain(stream, gain)
-        entries = config["streams"]
-        if isinstance(entries, list):
-            for entry in entries:
-                if isinstance(entry, dict) and entry.get("name") == stream.name:
-                    entry["gain_db"] = gain
         try:
-            self._save(config)
+            self._write_outputs({stream.id: {"gain_db": gain}})
         except (OSError, ValueError) as error:
             if active:
                 try:
                     set_sink_gain(stream.sink, stream.gain_db)
                 except (OSError, RuntimeError) as rollback_error:
                     raise GainPersistenceError(
-                        f"{stream.name}: saving gain failed ({error}); gain rollback also failed ({rollback_error})",
+                        f"{stream.id}: saving gain failed ({error}); gain rollback also failed ({rollback_error})",
                         rollback_failed=True,
                     ) from rollback_error
-            raise GainPersistenceError(f"{stream.name}: cannot persist gain: {error}") from error
+            raise GainPersistenceError(f"{stream.id}: cannot persist gain: {error}") from error
         return active
 
     def control_revision(self) -> str:
-        """Include file identity/time so repeated legacy intention writes invalidate edits."""
+        """Include file identity/time so repeated identical state writes invalidate edits."""
         try:
             with self.state_path.open("rb") as source:
                 raw = source.read()
@@ -637,29 +523,28 @@ class MPDBackend:
         version = f"{stat.st_ino}:{stat.st_mtime_ns}:".encode()
         return hashlib.sha256(version + raw).hexdigest()
 
-    def operation_inventory(self) -> tuple[str, tuple[tuple[str, str, str | None], ...]]:
-        config, _, revision = self.configuration_snapshot()
-        known = identities(config["streams"], required=True)
-        intentions = self._intentions()
+    def operation_inventory(self) -> tuple[str, tuple[tuple[str, str, str, bool], ...]]:
+        """Per output: ID, control revision, desired state and whether a station is selected."""
+        _, outputs, revision = self.configuration_snapshot()
         control = self.control_revision()
-        return revision, tuple((identity, control, intentions.get(name)) for name, (identity, _) in known.items())
+        return revision, tuple(
+            (output.id, control, output.intention, output.station is not None) for output in outputs
+        )
 
     def operation_observation(self, identity: str) -> dict[str, object]:
         """Fresh recovery evidence, not proof that an interrupted command completed."""
         with self._mutation():
-            config, settings, revision = self.configuration_snapshot()
-            known = identities(config["streams"], required=True)
-            name = next((name for name, (key, _) in known.items() if key == identity), None)
-            if name is None:
+            _, outputs, revision = self.configuration_snapshot()
+            stream = next((item for item in outputs if item.id == identity), None)
+            if stream is None:
                 raise KeyError(identity)
-            stream = next(item for item in settings if item.name == name)
             with self.observation_connection(stream) as client:
                 state = client.status().get("state")
                 if state not in ("play", "pause", "stop"):
                     raise MPDOperationError("Invalid MPD state during recovery")
             return {
                 "config_revision": revision, "control_revision": self.control_revision(),
-                "desired_state": self._intentions().get(name), "observed_state": state,
+                "desired_state": stream.intention, "observed_state": state,
                 "configured_gain_db": stream.gain_db,
             }
 
@@ -667,50 +552,52 @@ class MPDBackend:
         # Submission is read-only; execution revalidates under the mutation lock.
         self._operation_target(identity, config_revision, control_revision)
 
+    def _check_revisions(self, config_revision: str, control_revision: str) -> None:
+        self._check_revision(config_revision, self._configuration()[1])
+        self._check_revision(control_revision, self.control_revision())
+
     def _operation_target(
         self, identity: str, config_revision: str, control_revision: str,
-    ) -> tuple[dict[str, JSONValue], StreamSettings]:
-        config, settings, actual = self.configuration_snapshot()
-        self._check_revision(config_revision, actual)
-        self._check_revision(control_revision, self.control_revision())
-        known = identities(config["streams"], required=True)
-        name = next((name for name, (key, _) in known.items() if key == identity), None)
-        if name is None:
+    ) -> OutputSettings:
+        self._check_revisions(config_revision, control_revision)
+        stream = next((item for item in self.list_outputs() if item.id == identity), None)
+        if stream is None:
             raise KeyError(identity)
-        return config, next(stream for stream in settings if stream.name == name)
+        return stream
 
     def manual_operation(
         self, identity: str, action: str, gain_db: float | None, *,
         expected_config_revision: str, expected_control_revision: str,
         progress: Callable[[str], None], station_id: str | None = None,
-        station_name: str | None = None,
+        station_name: str | None = None, favorite_key: str | None = None,
     ) -> None:
-        if action not in ("play", "pause", "stop", "set_gain", "set_tunein_station"):
+        if action not in OUTPUT_ACTIONS:
             raise ValueError("Unsupported manual action")
         gain = validate_gain_db(gain_db) if action == "set_gain" else None
-        selected_station_id = TuneInCatalog.validate_station_id(station_id) if action == "set_tunein_station" else None
-        selected_station_name = station_name if action == "set_tunein_station" else None
-        if selected_station_id is not None and (
-            not isinstance(selected_station_name, str)
-            or not selected_station_name
-            or len(selected_station_name) > 120
-            or not selected_station_name.isprintable()
-        ):
-            raise ValueError("Invalid TuneIn station name")
+        station = Station.tunein(station_id, station_name) if action == "set_tunein_station" else None
+        if action == "select_favorite" and not isinstance(favorite_key, str):
+            raise ValueError("A favorite key is required")
         with self._mutation():
-            config, stream = self._operation_target(
+            stream = self._operation_target(
                 identity, expected_config_revision, expected_control_revision,
             )
+            if action == "select_favorite" and favorite_key is not None:
+                try:
+                    station = self._read()[1].favorite(favorite_key)
+                except KeyError:
+                    raise FavoriteNotFound("Favorite is not in the list") from None
             if gain is not None:
                 progress("gain_applying")
-                active = self._set_gain(config, stream, gain)
+                active = self._set_gain(stream, gain)
                 progress("gain_saved")
                 progress("gain_live" if active else "gain_deferred")
-            elif selected_station_id is not None and selected_station_name is not None:
-                self._set_tunein_station(
-                    config, stream, selected_station_id, selected_station_name, progress,
-                )
+            elif station is not None:
+                self._set_station(stream, station, progress)
             else:
+                if action == "play" and stream.station is None:
+                    raise NoStationError(f"{identity}: no station selected")
+                if action == "pause" and stream.station is None:
+                    action = "stop"
                 progress("intention_saving")
                 self._record_intention([stream], action)
                 progress("intention_persisted")
@@ -719,62 +606,59 @@ class MPDBackend:
                 else:
                     self._stop_selected([stream], pause=action == "pause")
 
-    def _save(self, config: dict[str, JSONValue]) -> None:
-        write_json(self.config_path, config)
+    def favorites(self) -> tuple[tuple[Station, ...], str, str]:
+        """Favorites with the revisions a favorites operation must name."""
+        configuration, revision = self._configuration()
+        state = read_state(self.state_path, configuration)[0]
+        return state.favorites, revision, self.control_revision()
+
+    def validate_favorites_operation(self, config_revision: str, control_revision: str) -> None:
+        self._check_revisions(config_revision, control_revision)
+
+    def favorites_operation(
+        self, action: str, *, expected_config_revision: str, expected_control_revision: str,
+        key: str | None = None, index: int | None = None,
+        station_id: str | None = None, station_name: str | None = None,
+    ) -> None:
+        if action not in FAVORITE_ACTIONS:
+            raise ValueError("Unsupported favorites action")
+        with self._mutation():
+            self._check_revisions(expected_config_revision, expected_control_revision)
+            _, state = self._read()
+            try:
+                if action == "add_favorite":
+                    updated = state.add_favorite(Station.tunein(station_id, station_name))
+                elif action == "remove_favorite" and key is not None:
+                    updated = state.remove_favorite(key)
+                elif action == "move_favorite" and key is not None and index is not None:
+                    updated = state.move_favorite(key, index)
+                else:
+                    raise ValueError("Favorite operation fields are missing")
+            except FavoritesFull as error:
+                raise FavoritesFullError(str(error)) from None
+            except KeyError:
+                raise FavoriteNotFound("Favorite is not in the list") from None
+            if updated is not state:
+                write_state(self.state_path, updated)
 
     @staticmethod
     def _check_revision(expected: str | None, actual: str) -> None:
         if expected is not None and expected != actual:
             raise RevisionConflict("Configuration revision conflict; read the current configuration and retry")
 
-    def set_label(self, name: str, label: str, *, expected_revision: str) -> None:
-        label = output_label(label)
-        with self._mutation():
-            config, _, revision = self.configuration_snapshot()
-            self._check_revision(expected_revision, revision)
-            known = identities(config["streams"], required=True)
-            if name not in known:
-                raise ValueError(f"Unknown stream name: {name!r}")
-            entries = config["streams"]
-            if isinstance(entries, list):
-                for entry in entries:
-                    if isinstance(entry, dict) and entry.get("name") == name:
-                        entry["label"] = label
-            self._save(config)
-
-    def _intentions(self) -> dict[str, str]:
-        if not self.state_path.exists():
-            return {}
-        value: JSONValue = json.loads(self.state_path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError("Invalid persisted playback intentions")
-        intentions: dict[str, str] = {}
-        for name, state in value.items():
-            if state not in ("play", "pause", "stop"):
-                raise ValueError(f"Invalid playback intention for {name}")
-            intentions[name] = state
-        return intentions
-
-    def _record_intention(self, streams: list[StreamSettings], state: str) -> None:
-        intentions = self._intentions()
-        intentions.update({stream.name: state for stream in streams})
-        write_json(self.state_path, intentions)
+    def _record_intention(self, streams: list[OutputSettings], state: str) -> None:
+        self._write_outputs({stream.id: {"intention": state} for stream in streams})
 
     def initialize_intentions(self) -> None:
-        """Default only previously unknown streams to playing; retain user choices."""
+        """Persist defaults for outputs without runtime state; retain user choices."""
         with self._mutation():
-            intentions = self._intentions()
-            for stream in self.list_streams():
-                intentions.setdefault(stream.name, "play")
-            write_json(self.state_path, intentions)
+            write_state(self.state_path, self._read()[1])
 
-    def reconcile(self, name: str) -> None:
+    def reconcile(self, identity: str) -> None:
         """Restore a saved intention without overwriting it with observed state."""
         with self._mutation():
-            stream = self._select(name)[0]
-            intended = self._intentions().get(name)
-            if intended is None:
-                raise BackendError(f"No saved intention for {name}; initialize intentions first")
+            stream = self._select(identity)[0]
+            intended = stream.intention
             if intended == "play":
                 wait_for_audio(self.config_path, timeout=5)
                 self._start_stream(stream)
@@ -788,10 +672,10 @@ class MPDBackend:
                     # A stopped/empty instance stays silent for a paused intention.
                     final = client.status().get("state")
                     if final not in (("stop",) if intended == "stop" else ("stop", "pause")):
-                        raise BackendError(f"{stream.name}: failed to restore {intended} intention")
+                        raise BackendError(f"{stream.id}: failed to restore {intended} intention")
 
-    def apply_gain(self, name: str | None = None) -> None:
+    def apply_gain(self, identity: str | None = None) -> None:
         with self._mutation():
-            for stream in self._select(name):
+            for stream in self._select(identity):
                 recover_route(stream.sink)
                 set_sink_gain(stream.sink, stream.gain_db)

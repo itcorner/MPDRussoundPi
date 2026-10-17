@@ -60,9 +60,25 @@ This review covers the Python production modules in `web/` and `tool/`.
   descriptor failures. USB bandwidth limits remain unresolved; see the
   [acceptance qualifications](./usb-audio-recovery-fix.md#final-checkpoint-after-guided-tests).
 
+## Configuration split (config.json / playback.json)
+
+[Config tests](../tests/test_outputconfig.py) cover the `outputs`/`stations`
+schema, rejection of the old `streams` format, unknown fields, duplicate
+IDs/ports/sinks, unknown `default_station` keys, URL and TuneIn station
+validation and the 20-station limit. [State tests](../tests/test_playbackstate.py)
+cover defaults (optional `default_station`/`default_gain_db`), stationless
+outputs, favorites seeding, add/remove/move, duplicate no-ops, the cap and
+atomic writes. Backend, agent, operations, status, CLI, supervisor, setup,
+audit and loudness tests verify that `config.json` stays byte-identical, that
+outputs without a station cannot play, URL/TuneIn favorite selection, favorites
+HTTP endpoints and capability opt-out, URL privacy in favorites responses and
+probe preservation across runtime station/gain changes.
+[playbackfixtures.py](../tests/playbackfixtures.py) provides the small shared
+configuration.
+
 ## S04 offline preparation (2026-10-16)
 
-[Migration/revision tests](../tests/test_playbackmigration.py) cover exact
+Migration/revision tests (removed with the tool by the [configuration split](./config-split-plan.md)) covered exact
 original-byte rollback material, preservation of all nonidentity fields,
 private bundle permissions, unchanged input files, exclusive destination
 creation and failed-write cleanup. They reject duplicate/partial mappings,
@@ -159,27 +175,27 @@ control-state replacement or production rollback was performed for S04.
 ## Manual MPD Stream Control
 
 A reusable [Python MPD backend API](./mpd-backend-api.md) also provides
-playback/status/route control and persistent per-stream gain changes without
+playback/status/route control and persistent per-output gain changes without
 an HTTP server. [Backend tests](../tests/test_mpdbackend.py) cover queue
 idempotence, protocol errors, locking, gain persistence and rollback.
 
 From `mpdrussoundpi/russound/`, with MPD services already running:
 
 ```sh
-python mpdctrl.py --start --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --stop --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --pause --stream "Stereo Front" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --status --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --start --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --status --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --stop ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --status ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --apply-gain ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --check-route ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --recover-route --stream "Stereo Front" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --recover-route --output stereo_front ~/.config/mpdrussoundpi/config.json
 ```
 
-Names are exact, case-sensitive configured stream names. Omitting `--stream`
-selects all streams. Exactly one action is required; invalid/ambiguous names
+IDs are exact configured output IDs. Omitting `--output`
+selects all outputs (`--start` skips outputs without a station). Exactly one action is required; invalid/ambiguous names
 fail before any MPD action. Start/stop hold `mpd_control.lock` in the private
 user runtime directory; status does not require a lock.
 
@@ -216,7 +232,7 @@ skipped. Start them separately if desired.
 
 `--recover-route` uses `mpd_control.lock` and moves only incorrectly routed
 MPD clients to their configured virtual sinks. Both commands accept
-`--stream NAME`; omit it for all streams. Recovery does not start/stop MPD,
+`--output ID`; omit it for all outputs. Recovery does not start/stop MPD,
 change queues, alter gains, restart services or modify audio configuration.
 Already-correct routes are left alone. A failed recovery exits 1; previously
 recovered streams remain corrected.
@@ -250,9 +266,10 @@ moves, missing/ambiguous clients, command errors and JSON validation.
 Controller tests cover selected/all route actions, read-only failures,
 mutation locking, route-before-gain ordering and failure cleanup.
 
-## Per-stream loudness balancing
+## Per-output loudness balancing
 
-Each stream in `config.json` has an optional `gain_db` number (default `0.0`).
+Each output has a runtime gain in `playback.json`, seeded from the optional
+`default_gain_db` in `config.json` (default `0.0`).
 Only finite values <= 0 are supported: `-6.0` attenuates by 6 dB and `0.0`
 leaves unity gain. Gains apply equally to both channels of that stream's
 virtual PulseAudio/PipeWire sink; the six-channel USB master and channel maps
@@ -268,7 +285,7 @@ inactive virtual sinks on the tested Pi ignored volume changes until a client
 was active. The helper retries/read-checks for five seconds and reports failure
 instead of claiming an ignored setting succeeded.
 `--apply-gain` applies them without changing MPD state or adding queue entries;
-it accepts the same optional `--stream NAME` selector. For non-unity gains,
+it accepts the same optional `--output ID` selector. For non-unity gains,
 playback must already be active. Both actions hold `mpd_control.lock`; a gain
 failure exits nonzero, and start requests stop on the affected stream before
 exiting. A failure partway through multiple streams can leave earlier streams
@@ -312,16 +329,16 @@ overwritten, and unrelated configuration fields are retained.
 
 Review the report, particularly warnings, and compare several representative
 programme windows before adopting the values. Fixed gains do not continuously
-normalize changing programmes or limit future peaks. To try the generated
-configuration without restarting or modifying queues:
+normalize changing programmes or limit future peaks. The generated file only
+updates `default_gain_db`, which seeds outputs without saved runtime state. To
+apply a recommendation to the running output (persisted in `playback.json`):
 
 ```sh
-python mpdctrl.py --apply-gain balanced-config.json
+python mpdctrl.py --set-gain -6.1 --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
 ```
 
-After review, copy the recommended `gain_db` values into the authoritative
-configuration so subsequent starts use them. All shipped values remain `0.0`
-until real extended measurements are evaluated.
+Copy accepted values into `default_gain_db` of the authoritative configuration
+so a reset of `playback.json` starts from them.
 
 [Loudness tests](../tests/test_streamlevels.py) cover FFmpeg summary/duration
 parsing, rejection of silence and failures, concurrent process cleanup,

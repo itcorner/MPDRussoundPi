@@ -78,9 +78,8 @@ was then applied in about 3 seconds and played.
 ### Channel-based output identities (2026-10-17)
 
 Because outputs now switch stations, the station-named outputs were renamed to
-their audio channels with
-[outputrename.py](../mpdrussoundpi/russound/outputrename.py) (copied into the
-agent directory):
+their audio channels with the one-off `outputrename.py` tool (copied into the
+agent directory; removed from the repository by the configuration split):
 
 | Former name / ID | New name and label / ID | MPD unit |
 | --- | --- | --- |

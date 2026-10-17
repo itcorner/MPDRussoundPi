@@ -28,9 +28,12 @@ class PlaybackAuditTests(unittest.TestCase):
         self.config = self.directory / "config.json"
         self.config.write_text((SCRIPTS / "config.json").read_text())
         self.output = self.directory / "audit"
+        state_home = patch.dict(os.environ, {"XDG_STATE_HOME": str(self.directory)})
+        state_home.start()
+        self.addCleanup(state_home.stop)
         self.recorder = audit.Recorder(self.config, self.output, 72)
         self.addCleanup(self.recorder.close)
-        self.stream = self.recorder.backend.list_streams()[0]
+        self.stream = self.recorder.backend.list_outputs()[0]
 
     def events(self):
         self.recorder.handler.flush()
@@ -75,11 +78,11 @@ class PlaybackAuditTests(unittest.TestCase):
         for intention in ("pause", "stop"):
             with patch.object(audit, "playback", return_value=self.state()):
                 self.recorder.check_playback(self.stream, intention)
-            self.assertIn(f"state:{self.stream.name}", self.recorder.problems)
+            self.assertIn(f"state:{self.stream.id}", self.recorder.problems)
         with patch.object(audit, "playback", return_value=self.state(error="output failed", current_url="wrong", queue_entries="2")):
             self.recorder.check_playback(self.stream, "play")
         for kind in ("state", "url", "queue"):
-            self.assertIn(f"{kind}:{self.stream.name}", self.recorder.problems)
+            self.assertIn(f"{kind}:{self.stream.id}", self.recorder.problems)
 
     def test_disconnect_or_measurement_error_does_not_stop_other_observations(self):
         self.recorder.observe("one", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
@@ -94,15 +97,15 @@ class PlaybackAuditTests(unittest.TestCase):
         with patch.object(audit, "inspect_route", return_value=route):
             with patch.object(audit, "command", return_value="front-left: 65536 / 100%, front-right: 65536 / 100%"):
                 self.recorder.check_audio(self.stream, "play")
-        self.assertIn(f"route:{self.stream.name}", self.recorder.problems)
-        self.assertIn(f"gain:{self.stream.name}", self.recorder.problems)
+        self.assertIn(f"route:{self.stream.id}", self.recorder.problems)
+        self.assertIn(f"gain:{self.stream.id}", self.recorder.problems)
 
     def test_inactive_gain_is_recorded_but_not_required_to_match(self):
         with patch.object(audit, "inspect_route") as route:
             with patch.object(audit, "command", return_value="front-left: 65536 / 100%, front-right: 65536 / 100%"):
                 self.recorder.check_audio(self.stream, "stop")
         route.assert_not_called()
-        self.assertNotIn(f"gain:{self.stream.name}", self.recorder.problems)
+        self.assertNotIn(f"gain:{self.stream.id}", self.recorder.problems)
 
     def test_signal_silence_serializes_without_nonfinite_json(self):
         with patch.object(audit, "signal_levels", return_value=[float("-inf"), float("-inf")]):
@@ -147,7 +150,7 @@ class PlaybackAuditTests(unittest.TestCase):
         self.assertIn("journal_overflow:user", self.recorder.problems)
 
     def test_once_checks_all_streams_and_never_calls_recovery(self):
-        with patch.object(self.recorder, "intentions", return_value={s.name: "play" for s in self.recorder.backend.list_streams()}):
+        with patch.object(self.recorder, "intentions", return_value={s.id: "play" for s in self.recorder.backend.list_outputs()}):
             with patch.object(self.recorder, "check_playback", return_value=None) as playback:
                 with patch.object(self.recorder, "check_audio", return_value=None) as audio:
                     with patch.object(self.recorder, "check_signal", return_value=None) as signal:

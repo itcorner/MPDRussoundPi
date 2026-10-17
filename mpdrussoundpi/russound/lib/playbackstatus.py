@@ -12,10 +12,10 @@ from typing import Generic, Literal, Protocol, TypeVar, cast
 
 from lib.audioready import audio_ready_config
 from lib.audioidentity import HardwareUnavailable
-from lib.mpdbackend import BackendError, MPDBackend, MPDConnection, StreamSettings
+from lib.mpdbackend import BackendError, JSONValue, MPDBackend, MPDConnection, OutputSettings
 from lib.streamgain import read_sink_gain
 from lib.streamroute import inspect_route
-from lib.playbackidentity import identities
+from lib.stations import Station
 from lib.sourceurl import source_display
 
 
@@ -230,12 +230,9 @@ class Probe(Generic[T]):
 class OutputObservation:
     id: str
     label: str
-    selection_label: str
     configured_db: float
+    station: Station | None = None
     selected_source: str | None = None
-    source_provider: str | None = None
-    source_station_id: str | None = None
-    source_station_name: str | None = None
     playback: Probe[Playback] = Probe()
     readiness: Probe[Readiness] = Probe()
     route: Probe[Route] = Probe()
@@ -248,11 +245,15 @@ class OutputObservation:
             or self.playback.current.value.state == "play"
         ):
             route = Probe[Route]()
+        station = self.station
         return {
             "id": self.id, "label": self.label, "selection": {
-                "label": self.selection_label, "source": self.selected_source,
-                "provider": self.source_provider, "station_id": self.source_station_id,
-                "station_name": self.source_station_name,
+                "key": station.key if station else None,
+                "label": station.name if station else None,
+                "source": self.selected_source,
+                "provider": station.type if station else None,
+                "station_id": station.station_id if station else None,
+                "station_name": station.name if station else None,
             },
             "gain": {"configured_db": self.configured_db},
             "playback": self.playback.to_dict(now, 10),
@@ -267,26 +268,18 @@ class PlaybackCollector:
     """Read a captured inventory; independently publish bounded output probes."""
 
     def __init__(self, backend: MPDBackend) -> None:
-        config, streams, self.config_revision = backend.configuration_snapshot()
-        entries = config["streams"]
-        if not isinstance(entries, list):
-            raise ValueError("Invalid observation inventory")
-        known = identities(entries, required=True)
-        self._streams: dict[str, StreamSettings] = {}
+        configuration, streams, self.config_revision = backend.configuration_snapshot()
+        self._streams: dict[str, OutputSettings] = {}
         self._outputs: dict[str, OutputObservation] = {}
-        for entry, stream in zip(entries, streams, strict=True):
-            if not isinstance(entry, dict):
-                raise ValueError("Invalid observation entry")
-            identity, label = known[stream.name]
-            normalized_label, selection_label = _text(label), _text(stream.name)
-            if normalized_label is None or selection_label is None:
+        for stream in streams:
+            label = _text(stream.label)
+            if label is None:
                 raise ValueError("Observation inventory requires printable labels")
-            self._streams[identity] = stream
-            self._outputs[identity] = OutputObservation(
-                identity, normalized_label, selection_label, stream.gain_db,
-                source_display(stream.url), stream.source_provider,
-                stream.source_station_id, stream.source_station_name,
+            self._streams[stream.id] = stream
+            self._outputs[stream.id] = OutputObservation(
+                stream.id, label, stream.gain_db, stream.station, source_display(stream.url),
             )
+        config = cast(JSONValue, configuration.raw)
         self._config = config
         self._backend = backend
         self._lock = threading.Lock()
@@ -294,6 +287,18 @@ class PlaybackCollector:
         self._audio_pool = ThreadPoolExecutor(max_workers=len(streams), thread_name_prefix="audio-read")
         self._jobs: dict[tuple[str, str], Future[None]] = {}
         self._closed = False
+
+    def apply_state(self, streams: tuple[OutputSettings, ...]) -> None:
+        """Adopt runtime station/gain changes without discarding observations."""
+        with self._lock:
+            for stream in streams:
+                if stream.id not in self._streams:
+                    continue
+                self._streams[stream.id] = stream
+                self._outputs[stream.id] = replace(
+                    self._outputs[stream.id], configured_db=stream.gain_db,
+                    station=stream.station, selected_source=source_display(stream.url),
+                )
 
     def snapshot(self) -> tuple[OutputObservation, ...]:
         with self._lock:

@@ -34,28 +34,25 @@ must be capability-advertised and must not change these read semantics.
 
 ## 2. Identity and persisted configuration
 
-Accepted D08: add an immutable `id` and separate editable `label` to each Pi
-operational `streams` entry during S04 migration. Preserve existing `name`,
-port, sink and derived unit identity. `name` remains the backend/CLI/
-intention key and derives the MPD unit name.
-
-Outputs are named after their audio channel, not a station, because the
-selected station can change (see
-[channel-based identities](mpd-backend-api.md#channel-based-output-identities)).
-Example stream entry, matching the
-[sample config](../mpdrussoundpi/russound/config.json):
+Accepted D08, simplified by the [configuration split](./config-split-plan.md):
+each `config.json` output has an `id` (the only identity; it also derives the
+MPD unit name) and a display `label`. Outputs are named after their audio
+channel, not a station, because the selected station can change. Example
+output entry, matching the [sample config](../mpdrussoundpi/russound/config.json):
 
 ```json
 {
   "id": "stereo_front",
   "label": "Stereo Front",
-  "name": "Stereo Front",
-  "stream": "https://radio.example/live.mp3",
   "port": 6601,
-  "gain_db": -7.1,
-  "audio_output": {"type": "pulse", "sink": "stereo_front"}
+  "sink": "stereo_front",
+  "default_station": "radio886",
+  "default_gain_db": -7.1
 }
 ```
+
+The selected station and gain are runtime state in `playback.json`; see the
+[deployment guide](./mpd-headless-deployment.md#runtime-state-playbackjson-agent-owned).
 
 `agent_id` is explicitly configured persistent identity, not hostname discovery.
 Agent and output IDs use ASCII `[a-z][a-z0-9_-]{0,63}` and are case-sensitive.
@@ -97,8 +94,9 @@ Read-only local tests can use migrated fixture configs without editing the Pi.
 | `config_revision` | Opaque persisted-config token; initially SHA-256 of exact config bytes |
 | Web `epoch`/`revision` | Separate web playback-cache publication identity, not hardware SSE revision |
 
-Treat config tokens as equality-only, not numeric ordering. Gain/selection/label/
-ID edits change the token, including cooperating CLI edits. Read config bytes
+Treat config tokens as equality-only, not numeric ordering. Only admin edits
+of `config.json` (labels, outputs, seed stations) change the token; station,
+gain and intention changes are runtime state and do not. Read config bytes
 once for validation/settings/token; never hash one version and parse another.
 Observation revisions may advance without config edits; stale-cache responses
 may retain their last revision while their age grows. Future control revisions
@@ -160,16 +158,15 @@ after valid inventory establishes the ID is absent.
 | Field | Producer / interpretation |
 | --- | --- |
 | `id`, `label` | Pi operational config ID/label |
-| `selection.label` | Configured source label when available; legacy `name` as initial clearly labeled station fallback |
-| `gain.configured_db` | Config `gain_db`; stream-volume calibration, not measured gain |
+| `selection` | Selected station: `key`, `label`/`station_name`, `provider` (`url`/`tunein`), `station_id` and redacted `source`; all `null` when the output has no station |
+| `gain.configured_db` | Saved runtime gain (`playback.json`, seeded from `default_gain_db`); calibration, not measured gain |
 | `playback` | MPD observer probe |
 | `audio.readiness` | Read-only `audio_ready_config(..., enforce_profile=False)` on the captured config |
 | `audio.route` | Read-only `inspect_route` for freshly observed active playback; expected sink comes from config |
 | `audio.gain` | Read-only two-channel `pactl` raw mixer units |
 
-Selection kind/provider IDs and desired control state are intentionally absent
-from v1 initial reads: provider provenance and mode/intention schema are not
-implemented yet. Advertise later fields additively. A station label is not
+Desired control state is published separately under `control` when writes are
+enabled (see the [operations API](./mpd-playback-operations-api.md)). A station label is not
 now-playing metadata.
 
 ### Probe object (playback and each audio subprobe)

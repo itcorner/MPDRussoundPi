@@ -26,7 +26,7 @@ import mpd  # pyright: ignore[reportMissingTypeStubs]
 
 from lib.atomicjson import write_json
 from lib.audioready import audio_ready
-from lib.mpdbackend import JSONValue, MPDBackend, MPDConnection, StreamSettings
+from lib.mpdbackend import JSONValue, MPDBackend, MPDConnection, OutputSettings
 from lib.mpdinstance import MPD_HOST
 from lib.setuplock import setup_lock
 from lib.streamroute import inspect_route
@@ -51,7 +51,7 @@ def command(argv: list[str], timeout: float = 5) -> str:
     return result.stdout
 
 
-def playback(stream: StreamSettings) -> dict[str, str]:
+def playback(stream: OutputSettings) -> dict[str, str]:
     client = cast(MPDConnection, mpd.MPDClient())
     client.timeout = 3
     try:
@@ -200,19 +200,11 @@ class Recorder:
         return result
 
     def intentions(self) -> dict[str, str]:
-        value: JSONValue = json.loads(self.backend.state_path.read_text())
-        if not isinstance(value, dict):
-            raise ValueError("Playback intentions must be an object")
-        result: dict[str, str] = {}
-        for name, intended in value.items():
-            if intended not in ("play", "pause", "stop"):
-                raise ValueError(f"Invalid intention for {name}")
-            result[name] = intended
-        return result
+        return {output.id: output.intention for output in self.backend.list_outputs()}
 
-    def check_playback(self, stream: StreamSettings, intended: str | None) -> None:
+    def check_playback(self, stream: OutputSettings, intended: str | None) -> None:
         state = playback(stream)
-        self.record("playback", stream=stream.name, intended=intended, observed=state)
+        self.record("playback", stream=stream.id, intended=intended, observed=state)
         observed = state.get("state")
         if observed not in ("play", "pause", "stop"):
             raise ValueError(f"Invalid observed MPD state: {observed}")
@@ -225,44 +217,44 @@ class Recorder:
             problem = "Stopped intention not honored"
         elif intended is None:
             problem = "No saved playback intention"
-        self.condition(f"state:{stream.name}", problem)
-        self.condition(f"url:{stream.name}",
+        self.condition(f"state:{stream.id}", problem)
+        self.condition(f"url:{stream.id}",
                        "Playing an unconfigured URL" if observed == "play" and state["current_url"] != stream.url else None)
-        self.condition(f"queue:{stream.name}",
+        self.condition(f"queue:{stream.id}",
                        "Queue contains more than one entry" if int(state["queue_entries"]) > 1 else None)
         now = time.monotonic()
         elapsed = float(state.get("elapsed", "0"))
-        previous = self.previous.get(stream.name)
+        previous = self.previous.get(stream.id)
         if previous is not None and observed == "play" and elapsed < previous[1]:
-            self.record("elapsed_reset", stream=stream.name, previous_elapsed=previous[1], elapsed=elapsed)
+            self.record("elapsed_reset", stream=stream.id, previous_elapsed=previous[1], elapsed=elapsed)
         stalled = (previous is not None and intended == "play" and observed == "play"
                    and previous[0] == "play" and previous[3] == state.get("songid", "")
                    and now - previous[2] >= 5 and elapsed == previous[1])
-        self.condition(f"progress:{stream.name}", "Elapsed time did not advance" if stalled else None)
-        self.previous[stream.name] = (observed, elapsed, now, state.get("songid", ""))
+        self.condition(f"progress:{stream.id}", "Elapsed time did not advance" if stalled else None)
+        self.previous[stream.id] = (observed, elapsed, now, state.get("songid", ""))
 
-    def check_audio(self, stream: StreamSettings, intended: str | None) -> None:
-        route = self.observe(f"route:{stream.name}", lambda: asdict(inspect_route(stream.sink))) if intended == "play" else None
+    def check_audio(self, stream: OutputSettings, intended: str | None) -> None:
+        route = self.observe(f"route:{stream.id}", lambda: asdict(inspect_route(stream.sink))) if intended == "play" else None
         if isinstance(route, dict):
-            self.condition(f"route:{stream.name}",
+            self.condition(f"route:{stream.id}",
                            "Incorrect actual sink" if route["actual_sink"] != route["expected_sink"] else None)
         raw = command(["pactl", "get-sink-volume", f"sink.{stream.sink}"], timeout=2)
         volumes = [int(value) for value in re.findall(r":\s*(\d+)\s*/", raw)]
         if len(volumes) != 2:
             raise ValueError(f"Expected two mixer channels: {raw}")
         expected = round(65536 * 10 ** (stream.gain_db / 60))
-        self.record("gain", stream=stream.name, units=volumes, configured_db=stream.gain_db,
+        self.record("gain", stream=stream.id, units=volumes, configured_db=stream.gain_db,
                     active_expected=intended == "play")
-        self.condition(f"gain:{stream.name}",
+        self.condition(f"gain:{stream.id}",
                        "Active sink gain differs from configured gain"
                        if intended == "play" and any(value != expected for value in volumes) else None)
 
-    def check_signal(self, stream: StreamSettings, intended: str | None) -> None:
+    def check_signal(self, stream: OutputSettings, intended: str | None) -> None:
         levels = signal_levels(stream.sink)
-        self.record("signal", stream=stream.name, intended=intended,
+        self.record("signal", stream=stream.id, intended=intended,
                     rms_db=[level if math.isfinite(level) else "-inf" for level in levels])
         quiet = any(level < -80 for level in levels)
-        self.condition(f"signal:{stream.name}",
+        self.condition(f"signal:{stream.id}",
                        "Suspected silence; programme silence is possible" if intended == "play" and quiet else
                        "Signal present despite silent intention" if intended in ("pause", "stop") and any(level > -80 for level in levels)
                        else None)
@@ -318,7 +310,7 @@ class Recorder:
         intervals = {"playback": 10.0, "audio": 30.0, "signal": 300.0}
         try:
             while not self.stop.is_set() and time.time() < self.deadline:
-                streams = self.backend.list_streams()
+                streams = self.backend.list_outputs()
                 intentions = self.observe("intentions", self.intentions)
                 for kind, interval in intervals.items():
                     now = time.monotonic()
@@ -342,18 +334,18 @@ class Recorder:
                     for stream in streams:
                         if self.stop.is_set():
                             break
-                        intended = intentions.get(stream.name) if intentions is not None else None
+                        intended = intentions.get(stream.id) if intentions is not None else None
                         if kind == "playback":
-                            self.observe(f"playback:{stream.name}", lambda: self.check_playback(stream, intended))
+                            self.observe(f"playback:{stream.id}", lambda: self.check_playback(stream, intended))
                         elif kind == "audio":
-                            self.observe(f"audio:{stream.name}", lambda: self.check_audio(stream, intended))
-                            unit = "mpd_" + stream.name.replace(" ", "_").lower() + ".service"
-                            self.observe(f"service:{stream.name}", lambda: command([
+                            self.observe(f"audio:{stream.id}", lambda: self.check_audio(stream, intended))
+                            unit = f"mpd_{stream.id}.service"
+                            self.observe(f"service:{stream.id}", lambda: command([
                                 "systemctl", "--user", "show", unit, "-p", "MainPID", "-p", "ActiveState",
                                 "-p", "NRestarts", "-p", "MemoryCurrent", "-p", "CPUUsageNSec",
                             ]))
                         else:
-                            self.observe(f"signal:{stream.name}", lambda: self.check_signal(stream, intended))
+                            self.observe(f"signal:{stream.id}", lambda: self.check_signal(stream, intended))
                 self.summary("sampling")
                 if once:
                     break

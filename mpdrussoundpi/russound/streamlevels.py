@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,11 +17,17 @@ import time
 from typing import TextIO, TypeAlias, Union
 from urllib.parse import urlparse
 
+from lib.outputconfig import parse_configuration
+from lib.playbackstate import read_state
 from lib.streamgain import validate_gain_db
 from lib.tunein import TuneInCatalog, TuneInError
 
 
 JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]
+
+
+def state_path() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "mpdrussoundpi/playback.json"
 
 
 @dataclass(frozen=True)
@@ -119,10 +126,10 @@ def recommend_gains(measurements: list[Measurement], peak_ceiling: float) -> tup
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("json", type=Path, help="Stream configuration")
+    parser.add_argument("json", type=Path, help="Output configuration (config.json)")
     parser.add_argument("--duration", type=float, default=900, help="Seconds of decoded audio per feed (default: 900)")
     parser.add_argument("--peak-ceiling", type=float, default=-1, help="Maximum predicted true peak in dBTP (default: -1)")
-    parser.add_argument("--output-config", type=Path, help="Write a NEW configuration with recommended gains")
+    parser.add_argument("--output-config", type=Path, help="Write a NEW configuration with recommended default_gain_db values")
     args = parser.parse_args(argv)
     if not math.isfinite(args.duration) or args.duration < 10:
         parser.error("duration must be finite and >= 10 seconds")
@@ -134,36 +141,25 @@ def main(argv: list[str] | None = None) -> None:
     if not ffmpeg:
         parser.exit(1, "FFmpeg is required with the ebur128 filter (on Debian: sudo apt install ffmpeg).\n")
     try:
-        with args.json.open(encoding="utf-8") as source:
-            config: JSONValue = json.load(source)
-        if not isinstance(config, dict):
-            raise ValueError("Configuration must contain a nonempty streams list")
-        streams = config.get("streams")
-        if not isinstance(streams, list) or not streams:
-            raise ValueError("Configuration must contain a nonempty streams list")
+        configuration = parse_configuration(args.json.read_bytes())
+        state = read_state(state_path(), configuration)[0]
         sources: list[dict[str, str]] = []
-        configured_streams: list[dict[str, JSONValue]] = []
-        names: set[str] = set()
-        for entry in streams:
-            if not isinstance(entry, dict):
-                raise ValueError("Each stream must be an object")
-            name = entry.get("name")
-            if not isinstance(name, str) or not name:
-                raise ValueError("Each stream requires a nonempty name")
-            if name in names:
-                raise ValueError(f"Duplicate stream name: {name!r}")
-            names.add(name)
-            url = entry.get("stream")
-            if url is None and entry.get("source_provider") == "tunein":
+        for output in configuration.outputs:
+            # Measure what the output plays now, falling back to its configured default.
+            station = state.outputs[output.id].station or output.default_station
+            if station is None:
+                continue
+            url = station.url
+            if station.type == "tunein":
                 try:
-                    url = TuneInCatalog().resolve(entry.get("source_station_id"))
+                    url = TuneInCatalog().resolve(station.station_id)
                 except TuneInError as error:
-                    raise ValueError(f"{name}: {error}") from None
+                    raise ValueError(f"{output.id}: {error}") from None
             if not isinstance(url, str) or urlparse(url).scheme not in ("http", "https") or not urlparse(url).netloc:
-                raise ValueError(f"{name}: stream must be an HTTP(S) URL")
-            validate_gain_db(entry.get("gain_db", 0))
-            sources.append({"name": name, "stream": url})
-            configured_streams.append(entry)
+                raise ValueError(f"{output.id}: station must resolve to an HTTP(S) URL")
+            sources.append({"name": output.id, "stream": url})
+        if not sources:
+            raise ValueError("No output has a current or default station to measure")
         started = datetime.now(timezone.utc).isoformat()
         measurements = measure_streams(sources, args.duration, ffmpeg)
         target, gains = recommend_gains(measurements, args.peak_ceiling)
@@ -183,8 +179,10 @@ def main(argv: list[str] | None = None) -> None:
             ],
         }
         if args.output_config:
-            for entry, source_entry in zip(configured_streams, sources):
-                entry["gain_db"] = gains[source_entry["name"]]
+            config = json.loads(args.json.read_text(encoding="utf-8"))
+            for entry in config["outputs"]:
+                if entry["id"] in gains:
+                    entry["default_gain_db"] = gains[entry["id"]]
             with args.output_config.open("x", encoding="utf-8") as destination:
                 json.dump(config, destination, indent=2, allow_nan=False)
                 destination.write("\n")

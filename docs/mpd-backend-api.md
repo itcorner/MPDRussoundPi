@@ -41,180 +41,40 @@ Read-only collection and audit do not set profiles. Saved intentions and
 daemon is introduced. See the [coordinated recovery design and validation
 gates](./usb-audio-recovery-fix.md) before deploying the opt-in configuration.
 
-## Offline identity and control preparation (S04)
+## Configuration, runtime state and revisions
 
-This preparation is local only. Do not run against the Pi's live files during
-an observation run. Use private local copies; configuration and backup bundles
-can contain stream credentials.
+The backend reads two files (format details in
+[the deployment guide](./mpd-headless-deployment.md#configuration-configjson-admin-owned)):
 
-### Identity and revision contract
+- `config.json` (admin-owned, never written by the backend): `outputmappers`,
+  `outputs` (`id`, `label`, `port`, `sink`, optional `default_station` and
+  `default_gain_db`) and up to 20 seed `stations`. Parsed and validated by
+  [outputconfig.py](../mpdrussoundpi/russound/lib/outputconfig.py); station values by
+  [stations.py](../mpdrussoundpi/russound/lib/stations.py). The old `streams`
+  format is rejected.
+- `playback.json` (backend-owned runtime state): favorites plus, per output ID,
+  station, cached resolved URL, managed song ID, gain and intention. Handled by
+  [playbackstate.py](../mpdrussoundpi/russound/lib/playbackstate.py) and written
+  atomically under `mpd_control.lock`.
 
-- Configurations without any stream `id`/`label` retain legacy behavior.
-  If either field is present, every stream must have a unique ID matching
-  `[a-z][a-z0-9_-]{0,63}` and a nonempty printable label. The backend and
-  collector share validation in
-  [playbackidentity.py](../mpdrussoundpi/russound/lib/playbackidentity.py).
-- Persist the ID once. Changing the display label does not change the ID,
-  legacy `name`, MPD port, sink or derived systemd unit name.
-- `configuration_snapshot()[2]` is SHA-256 of the exact configuration bytes,
-  the same opaque revision published by the read API. Every file edit,
-  including a legacy CLI gain edit or whitespace-only edit, invalidates it.
-- `set_gain(name, gain_db, expected_revision=revision)` checks the revision
-  **under `mpd_control.lock`, before connecting to MPD or changing gain**.
-  Stale requests raise `RevisionConflict`. Omitting the revision preserves the
-  existing Python API behavior; future HTTP mutations must require it.
-- `set_label(name, label, expected_revision=revision)` requires persisted IDs
-  and edits only the label under that same lock, without contacting audio.
-  Neither operation exposes an ID setter. A busy lock is an explicit failure,
-  not permission to write without locking. Re-read before retrying a conflict.
-- The guarantee covers cooperating backend writers, not arbitrary external
-  file edits. Operational config replacement/Ansible/manual installs must not
-  run concurrently with a live writer.
+Revisions:
 
-The CLI exposes these operations (examples only, not deployment instructions):
+- `configuration_snapshot()[2]` (`config_revision`) is the SHA-256 of the exact
+  `config.json` bytes. It changes only on admin edits.
+- `control_revision()` hashes `playback.json` plus its inode and modification
+  time, so every station, gain, intention or favorites write invalidates it.
+- Durable operations carry both revisions and are rechecked **under the lock,
+  before contacting MPD or audio**; stale requests raise `RevisionConflict`.
+  A busy lock is an explicit failure, not permission to write without locking.
+
+Output IDs match `[a-z][a-z0-9_-]{0,63}` and name the MPD units
+(`mpd_<id>.service`). Labels are display-only and edited in `config.json` by
+the admin. The CLI selects outputs by ID:
 
 ```sh
-python mpdctrl.py --config-revision local-config.json
-python mpdctrl.py --set-gain -6.1 --stream "Stereo CenterLFE" \
-  --expected-revision SHA256_FROM_READ local-config.json
-python mpdctrl.py --set-label "Kitchen radio" --stream "Stereo CenterLFE" \
-  --expected-revision SHA256_FROM_READ local-config.json
+python mpdctrl.py --config-revision ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --set-gain -6.1 --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
 ```
-
-Read a new revision after each successful edit. Labels are display-only;
-`--stream` uses the stream `name`, which also names the MPD unit.
-
-### Offline bundle
-
-Provide an explicit identity mapping for **every** existing name. Choose labels
-for the installation; do not infer physical Russound input mappings from sinks:
-
-```json
-{
-  "Radio 88.6": {"id": "stereo_front", "label": "Stereo Front"},
-  "FM4 Radio": {"id": "stereo_centerlfe", "label": "Stereo CenterLFE"},
-  "OE3 Radio": {"id": "stereo_rear", "label": "Stereo Rear"}
-}
-```
-
-The keys are the legacy, station-named stream names of an unmigrated config.
-The shipped sample config already uses channel names, IDs and labels. To also
-rename legacy stream names and MPD units to their channels, see
-[Channel-based output identities](#channel-based-output-identities).
-
-From the script directory, using copied input files:
-
-```sh
-python playbackmigrate.py --config local-config.json \
-  --intentions local-playback.json --identities local-identities.json \
-  --output private-s04-bundle
-```
-
-The output directory must not exist; its parent must exist. The tool creates
-a mode-0700 directory with mode-0600 files, refuses ID reassignment, requires
-exact name coverage and preserves:
-
-| Bundle file | Purpose |
-| --- | --- |
-| `config.original.json` | Exact original config bytes for rollback |
-| `playback.original.json` | Exact original intention bytes for rollback |
-| `config.prepared.json` | Only adds/updates explicit IDs and labels |
-| `playback.legacy.json` | Exact legacy intention bytes; current runtime format |
-| `control-v1.preview.json` | Offline, manual-only future control schema |
-| `manifest.json` | Bundle version, original/prepared revisions, file hashes and original permission modes |
-
-Every generated file is flushed/fsynced before success is printed. A failed
-file write cleans up only files created by that invocation. Originals are
-never written. Unsupported control preview versions, corrupt/unknown states
-and missing intention entries fail explicitly; migration does not invent
-playing defaults. The preview is shaped as:
-
-```json
-{
-  "schema_version": 1,
-  "outputs": {
-    "front": {"mode": "manual", "intention": "play"},
-    "centerlfe": {"mode": "manual", "intention": "pause"},
-    "rear": {"mode": "manual", "intention": "stop"}
-  }
-}
-```
-
-D04 is accepted: future manual play/pause/stop sets mode to manual until
-explicit return to automatic. This preview deliberately permits manual mode
-only. Automatic owner/generation/target fields must be specified with S10;
-do not fabricate them while their policy decisions remain open.
-**Do not install this preview as the current playback intention file.**
-Current runtime readers reject it rather than treating it as missing state.
-
-### Reader/writer inventory and coordinated rollout
-
-| Surface | Current ownership / migration requirement |
-| --- | --- |
-| Backend start/pause/stop | Reads/writes legacy intentions under `mpd_control.lock` |
-| Backend initialize/reconcile | Initializes missing legacy entries/reconciles them; must migrate together with any state schema |
-| CLI | Delegates to backend; gain/label config edits use the same lock |
-| Supervisor | Uses preserved legacy names for service units and delegates intentions to backend |
-| Recorder | Reads name-to-intention JSON directly; must adopt a shared versioned reader before control-v1 activation |
-| Agent/collector | Read-only configuration/metadata; no intention initialization or writes; scheduler replaces collectors when config hash changes |
-| MPD/audio setup | Reads config; derives existing services/sinks from unchanged fields; no unit regeneration needed just for IDs/labels |
-| Setup Ansible | Seeds operational config only if absent; invokes legacy intention initialization; coordinate before changing state schema |
-| Agent Ansible | Copies helpers and explicitly selected config; separate observer copy must be deliberately reconciled with operational IDs |
-| `streamlevels.py` | Writes a new, exclusively created calibration output config, not a locked live edit; installation needs maintenance |
-
-Offline acceptance is preparation, not approval to migrate production. Later:
-
-1. Wait for observation completion and obtain maintenance approval. Verify a
-   fresh bundle against unchanged source revision/state; back up all affected
-   code/config/state and permissions. Do not overwrite endurance artifacts.
-2. Stop all mutation-capable entry points (supervisor, future worker/policy and
-   any CLI sessions); stop the recorder before changing its state schema.
-   Ensure no old writer remains, and hold the existing control lock throughout
-   replacement. The lock alone cannot prevent an old process from overwriting
-   new state after it is released.
-3. For an **identity-only** rollout, install coordinated helpers and prepared
-   config, retaining `playback.legacy.json` as runtime state. Deliberately align
-   the observer config. Ports, unit names, audio fragments and gains do not
-   change; do not rerun audio or MPD setup.
-4. A **control-v1** rollout is not implemented here. Before enabling it, update
-   every state reader/writer above, including the recorder and initializer,
-   validate supported versions, and finalize the automatic control record.
-   Old code must fail closed and must never run alongside new writers.
-5. Verify IDs, byte-preserved intentions, gains, service lifecycles, readiness
-   and collector/API health before resuming approved writers. On failure,
-   keep writers stopped; restore the coordinated original code/config/state
-   from named backups with manifest-recorded original modes. Verify original
-   hashes, then restart the old writers. Never roll back only one side of a
-   code/state-schema transition.
-
-Local fixtures verify field preservation, exact-byte rollback material,
-permissions, explicit schema rejection, stale edits and concurrent lock
-exclusion. No production migration or live rollback is claimed.
-
-### Channel-based output identities
-
-Outputs switch stations, so stream names, IDs and labels name the audio
-channel rather than a station. [outputrename.py](../mpdrussoundpi/russound/outputrename.py)
-derives them from each stream's sink (`stereo_front` becomes name/label
-`Stereo Front` and ID `stereo_front`; MPD unit `mpd_stereo_front.service`) and
-renames the intention keys. Each stream needs its own sink. Ports, sinks, gains
-and selected sources are unchanged.
-
-This is an offline maintenance step: stop the agent, supervisor, meta unit and
-MPD units first, because unit names change.
-
-```sh
-python outputrename.py ~/.config/mpdrussoundpi/config.json --dry-run
-python outputrename.py ~/.config/mpdrussoundpi/config.json \
-  --intentions ~/.local/state/mpdrussoundpi/playback.json \
-  --operations-db ~/.local/state/mpdrussoundpi-agent/operations.sqlite3
-```
-
-`--operations-db` refuses to run while agent operations are queued or running.
-Afterwards remove the old `mpd_*.service`/`mpd_*.conf` files, run
-`mpdsetup.py --install` and start the services again. Stored operation history
-keeps former output IDs. The production run is recorded in
-[playback-agent-deployment.md](playback-agent-deployment.md#channel-based-output-identities-2026-10-17).
 
 ## Read-only detailed observations (S02)
 
@@ -373,39 +233,39 @@ from lib.mpdbackend import BackendError, MPDBackend
 from pathlib import Path
 
 backend = MPDBackend(Path.home() / ".config/mpdrussoundpi/config.json")
-streams = backend.list_streams()
-states = backend.status()                  # All configured instances
-backend.start("Stereo Front")
-backend.pause("Stereo Front")
-backend.start("Stereo Front")                 # Resume configured stream
-backend.set_gain("Stereo Front", -6.0)        # Apply and persist attenuation
-gain = backend.get_gain("Stereo Front")       # Persisted gain, not mixer reading
-route = backend.check_route("Stereo Front")
+outputs = backend.list_outputs()
+states = backend.status()                     # All configured instances
+backend.start("stereo_front")
+backend.pause("stereo_front")
+backend.start("stereo_front")                 # Resume the selected station
+backend.set_gain("stereo_front", -6.0)        # Apply and persist attenuation
+gain = backend.get_gain("stereo_front")       # Persisted gain, not mixer reading
+route = backend.check_route("stereo_front")
 if not route.correct:
-    backend.recover_route("Stereo Front")
-backend.stop("Stereo Front")
+    backend.recover_route("stereo_front")
+backend.stop("stereo_front")
 ```
 
 ## Methods and results
 
 | Method | Behavior |
 |---|---|
-| `list_streams()` | Tuple of immutable `StreamSettings`: name, URL, port, sink name, configured gain in dB. |
-| `status(name=None)` | Tuple of immutable `PlaybackStatus`: name, MPD state (`play`/`pause`/`stop`), persisted `gain_db`, expected sink. Does not claim actual route or measured mixer gain. |
-| `start(name=None)` | Persist playing intention, wait for configured audio readiness, play/resume configured URL, recover/verify routing, apply gain and verify playback. New/resumed playback starts at software mixer volume zero, then returns to 100 after gain verification. |
-| `pause(name=None)` | Explicit pause, not a toggle; verify paused state. A stopped instance cannot be reported as successfully paused. |
-| `stop(name=None)` | Stop playback and verify state without clearing the queue. |
-| `get_gain(name)` | Read persisted configured gain. |
-| `set_gain(name, gain_db, *, expected_revision=None)` | Persist per-stream attenuation; optional stale-write guard under the mutation lock. When playing, recover/verify route and apply/read-verify gain before saving. When stopped or paused, save without starting audio; next `start` applies it. |
-| `set_label(name, label, *, expected_revision)` | Edit only the display label of an output with persisted identity; require a matching config revision and do not change audio. |
-| Durable `set_tunein_station` operation | Resolve a validated TuneIn station ID, set the output's play intention, and replace its one-item managed queue under the shared lock. See [station-selection semantics](./mpd-playback-operations-api.md#tunein-station-selection-request). |
-| `check_route(name)` | Return `StreamRoute` including actual/expected sink, current client ID and `correct`. Missing/ambiguous clients raise an error. |
-| `recover_route(name=None)` | Return tuple of verified `StreamRoute` objects; move only incorrectly routed matching MPD clients. |
-| `initialize_intentions()` | Initialize only unknown streams as playing; preserve previously saved choices. |
-| `reconcile(name)` | Restore saved intention after daemon/audio loss; never infer intention from observed MPD state. |
+| `list_outputs()` | Tuple of immutable `OutputSettings`: ID, label, port, sink, saved gain, selected station (or `None`), cached resolved URL, managed song ID and intention. |
+| `status(id=None)` | Tuple of immutable `PlaybackStatus`: ID, MPD state (`play`/`pause`/`stop`), persisted `gain_db`, expected sink. Does not claim actual route or measured mixer gain. |
+| `start(id=None)` | Persist playing intention, wait for configured audio readiness, play/resume the selected station (resolving TuneIn stations when the cached URL is not playing), recover/verify routing, apply gain and verify playback. New/resumed playback starts at software mixer volume zero, then returns to 100 after gain verification. Raises `NoStationError` for an output without a station; `start()` skips such outputs. |
+| `pause(id=None)` | Explicit pause, not a toggle; verify paused state. A stopped instance cannot be reported as successfully paused. |
+| `stop(id=None)` | Stop playback and verify state without clearing the queue. |
+| `get_gain(id)` | Read persisted gain. |
+| `set_gain(id, gain_db)` | Persist per-output attenuation in `playback.json`. When playing, recover/verify route and apply/read-verify gain before saving. When stopped or paused, save without starting audio; next `start` applies it. |
+| Durable `set_tunein_station` / `select_favorite` operations | Select a TuneIn station or a favorite (URL or TuneIn), save station, resolved URL and play intention in one atomic write, and replace the output's one-item managed queue under the shared lock. See [station-selection semantics](./mpd-playback-operations-api.md#tunein-station-selection-request). |
+| `favorites()` / `favorites_operation(action, ...)` | Read the favorites list with both revisions; add (TuneIn only, duplicate is a no-op, at most 20), remove or move a favorite. |
+| `check_route(id)` | Return `StreamRoute` including actual/expected sink, current client ID and `correct`. Missing/ambiguous clients raise an error. |
+| `recover_route(id=None)` | Return tuple of verified `StreamRoute` objects; move only incorrectly routed matching MPD clients. |
+| `initialize_intentions()` | Persist `config.json` defaults for outputs without runtime state; preserve previously saved choices. |
+| `reconcile(id)` | Restore saved intention after daemon/audio loss; never infer intention from observed MPD state. |
 
-Names are exact and case-sensitive. `None` selects all where supported;
-gain changes require one named stream. Only existing exclusive PulseAudio
+IDs are exact. `None` selects all where supported;
+gain changes require one output ID. Only existing exclusive PulseAudio
 virtual sinks and finite nonpositive gains are supported. Configuration is
 reloaded on each operation, so subsequent starts and CLI calls see persisted
 changes. It is validated before contacting MPD.
@@ -416,20 +276,20 @@ changes. It is validated before contacting MPD.
   `XDG_RUNTIME_DIR` to the current user's private mode-0700 runtime directory.
   Concurrent CLI/API mutations fail rather than overlap. Read-only methods
   are snapshots and can observe concurrent changes.
-- Starts reuse a queued entry matching the configured URL. An already-playing
-  matching entry is not restarted. Missing URLs are appended using `addid`;
-  unrelated entries and pre-existing duplicates are not deleted. Stop/pause
-  never change queues. CLI and supervisor share this idempotence.
-- Once an output explicitly adopts S08 managed-queue mode, startup verifies that
-  its queue contains only the tracked song ID and configured source. It never
-  clears unowned entries; source replacement is limited to one identified song.
+- Every output owns exactly one managed queue entry. Starts reuse it when it
+  matches the selected station's URL; an already-playing matching entry is not
+  restarted. Startup verifies that the queue contains only the tracked song ID.
+  It never clears unowned entries; source replacement is limited to one
+  identified song. Stop/pause never change queues. CLI and supervisor share
+  this idempotence.
 - MPD operations have a five-second timeout and guaranteed disconnect attempts.
   Route/gain helpers retain bounded checks and absolute, non-accumulating gain.
   Route/gain failure during start requests stop on the affected instance.
   Cleanup/stop failure is reported explicitly.
-- Gain updates preserve unrelated JSON fields and file permissions. A
-  temporary file in the same directory is flushed/fsynced and atomically
-  replaces the configuration. The directory must be writable. Saving failure
+- Runtime writes (station, gain, intention, favorites) go only to
+  `playback.json`, preserving its file permissions. A temporary file in the same
+  directory is flushed/fsynced and atomically replaces it. `config.json` is
+  never written. Saving failure
   attempts restoration of the prior configured live gain; failed rollback is
   reported with the persistence failure. Saving does not regenerate audio or
   systemd configuration. This does not synchronize noncooperating manual file
@@ -438,9 +298,9 @@ changes. It is validated before contacting MPD.
   overwrite it on redeployment. Use that same path for API, CLI and measurement
   tools. Repository configuration is a deployment seed, not ongoing runtime
   configuration. Structural changes must be deliberately merged into the
-  operational file before regenerating units/audio; gain-only changes need no
-  service restart. This separation preserves calibration through git updates.
-- Playback intention lives in
+  operational file before regenerating units/audio. Gains and station choices
+  live in `playback.json`, so calibration survives git updates.
+- Runtime state (stations, gains, intentions, favorites) lives in
   `${XDG_STATE_HOME:-~/.local/state}/mpdrussoundpi/playback.json`, independently
   of the runtime directory and MPD queues. An optional second constructor
   argument selects a different state file. Start/pause/stop save the requested
@@ -451,13 +311,13 @@ changes. It is validated before contacting MPD.
   operational failure, including lock contention; methods never deliberately
   terminate the caller with `SystemExit`. Successful mutations return `None`
   unless listed otherwise. No errors are converted into successful empty results.
-- All-stream operations execute sequentially and fail on the first error.
+- All-output operations execute sequentially and fail on the first error.
   Earlier successful instances are not rolled back. Paused/stopped gain
   persistence does not promise the inactive sink already reflects that gain.
 - This is synchronous; callers should use a worker in an event loop.
-  The separate supervisor reconciles every two seconds, with per-stream
+  The separate supervisor reconciles every two seconds, with per-output
   exponential failure backoff capped at 30 seconds. It starts missing daemon
-  services, restores the configured URL, clears output errors, recovers
+  services, restores the selected station, clears output errors, recovers
   routing and reapplies absolute gains. There is no continuous loudness
   normalization. Pause/stop choices survive reboot; a paused stream with a
   lost/empty queue remains silently stopped until explicitly started.
