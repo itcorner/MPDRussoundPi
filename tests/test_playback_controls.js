@@ -719,7 +719,7 @@ test("command feedback stays in the dialog, including after closing and reopenin
   assert.equal(h.posts().length, 1);
 });
 
-test("consecutive gain changes wait for fresh agent-wide revisions and preserve the saved draft", async () => {
+test("consecutive gain changes wait for a fresh agent-wide control revision and preserve the saved draft", async () => {
   const h = harness();
   h.snapshot.agents[0].snapshot.outputs.push({
     ...h.snapshot.agents[0].snapshot.outputs[0], id: "other", label: "Other",
@@ -732,7 +732,7 @@ test("consecutive gain changes wait for fresh agent-wide revisions and preserve 
   await settle();
   assert.equal(h.button("Apply gain").disabled, true);
   assert.equal(h.input("range").value, "-20");
-  assert.match(h.ids.playbackConfigControls.querySelector(".playback-meta").textContent, /Waiting for updated configuration/);
+  assert.match(h.ids.playbackConfigControls.querySelector(".playback-meta").textContent, /Waiting for updated playback state/);
   h.button("Apply gain").listeners.click();
   assert.equal(h.posts().length, 1);
   h.open(1);
@@ -741,7 +741,10 @@ test("consecutive gain changes wait for fresh agent-wide revisions and preserve 
   h.snapshot.agents[0].snapshot.outputs[0].gain.configured_db = -20;
   h.render();
   assert.equal(h.button("Apply gain").disabled, true);
-  h.snapshot.agents[0].snapshot.config_revision = "config-2";
+  const setControlRevision = (value) => {
+    for (const output of h.snapshot.agents[0].snapshot.outputs) output.control_revision = value;
+  };
+  setControlRevision("control-2");
   h.failSnapshot(true);
   await h.evaluate("fetchPlayback()");
   assert.equal(h.button("Apply gain").disabled, true);
@@ -754,9 +757,9 @@ test("consecutive gain changes wait for fresh agent-wide revisions and preserve 
   h.plan.push(response(202, operation("applied", "set_gain")));
   h.click("Apply gain");
   await settle();
-  assert.equal(JSON.parse(h.posts()[1].options.body).expected_config_revision, "config-2");
+  assert.equal(JSON.parse(h.posts()[1].options.body).expected_control_revision, "control-2");
   assert.equal(JSON.parse(h.posts()[1].options.body).gain_db, -21);
-  h.snapshot.agents[0].snapshot.config_revision = "config-3";
+  setControlRevision("control-3");
   h.snapshot.agents[0].snapshot.outputs[0].gain.configured_db = -21;
   await h.evaluate("fetchPlayback()");
   assert.equal(h.button("Apply gain").disabled, false);
@@ -809,7 +812,7 @@ test("dialog groups controls into sections and shows the gain hint only for draf
   h.open();
   const titles = h.ids.playbackConfigControls.querySelectorAll(".playback-section-title")
     .map((title) => title.textContent);
-  assert.deepEqual(titles, ["Playback", "Station", "Calibration gain"]);
+  assert.deepEqual(titles, ["Playback", "Favorites", "Find a station", "Calibration gain"]);
   assert.equal(h.ids.playbackConfigControls.querySelector(".playback-section-detail").textContent, "stopped");
   const hint = h.ids.playbackConfigControls.querySelector(".playback-gain-actions")
     .querySelector(".playback-gain-hint");
@@ -864,4 +867,137 @@ test("empty TuneIn search results explain that nothing playable was found", asyn
   assert.ok(status);
   assert.equal(status.hidden, false);
   assert.equal(h.button("Select and play"), undefined);
+});
+
+function favoritesFixture() {
+  const snapshot = fixture();
+  const agent = snapshot.agents[0];
+  agent.write_operations.push("select_favorite", "add_favorite", "remove_favorite", "move_favorite");
+  agent.snapshot.favorites = {
+    config_revision: "config-1",
+    control_revision: "control-1",
+    stations: [
+      { key: "radio886", name: "Radio 88.6", type: "url", station_id: null },
+      { key: "tunein:s8007", name: "ORF Hitradio OE3", type: "tunein", station_id: "s8007" },
+    ],
+  };
+  agent.snapshot.outputs[0].selection = {
+    key: "tunein:s8007", provider: "tunein", station_id: "s8007", station_name: "ORF Hitradio OE3",
+  };
+  agent.snapshot.outputs[0].control = { mode: "manual", desired_state: "stop", has_station: true };
+  return snapshot;
+}
+
+function favoritesOperation(status, action) {
+  const envelope = operation(status, action);
+  envelope.operation.output_id = null;
+  return envelope;
+}
+
+test("favorites list plays a favorite on this output and marks the current station", async () => {
+  const h = harness(favoritesFixture());
+  await settle();
+  h.open();
+  const rows = h.ids.playbackConfigControls.querySelectorAll(".playback-favorite");
+  assert.equal(rows.length, 2);
+  assert.match(rows[1].className, /playback-favorite-current/);
+  assert.match(rows[1].querySelector(".playback-station-name").textContent, /ORF Hitradio OE3 \(current\)/);
+  assert.ok(rows[1].querySelector(".playback-logo"));
+  assert.ok(!rows[0].querySelector(".playback-logo"));
+  const play = rows[0].querySelector(".playback-favorite-actions").children[0];
+  assert.equal(play.attributes["aria-label"], "Play Radio 88.6");
+  h.plan.push(response(202, operation("applied", "select_favorite")));
+  play.listeners.click();
+  await settle();
+  const request = h.posts()[0];
+  assert.equal(request.url, "/api/playback/agents/agent%2Fone/outputs/output%2Fone/operations");
+  const body = JSON.parse(request.options.body);
+  assert.deepEqual(Object.keys(body).sort(), [
+    "action", "expected_config_revision", "expected_control_revision", "idempotency_key", "key"]);
+  assert.equal(body.key, "radio886");
+  assert.match(h.status().textContent, /select_favorite — applied.*Desired station persisted: yes/);
+});
+
+test("favorites edits use the agent favorites route and expect no output", async () => {
+  const h = harness(favoritesFixture());
+  await settle();
+  h.open();
+  const row = () => h.ids.playbackConfigControls.querySelectorAll(".playback-favorite")[1];
+  const action = (label) => row().querySelector(".playback-favorite-actions").children
+    .find((item) => item.textContent === label);
+  assert.equal(h.ids.playbackConfigControls.querySelectorAll(".playback-favorite")[0]
+    .querySelector(".playback-favorite-actions").children.find((item) => item.textContent === "↑").disabled, true);
+  assert.equal(action("↓").disabled, true);
+  h.plan.push(response(202, favoritesOperation("applied", "move_favorite")));
+  action("↑").listeners.click();
+  await settle();
+  let request = h.posts()[0];
+  assert.equal(request.url, "/api/playback/agents/agent%2Fone/favorites/operations");
+  assert.deepEqual(JSON.parse(request.options.body).index, 0);
+  assert.match(h.status().textContent, /Command confirmed: move_favorite — applied\.$/);
+  h.plan.push(response(202, favoritesOperation("applied", "remove_favorite")));
+  action("✕").listeners.click();
+  await settle();
+  request = h.posts()[1];
+  assert.equal(JSON.parse(request.options.body).action, "remove_favorite");
+  assert.equal(JSON.parse(request.options.body).key, "tunein:s8007");
+  h.plan.push(response(202, operation("applied", "remove_favorite")));
+  action("✕").listeners.click();
+  await settle();
+  assert.match(h.status().textContent, /outcome unknown/i);
+});
+
+test("star toggles add search results and remove the current station from favorites", async () => {
+  const snapshot = favoritesFixture();
+  const h = harness(snapshot);
+  await settle();
+  h.open();
+  const current = h.ids.playbackConfigControls.querySelector(".playback-current-favorite").children[0];
+  assert.equal(current.textContent, "★");
+  assert.equal(current.attributes["aria-label"], "Remove ORF Hitradio OE3 from favorites");
+  h.edit("search", "FM4");
+  h.plan.push(response(200, { api_version: 1, provider: "tunein", stations: [
+    { id: "s8235", name: "ORF Radio FM4" }, { id: "s8007", name: "ORF Hitradio OE3" }] }));
+  h.click("Search");
+  await settle();
+  const toggles = h.ids.playbackConfigControls.querySelector(".playback-station-results").children
+    .map((result) => result.children[1].children[1]);
+  assert.deepEqual(toggles.map((item) => item.textContent), ["☆", "★"]);
+  h.plan.push(response(202, favoritesOperation("applied", "add_favorite")));
+  toggles[0].listeners.click();
+  await settle();
+  const body = JSON.parse(h.posts()[0].options.body);
+  assert.equal(body.action, "add_favorite");
+  assert.equal(body.station_id, "s8235");
+  assert.equal(body.station_name, "ORF Radio FM4");
+  snapshot.agents[0].snapshot.favorites.stations = Array.from({ length: 20 }, (_, index) => ({
+    key: `tunein:s${index + 1}`, name: `Station ${index + 1}`, type: "tunein", station_id: `s${index + 1}`,
+  }));
+  h.render();
+  const full = h.ids.playbackConfigControls.querySelector(".playback-station-results").children[0]
+    .children[1].children[1];
+  assert.equal(full.disabled, true);
+  assert.equal(full.title, "Favorites are full (20)");
+});
+
+test("an output without a station disables Play instead of hiding it", async () => {
+  const snapshot = favoritesFixture();
+  const output = snapshot.agents[0].snapshot.outputs[0];
+  output.selection = { key: null, label: null, source: null, provider: null, station_id: null, station_name: null };
+  output.control.has_station = false;
+  const h = harness(snapshot);
+  await settle();
+  assert.equal(h.ids.playbackOutputs.children[0].querySelector(".playback-state").textContent, "stopped · No station");
+  h.open();
+  const play = h.button("Play");
+  assert.equal(play.hidden, false);
+  assert.equal(play.disabled, true);
+  assert.equal(play.title, "Select a station first");
+  assert.match(h.ids.playbackConfigControls.querySelector(".playback-section-detail").textContent, /^No station/);
+  assert.equal(h.ids.playbackConfigControls.querySelector(".playback-current-favorite").children.length, 0);
+  output.control.has_station = true;
+  h.render();
+  assert.equal(h.button("Play").disabled, false);
+  assert.equal(h.button("Play").title, "");
+  assert.equal(h.posts().length, 0);
 });

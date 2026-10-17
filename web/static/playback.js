@@ -24,7 +24,7 @@ const trackResizeObserver = new ResizeObserver((entries) => {
     line.style.setProperty("--track-duration", `${Math.max(6, distance / 25 + 4)}s`);
   }
 });
-const pendingConfigRevisions = new Map();
+const pendingControlRevisions = new Map();
 const terminalOperationStatuses = new Set(["applied", "failed", "expired", "superseded", "outcome_unknown"]);
 const pendingOperationStatuses = new Set(["queued", "running"]);
 const operationPollLimit = 60;
@@ -95,11 +95,11 @@ function outputControlState(agent, output) {
   state.agent = agent;
   state.output = output;
   state.present = true;
-  const pendingRevision = pendingConfigRevisions.get(agent.agent_id);
-  if (pendingRevision && agent.snapshot.config_revision !== pendingRevision) {
-    pendingConfigRevisions.delete(agent.agent_id);
+  const pendingRevision = pendingControlRevisions.get(agent.agent_id);
+  if (pendingRevision && output.control_revision !== pendingRevision) {
+    pendingControlRevisions.delete(agent.agent_id);
   }
-  if (state.savedGain !== undefined && !pendingConfigRevisions.has(agent.agent_id)
+  if (state.savedGain !== undefined && !pendingControlRevisions.has(agent.agent_id)
     && output.gain?.configured_db === state.savedGain) {
     if (Number(state.draft) === state.savedGain) state.dirty = false;
     delete state.savedGain;
@@ -113,13 +113,51 @@ function outputControlState(agent, output) {
 
 function canWrite(state, action) {
   return playbackAvailable && state.present && Array.isArray(state.agent.write_operations)
-    && !pendingConfigRevisions.has(state.agent.agent_id)
+    && !pendingControlRevisions.has(state.agent.agent_id)
     && state.agent.write_operations.includes(action)
     && typeof state.agent.snapshot?.config_revision === "string"
     && typeof state.output.control_revision === "string"
     && state.agent.status === "ok"
     && !state.agent.snapshot.stale
     && !state.output.playback?.stale;
+}
+
+function hasStation(state) {
+  return state.output.control?.has_station !== false;
+}
+
+function favoriteStations(state) {
+  const stations = state.agent.snapshot?.favorites?.stations;
+  return Array.isArray(stations) ? stations : [];
+}
+
+function favoriteKey(station) {
+  return station.key || `tunein:${station.id}`;
+}
+
+function iconButton(parent, label, title, disabled, handler) {
+  const button = commandButton(parent, label, disabled, handler);
+  button.className = "playback-icon-button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  return button;
+}
+
+// ☆ adds a TuneIn station, ★ removes it; URL stations can only come from config.json.
+function favoriteToggle(parent, state, station, blocked) {
+  const key = favoriteKey(station);
+  const favorites = favoriteStations(state);
+  const existing = favorites.find((item) => item.key === key);
+  if (existing) {
+    return iconButton(parent, "★", `Remove ${existing.name} from favorites`,
+      blocked || !canWrite(state, "remove_favorite"),
+      () => submitOutputOperation(state, "remove_favorite", existing));
+  }
+  const full = favorites.length >= 20;
+  const button = iconButton(parent, "☆", full ? "Favorites are full (20)" : `Add ${station.name} to favorites`,
+    blocked || full || !station.id || !canWrite(state, "add_favorite"),
+    () => submitOutputOperation(state, "add_favorite", station));
+  return button;
 }
 
 function validGain(draft) {
@@ -162,9 +200,19 @@ function renderOutputControls(state) {
       true, () => submitOutputOperation(state, action));
     buttons[action].dataset.action = action;
   }
-  playbackSection.append(nowPlaying, transport);
+  const nowPlayingRow = document.createElement("div");
+  nowPlayingRow.className = "playback-now-playing";
+  const currentFavorite = document.createElement("span");
+  currentFavorite.className = "playback-current-favorite";
+  nowPlayingRow.append(nowPlaying, currentFavorite);
+  playbackSection.append(nowPlayingRow, transport);
 
-  const stationSection = dialogSection(controls, "Station");
+  const favoritesSection = dialogSection(controls, "Favorites");
+  const favoritesList = document.createElement("div");
+  favoritesList.className = "playback-favorites";
+  favoritesSection.appendChild(favoritesList);
+
+  const stationSection = dialogSection(controls, "Find a station");
   const searchRow = document.createElement("div");
   searchRow.className = "playback-search";
   const stationInput = document.createElement("input");
@@ -235,8 +283,8 @@ function renderOutputControls(state) {
   });
   controls.appendChild(feedback);
   state.dialogElements = {
-    buttons, nowPlaying, slider, gainValue, apply, stationInput, searchStations, stationStatus,
-    stationResults, validation, availability, status, retry, feedback,
+    buttons, nowPlaying, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
+    searchStations, stationStatus, stationResults, validation, availability, status, retry, feedback,
   };
   updateOutputDialog(state);
   return controls;
@@ -254,8 +302,8 @@ function updateOutputDialog(state) {
   configTitle.textContent = state.output.label;
   configSubtitle.textContent = `${state.agent.agent_id} · ${state.output.id}`;
   const {
-    buttons, nowPlaying, slider, gainValue, apply, stationInput, searchStations, stationStatus,
-    stationResults, validation, availability, status, retry, feedback,
+    buttons, nowPlaying, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
+    searchStations, stationStatus, stationResults, validation, availability, status, retry, feedback,
   } = state.dialogElements;
   const blocked = Boolean(state.command?.pending || state.command?.unknown);
   for (const action of ["play", "pause", "stop"]) buttons[action].disabled = blocked || !canWrite(state, action);
@@ -263,11 +311,52 @@ function updateOutputDialog(state) {
   buttons.play.hidden = playing;
   buttons.pause.hidden = !playing;
   buttons.stop.disabled ||= state.output.playback?.value?.state === "stop";
+  const stationless = !hasStation(state);
+  buttons.play.disabled ||= stationless;
+  buttons.play.title = stationless ? "Select a station first" : "";
   const observed = state.output.playback?.value || state.output.playback?.last_known?.value || {};
   const station = [state.output.selection?.station_name, observed.now_playing?.station]
     .find((value) => typeof value === "string" && value);
   const playbackState = observed.state || state.output.playback?.status || "unknown";
-  nowPlaying.textContent = station ? `${station} · ${playbackState}` : playbackState;
+  nowPlaying.textContent = station ? `${station} · ${playbackState}`
+    : stationless ? `No station · ${playbackState}` : playbackState;
+  const selection = state.output.selection || {};
+  currentFavorite.replaceChildren();
+  if (typeof selection.key === "string" && selection.key) {
+    const current = { key: selection.key, id: selection.provider === "tunein" ? selection.station_id : null,
+      name: selection.station_name || selection.label || selection.key };
+    favoriteToggle(currentFavorite, state, current, blocked);
+  }
+  const favorites = favoriteStations(state);
+  favoritesList.replaceChildren();
+  if (!favorites.length) {
+    appendPlaybackText(favoritesList, "playback-gain-hint",
+      state.agent.snapshot?.favorites ? "No favorites yet. Add stations with ☆." : "Favorites unavailable.");
+  }
+  favorites.forEach((favorite, index) => {
+    const row = document.createElement("div");
+    const isCurrent = favorite.key === selection.key;
+    row.className = isCurrent ? "playback-favorite playback-favorite-current" : "playback-favorite";
+    const logo = favorite.type === "tunein" ? stationLogo("favorites", favorite.station_id) : null;
+    const name = document.createElement("span");
+    name.className = "playback-station-name";
+    name.textContent = isCurrent ? `${favorite.name} (current)` : favorite.name;
+    const actions = document.createElement("div");
+    actions.className = "playback-favorite-actions";
+    const play = commandButton(actions, "Play", blocked || !canWrite(state, "select_favorite")
+      || (isCurrent && playing), () => submitOutputOperation(state, "select_favorite", favorite));
+    play.setAttribute("aria-label", `Play ${favorite.name}`);
+    iconButton(actions, "↑", `Move ${favorite.name} up`, blocked || index === 0 || !canWrite(state, "move_favorite"),
+      () => submitOutputOperation(state, "move_favorite", favorite, index - 1));
+    iconButton(actions, "↓", `Move ${favorite.name} down`,
+      blocked || index === favorites.length - 1 || !canWrite(state, "move_favorite"),
+      () => submitOutputOperation(state, "move_favorite", favorite, index + 1));
+    iconButton(actions, "✕", `Remove ${favorite.name} from favorites`,
+      blocked || !canWrite(state, "remove_favorite"),
+      () => submitOutputOperation(state, "remove_favorite", favorite));
+    row.append(...(logo ? [logo] : []), name, actions);
+    favoritesList.appendChild(row);
+  });
   const valid = validGain(state.draft);
   // Include both configured and draft gain without rounding or clamping the saved value.
   const configuredGain = state.output.gain?.configured_db;
@@ -298,11 +387,14 @@ function updateOutputDialog(state) {
       meta.textContent = metadata.join(" · ");
       details.appendChild(meta);
     }
-    const select = commandButton(
-      result, "Select and play", blocked || !canWrite(state, "set_tunein_station"),
+    const actions = document.createElement("div");
+    actions.className = "playback-favorite-actions";
+    commandButton(
+      actions, "Select and play", blocked || !canWrite(state, "set_tunein_station"),
       () => submitOutputOperation(state, "set_tunein_station", station),
     );
-    result.replaceChildren(details, select);
+    favoriteToggle(actions, state, station, blocked);
+    result.replaceChildren(details, actions);
     stationResults.appendChild(result);
   }
   gainValue.textContent = valid ? `${state.draft} dB` : "Gain unavailable";
@@ -310,10 +402,10 @@ function updateOutputDialog(state) {
   validation.textContent = valid
     ? "Unsaved draft. Select Apply gain to send."
     : "No valid configured gain. Move the slider to choose a draft.";
-  availability.hidden = ["play", "pause", "stop", "set_gain", "set_tunein_station"]
+  availability.hidden = ["play", "pause", "stop", "set_gain", "set_tunein_station", "select_favorite"]
     .some((action) => canWrite(state, action));
-  availability.textContent = pendingConfigRevisions.has(state.agent.agent_id)
-    ? "Waiting for updated configuration before another command can be sent."
+  availability.textContent = pendingControlRevisions.has(state.agent.agent_id)
+    ? "Waiting for updated playback state before another command can be sent."
     : "Read-only: output unavailable, stale, or write capabilities/current revisions unavailable.";
   updateCommandStatus(status, state.command);
   validation.hidden = valid && Number(state.draft) === configuredGain;
@@ -383,7 +475,8 @@ function operationFromEnvelope(envelope, state, command) {
   if (envelope?.api_version !== 1 || envelope.agent_id !== state.agent.agent_id
     || typeof operation?.id !== "string" || !operation.id
     || (command.id && command.id !== operation.id)
-    || operation.output_id !== state.output.id || operation.action !== command.body.action
+    || operation.output_id !== (command.favorites ? null : state.output.id)
+    || operation.action !== command.body.action
     || (!terminalOperationStatuses.has(operation.status) && !pendingOperationStatuses.has(operation.status))) {
     throw new Error("Invalid operation response.");
   }
@@ -402,15 +495,15 @@ function acceptOperation(state, command, operation) {
   command.unknown = operation.status === "outcome_unknown";
   command.error = operation.status !== "applied" || Boolean(operation.error);
   if (operation.status === "applied" && operation.applied === true
-    && command.body.action === "set_tunein_station") {
+    && (command.body.action === "set_tunein_station" || command.body.action === "select_favorite")) {
     state.stationResults = [];
   }
   if (operation.status === "applied" && operation.applied === true && command.body.action === "set_gain"
     && Number(state.draft) === command.body.gain_db) {
     state.savedGain = command.body.gain_db;
-    if (state.agent.snapshot.config_revision === command.body.expected_config_revision
+    if (state.output.control_revision === command.body.expected_control_revision
       && state.output.gain?.configured_db !== command.body.gain_db) {
-      pendingConfigRevisions.set(state.agent.agent_id, command.body.expected_config_revision);
+      pendingControlRevisions.set(state.agent.agent_id, command.body.expected_control_revision);
     } else {
       state.dirty = false;
     }
@@ -420,11 +513,11 @@ function acceptOperation(state, command, operation) {
     && operation.gain_application === "on_next_play";
   command.message = `${command.error ? "Command result" : "Command confirmed"}: ${command.body.action} — ${operation.status}.`
     + (error ? ` ${error.code}: ${error.message} (retryable: ${error.retryable === true ? "yes" : "no"}).` : "")
-    + (command.body.action === "set_tunein_station"
+    + (command.body.action === "set_tunein_station" || command.body.action === "select_favorite"
       ? ` Desired station persisted: ${operation.requested_source_persisted === true ? "yes" : operation.requested_source_persisted === false ? "no" : "unknown"}.`
       : "")
-    + ` Intention persisted: ${operation.requested_intention_persisted === true ? "yes" : operation.requested_intention_persisted === false ? "no" : "unknown"}.`
-    + (gainOnNextPlay
+    + (command.favorites ? "" : ` Intention persisted: ${operation.requested_intention_persisted === true ? "yes" : operation.requested_intention_persisted === false ? "no" : "unknown"}.`)
+    + (command.favorites ? "" : gainOnNextPlay
       ? " Calibration saved; applies on next play (not applied to the live mixer)."
       : ` Applied: ${operation.applied === true ? "yes" : operation.applied === false ? "no" : "unknown"}.`);
   if (command.unknown) {
@@ -541,11 +634,15 @@ async function searchTuneInStations(state) {
   }
 }
 
-function submitOutputOperation(state, action, station) {
+const favoriteActions = new Set(["add_favorite", "remove_favorite", "move_favorite"]);
+
+function submitOutputOperation(state, action, station, index) {
   if (!canWrite(state, action) || state.command?.pending || state.command?.unknown
     || (action === "stop" && state.output.playback?.value?.state === "stop")
+    || (action === "play" && !hasStation(state))
     || (action === "set_gain" && !validGain(state.draft))
-    || (action === "set_tunein_station" && !station)) {
+    || (["set_tunein_station", "add_favorite"].includes(action) && !station?.id)
+    || (["select_favorite", "remove_favorite", "move_favorite"].includes(action) && !station?.key)) {
     return;
   }
   const randomKey = globalThis.crypto?.randomUUID?.()
@@ -558,13 +655,21 @@ function submitOutputOperation(state, action, station) {
   };
   if (action === "set_gain") {
     body.gain_db = Number(state.draft);
-  } else if (action === "set_tunein_station") {
+  } else if (action === "set_tunein_station" || action === "add_favorite") {
     body.station_id = station.id;
     body.station_name = station.name;
+  } else if (action !== "play" && action !== "pause" && action !== "stop") {
+    body.key = station.key;
+    if (action === "move_favorite") body.index = index;
   }
+  const favorites = favoriteActions.has(action);
+  const agentPath = `/api/playback/agents/${encodeURIComponent(state.agent.agent_id)}`;
   state.command = {
     body,
-    path: `/api/playback/agents/${encodeURIComponent(state.agent.agent_id)}/outputs/${encodeURIComponent(state.output.id)}/operations`,
+    favorites,
+    path: favorites
+      ? `${agentPath}/favorites/operations`
+      : `${agentPath}/outputs/${encodeURIComponent(state.output.id)}/operations`,
   };
   sendOutputOperation(state, state.command);
 }
@@ -694,7 +799,8 @@ function renderPlayback(playback) {
       const station = [output.selection?.station_name, nowPlaying.station]
         .find((value) => typeof value === "string" && value);
       const playbackState = observed.state || playbackProbe.status || "unknown";
-      appendPlaybackText(card, "playback-state", `${playbackState}${station ? ` · ${station}` : ""}`);
+      const stationText = station || (output.control?.has_station === false ? "No station" : "");
+      appendPlaybackText(card, "playback-state", `${playbackState}${stationText ? ` · ${stationText}` : ""}`);
       const track = [nowPlaying.artist, nowPlaying.title].filter((value) => typeof value === "string" && value).join(" — ");
       if (track) {
         const line = document.createElement("p");

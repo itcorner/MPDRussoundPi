@@ -419,9 +419,63 @@ h1 {
   font-size: 0.85rem;
 }
 
+.playback-station-result {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .playback-controls .playback-station-result button {
-  width: 100%;
   white-space: nowrap;
+}
+
+.playback-now-playing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.playback-favorites {
+  display: grid;
+  gap: 0.4rem;
+  max-height: min(40vh, 22rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.playback-favorite {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.playback-favorite > .playback-station-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.playback-favorite-current {
+  border-color: var(--accent);
+}
+
+.playback-favorite .playback-logo {
+  float: none;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+}
+
+.playback-favorite-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.playback-controls .playback-icon-button {
+  min-width: 2.25rem;
+  padding: 0.4rem 0.5rem;
 }
 
 .playback-transport {

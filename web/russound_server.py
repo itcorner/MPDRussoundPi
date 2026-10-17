@@ -299,6 +299,12 @@ class RussoundHTTPServer:
                 raise PlaybackCommandError("invalid_request", "A bounded JSON operation body is required.", 400)
             return jsonify(playback_client(agent_id).submit_operation(output_id, request.get_json(silent=True))), 202
 
+        @app.post("/api/playback/agents/<agent_id>/favorites/operations")
+        def api_playback_favorites_submit(agent_id: str):
+            if request.content_length is None or request.content_length > 2048:
+                raise PlaybackCommandError("invalid_request", "A bounded JSON operation body is required.", 400)
+            return jsonify(playback_client(agent_id).submit_favorites_operation(request.get_json(silent=True))), 202
+
         @app.get("/api/playback/agents/<agent_id>/operations/<operation_id>")
         def api_playback_operation(agent_id: str, operation_id: str):
             return jsonify(playback_client(agent_id).get_operation(operation_id))

@@ -181,8 +181,8 @@ credentials and raw backend exceptions are not returned.
 The favorites list (at most 20 stations, seeded from `config.json` `stations`)
 is stored in `playback.json` and shared by all outputs.
 
-- `GET /v1/favorites` (web: `GET /api/playback/agents/{agent_id}/favorites`)
-  returns `{api_version, agent_id, config_revision, control_revision,
+- `GET /v1/favorites` (the web polls it with the inventory and publishes it as
+  `snapshot.favorites` in `GET /api/playback`) returns `{api_version, agent_id, config_revision, control_revision,
   favorites: [{key, name, type, station_id}]}`. Stream URLs are never returned.
   `503 favorites_unavailable` before the first observation.
 - `POST /v1/favorites/operations`

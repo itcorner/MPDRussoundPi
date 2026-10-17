@@ -74,7 +74,11 @@ outputs without a station cannot play, URL/TuneIn favorite selection, favorites
 HTTP endpoints and capability opt-out, URL privacy in favorites responses and
 probe preservation across runtime station/gain changes.
 [playbackfixtures.py](../tests/playbackfixtures.py) provides the small shared
-configuration.
+configuration. [Web command tests](../tests/test_playback_commands.py) cover
+favorites polling/validation (no URL field accepted), the favorites proxy route,
+CSRF rejection and `output_id: null` checks; [dashboard tests](../tests/test_playback_controls.js)
+cover the favorites list, current marker, Play/↑/↓/✕, ☆/★ toggles including the
+20-entry cap, and Play disabled ("Select a station first") without a station.
 
 ## S04 offline preparation (2026-10-16)
 

@@ -1,8 +1,7 @@
 # Plan: split output configuration from station selection
 
-Status: phases 1-3 implemented (loopback MPD, `id` keys, config/state split
-and favorites backend); phase 4 (web favorites UI) and phase 5 (Pi rollout)
-pending. Decisions C1-C6 are settled (see below).
+Status: phases 1-4 implemented (loopback MPD, `id` keys, config/state split,
+favorites backend and web UI); phase 5 (Pi rollout) pending. Decisions C1-C6 are settled (see below).
 
 Implementation deviations from this plan:
 
@@ -12,8 +11,10 @@ Implementation deviations from this plan:
 - `set_label` was dropped entirely: labels are admin-edited in `config.json`.
 - Station selection saves station, resolved URL, managed song ID and the play
   intention in one atomic `playback.json` write.
-- The web gateway already accepts the new agent capabilities; its favorites
-  routes and UI are phase 4.
+- The web has no separate favorites GET: it polls `/v1/favorites` with the
+  inventory and publishes it as `snapshot.favorites`, so SSE updates cover it.
+- The dashboard's gain-change wait now keys on `control_revision`, because
+  gain no longer changes `config_revision`.
 
 ## Problem
 

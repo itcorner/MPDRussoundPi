@@ -20,8 +20,11 @@ from web.config_types import env_str
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
 AGENT_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
-WRITE_ACTIONS = {"play", "pause", "stop", "set_gain", "set_tunein_station"}
-AGENT_WRITE_ACTIONS = WRITE_ACTIONS | {"select_favorite", "add_favorite", "remove_favorite", "move_favorite"}
+WRITE_ACTIONS = {"play", "pause", "stop", "set_gain", "set_tunein_station", "select_favorite"}
+FAVORITE_ACTIONS = {"add_favorite", "remove_favorite", "move_favorite"}
+AGENT_WRITE_ACTIONS = WRITE_ACTIONS | FAVORITE_ACTIONS
+FAVORITE_KEY_PATTERN = re.compile(r"(tunein:s[0-9]{1,12}|[a-z0-9][a-z0-9_-]{0,63})\Z")
+MAX_FAVORITES = 20
 
 
 class PlaybackCommandError(Exception):
@@ -30,14 +33,24 @@ class PlaybackCommandError(Exception):
         self.code, self.message, self.status = code, message, status
 
 
-def validate_operation_request(payload: Any) -> dict[str, Any]:
+def validate_operation_request(payload: Any, *, favorites: bool = False) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise PlaybackCommandError("invalid_request", "A playback operation object is required.", 400)
     value = cast(dict[str, Any], payload)
     fields = {"action", "expected_config_revision", "expected_control_revision", "idempotency_key"}
     action = value.get("action")
-    if not isinstance(action, str) or action not in WRITE_ACTIONS:
+    if not isinstance(action, str) or action not in (FAVORITE_ACTIONS if favorites else WRITE_ACTIONS):
         raise PlaybackCommandError("invalid_request", "Unsupported playback action.", 400)
+    if action in ("select_favorite", "remove_favorite", "move_favorite"):
+        fields.add("key")
+        key = value.get("key")
+        if not isinstance(key, str) or FAVORITE_KEY_PATTERN.match(key) is None:
+            raise PlaybackCommandError("invalid_request", "A valid favorite is required.", 400)
+    if action == "move_favorite":
+        fields.add("index")
+        index = value.get("index")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < MAX_FAVORITES:
+            raise PlaybackCommandError("invalid_request", "A valid favorite position is required.", 400)
     if action == "set_gain":
         fields.add("gain_db")
         gain = value.get("gain_db")
@@ -47,7 +60,7 @@ def validate_operation_request(payload: Any) -> dict[str, Any]:
             valid_gain = False
         if not valid_gain:
             raise PlaybackCommandError("invalid_request", "Gain must be finite and at or below 0 dB.", 400)
-    if action == "set_tunein_station":
+    if action in ("set_tunein_station", "add_favorite"):
         fields.update(("station_id", "station_name"))
         try:
             TuneInCatalog.validate_station_id(value.get("station_id"))
@@ -220,6 +233,7 @@ class PlaybackStatusClient:
                 for key in ("api_version", "agent_id", "epoch", "revision", "config_revision", "snapshot_at", "snapshot_age_ms", "stale", "outputs")
                 if key in inventory
             }
+            snapshot["favorites"] = self._favorites() if "select_favorite" in writes else None
         except (HTTPError, URLError, TimeoutError, OSError, HTTPException, ValueError) as exc:
             code = _error_code(exc)
             with self._lock:
@@ -278,6 +292,18 @@ class PlaybackStatusClient:
             if self._thread.is_alive():
                 logging.error("Playback status poller did not stop within its timeout")
 
+    def _favorites(self) -> dict[str, Any] | None:
+        """Favorites are optional: before the agent's first observation they are unavailable."""
+        try:
+            response = self._get_json("/v1/favorites")
+        except HTTPError as exc:
+            exc.close()
+            if exc.code == 503:
+                return None
+            raise
+        _validate_identity(response, self._config.agent_id)
+        return _validate_favorites(response)
+
     def _get_json(self, path: str) -> dict[str, Any]:
         request = Request(
             f"{self._config.base_url}{path}",
@@ -303,6 +329,16 @@ class PlaybackStatusClient:
                 raise PlaybackCommandError("writes_unavailable", "Playback commands are unavailable or not enabled on this agent.", 503)
         response = self._operation_request(f"/v1/outputs/{output_id}/operations", value)
         if response["operation"].get("output_id") != output_id or response["operation"].get("action") != value["action"]:
+            raise PlaybackCommandError("invalid_agent_response", "Agent returned a mismatched operation; its outcome is unknown.", 502)
+        return response
+
+    def submit_favorites_operation(self, payload: Any) -> dict[str, Any]:
+        value = validate_operation_request(payload, favorites=True)
+        with self._lock:
+            if self._status != "ok" or value["action"] not in self._write_operations:
+                raise PlaybackCommandError("writes_unavailable", "Favorites editing is unavailable or not enabled on this agent.", 503)
+        response = self._operation_request("/v1/favorites/operations", value)
+        if response["operation"].get("output_id") is not None or response["operation"].get("action") != value["action"]:
             raise PlaybackCommandError("invalid_agent_response", "Agent returned a mismatched operation; its outcome is unknown.", 502)
         return response
 
@@ -387,6 +423,32 @@ def _write_capabilities(value: object) -> list[str]:
             raise ValueError("invalid_agent_response")
         result.append(item)
     return result
+
+
+def _validate_favorites(response: dict[str, Any]) -> dict[str, Any]:
+    stations = response.get("favorites")
+    revisions = [response.get("config_revision"), response.get("control_revision")]
+    if not isinstance(stations, list) or len(cast(list[Any], stations)) > MAX_FAVORITES or not all(
+        isinstance(item, str) and re.fullmatch(r"[a-f0-9]{64}", item) for item in revisions
+    ):
+        raise ValueError("invalid_agent_response")
+    result: list[dict[str, Any]] = []
+    for item in cast(list[Any], stations):
+        if not isinstance(item, dict):
+            raise ValueError("invalid_agent_response")
+        station = cast(dict[str, Any], item)
+        key, name, kind, station_id = (station.get(field) for field in ("key", "name", "type", "station_id"))
+        if (
+            set(station) != {"key", "name", "type", "station_id"}
+            or not isinstance(key, str) or FAVORITE_KEY_PATTERN.match(key) is None
+            or not isinstance(name, str) or not name or len(name) > 120
+            or kind not in ("url", "tunein")
+            or (kind == "tunein") != isinstance(station_id, str)
+            or (station_id is not None and (not isinstance(station_id, str) or re.fullmatch(r"s[0-9]{1,12}", station_id) is None))
+        ):
+            raise ValueError("invalid_agent_response")
+        result.append({"key": key, "name": name, "type": kind, "station_id": station_id})
+    return {"config_revision": revisions[0], "control_revision": revisions[1], "stations": result}
 
 
 def _validate_identity(response: dict[str, Any], agent_id: str) -> None:

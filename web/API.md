@@ -231,11 +231,24 @@ Returns the cached playback inventory, or an explicit disabled response.
       "revision": 42,
       "snapshot_age_ms": 500,
       "stale": false,
-      "outputs": []
+      "outputs": [],
+      "favorites": {
+        "config_revision": "<sha256>",
+        "control_revision": "<sha256>",
+        "stations": [
+          {"key": "radio886", "name": "Radio 88.6", "type": "url", "station_id": null},
+          {"key": "tunein:s8007", "name": "ORF Hitradio OE3", "type": "tunein", "station_id": "s8007"}
+        ]
+      }
     }
   }]
 }
 ```
+
+`snapshot.favorites` is polled only from agents that advertise
+`select_favorite`; it is `null` until the agent's first observation. Favorites
+never contain stream URLs. Each output carries `control.has_station`; when it is
+`false` the output has no station and cannot play until one is selected.
 
 When not configured, the response is
 `{"api_version":1,"configured":false,"revision":0,"agents":[]}`. On an agent
@@ -256,9 +269,10 @@ agent has that output id.
 
 The output's `selection.source` and `playback.value.current_source` fields are
 redacted display values containing only the HTTP(S) scheme and host. They omit
-path, user-info, query and fragment. These are the configured desired source
+path, user-info, query and fragment. These are the selected station's source
 and MPD's observed current source, respectively; they can differ after a failed
-source switch.
+source switch. `selection` also carries the station `key`, `provider` (`url` or
+`tunein`), `station_id` and `station_name` (all `null` without a station).
 
 #### POST /api/playback/agents/{agent_id}/outputs/{output_id}/operations
 
@@ -275,8 +289,23 @@ idempotency key. The Pi resolves the stream URL from TuneIn (directly or via
 a TuneIn-listed M3U/PLS playlist) and always starts playback. Stations without
 a supported stream fail with `station_unavailable` and leave playback unchanged. Selection is enabled on agents with manual operations unless they run with
 `--disable-tunein-selection`.
+`select_favorite` with a favorite `key` plays any favorite (including URL
+stations from the Pi configuration) on that output.
 The durable result reports whether the desired station was saved separately
 from whether MPD application succeeded; raw stream URLs are never returned.
+
+#### POST /api/playback/agents/{agent_id}/favorites/operations
+
+Submits a durable edit of the agent-wide favorites list (at most 20 stations),
+with the same revision, idempotency, size and same-origin rules:
+
+- `add_favorite` with `station_id` and `station_name` (TuneIn only);
+- `remove_favorite` with `key`;
+- `move_favorite` with `key` and `index` (0-19).
+
+The returned operation has `output_id: null`; poll it with
+`GET /api/playback/agents/{agent_id}/operations/{operation_id}`. Errors include
+`favorites_full` and `favorite_not_found`.
 
 ### GET /api/state
 

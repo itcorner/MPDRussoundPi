@@ -172,3 +172,110 @@ class PlaybackCommandTests(unittest.TestCase):
             with self.assertRaises(PlaybackCommandError) as caught:
                 client.submit_operation("front", self.request())
         self.assertEqual(caught.exception.status, 502)
+
+
+class FavoritesCommandTests(unittest.TestCase):
+    setUp = status_tests.PlaybackStatusTests.setUp
+    create_client = status_tests.PlaybackStatusTests.create_client
+    request = PlaybackCommandTests.request
+    response = PlaybackCommandTests.response
+    WRITES = ["play", "pause", "stop", "set_gain", "set_tunein_station",
+              "select_favorite", "add_favorite", "remove_favorite", "move_favorite"]
+
+    def favorites(self, **changes):
+        return {
+            "api_version": 1, "agent_id": "musicpi",
+            "config_revision": "a" * 64, "control_revision": "b" * 64,
+            "favorites": [
+                {"key": "radio886", "name": "Radio 88.6", "type": "url", "station_id": None},
+                {"key": "tunein:s8007", "name": "ORF Hitradio OE3", "type": "tunein", "station_id": "s8007"},
+            ], **changes,
+        }
+
+    def prepare(self, favorites_reply=None):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        client = self.create_client(Path(directory.name) / "token")
+        self.addCleanup(client.close)
+        capabilities = dict(self.capabilities, write_operations=self.WRITES)
+        reply = favorites_reply if favorites_reply is not None else status_tests.FakeResponse(self.favorites())
+        with patch("web.playback_status.build_opener", return_value=status_tests.FakeOpener([
+            status_tests.FakeResponse(self.health), status_tests.FakeResponse(capabilities),
+            status_tests.FakeResponse(self.fixture["healthy_inventory"]), reply,
+        ])):
+            ok = client.poll_once()
+        self.server = RussoundHTTPServer(None, None, playback_clients=[client])
+        return ok, client, self.server.app.test_client()
+
+    def test_favorites_are_polled_without_stream_urls(self):
+        ok, _, browser = self.prepare()
+        self.assertTrue(ok)
+        agent = browser.get("/api/playback").json["agents"][0]
+        favorites = agent["snapshot"]["favorites"]
+        self.assertEqual(favorites["control_revision"], "b" * 64)
+        self.assertEqual([item["key"] for item in favorites["stations"]], ["radio886", "tunein:s8007"])
+        self.assertIn("select_favorite", agent["write_operations"])
+
+    def test_favorites_unavailable_before_first_agent_observation(self):
+        error = HTTPError("http://127.0.0.1:8081/v1/favorites", 503, "pending", None, None)
+        ok, client, _ = self.prepare(error)
+        self.assertTrue(ok)
+        self.assertIsNone(client.snapshot()["agents"][0]["snapshot"]["favorites"])
+
+    def test_invalid_favorites_reply_marks_agent_unavailable(self):
+        for changes in ({"favorites": [{"key": "x", "name": "X", "type": "url", "station_id": None,
+                                        "url": "https://private.example/stream"}]},
+                        {"favorites": [{"key": "Bad Key", "name": "X", "type": "url", "station_id": None}]},
+                        {"control_revision": "old"}):
+            with self.subTest(changes=changes):
+                ok, _, _ = self.prepare(status_tests.FakeResponse(self.favorites(**changes)))
+                self.assertFalse(ok)
+
+    def test_favorite_operations_are_validated_and_forwarded(self):
+        _, _, browser = self.prepare()
+        route = "/api/playback/agents/musicpi/favorites/operations"
+        calls = []
+
+        class Opener:
+            def open(inner, request, timeout):
+                calls.append(request)
+                return self.response(output_id=None, action=json.loads(request.data)["action"])
+
+        valid = (
+            {"action": "add_favorite", "station_id": "s8235", "station_name": "ORF Radio FM4"},
+            {"action": "remove_favorite", "key": "radio886"},
+            {"action": "move_favorite", "key": "tunein:s8007", "index": 0},
+        )
+        with patch("web.playback_status.build_opener", return_value=Opener()):
+            for changes in valid:
+                self.assertEqual(browser.post(route, json=self.request(**changes)).status_code, 202)
+        self.assertEqual([request.full_url for request in calls],
+                         ["http://127.0.0.1:8081/v1/favorites/operations"] * 3)
+        with patch("web.playback_status.build_opener") as opener:
+            for changes in ({"action": "stop"}, {"action": "select_favorite", "key": "radio886"},
+                            {"action": "move_favorite", "key": "radio886", "index": 20},
+                            {"action": "move_favorite", "key": "radio886", "index": True},
+                            {"action": "remove_favorite", "key": "../etc"},
+                            {"action": "add_favorite", "station_id": "https://x", "station_name": "X"}):
+                self.assertEqual(browser.post(route, json=self.request(**changes)).status_code, 400, changes)
+            self.assertEqual(browser.post(route, json=self.request(action="remove_favorite", key="radio886"),
+                                          headers={"Origin": "http://evil.example"}).status_code, 403)
+            opener.assert_not_called()
+
+    def test_select_favorite_is_an_output_operation(self):
+        _, _, browser = self.prepare()
+        with patch("web.playback_status.build_opener", return_value=status_tests.FakeOpener([
+            self.response(action="select_favorite"),
+        ])):
+            response = browser.post("/api/playback/agents/musicpi/outputs/front/operations",
+                                    json=self.request(action="select_favorite", key="tunein:s8007"))
+        self.assertEqual(response.status_code, 202)
+
+    def test_favorite_operation_must_not_target_an_output(self):
+        _, client, _ = self.prepare()
+        with patch("web.playback_status.build_opener", return_value=status_tests.FakeOpener([
+            self.response(action="remove_favorite"),
+        ])):
+            with self.assertRaises(PlaybackCommandError) as caught:
+                client.submit_favorites_operation(self.request(action="remove_favorite", key="radio886"))
+        self.assertEqual(caught.exception.status, 502)
