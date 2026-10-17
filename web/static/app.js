@@ -89,6 +89,41 @@ function apiFetch(path, options = {}) {
   return fetch(path, { ...options, credentials: "same-origin" });
 }
 
+function inputDisplayName(input) {
+  const unavailable = ["unavailable", "unmapped"].includes(input.playback_status);
+  return `${input.display_name || input.name}${unavailable ? " (unavailable)" : ""}`;
+}
+
+function applyInputNames(payload) {
+  const inputs = payload.resolved_inputs || payload.config?.inputs || payload.state?.inputs || [];
+  state.inputs = inputs.filter((input) => input.enabled !== false);
+}
+
+async function refreshInputNames() {
+  try {
+    const response = await apiFetch("/api/state");
+    if (!response.ok) throw new Error(`Source names unavailable (${response.status})`);
+    applyInputNames(await response.json());
+  } catch (error) {
+    console.error("Unable to refresh playback input names", error);
+    return;
+  }
+  for (const select of zonesContainer.querySelectorAll('select[data-action="source"]')) {
+    for (const option of select.options) {
+      const input = state.inputs.find((input) => input.id === Number(option.value));
+      if (input) {
+        option.textContent = inputDisplayName(input);
+        option.title = input.playback_message || "";
+      }
+      for (const button of shortcutsContainer.querySelectorAll("button[data-shortcut-id]")) {
+        const shortcut = state.shortcuts.find((shortcut) => shortcut.id === button.dataset.shortcutId);
+        const input = state.inputs.find((input) => input.id === shortcut?.source);
+        button.title = input ? inputDisplayName(input) : "";
+      }
+    }
+  }
+}
+
 function applyPayload(payload) {
   if (payload.config_required) {
     window.location.replace("/config");
@@ -106,8 +141,7 @@ function applyPayload(payload) {
     }
   }
   state.systemPower = Boolean(payload.state?.system_power);
-  const configuredInputs = state.config?.inputs || payload.state?.inputs || [];
-  state.inputs = configuredInputs.filter((input) => input.enabled !== false);
+  applyInputNames(payload);
   state.shortcuts = state.config?.shortcuts || [];
   render();
 }
@@ -143,6 +177,7 @@ function startStateSync() {
     return;
   }
   eventSource = new EventSource("/api/events");
+  eventSource.addEventListener("playback-change", refreshInputNames);
   eventSource.addEventListener("state-change", (event) => {
     try {
       const data = JSON.parse(event.data || "{}");
@@ -242,6 +277,8 @@ function render() {
     button.type = "button";
     button.textContent = shortcut.name;
     button.dataset.shortcutId = shortcut.id;
+    const input = state.inputs.find((input) => input.id === shortcut.source);
+    button.title = input ? inputDisplayName(input) : "";
     shortcutsContainer.appendChild(button);
   }
   shortcutsContainer.appendChild(systemButton);
@@ -271,7 +308,6 @@ function render() {
           <div class="control-row">
             <label for="source-${zoneDomId}">Source</label>
             <select id="source-${zoneDomId}" data-action="source" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-              ${state.inputs.map((input) => `<option value="${input.id}" ${input.id === zone.source ? "selected" : ""}>${input.name}</option>`).join("")}
             </select>
           </div>
           <div class="control-row">
@@ -327,6 +363,12 @@ function render() {
       </div>
     `;
 
+    const sourceSelect = card.querySelector('select[data-action="source"]');
+    for (const input of state.inputs) {
+      const option = new Option(inputDisplayName(input), String(input.id), false, input.id === zone.source);
+      option.title = input.playback_message || "";
+      sourceSelect.add(option);
+    }
     zonesContainer.appendChild(card);
   }
 }

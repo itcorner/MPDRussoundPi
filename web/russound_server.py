@@ -28,6 +28,7 @@ from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
+from web.input_playback import resolve_input_names
 from mpdrussoundpi.russound.lib.tunein import TuneInCatalog, TuneInError
 
 WEB_ROOT = Path(__file__).resolve().parent
@@ -357,6 +358,7 @@ class RussoundHTTPServer:
         def api_config():
             with self.state_lock:
                 payload = self.controller.build_config_editor_payload()
+            payload = self._with_playback_editor(payload)
             return jsonify(payload)
 
         @app.get("/api/status")
@@ -416,7 +418,7 @@ class RussoundHTTPServer:
             self._zone_refresh_requested.set()
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(response_payload)
+            return jsonify(self._with_playback_editor(response_payload))
 
         @app.post("/api/system/power")
         def api_system_power():
@@ -432,7 +434,7 @@ class RussoundHTTPServer:
                 self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(response_payload)
+            return jsonify(self._with_input_names(response_payload))
 
         @app.post("/api/source")
         def api_source():
@@ -448,7 +450,7 @@ class RussoundHTTPServer:
                 self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(response_payload)
+            return jsonify(self._with_input_names(response_payload))
 
         @app.post("/api/shortcuts/<shortcut_id>/activate")
         def api_shortcut_activate(shortcut_id: str):
@@ -463,7 +465,7 @@ class RussoundHTTPServer:
                 self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(response_payload)
+            return jsonify(self._with_input_names(response_payload))
 
         @app.post("/api/controller/<int:controller_id>/zone/<int:zone_number>/<action>")
         def api_zone_action(controller_id: int, zone_number: int, action: str):
@@ -497,7 +499,7 @@ class RussoundHTTPServer:
                 value,
             )
             self.broadcast_state_change()
-            return jsonify(response_payload)
+            return jsonify(self._with_input_names(response_payload))
 
         @app.get("/static/<path:filename>")
         def static_files(filename: str) -> Response:
@@ -956,7 +958,34 @@ class RussoundHTTPServer:
             finally:
                 self.state_lock.release()
         with self._state_payload_lock:
-            return self._state_payload
+            payload = self._state_payload
+        return self._with_input_names(payload)
+
+    def _with_input_names(self, payload: dict[str, Any]) -> dict[str, Any]:
+        config: dict[str, Any] = payload.get("config") or {}
+        inputs: list[dict[str, Any]] = config.get("inputs", [])
+        if not any("playback_output" in item for item in inputs):
+            return payload
+        return {**payload, "resolved_inputs": resolve_input_names(inputs, self._read_playback_snapshot())}
+
+    def _with_playback_editor(self, payload: dict[str, Any]) -> dict[str, Any]:
+        playback = self._read_playback_snapshot()
+        outputs: list[dict[str, Any]] = []
+        for agent in playback["agents"]:
+            snapshot: dict[str, Any] = agent.get("snapshot") or {}
+            for output in snapshot.get("outputs", []):
+                selection: dict[str, Any] = output.get("selection") or {}
+                outputs.append({
+                    "agent_id": agent["agent_id"], "output_id": output["id"],
+                    "label": output["label"], "station_name": selection.get("label"),
+                    "available": agent["status"] == "ok" and not snapshot.get("stale", False),
+                })
+        config: dict[str, Any] = payload.get("config") or {}
+        return {
+            **payload,
+            "playback_outputs": outputs,
+            "resolved_inputs": resolve_input_names(config.get("inputs", []), playback),
+        }
 
     def record_frontend_event(self, ip_address: str, path: str, payload: dict[str, Any]) -> None:
         entry: dict[str, Any] = {

@@ -155,6 +155,31 @@ In `web/config_example.json`, `zones` and `shortcuts` are included as examples a
 
 Use `web/config_example.json` as the base template for new environments.
 
+### Map playback outputs to Russound inputs
+
+In the configuration editor, choose an input's **Stream mapping** for input 1
+if that output is physically wired to input 1. Menu entries show the station
+name followed by `[agent / output_id]`; the closed selector shows only the
+station name.
+The equivalent input configuration is:
+
+```json
+{
+  "id": 1,
+  "name": "Radio",
+  "playback_output": {"agent_id": "musicpi", "output_id": "stereo_front"}
+}
+```
+
+The dashboard source selector displays the selected station's name and updates
+when the station changes, including while paused or stopped. `name` remains an
+editable fallback; station changes never rewrite web configuration. No station
+uses that fallback. Unavailable playback retains the last known station name,
+marked unavailable; missing agents/outputs show the fallback and a mapping warning.
+Mappings remain editable and are preserved while agents are offline. Choose
+**Not mapped** to remove one. This is web display/wiring metadata only: it does
+not rename physical keypads or start playback when a Russound zone changes.
+
 ## API Summary
 
 The complete API reference is documented in `web/API.md`.

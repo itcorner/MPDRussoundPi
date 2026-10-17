@@ -968,9 +968,10 @@ h1 {
 
 .config-source-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) auto minmax(240px, 2fr);
+  grid-template-columns: minmax(90px, 0.5fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  grid-template-rows: auto auto;
   gap: 0.9rem;
-  align-items: center;
+  align-items: baseline;
   padding: 0.95rem 1rem;
   border-radius: 16px;
   background: rgba(7, 19, 31, 0.45);
@@ -981,6 +982,69 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+}
+
+.config-source-row .field,
+.config-source-row select {
+  min-width: 0;
+}
+
+.config-source-row .config-slot-meta {
+  gap: 0.4rem;
+}
+
+.config-source-row > .config-slot-meta,
+.config-source-row > .field {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  row-gap: 0.4rem;
+  align-items: baseline;
+}
+
+.config-source-row .config-check,
+.config-source-row input[data-field="source-name"],
+.config-source-row .stream-mapping-select {
+  align-self: center;
+}
+
+.stream-mapping-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.stream-mapping-select select {
+  color: transparent;
+  cursor: pointer;
+}
+
+.stream-mapping-select option {
+  color: var(--text);
+  background: #0e2132;
+}
+
+.stream-mapping-value {
+  position: absolute;
+  inset: 0;
+  padding: 0.7rem 2rem 0.7rem 0.8rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.stream-mapping-select::after {
+  content: "";
+  position: absolute;
+  right: 0.85rem;
+  top: 50%;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1px solid var(--text);
+  border-bottom: 1px solid var(--text);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
 }
 
 .config-check {
@@ -1449,6 +1513,12 @@ input[type="range"] {
 
   .config-source-row {
     grid-template-columns: 1fr;
+  }
+
+  .config-source-row > .config-slot-meta,
+  .config-source-row > .field {
+    grid-row: auto;
+    grid-template-rows: auto auto;
   }
 
   .app-shell {

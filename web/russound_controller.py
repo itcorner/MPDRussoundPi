@@ -97,6 +97,8 @@ class RussoundController:
                     "id": source_id,
                     "name": input_item.get("name", _default_source_name(source_id)) if input_item else _default_source_name(source_id),
                     "enabled": bool(input_item.get("enabled", True)) if input_item else False,
+                    **({"playback_output": dict(input_item["playback_output"])}
+                       if input_item and "playback_output" in input_item else {}),
                 }
             )
 
@@ -277,6 +279,14 @@ class RussoundController:
                     normalized_input = {"id": source_id}
                     input_lookup[source_id] = normalized_input
                 input_lookup[source_id]["name"] = source_name.strip() or _default_source_name(source_id)
+                if "playback_output" in raw_source:
+                    binding = raw_source["playback_output"]
+                    if binding is None:
+                        input_lookup[source_id].pop("playback_output", None)
+                    else:
+                        binding_config: dict[str, Any] = {"inputs": [{"id": source_id, "playback_output": binding}]}
+                        validate_russound_config(binding_config)
+                        input_lookup[source_id]["playback_output"] = dict(binding)
 
         updated_config["inputs"] = sorted(
             (

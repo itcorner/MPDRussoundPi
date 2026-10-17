@@ -154,6 +154,10 @@ async function refreshBackendStatus() {
     const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error("Status unavailable");
     const payload = await response.json();
+    if (configPayload) {
+      configPayload.resolved_inputs = payload.resolved_inputs || [];
+      for (const row of configSources.querySelectorAll(".config-source-row")) updatePlaybackPreview(row);
+    }
     const backend = payload.config?.backend || {};
     const overrides = configPayload?.backend_overrides || {};
     const hasOverrides = Boolean(overrides.RUSSOUND_BACKEND_HOST || overrides.RUSSOUND_BACKEND_PORT);
@@ -240,6 +244,9 @@ function normalizeSourceSlots(sourceSlots) {
       id: Number(slot.id),
       name: String(slot.name ?? ""),
       enabled: Boolean(slot.enabled),
+      playback_output: slot.playback_output
+        ? { agent_id: slot.playback_output.agent_id, output_id: slot.playback_output.output_id }
+        : null,
     }))
     .sort((a, b) => a.id - b.id);
 }
@@ -318,15 +325,24 @@ function renderEditor(payload) {
     row.innerHTML = `
       <div class="config-slot-meta">
         <strong>Source ${sourceSlot.id}</strong>
+        <label class="config-check">
+          <input type="checkbox" data-field="source-enabled" ${sourceSlot.enabled ? "checked" : ""} />
+          <span>Enable</span>
+        </label>
       </div>
-      <label class="config-check">
-        <input type="checkbox" data-field="source-enabled" ${sourceSlot.enabled ? "checked" : ""} />
-        <span>Enable</span>
-      </label>
       <label class="field config-name-field">
+        Fallback name
         <input type="text" data-field="source-name" value="${escapeAttribute(sourceSlot.name)}" aria-label="Source ${sourceSlot.id} name" />
       </label>
+      <label class="field">
+        Stream mapping
+        <span class="stream-mapping-select">
+          <select data-field="playback-output" aria-label="Source ${sourceSlot.id} stream mapping"></select>
+          <span class="stream-mapping-value" data-field="playback-preview" aria-hidden="true"></span>
+        </span>
+      </label>
     `;
+    populatePlaybackOutputs(row, sourceSlot.playback_output);
     configSources.appendChild(row);
   }
 
@@ -422,7 +438,48 @@ function collectSourceSlots() {
     id: Number(row.dataset.sourceId),
     name: row.querySelector('[data-field="source-name"]').value,
     enabled: row.querySelector('[data-field="source-enabled"]').checked,
+    playback_output: JSON.parse(row.querySelector('[data-field="playback-output"]').value || "null"),
   }));
+}
+
+function populatePlaybackOutputs(row, binding) {
+  const select = row.querySelector('[data-field="playback-output"]');
+  select.add(new Option("Not mapped", "null"));
+  for (const output of configPayload.playback_outputs || []) {
+    const value = JSON.stringify({ agent_id: output.agent_id, output_id: output.output_id });
+    select.add(new Option(`${output.station_name || "No station selected"} [${output.agent_id} / ${output.output_id}]${output.available ? "" : " (unavailable)"}`, value));
+  }
+  const value = binding ? JSON.stringify({ agent_id: binding.agent_id, output_id: binding.output_id }) : "null";
+  if (!Array.from(select.options).some((option) => option.value === value)) {
+    select.add(new Option(`Unavailable [${binding.agent_id} / ${binding.output_id}]`, value));
+  }
+  select.value = value;
+  updatePlaybackPreview(row);
+}
+
+function updatePlaybackPreview(row) {
+  const select = row.querySelector('[data-field="playback-output"]');
+  const binding = JSON.parse(select.value || "null");
+  const preview = row.querySelector('[data-field="playback-preview"]');
+  const output = (configPayload.playback_outputs || []).find((output) =>
+    output.agent_id === binding?.agent_id && output.output_id === binding?.output_id);
+  const resolved = (configPayload.resolved_inputs || []).find((input) =>
+    input.id === Number(row.dataset.sourceId) &&
+    input.playback_output?.agent_id === binding?.agent_id &&
+    input.playback_output?.output_id === binding?.output_id);
+  const station = resolved?.playback_status === "no_station" ? "No station selected"
+    : resolved && !["unmapped"].includes(resolved.playback_status) ? resolved.display_name
+    : output?.station_name || (output ? "No station selected" : "Unavailable");
+  preview.textContent = binding ? station : "Not mapped";
+  select.title = !binding ? "" : resolved?.playback_message ||
+    (!output ? "Playback output unavailable; fallback name will be used."
+      : !output.available ? "Playback unavailable; showing the last known station." : "");
+  if (binding) {
+    const option = Array.from(select.options).find((option) => option.value === select.value);
+    if (option) {
+      option.textContent = `${station} [${binding.agent_id} / ${binding.output_id}]${select.title && resolved?.playback_status !== "no_station" ? " (unavailable)" : ""}`;
+    }
+  }
 }
 
 async function fetchConfigEditor() {
@@ -562,6 +619,10 @@ controllerZones.addEventListener("input", handleEditorInteraction);
 controllerZones.addEventListener("change", handleEditorInteraction);
 configSources.addEventListener("input", handleEditorInteraction);
 configSources.addEventListener("change", handleEditorInteraction);
+configSources.addEventListener("change", (event) => {
+  const row = event.target.closest(".config-source-row");
+  if (row) updatePlaybackPreview(row);
+});
 document.addEventListener("click", handleNavigationGuard);
 connectionConfig.addEventListener("input", () => { updateConnectionFields(); recomputeUnsavedChanges(); });
 connectionConfig.addEventListener("change", () => { updateConnectionFields(); recomputeUnsavedChanges(); });

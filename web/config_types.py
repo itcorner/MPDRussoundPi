@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass
 from typing import TypedDict, cast
 
@@ -52,6 +53,18 @@ def validate_russound_config(config: object) -> None:
                         raise ValueError(f"{collection}.{field} must be an integer from {minimum} to {maximum}")
             if "name" in item and not isinstance(item["name"], str):
                 raise ValueError(f"{collection}.name must be a string")
+            if collection == "inputs" and "playback_output" in item:
+                raw_binding = cast(object, item["playback_output"])
+                binding = cast(dict[str, object], raw_binding) if isinstance(raw_binding, dict) else {}
+                if (
+                    set(binding) != {"agent_id", "output_id"}
+                    or any(
+                        not isinstance(value, str)
+                        or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value) is None
+                        for value in binding.values()
+                    )
+                ):
+                    raise ValueError("inputs.playback_output must contain valid agent_id and output_id")
             for field in ("enabled", "visible"):
                 if field in item and not isinstance(item[field], bool):
                     raise ValueError(f"{collection}.{field} must be a boolean")
@@ -95,10 +108,16 @@ class ZoneConfig(TypedDict, total=False):
     visible: bool
 
 
+class PlaybackOutputBinding(TypedDict):
+    agent_id: str
+    output_id: str
+
+
 class InputConfig(TypedDict, total=False):
     id: int
     name: str
     enabled: bool
+    playback_output: PlaybackOutputBinding
 
 
 class ShortcutZoneAddressConfig(TypedDict, total=False):

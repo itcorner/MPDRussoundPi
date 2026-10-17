@@ -176,6 +176,15 @@ control-state replacement or production rollback was performed for S04.
   sampling advanced. Existing Radio 88.6 (now Stereo Front) faults continued. No fault injection,
   playback repair, Docker transport or p95 update-latency acceptance was performed.
 
+## Playback input bindings
+
+[Python mapping tests](../tests/test_input_playback.py) cover binding validation,
+editor persistence/removal, cached HTTP/event resolution, station changes,
+no-station fallbacks and offline/missing mappings.
+[JavaScript mapping tests](../tests/test_input_playback.js) cover dirty tracking,
+offline selector preservation, previews and in-place source-name updates that
+keep the selected hardware input unchanged and render station labels as text.
+
 ## Deployment workflows
 
 [Workflow tests](../tests/test_deployment_workflows.py) check non-forcing Git

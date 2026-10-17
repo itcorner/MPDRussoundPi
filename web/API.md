@@ -96,6 +96,26 @@ Content-Type: application/json
 
 ## View payload
 
+Mapped inputs may contain `playback_output: {"agent_id":"musicpi",
+"output_id":"stereo_front"}`. Both identities follow
+`[a-z][a-z0-9_-]{0,63}`. These bindings describe physical wiring, not commands.
+Configuration `inputs[].name` remains the fallback and is never replaced by
+station metadata.
+
+When bindings exist, view payloads add `resolved_inputs`, copies of configured
+inputs with `display_name` and (for mapped inputs) `playback_status`
+(`ok`, `no_station`, `unavailable`, `unmapped`) and `playback_message`.
+Resolution uses cached playback observations only, including last-known station
+names during outages; it never contacts agents on the request path.
+The `playback-change` SSE event prompts the dashboard to refresh names in place.
+
+`GET /api/config` and successful configuration saves additionally return
+`playback_outputs` (agent/output identities, label, station_name and available)
+and `resolved_inputs` for editor choices/previews. Source slots preserve the
+optional `playback_output` object. On save, null explicitly removes a binding;
+omitting the property preserves an existing binding. Unknown but syntactically
+valid identities are retained, allowing configuration while an agent is offline.
+
 Most endpoints return the same payload shape:
 
 ```json
