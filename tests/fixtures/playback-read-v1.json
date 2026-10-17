@@ -22,7 +22,13 @@
       {
         "id": "front",
         "label": "Front stream",
-        "selection": {"label": "Radio 88.6"},
+        "selection": {
+          "label": "Stereo Front",
+          "source": "https://edge85.streamonkey.net/...",
+          "provider": null,
+          "station_id": null,
+          "station_name": null
+        },
         "gain": {"configured_db": -7.1},
         "playback": {
           "status": "ok",
@@ -41,11 +47,12 @@
             "bitrate_kbps": 128,
             "audio_format": "44100:24:2",
             "mpd_error": null,
+            "current_source": null,
             "now_playing": {
               "title": "Example track",
               "artist": null,
               "album": null,
-              "station": "Radio 88.6",
+              "station": "Stereo Front",
               "metadata_available": true
             }
           },
@@ -111,6 +118,7 @@
         "bitrate_kbps": 128,
         "audio_format": "44100:24:2",
         "mpd_error": null,
+        "current_source": null,
         "now_playing": {
           "title": null, "artist": null, "album": null, "station": null,
           "metadata_available": false

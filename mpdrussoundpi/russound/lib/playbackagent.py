@@ -236,7 +236,11 @@ def create_app(
     def capabilities() -> Response:
         response: dict[str, object] = dict(identity, read_features=[
             "inventory", "playback", "now_playing", "audio_diagnostics",
-        ], write_operations=list(ACTIONS) if operations is not None else [])
+        ], write_operations=[
+            action for action in ACTIONS
+            if operations is not None
+            and (action != "set_tunein_station" or operations.tunein_selection_enabled)
+        ])
         if operations is not None:
             response["operation_retention_seconds"] = 86400
             response["gain_limits"] = {"slider_min_db": -60, "max_db": 0, "step_db": 0.1}

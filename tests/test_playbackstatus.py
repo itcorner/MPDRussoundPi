@@ -62,7 +62,7 @@ class PlaybackStatusTests(unittest.TestCase):
     def client(self):
         client = Mock()
         client.status.return_value = self.state()
-        client.currentsong.return_value = {"id": "1", "title": "Example track", "name": "Radio 88.6"}
+        client.currentsong.return_value = {"id": "1", "title": "Example track", "name": "Stereo Front"}
         self.clients.append(client)
         return client
 
@@ -161,12 +161,15 @@ class PlaybackStatusTests(unittest.TestCase):
 
     def test_missing_metadata_is_not_configured_station_fallback(self):
         client = self.client()
-        client.currentsong.return_value = {"id": "1", "file": "https://secret.example?token=private"}
+        client.currentsong.return_value = {
+            "id": "1", "file": "https://user:private-pass@radio.example/live?token=private",
+        }
         value = status.read_playback(client)
         self.assertEqual(value.now_playing.to_dict(),
                          {"title": None, "artist": None, "album": None, "station": None,
                           "metadata_available": False})
-        self.assertNotIn("secret", json.dumps(value.to_dict()))
+        self.assertEqual(value.current_source, "https://radio.example/...")
+        self.assertNotIn("private", json.dumps(value.to_dict()))
 
     def test_repeated_tags_are_normalized_and_bounded(self):
         client = self.client()

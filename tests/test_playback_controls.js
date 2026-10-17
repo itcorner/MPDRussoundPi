@@ -86,15 +86,16 @@ function fixture() {
     agents: [{
       agent_id: "agent/one",
       status: "ok",
-      write_operations: ["play", "pause", "stop", "set_gain"],
+      write_operations: ["play", "pause", "stop", "set_gain", "set_tunein_station"],
       snapshot: {
         config_revision: "config-1",
         outputs: [{
           id: "output/one",
           label: "Kitchen",
           control_revision: "control-1",
+          selection: { source: "https://radio.example/..." },
           gain: { configured_db: -12 },
-          playback: { age_ms: 0, value: { state: "stopped" } },
+          playback: { age_ms: 0, value: { state: "stopped", current_source: "https://old.example/..." } },
         }],
       },
     }],
@@ -112,6 +113,7 @@ function operation(status, action = "play", extra = {}) {
       status,
       error: null,
       requested_intention_persisted: status === "applied" ? true : null,
+      requested_source_persisted: status === "applied" ? true : null,
       applied: status === "applied" ? true : null,
       ...extra,
     },
@@ -130,7 +132,8 @@ const settle = async () => {
 
 function harness(snapshot = fixture()) {
   const ids = Object.fromEntries(["playbackHealth", "playbackMessage", "playbackOutputs",
-    "playbackConfigDialog", "playbackConfigTitle", "playbackConfigControls", "playbackConfigClose"]
+    "playbackConfigDialog", "playbackConfigTitle", "playbackConfigSubtitle", "playbackConfigControls",
+    "playbackConfigClose"]
     .map((id) => [id, new Element("div")]));
   ids.playbackConfigDialog.append(ids.playbackConfigTitle, ids.playbackConfigControls, ids.playbackConfigClose);
   const requests = [];
@@ -171,6 +174,12 @@ function harness(snapshot = fixture()) {
       if (url === "/api/playback") {
         if (snapshotFailure) throw new Error("Snapshot connection lost");
         return response(200, JSON.parse(JSON.stringify(snapshot)));
+      }
+      if (url.startsWith("/api/playback/catalogs/tunein/search?")) {
+        assert.ok(plan.length, "Unexpected TuneIn search request");
+        const next = plan.shift();
+        if (next instanceof Error) throw next;
+        return typeof next === "function" ? next(options) : next;
       }
       assert.ok(plan.length, `Unexpected operation request: ${url}`);
       const next = plan.shift();
@@ -231,7 +240,8 @@ test("write controls require each capability and string revisions; unavailable/s
     }
     assert.equal(h.input("range").disabled, !capabilities?.includes("set_gain"));
   }
-  agent.write_operations = ["play", "pause", "stop", "set_gain"];
+  agent.write_operations = ["play", "pause", "stop", "set_gain", "set_tunein_station"];
+  h.render();
   for (const target of [agent.snapshot, output]) {
     const field = target === output ? "control_revision" : "config_revision";
     for (const value of [undefined, null, 123]) {
@@ -311,6 +321,7 @@ test("each explicit action submits the contract and locks only its output until 
     snapshot.agents[0].snapshot.outputs.push({
       ...snapshot.agents[0].snapshot.outputs[0], id: "other", label: "Other",
     });
+
     const h = harness(snapshot);
     await settle();
     h.open();
@@ -351,6 +362,62 @@ test("each explicit action submits the contract and locks only its output until 
     assert.equal(h.requests.filter((item) => item.url === "/api/playback").length, snapshotsBefore + 1);
     assert.equal(h.gets()[0].url, "/api/playback/agents/agent%2Fone/operations/operation%2Fone");
   }
+});
+
+test("TuneIn search returns selectable stations and submits only station identity", async () => {
+  const h = harness();
+  await settle();
+  h.open();
+  const agent = h.snapshot.agents[0];
+  h.edit("search", "BBC");
+  assert.equal(h.posts().length, 0);
+  h.plan.push(response(200, {
+    api_version: 1,
+    provider: "tunein",
+    stations: [{
+      id: "s231065",
+      name: "Radio BBC",
+      description: "News",
+      formats: "aac",
+      bitrate_kbps: 128,
+    }],
+  }));
+  let prevented = false;
+  h.input("search").listeners.keydown({ key: "Enter", isComposing: false, preventDefault() { prevented = true; } });
+  await settle();
+  assert.equal(prevented, true);
+  assert.equal(h.requests.some((request) => request.url === "/api/playback/catalogs/tunein/search?q=BBC"), true);
+  agent.write_operations = ["play", "pause", "stop", "set_gain"];
+  h.render();
+  assert.equal(h.button("Select and play").disabled, true);
+  agent.write_operations.push("set_tunein_station");
+  h.render();
+  assert.equal(h.button("Select and play").disabled, false);
+  h.plan.push(response(202, operation("queued", "set_tunein_station")),
+    response(200, operation("applied", "set_tunein_station")));
+  h.click("Select and play");
+  await settle();
+  assert.equal(h.posts().length, 1);
+  const body = JSON.parse(h.posts()[0].options.body);
+  assert.equal(body.action, "set_tunein_station");
+  assert.equal(body.station_id, "s231065");
+  assert.equal(body.station_name, "Radio BBC");
+  assert.equal("source_url" in body, false);
+  assert.match(h.status().textContent, /Desired station persisted: yes/);
+  const cardText = h.ids.playbackOutputs.children[0].children.map((child) => child.textContent).join(" ");
+  assert.doesNotMatch(cardText, /secret-value|radio\.example|old\.example|MPD source/);
+  assert.ok(!h.ids.playbackOutputs.children[0].querySelector(".playback-logo"));
+  agent.snapshot.outputs[0].selection = {
+    provider: "tunein", station_id: "s231065", station_name: "Radio BBC", source: "https://radio.example/...",
+  };
+  agent.snapshot.outputs[0].playback.value.now_playing = { station: "icy-name", title: "Song" };
+  h.render();
+  const card = h.ids.playbackOutputs.children[0];
+  assert.equal(card.querySelector(".playback-state").textContent, "stopped · Radio BBC");
+  assert.equal(card.querySelector(".playback-logo").src, "https://cdn-profiles.tunein.com/s231065/images/logoq.png");
+  agent.snapshot.outputs[0].selection = { source: "https://radio.example/..." };
+  h.render();
+  assert.equal(h.ids.playbackOutputs.children[0].querySelector(".playback-state").textContent, "stopped · icy-name");
 });
 
 test("lost submission exposes unknown outcome and manual retry reuses the identical body and key", async () => {
@@ -528,12 +595,14 @@ test("cards show only Config; native dialog opens, closes and switches output id
   }
   h.open();
   assert.equal(h.ids.playbackConfigDialog.open, true);
-  assert.match(h.ids.playbackConfigTitle.textContent, /agent\/one.*Kitchen.*output\/one/);
+  assert.equal(h.ids.playbackConfigTitle.textContent, "Kitchen");
+  assert.equal(h.ids.playbackConfigSubtitle.textContent, "agent/one · output/one");
   assert.equal(h.input("number"), undefined);
   assert.equal(h.input("text"), undefined);
   h.edit("range", "-27.3");
   h.open(1);
-  assert.match(h.ids.playbackConfigTitle.textContent, /Bedroom.*other/);
+  assert.match(h.ids.playbackConfigTitle.textContent, /Bedroom/);
+  assert.match(h.ids.playbackConfigSubtitle.textContent, /other/);
   assert.equal(h.input("range").value, "-20");
   h.edit("range", "-31.1");
   h.open(0);
@@ -622,14 +691,13 @@ test("command feedback stays in the dialog, including after closing and reopenin
   await settle();
   h.open();
   const feedback = h.ids.playbackConfigControls.querySelector(".playback-command-feedback");
-  const hint = feedback.querySelector(".playback-gain-hint");
-  assert.equal(hint.hidden, false);
+  assert.equal(feedback.hidden, true);
   assert.equal(feedback.attributes["aria-label"], "Command feedback");
   h.plan.push(response(202, operation("queued")), response(200, operation("running")),
     response(200, operation("failed", "play", { error: { code: "failed", message: "<b>Failure</b>", retryable: false } })));
   h.click("Play");
   await settle();
-  assert.equal(hint.hidden, true);
+  assert.equal(feedback.hidden, false);
   h.close();
   assert.equal(h.ids.playbackOutputs.querySelector(".playback-command-status"), undefined);
   h.open();
@@ -733,4 +801,67 @@ test("snapshot request failure disables open dialog in place until a fresh snaps
   assert.equal(slider.value, "-22.3");
   assert.equal(slider.disabled, false);
   assert.equal(h.button("Play").disabled, false);
+});
+
+test("dialog groups controls into sections and shows the gain hint only for drafts", async () => {
+  const h = harness();
+  await settle();
+  h.open();
+  const titles = h.ids.playbackConfigControls.querySelectorAll(".playback-section-title")
+    .map((title) => title.textContent);
+  assert.deepEqual(titles, ["Playback", "Station", "Calibration gain"]);
+  assert.equal(h.ids.playbackConfigControls.querySelector(".playback-section-detail").textContent, "stopped");
+  const hint = h.ids.playbackConfigControls.querySelector(".playback-gain-actions")
+    .querySelector(".playback-gain-hint");
+  assert.equal(hint.hidden, true);
+  h.edit("range", "-20");
+  assert.equal(hint.hidden, false);
+  assert.match(hint.textContent, /Unsaved draft/);
+  h.edit("range", "-12");
+  assert.equal(hint.hidden, true);
+});
+
+test("station logos fall back across TuneIn CDN paths and survive re-renders without flicker", async () => {
+  const h = harness();
+  await settle();
+  const output = h.snapshot.agents[0].snapshot.outputs[0];
+  output.selection = { provider: "tunein", station_id: "s296247", station_name: "METAL Radio" };
+  h.render();
+  const logo = h.ids.playbackOutputs.children[0].querySelector(".playback-logo");
+  assert.equal(logo.src, "https://cdn-profiles.tunein.com/s296247/images/logoq.png");
+  assert.equal(logo.hidden, true);
+  logo.listeners.error();
+  assert.equal(logo.src, "https://cdn-profiles.tunein.com/s296247/images/logoq.jpg");
+  logo.listeners.load();
+  assert.equal(logo.hidden, false);
+  h.render();
+  const rerendered = h.ids.playbackOutputs.children[0].querySelector(".playback-logo");
+  assert.equal(rerendered, logo);
+  assert.equal(rerendered.src, "https://cdn-profiles.tunein.com/s296247/images/logoq.jpg");
+  assert.equal(rerendered.hidden, false);
+
+  output.selection = { provider: "tunein", station_id: "s1", station_name: "No logo" };
+  h.render();
+  const missing = h.ids.playbackOutputs.children[0].querySelector(".playback-logo");
+  missing.listeners.error();
+  missing.listeners.error();
+  assert.equal(missing.src, "https://cdn-radiotime-logos.tunein.com/s1q.png");
+  missing.listeners.error();
+  h.render();
+  assert.equal(h.ids.playbackOutputs.children[0].querySelector(".playback-logo"), undefined);
+});
+
+test("empty TuneIn search results explain that nothing playable was found", async () => {
+  const h = harness();
+  await settle();
+  h.open();
+  h.edit("search", "s999999999");
+  h.plan.push(response(200, { api_version: 1, provider: "tunein", stations: [] }));
+  h.click("Search");
+  await settle();
+  const status = h.ids.playbackConfigControls.querySelectorAll(".playback-gain-hint")
+    .find((node) => node.textContent === "No playable stations found.");
+  assert.ok(status);
+  assert.equal(status.hidden, false);
+  assert.equal(h.button("Select and play"), undefined);
 });

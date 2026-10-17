@@ -24,7 +24,7 @@ TOKEN = "test-service-token-" + "x" * 32
 class FakeCollector:
     def __init__(self, revision="a" * 64):
         self.config_revision = revision
-        self.outputs = (status.OutputObservation("front", "Front stream", "Radio 88.6", -7.1),)
+        self.outputs = (status.OutputObservation("front", "Front stream", "Stereo Front", -7.1),)
         self.refresh = Mock()
         self.close = Mock()
 
@@ -174,7 +174,7 @@ class PlaybackAgentTests(unittest.TestCase):
         self.observer.tick()
         healthy = status.Playback(
             "play", "1", 1, 1234.5, None, 128, "44100:24:2", None,
-            status.NowPlaying("Example track", None, None, "Radio 88.6"),
+            status.NowPlaying("Example track", None, None, "Stereo Front"),
         )
         first = replace(self.collector.outputs[0], playback=status.Probe(
             "ok", "2026-10-14T18:50:00Z",

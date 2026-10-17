@@ -153,7 +153,7 @@ control-state replacement or production rollback was performed for S04.
   verifies real Pi cached reads, metadata, routes/gain and HTTP authentication
   with a separate private config copy. Production config/intentions hashes and
   existing audio/MPD/supervisor/recorder PIDs/restarts were unchanged; recorder
-  sampling advanced. Existing Radio 88.6 faults continued. No fault injection,
+  sampling advanced. Existing Radio 88.6 (now Stereo Front) faults continued. No fault injection,
   playback repair, Docker transport or p95 update-latency acceptance was performed.
 
 ## Manual MPD Stream Control
@@ -166,16 +166,16 @@ idempotence, protocol errors, locking, gain persistence and rollback.
 From `mpdrussoundpi/russound/`, with MPD services already running:
 
 ```sh
-python mpdctrl.py --start --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --stop --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --pause --stream "Radio 88.6" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --status --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --start --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --stop --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --pause --stream "Stereo Front" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --status --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --stop ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --status ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --apply-gain ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --check-route ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --recover-route --stream "Radio 88.6" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --recover-route --stream "Stereo Front" ~/.config/mpdrussoundpi/config.json
 ```
 
 Names are exact, case-sensitive configured stream names. Omitting `--stream`
@@ -227,7 +227,8 @@ The configured output name `pw_<sink>` must match the live MPD client's
 matches refuse recovery. Configured sink names must be unique across streams.
 The helper discovers current sink-input IDs on every inspection, including
 after client recreation, instead of storing transient IDs such as `253`.
-Recovery retries missing clients/sinks for five seconds, uses two-second
+Recovery retries missing clients/sinks for five seconds (12 seconds right after
+MPD (re)starts a stream, while it buffers), uses two-second
 timeouts for each `pactl` call, and requires two consecutive correct snapshots
 for the same client, separated by 0.2 seconds. Move command errors and invalid
 JSON fail explicitly. Recreated clients must retain the generated output name.

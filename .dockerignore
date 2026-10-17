@@ -7,7 +7,11 @@
 
 ansible/
 docs/
-mpdrussoundpi/
+mpdrussoundpi/**
+!mpdrussoundpi/russound/
+!mpdrussoundpi/russound/lib/
+!mpdrussoundpi/russound/lib/sourceurl.py
+!mpdrussoundpi/russound/lib/tunein.py
 tests/
 tool/
 

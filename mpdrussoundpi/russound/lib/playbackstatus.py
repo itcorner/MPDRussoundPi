@@ -16,6 +16,7 @@ from lib.mpdbackend import BackendError, MPDBackend, MPDConnection, StreamSettin
 from lib.streamgain import read_sink_gain
 from lib.streamroute import inspect_route
 from lib.playbackidentity import identities
+from lib.sourceurl import source_display
 
 
 class ReadValue(Protocol):
@@ -112,6 +113,7 @@ class Playback:
     audio_format: str | None
     mpd_error: str | None
     now_playing: NowPlaying
+    current_source: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -119,7 +121,7 @@ class Playback:
             "queue_entries": self.queue_entries, "elapsed_seconds": self.elapsed_seconds,
             "duration_seconds": self.duration_seconds, "bitrate_kbps": self.bitrate_kbps,
             "audio_format": self.audio_format, "mpd_error": self.mpd_error,
-            "now_playing": self.now_playing.to_dict(),
+            "now_playing": self.now_playing.to_dict(), "current_source": self.current_source,
         }
 
 
@@ -158,6 +160,7 @@ def read_playback(client: MPDConnection) -> Playback:
             _text(after.get("audio")), "MPD reported a playback error." if _text(after.get("error")) else None,
             NowPlaying(_text(song.get("title")), _text(song.get("artist")),
                        _text(song.get("album")), _text(song.get("name"))),
+                       source_display(song.get("file")),
         )
     raise InconsistentSnapshot("MPD snapshot did not settle")
 
@@ -229,6 +232,10 @@ class OutputObservation:
     label: str
     selection_label: str
     configured_db: float
+    selected_source: str | None = None
+    source_provider: str | None = None
+    source_station_id: str | None = None
+    source_station_name: str | None = None
     playback: Probe[Playback] = Probe()
     readiness: Probe[Readiness] = Probe()
     route: Probe[Route] = Probe()
@@ -242,7 +249,11 @@ class OutputObservation:
         ):
             route = Probe[Route]()
         return {
-            "id": self.id, "label": self.label, "selection": {"label": self.selection_label},
+            "id": self.id, "label": self.label, "selection": {
+                "label": self.selection_label, "source": self.selected_source,
+                "provider": self.source_provider, "station_id": self.source_station_id,
+                "station_name": self.source_station_name,
+            },
             "gain": {"configured_db": self.configured_db},
             "playback": self.playback.to_dict(now, 10),
             "audio": {
@@ -273,6 +284,8 @@ class PlaybackCollector:
             self._streams[identity] = stream
             self._outputs[identity] = OutputObservation(
                 identity, normalized_label, selection_label, stream.gain_db,
+                source_display(stream.url), stream.source_provider,
+                stream.source_station_id, stream.source_station_name,
             )
         self._config = config
         self._backend = backend

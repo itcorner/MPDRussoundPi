@@ -160,6 +160,22 @@ class StreamLevelTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         levels.main([str(source), "--output-config", str(destination)])
 
+    def test_cli_resolves_tunein_entries_without_stream_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "config.json"
+            source.write_text(json.dumps({"streams": [
+                {"name": "a", "source_provider": "tunein", "source_station_id": "s8007",
+                 "source_station_name": "ORF Hitradio OE3"},
+            ]}))
+            measurement = levels.Measurement("a", -18.2, 4.3, -2.5, 900, [])
+            with patch.object(levels.shutil, "which", return_value="ffmpeg"), \
+                    patch.object(levels.TuneInCatalog, "resolve", return_value="https://example.com/oe3") as resolve, \
+                    patch.object(levels, "measure_streams", return_value=[measurement]) as measure, \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                levels.main([str(source)])
+            resolve.assert_called_once_with("s8007")
+            self.assertEqual(measure.call_args.args[0], [{"name": "a", "stream": "https://example.com/oe3"}])
+
     def test_cli_invalid_inputs_and_missing_ffmpeg_fail_explicitly(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "config.json"

@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging, _connection_socket_options
 from web.russound_state import RussoundState
 from web.zone import Zone
+from mpdrussoundpi.russound.lib.tunein import TuneInError
 
 
 def _close_server(server: RussoundHTTPServer) -> None:
@@ -21,6 +22,36 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_tunein_search_api_returns_normalized_station_results(self):
+        server = RussoundHTTPServer(None, None)
+        stations = [{
+            "id": "s231065",
+            "name": "Radio BBC",
+            "description": "News",
+            "bitrate_kbps": 128,
+            "formats": "aac",
+        }]
+        with patch.object(server._tunein, "search", return_value=stations) as search:
+            response = server.app.test_client().get("/api/playback/catalogs/tunein/search?q=BBC")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"api_version": 1, "provider": "tunein", "stations": stations})
+        search.assert_called_once_with("BBC")
+
+    def test_tunein_search_api_returns_safe_validation_and_provider_errors(self):
+        server = RussoundHTTPServer(None, None)
+        with patch.object(
+            server._tunein, "search",
+            side_effect=[ValueError("raw input"), TuneInError("private upstream details")],
+        ):
+            client = server.app.test_client()
+            invalid = client.get("/api/playback/catalogs/tunein/search?q=a")
+            unavailable = client.get("/api/playback/catalogs/tunein/search?q=BBC")
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(invalid.json["error"]["code"], "invalid_request")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.json["error"]["code"], "catalog_unavailable")
+        self.assertNotIn("private upstream details", unavailable.get_data(as_text=True))
+
     def test_system_off_backend_failure_returns_error_without_publishing(self):
         server = RussoundHTTPServer(None, None)
         server.controller = Mock()

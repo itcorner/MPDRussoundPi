@@ -3,6 +3,7 @@ const message = document.getElementById("playbackMessage");
 const outputsContainer = document.getElementById("playbackOutputs");
 const configDialog = document.getElementById("playbackConfigDialog");
 const configTitle = document.getElementById("playbackConfigTitle");
+const configSubtitle = document.getElementById("playbackConfigSubtitle");
 const configControls = document.getElementById("playbackConfigControls");
 let activeOutputKey = null;
 let playbackAvailable = false;
@@ -42,6 +43,42 @@ const volatilePlaybackFields = new Set([
   "snapshot_at",
 ]);
 
+// TuneIn hosts each station logo under one of several CDN paths; which one works varies per station.
+function stationLogoCandidates(stationId) {
+  return [
+    `https://cdn-profiles.tunein.com/${stationId}/images/logoq.png`,
+    `https://cdn-profiles.tunein.com/${stationId}/images/logoq.jpg`,
+    `https://cdn-radiotime-logos.tunein.com/${stationId}q.png`,
+  ];
+}
+
+// One element per output and station survives card re-renders, so logos neither reload nor retry failed URLs.
+const stationLogos = new Map();
+
+function stationLogo(outputKey, stationId) {
+  if (typeof stationId !== "string" || !/^s[0-9]{1,12}$/.test(stationId)) return null;
+  const key = JSON.stringify([outputKey, stationId]);
+  let entry = stationLogos.get(key);
+  if (!entry) {
+    const element = document.createElement("img");
+    element.className = "playback-logo";
+    element.alt = "";
+    element.referrerPolicy = "no-referrer";
+    element.hidden = true;
+    entry = { element, candidates: stationLogoCandidates(stationId), index: 0, failed: false };
+    element.addEventListener("load", () => { element.hidden = false; });
+    element.addEventListener("error", () => {
+      element.hidden = true;
+      entry.index += 1;
+      if (entry.index < entry.candidates.length) element.src = entry.candidates[entry.index];
+      else entry.failed = true;
+    });
+    element.src = entry.candidates[0];
+    stationLogos.set(key, entry);
+  }
+  return entry.failed ? null : entry.element;
+}
+
 function apiFetch(path, options = {}) {
   return fetch(path, { ...options, credentials: "same-origin" });
 }
@@ -49,7 +86,10 @@ function apiFetch(path, options = {}) {
 function outputControlState(agent, output) {
   const key = JSON.stringify([agent.agent_id, output.id]);
   if (!outputControls.has(key)) {
-    outputControls.set(key, { key, draft: "", dirty: false, command: null });
+    outputControls.set(key, {
+      key, draft: "", dirty: false, stationQuery: "", stationResults: [], stationSearching: false,
+      stationError: "", command: null,
+    });
   }
   const state = outputControls.get(key);
   state.agent = agent;
@@ -96,9 +136,24 @@ function commandButton(parent, label, disabled, handler) {
   return button;
 }
 
+function dialogSection(parent, title) {
+  const section = document.createElement("section");
+  section.className = "playback-section";
+  const heading = document.createElement("h3");
+  heading.className = "playback-section-title";
+  heading.textContent = title;
+  section.appendChild(heading);
+  parent.appendChild(section);
+  return section;
+}
+
 function renderOutputControls(state) {
   const controls = document.createElement("div");
   controls.className = "playback-controls";
+
+  const playbackSection = dialogSection(controls, "Playback");
+  const nowPlaying = document.createElement("p");
+  nowPlaying.className = "playback-section-detail";
   const transport = document.createElement("div");
   transport.className = "playback-transport";
   const buttons = {};
@@ -107,30 +162,62 @@ function renderOutputControls(state) {
       true, () => submitOutputOperation(state, action));
     buttons[action].dataset.action = action;
   }
-  controls.appendChild(transport);
+  playbackSection.append(nowPlaying, transport);
 
-  const gainLabel = document.createElement("label");
-  gainLabel.className = "playback-gain";
-  gainLabel.textContent = "Calibration gain";
-  gainLabel.setAttribute("for", "playbackGainSlider");
+  const stationSection = dialogSection(controls, "Station");
+  const searchRow = document.createElement("div");
+  searchRow.className = "playback-search";
+  const stationInput = document.createElement("input");
+  stationInput.id = "playbackTuneInQuery";
+  stationInput.type = "search";
+  stationInput.maxLength = 80;
+  stationInput.autocomplete = "off";
+  stationInput.placeholder = "Station name or TuneIn ID (e.g. s25744)";
+  stationInput.value = state.stationQuery;
+  stationInput.setAttribute("aria-label", "Search TuneIn stations");
+  searchRow.appendChild(stationInput);
+  const searchStations = commandButton(
+    searchRow, "Search", false, () => searchTuneInStations(state),
+  );
+  stationInput.addEventListener("input", () => {
+    state.stationQuery = stationInput.value;
+  });
+  stationInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    if (!searchStations.disabled) searchTuneInStations(state);
+  });
+  const stationStatus = document.createElement("p");
+  stationStatus.className = "playback-gain-hint";
+  const stationResults = document.createElement("div");
+  stationResults.className = "playback-station-results";
+  stationSection.append(searchRow, stationStatus, stationResults);
+
+  const gainSection = dialogSection(controls, "Calibration gain");
+  const gainValue = document.createElement("output");
+  gainValue.className = "playback-gain-value";
+  gainSection.children[0].appendChild(gainValue);
   const slider = document.createElement("input");
   slider.id = "playbackGainSlider";
   slider.type = "range";
   slider.max = "0";
   slider.step = "0.1";
-  const gainValue = document.createElement("output");
+  slider.setAttribute("aria-label", "Calibration gain");
   gainValue.setAttribute("for", slider.id);
-  gainValue.className = "playback-gain-value";
-  controls.append(gainLabel, slider, gainValue);
-  const apply = commandButton(controls, "Apply gain",
-    true, () => submitOutputOperation(state, "set_gain"));
-  const validation = document.createElement("p");
-  validation.className = "playback-gain-hint";
   slider.addEventListener("input", () => {
     state.draft = slider.value;
     state.dirty = true;
     updateOutputDialog(state);
   });
+  const gainActions = document.createElement("div");
+  gainActions.className = "playback-gain-actions";
+  const validation = document.createElement("p");
+  validation.className = "playback-gain-hint";
+  gainActions.appendChild(validation);
+  const apply = commandButton(gainActions, "Apply gain",
+    true, () => submitOutputOperation(state, "set_gain"));
+  gainSection.append(slider, gainActions);
+
   const availability = document.createElement("p");
   availability.className = "playback-meta";
   const status = document.createElement("p");
@@ -139,7 +226,7 @@ function renderOutputControls(state) {
   feedback.setAttribute("tabindex", "0");
   feedback.setAttribute("role", "region");
   feedback.setAttribute("aria-label", "Command feedback");
-  feedback.append(validation, availability, status);
+  feedback.append(availability, status);
   const retry = commandButton(feedback, "Retry identical submission", true, () => {
     const command = state.command;
     if (!command?.unknown || !state.present || !playbackAvailable) return;
@@ -147,7 +234,10 @@ function renderOutputControls(state) {
     else if (canWrite(state, command.body.action)) sendOutputOperation(state, command);
   });
   controls.appendChild(feedback);
-  state.dialogElements = { buttons, slider, gainValue, apply, validation, availability, status, retry };
+  state.dialogElements = {
+    buttons, nowPlaying, slider, gainValue, apply, stationInput, searchStations, stationStatus,
+    stationResults, validation, availability, status, retry, feedback,
+  };
   updateOutputDialog(state);
   return controls;
 }
@@ -161,33 +251,75 @@ function updateCommandStatus(element, command) {
 
 function updateOutputDialog(state) {
   if (activeOutputKey !== state.key || !state.dialogElements) return;
-  configTitle.textContent = `Config · ${state.agent.agent_id} · ${state.output.label} (${state.output.id})`;
-  const { buttons, slider, gainValue, apply, validation, availability, status, retry } = state.dialogElements;
+  configTitle.textContent = state.output.label;
+  configSubtitle.textContent = `${state.agent.agent_id} · ${state.output.id}`;
+  const {
+    buttons, nowPlaying, slider, gainValue, apply, stationInput, searchStations, stationStatus,
+    stationResults, validation, availability, status, retry, feedback,
+  } = state.dialogElements;
   const blocked = Boolean(state.command?.pending || state.command?.unknown);
   for (const action of ["play", "pause", "stop"]) buttons[action].disabled = blocked || !canWrite(state, action);
   const playing = state.output.playback?.value?.state === "play";
   buttons.play.hidden = playing;
   buttons.pause.hidden = !playing;
   buttons.stop.disabled ||= state.output.playback?.value?.state === "stop";
+  const observed = state.output.playback?.value || state.output.playback?.last_known?.value || {};
+  const station = [state.output.selection?.station_name, observed.now_playing?.station]
+    .find((value) => typeof value === "string" && value);
+  const playbackState = observed.state || state.output.playback?.status || "unknown";
+  nowPlaying.textContent = station ? `${station} · ${playbackState}` : playbackState;
   const valid = validGain(state.draft);
   // Include both configured and draft gain without rounding or clamping the saved value.
   const configuredGain = state.output.gain?.configured_db;
   slider.min = String(Math.min(-60, Number.isFinite(configuredGain) ? configuredGain : -60, valid ? Number(state.draft) : -60));
   slider.value = valid ? state.draft : slider.min;
   slider.disabled = blocked || !canWrite(state, "set_gain");
+  stationInput.value = state.stationQuery;
+  stationInput.disabled = false;
+  searchStations.disabled = state.stationSearching;
+  stationStatus.textContent = state.stationError || (state.stationSearching ? "Searching TuneIn…" : "");
+  stationStatus.hidden = !stationStatus.textContent;
+  stationStatus.setAttribute("role", state.stationError ? "alert" : "status");
+  stationResults.replaceChildren();
+  for (const station of state.stationResults) {
+    const result = document.createElement("div");
+    result.className = "playback-station-result";
+    const details = document.createElement("div");
+    details.className = "playback-station-details";
+    const name = document.createElement("span");
+    name.className = "playback-station-name";
+    name.textContent = station.name;
+    details.appendChild(name);
+    const metadata = [station.description, station.formats, station.bitrate_kbps
+      ? `${station.bitrate_kbps} kbps` : null].filter((value) => typeof value === "string" && value);
+    if (metadata.length) {
+      const meta = document.createElement("span");
+      meta.className = "playback-station-meta";
+      meta.textContent = metadata.join(" · ");
+      details.appendChild(meta);
+    }
+    const select = commandButton(
+      result, "Select and play", blocked || !canWrite(state, "set_tunein_station"),
+      () => submitOutputOperation(state, "set_tunein_station", station),
+    );
+    result.replaceChildren(details, select);
+    stationResults.appendChild(result);
+  }
   gainValue.textContent = valid ? `${state.draft} dB` : "Gain unavailable";
   apply.disabled = slider.disabled || !valid;
   validation.textContent = valid
-    ? "Draft only. Select Apply gain to send."
+    ? "Unsaved draft. Select Apply gain to send."
     : "No valid configured gain. Move the slider to choose a draft.";
-  availability.hidden = ["play", "pause", "stop", "set_gain"].some((action) => canWrite(state, action));
+  availability.hidden = ["play", "pause", "stop", "set_gain", "set_tunein_station"]
+    .some((action) => canWrite(state, action));
   availability.textContent = pendingConfigRevisions.has(state.agent.agent_id)
     ? "Waiting for updated configuration before another command can be sent."
     : "Read-only: output unavailable, stale, or write capabilities/current revisions unavailable.";
   updateCommandStatus(status, state.command);
-  validation.hidden = Boolean(state.command) || !availability.hidden;
+  validation.hidden = valid && Number(state.draft) === configuredGain;
   if (state.command) availability.hidden = true;
   retry.hidden = !state.command?.unknown;
+  feedback.hidden = availability.hidden && status.hidden && retry.hidden;
   retry.textContent = state.command?.id ? "Check operation status" : "Retry identical submission";
   retry.disabled = !state.present || !playbackAvailable
     || (!state.command?.id && !canWrite(state, state.command?.body.action));
@@ -269,6 +401,10 @@ function acceptOperation(state, command, operation) {
   command.pending = false;
   command.unknown = operation.status === "outcome_unknown";
   command.error = operation.status !== "applied" || Boolean(operation.error);
+  if (operation.status === "applied" && operation.applied === true
+    && command.body.action === "set_tunein_station") {
+    state.stationResults = [];
+  }
   if (operation.status === "applied" && operation.applied === true && command.body.action === "set_gain"
     && Number(state.draft) === command.body.gain_db) {
     state.savedGain = command.body.gain_db;
@@ -284,6 +420,9 @@ function acceptOperation(state, command, operation) {
     && operation.gain_application === "on_next_play";
   command.message = `${command.error ? "Command result" : "Command confirmed"}: ${command.body.action} — ${operation.status}.`
     + (error ? ` ${error.code}: ${error.message} (retryable: ${error.retryable === true ? "yes" : "no"}).` : "")
+    + (command.body.action === "set_tunein_station"
+      ? ` Desired station persisted: ${operation.requested_source_persisted === true ? "yes" : operation.requested_source_persisted === false ? "no" : "unknown"}.`
+      : "")
     + ` Intention persisted: ${operation.requested_intention_persisted === true ? "yes" : operation.requested_intention_persisted === false ? "no" : "unknown"}.`
     + (gainOnNextPlay
       ? " Calibration saved; applies on next play (not applied to the live mixer)."
@@ -365,10 +504,48 @@ async function sendOutputOperation(state, command) {
   }
 }
 
-function submitOutputOperation(state, action) {
+async function searchTuneInStations(state) {
+  if (!state.dialogElements || state.stationSearching) return;
+  const query = state.stationQuery.trim();
+  if (query.length < 2 || query.length > 80) {
+    state.stationError = "Enter at least two characters to search.";
+    updateOutputDialog(state);
+    return;
+  }
+  state.stationSearching = true;
+  state.stationError = "";
+  state.stationResults = [];
+  updateOutputDialog(state);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await apiFetch(
+      `/api/playback/catalogs/tunein/search?q=${encodeURIComponent(query)}`,
+      { signal: controller.signal },
+    );
+    const envelope = await response.json();
+    if (response.status !== 200 || envelope?.api_version !== 1
+      || envelope.provider !== "tunein" || !Array.isArray(envelope.stations)) {
+      throw new Error(envelope?.error?.message || "TuneIn search failed.");
+    }
+    state.stationResults = envelope.stations.filter((station) =>
+      station && typeof station.id === "string" && /^s[0-9]{1,12}$/.test(station.id)
+      && typeof station.name === "string" && station.name.length > 0 && station.name.length <= 120);
+    if (!state.stationResults.length) state.stationError = "No playable stations found.";
+  } catch (error) {
+    state.stationError = error.message || "TuneIn search failed.";
+  } finally {
+    window.clearTimeout(timer);
+    state.stationSearching = false;
+    updateOutputDialog(state);
+  }
+}
+
+function submitOutputOperation(state, action, station) {
   if (!canWrite(state, action) || state.command?.pending || state.command?.unknown
     || (action === "stop" && state.output.playback?.value?.state === "stop")
-    || (action === "set_gain" && !validGain(state.draft))) {
+    || (action === "set_gain" && !validGain(state.draft))
+    || (action === "set_tunein_station" && !station)) {
     return;
   }
   const randomKey = globalThis.crypto?.randomUUID?.()
@@ -381,6 +558,9 @@ function submitOutputOperation(state, action) {
   };
   if (action === "set_gain") {
     body.gain_db = Number(state.draft);
+  } else if (action === "set_tunein_station") {
+    body.station_id = station.id;
+    body.station_name = station.name;
   }
   state.command = {
     body,
@@ -500,17 +680,21 @@ function renderPlayback(playback) {
       const card = document.createElement("article");
       card.className = "playback-card";
       card.dataset.outputKey = JSON.stringify([agent.agent_id, output.id]);
-      const title = document.createElement("h3");
-      title.textContent = `${agent.agent_id} · ${output.label}`;
-      card.appendChild(title);
-
       const playbackProbe = output.playback || {};
       const controlState = outputControlState(agent, output);
       const observed = playbackProbe.value || playbackProbe.last_known?.value || {};
       const nowPlaying = observed.now_playing || {};
-      const selection = output.selection?.label;
+      const stationId = output.selection?.provider === "tunein" ? output.selection.station_id : null;
+      const logo = stationLogo(card.dataset.outputKey, stationId);
+      if (logo) card.appendChild(logo);
+      const title = document.createElement("h3");
+      title.textContent = `${agent.agent_id} · ${output.label}`;
+      card.appendChild(title);
+
+      const station = [output.selection?.station_name, nowPlaying.station]
+        .find((value) => typeof value === "string" && value);
       const playbackState = observed.state || playbackProbe.status || "unknown";
-      appendPlaybackText(card, "playback-state", `${playbackState}${selection ? ` · ${selection}` : ""}`);
+      appendPlaybackText(card, "playback-state", `${playbackState}${station ? ` · ${station}` : ""}`);
       const track = [nowPlaying.artist, nowPlaying.title].filter((value) => typeof value === "string" && value).join(" — ");
       if (track) {
         const line = document.createElement("p");
@@ -525,9 +709,6 @@ function renderPlayback(playback) {
       }
       if (typeof nowPlaying.album === "string" && nowPlaying.album) {
         appendPlaybackText(card, "playback-meta", nowPlaying.album);
-      }
-      if (!track && typeof nowPlaying.station === "string" && nowPlaying.station) {
-        appendPlaybackText(card, "playback-meta", nowPlaying.station);
       }
       if (typeof output.gain?.configured_db === "number" && Number.isFinite(output.gain.configured_db)) {
         appendPlaybackText(card, "playback-meta", `Configured gain: ${output.gain.configured_db.toFixed(1)} dB`);

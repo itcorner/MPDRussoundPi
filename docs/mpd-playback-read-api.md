@@ -36,16 +36,20 @@ must be capability-advertised and must not change these read semantics.
 
 Accepted D08: add an immutable `id` and separate editable `label` to each Pi
 operational `streams` entry during S04 migration. Preserve existing `name`,
-port, sink and derived unit identity. `name` remains the legacy backend/CLI/
-intention key until a coordinated migration explicitly changes that.
+port, sink and derived unit identity. `name` remains the backend/CLI/
+intention key and derives the MPD unit name.
 
-Example migration shape, **not a change to the current Pi**:
+Outputs are named after their audio channel, not a station, because the
+selected station can change (see
+[channel-based identities](mpd-backend-api.md#channel-based-output-identities)).
+Example stream entry, matching the
+[sample config](../mpdrussoundpi/russound/config.json):
 
 ```json
 {
-  "id": "front",
-  "label": "Front stream",
-  "name": "Radio 88.6",
+  "id": "stereo_front",
+  "label": "Stereo Front",
+  "name": "Stereo Front",
   "stream": "https://radio.example/live.mp3",
   "port": 6601,
   "gain_db": -7.1,
@@ -61,8 +65,8 @@ on every startup. IDs cannot be changed through label/source editing; changing
 one is an explicit structural migration. Duplicate/missing IDs produce a
 configuration error, not an auto-renumbered inventory.
 
-`front`, `centerlfe`, `rear` are illustrative migration IDs, not physical
-Russound input mappings. S04 must assign/validate them before live agent rollout.
+`stereo_front`, `stereo_centerlfe`, `stereo_rear` identify Pi audio channels,
+not physical Russound input mappings.
 Read-only local tests can use migrated fixture configs without editing the Pi.
 
 ## 3. Common rules

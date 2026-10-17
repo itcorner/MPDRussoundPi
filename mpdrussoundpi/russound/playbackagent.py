@@ -17,6 +17,9 @@ def main() -> None:
     parser.add_argument("--agent-id", required=True)
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--operations-db", help="Explicitly enable manual commands with a private persistent SQLite ledger")
+    parser.add_argument("--disable-tunein-selection", action="store_true",
+                        help="Disable station selection from the TuneIn catalog (enabled with manual operations)")
+    parser.add_argument("--enable-tunein-selection", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--allow-remote", action="store_true",
@@ -26,10 +29,14 @@ def main() -> None:
         parser.error("Remote binding requires --allow-remote and provisioned secure transport")
     if not 1 <= args.port <= 65535:
         parser.error("Port must be between 1 and 65535")
+    if args.enable_tunein_selection and args.disable_tunein_selection:
+        parser.error("--enable-tunein-selection conflicts with --disable-tunein-selection")
     logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
     logging.getLogger("mpd").setLevel(logging.WARNING)
     backend = MPDBackend(args.json) if args.operations_db else None
-    operations = OperationManager(backend, args.operations_db) if backend is not None else None
+    operations = OperationManager(
+        backend, args.operations_db, tunein_selection_enabled=not args.disable_tunein_selection,
+    ) if backend is not None else None
     observer = AgentObserver(args.json, backend=backend, controls_enabled=operations is not None)
     try:
         token = Path(args.token_file).read_text(encoding="ascii").strip()

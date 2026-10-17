@@ -18,7 +18,7 @@ class SupervisorTests(unittest.TestCase):
         self.api = patcher.start().return_value
         self.addCleanup(patcher.stop)
         self.streams = []
-        for name in ("Radio 88.6", "FM4 Radio", "OE3 Radio"):
+        for name in ("Stereo Front", "Stereo CenterLFE", "Stereo Rear"):
             stream = Mock()
             stream.name = name
             self.streams.append(stream)
@@ -34,7 +34,7 @@ class SupervisorTests(unittest.TestCase):
         run = self.run_once()
         self.assertEqual(self.api.reconcile.call_count, 3)
         self.assertEqual(run.call_args_list[0].args[0],
-                         ["systemctl", "--user", "start", "mpd_radio_88.6.service"])
+                         ["systemctl", "--user", "start", "mpd_stereo_front.service"])
 
     def test_one_stream_failure_does_not_block_other_streams(self):
         self.api.reconcile.side_effect = [supervisor.BackendError("offline"), None, None]

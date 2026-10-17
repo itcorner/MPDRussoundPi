@@ -3,8 +3,17 @@
 Date: 2026-10-14; deployment status updated 2026-10-17. Solution D is selected;
 the read-only agent, production identities, Pi TLS proxy and Docker web status
 integration are deployed. S07 manual playback and calibration-gain controls
-are done, deployed and production-verified by the user on 2026-10-17. Source
-selection and hardware-driven policy remain planned.
+are done, deployed and production-verified by the user on 2026-10-17. S08
+source changes are local-only; hardware-driven policy remains planned.
+
+S08 managed station selection and S09 TuneIn search/resolution are implemented
+locally; station selection is not production-enabled. D09-D12 are accepted:
+no user-entered URLs, explicit one-source queue management, retain saved
+stations for supervisor retry, and selecting a station always starts playback.
+TuneIn station selection is enabled by default on agents with manual
+operations; `--disable-tunein-selection` turns it off. Pi-side
+egress controls remain a production prerequisite because stream hosts and
+redirects are provider-selected.
 
 Implementation progress: S01-S07 are complete, including the
 [production Pi-to-Docker rollout](./playback-agent-deployment.md#production-read-only-rollout-2026-10-17).
@@ -23,9 +32,9 @@ Keep MPD, PipeWire, WirePlumber and the playback supervisor on the audio host.
 The web application may run in Docker on another host, natively on the Pi, or
 in Docker on the Pi. Use the same agent API in every deployment.
 
-Start with read-only stream status and now-playing metadata. Add manual
-playback and volume next, then individual source replacement and catalog
-providers. Introduce hardware-driven automation last, as an explicit opt-in.
+The read-only status, manual playback and volume steps are complete. S08 adds
+individual source replacement before any catalog provider. Introduce
+hardware-driven automation last, as an explicit opt-in.
 Do not deploy or mutate the production audio configuration while the current
 endurance test is running.
 
@@ -37,6 +46,16 @@ endpoints, schemas, modules and timing values below remain proposed until agreed
 Accepted availability decision (D01): the web host owns hardware-demand policy.
 During a web-host outage the Pi preserves/reconciles its last playback intention,
 but does not make new hardware-driven start/stop decisions.
+
+Accepted S08 source behavior: accept only direct HTTP(S) feed URLs without
+embedded user-info or fragments; retain query values for tokenized feeds but
+never echo full URLs in status or errors. Each output may adopt an empty queue
+or a single song matching its prior configured source. Thereafter, remove only
+the tracked MPD song ID and refuse cleanup if the queue contains unowned items.
+Save the new desired URL before applying it so the existing supervisor can
+retry after failure. A source selection changes that output's intention to
+`play` and starts it; there is no silent-selection action. Show desired and
+observed current source separately using redacted display values.
 
 ## 2. Requirements and terminology
 
@@ -55,7 +74,7 @@ exclusive virtual sink. A **source selection** is the station/feed assigned to
 that output. A **Russound source** is the physical input numbered 1 through 6.
 A **zone** is addressed by `(controller, zone)`, not by display name.
 
-Changing FM4 to another station must not change the output's MPD port, sink,
+Changing the station on Stereo CenterLFE must not change the output's MPD port, sink,
 systemd unit or physical input mapping. No transcoding or audio relay through
 the web container is required: the Pi fetches and decodes the stream itself.
 
@@ -84,9 +103,11 @@ proof that the proposed integration already exists.
 | [Recorder](../mpdrussoundpi/russound/playbackaudit.py) | Records status/queue/route/gain/signal without controlling playback | Reuse observation concepts, not its audit process or FFmpeg probes as a UI server |
 | Operational config and playback intentions | Pi-local JSON; config reload per operation; atomic cooperating writes | Agent/CLI/supervisor share these authoritative files; web must not maintain a second copy |
 
-The current Pi layout is Radio 88.6 on port 6601/front, FM4 on 6602/center-LFE,
-and OE3 on 6603/rear. Their physical Russound input numbers are **not established
-by those MPD ports or sink names** and must be configured/verified explicitly.
+The current Pi layout is output `stereo_front` (Stereo Front) on port 6601,
+`stereo_centerlfe` (Stereo CenterLFE) on 6602 and `stereo_rear` (Stereo Rear)
+on 6603; each plays a selectable station. Their physical Russound input numbers
+are **not established by those MPD ports or sink names** and must be
+configured/verified explicitly.
 
 See the existing [Python backend contract](./mpd-backend-api.md),
 [web API](../web/API.md) and [headless deployment](./mpd-headless-deployment.md).
@@ -300,8 +321,8 @@ Example cached output:
   "epoch": "agent-start-identifier",
   "revision": 42,
   "output": {
-    "id": "front",
-    "label": "Front stream",
+    "id": "stereo_front",
+    "label": "Stereo Front",
     "control": {
       "mode": "manual",
       "desired_state": "play",
@@ -434,6 +455,16 @@ Accepted D08: persist an immutable output ID plus a separate editable label, pre
 ports, sinks and unit names during migration. Initially map proposed IDs such
 as `front`, `centerlfe`, `rear` to existing exact-name entries; do not rename
 existing entries to station names supplied by a catalog.
+
+Amended 2026-10-17: because outputs now switch stations, station-named outputs
+were renamed to their audio channel. [outputrename.py](../mpdrussoundpi/russound/outputrename.py)
+derives the stream name, output ID and label from the configured sink (for
+example `stereo_front` / `Stereo Front`) and renames intention keys. It is an
+offline maintenance step: stop the agent, supervisor and MPD units, run it,
+remove the old `mpd_*` units/configs and regenerate them with
+`mpdsetup.py --install`. Ports, sinks, gain and selected sources are unchanged;
+historical operations keep their former output IDs. The dashboard shows the
+selected station (TuneIn name, else MPD's ICY station name) next to the state.
 
 A single-host stable ID is sufficient initially; multi-host identity is
 `(agent_id, output_id)`. Selection edits never regenerate systemd units/audio.

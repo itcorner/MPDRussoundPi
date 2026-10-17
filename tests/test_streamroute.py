@@ -95,6 +95,14 @@ class StreamRouteTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "missing sink"):
                     routes.recover_route("stereo_front")
 
+    def test_startup_timeout_waits_for_late_playback_client(self):
+        correct = routes.StreamRoute(254, "sink.stereo_front", "sink.stereo_front")
+        late = [routes.RouteUnavailable("no client")] * 3 + [correct, correct]
+        with patch.object(routes, "inspect_route", side_effect=late):
+            with patch.object(routes.time, "monotonic", side_effect=[0, 4, 6, 8, 9]):
+                with patch.object(routes.time, "sleep"):
+                    self.assertEqual(routes.recover_route("stereo_front", timeout=12), correct)
+
     def test_ambiguous_clients_never_moved(self):
         with patch.object(routes, "inspect_route", side_effect=RuntimeError("Ambiguous")):
             with patch.object(routes, "_pactl") as pactl:

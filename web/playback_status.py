@@ -14,12 +14,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
+from mpdrussoundpi.russound.lib.tunein import TuneInCatalog
 from web.config_types import env_str
 
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
 AGENT_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
-WRITE_ACTIONS = {"play", "pause", "stop", "set_gain"}
+WRITE_ACTIONS = {"play", "pause", "stop", "set_gain", "set_tunein_station"}
 
 
 class PlaybackCommandError(Exception):
@@ -45,6 +46,20 @@ def validate_operation_request(payload: Any) -> dict[str, Any]:
             valid_gain = False
         if not valid_gain:
             raise PlaybackCommandError("invalid_request", "Gain must be finite and at or below 0 dB.", 400)
+    if action == "set_tunein_station":
+        fields.update(("station_id", "station_name"))
+        try:
+            TuneInCatalog.validate_station_id(value.get("station_id"))
+        except ValueError:
+            raise PlaybackCommandError("invalid_request", "A valid TuneIn station selection is required.", 400) from None
+        station_name = value.get("station_name")
+        if (
+            not isinstance(station_name, str)
+            or not station_name
+            or len(station_name) > 120
+            or not station_name.isprintable()
+        ):
+            raise PlaybackCommandError("invalid_request", "A valid TuneIn station selection is required.", 400)
     if set(value) != fields:
         raise PlaybackCommandError("invalid_request", "Operation fields are missing or unsupported.", 400)
     for name in ("expected_config_revision", "expected_control_revision"):
@@ -390,6 +405,30 @@ def _validate_output(output: Any) -> None:
         or not isinstance(output_payload.get("gain"), dict)
     ):
         raise ValueError("invalid_agent_response")
+    selection: object = output_payload.get("selection")
+    if selection is not None:
+        if not isinstance(selection, dict):
+            raise ValueError("invalid_agent_response")
+        selection_payload = cast(dict[str, Any], selection)
+        source: object = selection_payload.get("source")
+        if source is not None and not isinstance(source, str):
+            raise ValueError("invalid_agent_response")
+        for key in ("provider", "station_id", "station_name"):
+            value = selection_payload.get(key)
+            if value is not None and not isinstance(value, str):
+                raise ValueError("invalid_agent_response")
+    playback: object = output_payload["playback"]
+    if isinstance(playback, dict):
+        playback_payload = cast(dict[str, Any], playback)
+        last_known: object = playback_payload.get("last_known")
+        last_known_value: object = None
+        if isinstance(last_known, dict):
+            last_known_value = cast(dict[str, Any], last_known).get("value")
+        for probe in (playback_payload.get("value"), last_known_value):
+            if isinstance(probe, dict):
+                source = cast(dict[str, Any], probe).get("current_source")
+                if source is not None and not isinstance(source, str):
+                    raise ValueError("invalid_agent_response")
 
 
 def _error_code(exc: Exception) -> str:

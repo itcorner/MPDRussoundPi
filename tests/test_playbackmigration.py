@@ -18,13 +18,22 @@ with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
     identity = importlib.import_module("lib.playbackidentity")
 
 
+def legacy_config():
+    """The sample config before S04 identities: streams without id/label."""
+    config = json.loads((SCRIPTS_DIR / "config.json").read_text())
+    for entry in config["streams"]:
+        entry.pop("id", None)
+        entry.pop("label", None)
+    return config
+
+
 class OfflineMigrationTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.config = self.root / "config.json"
-        self.config.write_bytes((SCRIPTS_DIR / "config.json").read_bytes())
+        self.config.write_text(json.dumps(legacy_config(), indent=2))
         self.original = self.config.read_bytes()
         self.names = [entry["name"] for entry in json.loads(self.original)["streams"]]
         self.state = self.root / "playback.json"
@@ -147,7 +156,10 @@ class OfflineMigrationTests(unittest.TestCase):
 
 
 class IdentityRevisionTests(unittest.TestCase):
-    setUp = fixtures.MPDBackendTests.setUp
+    def setUp(self):
+        fixtures.MPDBackendTests.setUp(self)
+        self.config = legacy_config()
+        self.path.write_text(json.dumps(self.config))
 
     def add_ids(self):
         for entry, output in zip(self.config["streams"], ("front", "centerlfe", "rear")):
@@ -171,24 +183,24 @@ class IdentityRevisionTests(unittest.TestCase):
     def test_label_requires_identity_and_preserves_config_on_invalid_input(self):
         revision = self.api.configuration_snapshot()[2]
         with self.assertRaises(ValueError):
-            self.api.set_label("Radio 88.6", "Display", expected_revision=revision)
+            self.api.set_label("Stereo Front", "Display", expected_revision=revision)
         self.add_ids()
         original = self.path.read_bytes()
         revision = self.api.configuration_snapshot()[2]
         for label in ("", " ", "bad\nlabel"):
             with self.assertRaises(ValueError):
-                self.api.set_label("Radio 88.6", label, expected_revision=revision)
+                self.api.set_label("Stereo Front", label, expected_revision=revision)
         self.assertEqual(self.path.read_bytes(), original)
 
     def test_stale_gain_rejected_before_any_audio_or_config_change(self):
         revision = self.api.configuration_snapshot()[2]
-        self.api.set_gain("Radio 88.6", -5, expected_revision=revision)
+        self.api.set_gain("Stereo Front", -5, expected_revision=revision)
         self.recover_route.reset_mock()
         self.set_sink_gain.reset_mock()
         original = self.path.read_bytes()
         self.client.reset_mock()
         with self.assertRaises(backend.RevisionConflict):
-            self.api.set_gain("Radio 88.6", -4, expected_revision=revision)
+            self.api.set_gain("Stereo Front", -4, expected_revision=revision)
         self.assertEqual(self.path.read_bytes(), original)
         self.recover_route.assert_not_called()
         self.set_sink_gain.assert_not_called()
@@ -197,11 +209,11 @@ class IdentityRevisionTests(unittest.TestCase):
     def test_legacy_gain_write_invalidates_revision_and_label_changes_only_label(self):
         self.add_ids()
         revision = self.api.configuration_snapshot()[2]
-        self.api.set_gain("Radio 88.6", -5)
+        self.api.set_gain("Stereo Front", -5)
         with self.assertRaises(backend.RevisionConflict):
-            self.api.set_label("Radio 88.6", "New label", expected_revision=revision)
+            self.api.set_label("Stereo Front", "New label", expected_revision=revision)
         config, _, revision = self.api.configuration_snapshot()
-        self.api.set_label("Radio 88.6", "New label", expected_revision=revision)
+        self.api.set_label("Stereo Front", "New label", expected_revision=revision)
         updated = json.loads(self.path.read_text())
         self.assertEqual(updated["streams"][0].pop("label"), "New label")
         config["streams"][0].pop("label")
@@ -219,7 +231,7 @@ class IdentityRevisionTests(unittest.TestCase):
 
         def first():
             try:
-                self.api.set_gain("Radio 88.6", -5, expected_revision=revision)
+                self.api.set_gain("Stereo Front", -5, expected_revision=revision)
             except Exception as error:
                 failures.append(error)
 
@@ -229,10 +241,10 @@ class IdentityRevisionTests(unittest.TestCase):
         try:
             self.assertTrue(entered.wait(5))
             with self.assertLogs(level="ERROR"), self.assertRaisesRegex(backend.BackendError, "lock is busy"):
-                self.api.set_gain("Radio 88.6", -4, expected_revision=revision)
+                self.api.set_gain("Stereo Front", -4, expected_revision=revision)
         finally:
             release.set()
             thread.join(5)
         self.assertFalse(thread.is_alive())
         self.assertEqual(failures, [])
-        self.assertEqual(self.api.get_gain("Radio 88.6"), -5)
+        self.assertEqual(self.api.get_gain("Stereo Front"), -5)

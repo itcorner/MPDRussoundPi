@@ -17,12 +17,13 @@ from uuid import uuid4
 
 from lib.mpdbackend import (
     AudioOperationError, BackendBusy, BackendError, GainPersistenceError,
-    MPDBackend, MPDOperationError, RevisionConflict,
+    MPDBackend, MPDOperationError, RevisionConflict, StationUnavailableError,
 )
 from lib.playbackidentity import output_id
+from lib.tunein import TuneInCatalog
 
 
-ACTIONS = ("play", "pause", "stop", "set_gain")
+ACTIONS = ("play", "pause", "stop", "set_gain", "set_tunein_station")
 TERMINAL = ("applied", "failed", "expired", "superseded", "outcome_unknown")
 RETENTION_SECONDS = 86400
 
@@ -53,6 +54,20 @@ def validate_request(value: object) -> dict[str, Any]:
             valid_gain = False
         if not valid_gain:
             raise OperationError("invalid_request", "Gain must be a finite number at or below 0 dB.", 400)
+    if action == "set_tunein_station":
+        allowed.update(("station_id", "station_name"))
+        try:
+            TuneInCatalog.validate_station_id(payload.get("station_id"))
+        except ValueError:
+            raise OperationError("invalid_request", "A valid TuneIn station selection is required.", 400) from None
+        station_name = payload.get("station_name")
+        if (
+            not isinstance(station_name, str)
+            or not station_name
+            or len(station_name) > 120
+            or not station_name.isprintable()
+        ):
+            raise OperationError("invalid_request", "A valid TuneIn station selection is required.", 400)
     if set(payload) != allowed:
         raise OperationError("invalid_request", "Operation fields are missing or unsupported.", 400)
     for field in ("expected_config_revision", "expected_control_revision"):
@@ -68,8 +83,10 @@ class OperationManager:
     def __init__(
         self, backend: MPDBackend, path: str | Path, *,
         capacity: int = 32, ledger_limit: int = 1000, deadline_seconds: float = 30,
+        tunein_selection_enabled: bool = True,
     ) -> None:
         self.backend = backend
+        self.tunein_selection_enabled = tunein_selection_enabled
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
@@ -118,6 +135,8 @@ class OperationManager:
                     result["requested_intention_persisted"] = None
                 if not result["gain_persisted"]:
                     result["gain_persisted"] = None
+                if not result.get("requested_source_persisted", False):
+                    result["requested_source_persisted"] = None
                 db.execute("UPDATE operations SET status=?, result=? WHERE id=?",
                            ("outcome_unknown", json.dumps(result), identity))
                 logging.warning("Operation %s interrupted; outcome unknown", identity)
@@ -138,6 +157,8 @@ class OperationManager:
         except ValueError:
             raise OperationError("invalid_request", "Invalid output identity.", 400) from None
         value = validate_request(payload)
+        if value["action"] == "set_tunein_station" and not self.tunein_selection_enabled:
+            raise OperationError("station_selection_disabled", "TuneIn station selection is not enabled on this agent.", 403)
         canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
         with self._lock, self._connect() as db:
             previous = db.execute("SELECT request,result FROM operations WHERE output_id=? AND key=?",
@@ -177,7 +198,8 @@ class OperationManager:
                 "id": uuid4().hex, "output_id": identity, "action": value["action"],
                 "status": "queued", "phase": "accepted", "created_at": now,
                 "deadline_at": now + self.deadline_seconds, "requested_intention_persisted": False,
-                "gain_persisted": False, "applied": False, "error": None,
+                "gain_persisted": False, "requested_source_persisted": False,
+                "applied": False, "error": None,
             }
             db.execute("INSERT INTO operations VALUES (?,?,?,?,?,?,?,?)",
                        (operation["id"], identity, value["idempotency_key"], canonical,
@@ -223,6 +245,8 @@ class OperationManager:
                 changes["gain_persisted"] = True
             elif phase in ("gain_live", "gain_deferred"):
                 changes["gain_application"] = "live" if phase == "gain_live" else "on_next_play"
+            elif phase == "source_persisted":
+                changes["requested_source_persisted"] = True
             self._update(operation, **changes)
 
         try:
@@ -230,6 +254,8 @@ class OperationManager:
                 try:
                     self.backend.manual_operation(
                         operation["output_id"], payload["action"], payload.get("gain_db"),
+                        station_id=payload.get("station_id"),
+                        station_name=payload.get("station_name"),
                         expected_config_revision=payload["expected_config_revision"],
                         expected_control_revision=payload["expected_control_revision"], progress=progress,
                     )
@@ -251,15 +277,24 @@ class OperationManager:
                 code = "gain_rollback_failed" if exc.rollback_failed else "gain_save_failed"
                 text = ("Gain persistence and live rollback failed; inspect the output before retrying."
                         if exc.rollback_failed else "Gain could not be saved; the previous live gain was restored if changed.")
+            elif isinstance(exc, StationUnavailableError):
+                code, text = "station_unavailable", f"{exc} The previous station remains selected."
             elif isinstance(exc, MPDOperationError):
                 code, text = "mpd_failed", "MPD command or readback failed; inspect current status and any saved intention."
             elif isinstance(exc, AudioOperationError):
                 code, text = "audio_failed", "Audio readiness, routing or gain application failed; inspect current status and any saved intention."
+            elif operation["phase"] == "source_saving":
+                code, text = "source_save_failed", "Selected source could not be saved; the previous selection remains in effect."
             elif operation["phase"] == "intention_saving":
                 code, text = "intention_save_failed", "Playback intention could not be saved; read current status before retrying."
-            logging.warning("Operation %s failed: %s", operation["id"], code)
+            if isinstance(exc, (AudioOperationError, StationUnavailableError)):
+                logging.warning("Operation %s failed: %s (%s)", operation["id"], code, exc)
+            else:
+                logging.warning("Operation %s failed: %s", operation["id"], code)
             self._update(operation, status="failed",
-                         applied=None if operation["phase"] in ("gain_applying", "intention_persisted") else False,
+                         applied=None if operation["phase"] in (
+                             "gain_applying", "source_persisted", "intention_persisted",
+                         ) else False,
                          error={"code": code, "message": text, "retryable": False})
         else:
             self._update(operation, status="applied", phase="complete", applied=True)

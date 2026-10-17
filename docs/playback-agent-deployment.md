@@ -2,10 +2,110 @@
 
 Status: read-only S06 deployment completed on 2026-10-17. The initial isolated
 agent rollout is recorded below; production IDs, the TLS proxy and the Docker
-web status integration are now active. Playback write controls remain out of
-scope.
+web status integration are now active. S07 write controls were subsequently
+accepted; the approved S08 TuneIn test deployment is recorded below.
 
 ## Scope and prerequisites
+
+### Active TuneIn test deployment (2026-10-17)
+
+The user explicitly approved testing against the real Pi on the trusted LAN,
+including the temporary TuneIn opt-in despite the outstanding Pi-side
+DNS/redirect egress policy. This is test acceptance of that risk, not completion
+of the production egress requirement. Since then TuneIn selection defaults on
+whenever manual operations are enabled (`playback_agent_enable_tunein_selection`
+defaults to `true`; the agent's old `--enable-tunein-selection` flag is still
+accepted). Manual operations themselves remain opt-in.
+
+- Test dashboard: `http://127.0.0.1:8000/playback` on the Docker host. Open an
+  output's Config dialog, search TuneIn (Enter or **Search**), then choose **Select and play**.
+  Selection changes the saved station and starts real playback for that output.
+- Rebuilt/recreated only `russound-web`. The web image now includes the two
+  TuneIn provider modules, without including the Pi setup scripts or private
+  runtime data. The previous image is retained as
+  `mpdrussoundpi-web:pre-tunein-test-20261017`.
+- Deployed the current checkout through the dedicated agent play with
+  `playback_agent_start=true`, `playback_agent_enable_operations=true` and
+  `playback_agent_enable_tunein_selection=true`, using the existing private
+  token file without changing or logging its value.
+- The existing supervisor used an older backend. A test-only user-unit drop-in,
+  `~/.config/systemd/user/mpd_playback_supervisor.service.d/90-tunein-test.conf`,
+  points its ExecStart to `mpdsupervisor.py` and the venv in
+  `~/.local/share/mpdrussoundpi-agent/`. This keeps supervisor and agent source
+  handling aligned without modifying the shared Pi checkout. Restarted the
+  supervisor and agent only.
+- Private pre-test agent sources/unit, operational config, intentions, an
+  online SQLite operation-store backup and service/inventory baseline are
+  retained on the Pi under
+  `~/.local/state/mpdrussoundpi/s08-tunein-test-20261017/`.
+- Verified authenticated agent health/inventory and advertised
+  `set_tunein_station` capability, live TuneIn search through the web API and
+  browser, and stream resolution on the Pi. The dashboard is healthy and its
+  station-selection buttons are enabled.
+- Deployment checks confirmed byte-identical operational config/intentions and
+  unchanged MPD PIDs (`65286`, `65283`, `65284`), audio PIDs and restart counts.
+  No station selection, gain change or transport command was issued during
+  deployment verification. Actual station-change/audio acceptance is left to
+  the user.
+
+To end the test, rerun the dedicated agent play with operations enabled but
+`playback_agent_enable_tunein_selection=false` and
+`playback_agent_start=true`. This disables new selections while retaining saved
+stations and the compatible backend. It does not restore the previous station.
+Keep the supervisor's compatible test backend until any TuneIn-selected outputs
+have been explicitly restored or a coordinated permanent rollout replaces it.
+Do not blindly restore old config, queues or the operation database over changes
+made during testing; the private backup and previous image support a separately
+reviewed full rollback.
+
+Station-switch fix (2026-10-17, after the channel rename): user selections
+failed with `audio_failed` while the supervisor re-resolved every TuneIn output
+every 2 s under the shared lock. The fixed `lib/mpdbackend.py`,
+`lib/streamroute.py` and `lib/playbackoperations.py` were copied into the agent
+checkout (previous copies in
+`~/.local/state/mpdrussoundpi/route-timeout-backup-174754/`) and only the
+supervisor and agent were restarted. Afterwards the lock contention stopped
+and dashboard selections were applied in 3–6 seconds.
+
+Playlist fallback (2026-10-17): stations that TuneIn lists only via M3U/PLS
+playlists (e.g. `s260655`) failed with `mpd_failed`. The updated
+`lib/tunein.py`, `lib/mpdbackend.py` and `lib/playbackoperations.py` were
+deployed the same way (previous copies in
+`~/.local/state/mpdrussoundpi/playlist-resolve-backup-182056/`); resolve
+failures now report `station_unavailable`. Selecting `s260655` on Stereo Rear
+was then applied in about 3 seconds and played.
+
+### Channel-based output identities (2026-10-17)
+
+Because outputs now switch stations, the station-named outputs were renamed to
+their audio channels with
+[outputrename.py](../mpdrussoundpi/russound/outputrename.py) (copied into the
+agent directory):
+
+| Former name / ID | New name and label / ID | MPD unit |
+| --- | --- | --- |
+| `Radio 88.6` / `radio_886` | `Stereo Front` / `stereo_front` | `mpd_stereo_front.service` |
+| `FM4 Radio` / `fm4_radio` | `Stereo CenterLFE` / `stereo_centerlfe` | `mpd_stereo_centerlfe.service` |
+| `OE3 Radio` / `oe3_radio` | `Stereo Rear` / `stereo_rear` | `mpd_stereo_rear.service` |
+
+Procedure: private backup of config, intentions, `mpd_*` units/configs and an
+online operation-store copy to
+`~/.local/state/mpdrussoundpi/s08-channel-rename-20261017/` (with
+`SHA256SUMS`); stop agent, supervisor, meta unit and the three MPD units; run
+`outputrename.py --dry-run`, then for real with `--intentions` and
+`--operations-db` (refuses pending operations); delete the three old
+`mpd_*.service`/`.conf` files; run the Pi checkout's `mpdsetup.py --install`
+with `~/russound-venv`; start `mpd_meta_control`, the supervisor and the agent.
+Regenerated units/configs differ from the backups only in names; the supervisor
+unit and test drop-in were unchanged. Verified all three outputs play their
+previous stations with one queue entry, correct sinks and unchanged gains.
+Historical operations retain their former output IDs.
+
+Rollback: stop the agent, supervisor, meta and `mpd_stereo_*` units; restore
+`config.json`, `playback.json`, `units/*` and `mpd/*` from the backup; remove
+the `mpd_stereo_*` units/configs; `systemctl --user daemon-reload`; start
+`mpd_meta_control`, the supervisor and the agent. Rebuild the dashboard image
+from the previous UI if the old card layout is required.
 
 Use [deploy-playback-agent.yml](../ansible/playbooks/deploy-playback-agent.yml),
 not the full [music Pi setup](../ansible/playbooks/setup-musicpi.yml). The latter
@@ -389,6 +489,10 @@ copies of the production config and intentions. Applied only these identities:
 | `Radio 88.6` | `radio_886` | `Radio 88.6` |
 | `FM4 Radio` | `fm4_radio` | `FM4 Radio` |
 | `OE3 Radio` | `oe3_radio` | `OE3 Radio` |
+
+These identities were superseded by
+[channel-based identities](#channel-based-output-identities-2026-10-17);
+this section records the state at the time.
 
 The migration tool verified all non-identity stream fields were unchanged.
 The original config SHA-256 was

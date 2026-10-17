@@ -28,6 +28,7 @@ from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
+from mpdrussoundpi.russound.lib.tunein import TuneInCatalog, TuneInError
 
 WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"
@@ -181,6 +182,7 @@ class RussoundHTTPServer:
             PlaybackStatusClient(config, self.broadcast_playback_change)
             for config in (playback_configs or ())
         ]
+        self._tunein = TuneInCatalog()
         for client in self._playback_clients:
             client.set_on_change_callback(self.broadcast_playback_change)
         self._backend_watcher_lock = threading.Lock()
@@ -274,6 +276,16 @@ class RussoundHTTPServer:
             return jsonify(api_version=1, error={
                 "code": error.code, "message": error.message, "retryable": error.status in (429, 503),
             }), error.status
+
+        @app.get("/api/playback/catalogs/tunein/search")
+        def api_tunein_search():
+            try:
+                stations = self._tunein.search(request.args.get("q"))
+            except ValueError:
+                raise PlaybackCommandError("invalid_request", "Enter a TuneIn station search of 2 to 80 characters.", 400) from None
+            except TuneInError:
+                raise PlaybackCommandError("catalog_unavailable", "TuneIn station search is unavailable; try again later.", 503) from None
+            return jsonify(api_version=1, provider="tunein", stations=stations)
 
         def playback_client(agent_id: str) -> PlaybackStatusClient:
             client = next((item for item in self._playback_clients if item.agent_id == agent_id), None)

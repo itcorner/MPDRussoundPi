@@ -17,6 +17,7 @@ from typing import TextIO, TypeAlias, Union
 from urllib.parse import urlparse
 
 from lib.streamgain import validate_gain_db
+from lib.tunein import TuneInCatalog, TuneInError
 
 
 JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]
@@ -153,6 +154,11 @@ def main(argv: list[str] | None = None) -> None:
                 raise ValueError(f"Duplicate stream name: {name!r}")
             names.add(name)
             url = entry.get("stream")
+            if url is None and entry.get("source_provider") == "tunein":
+                try:
+                    url = TuneInCatalog().resolve(entry.get("source_station_id"))
+                except TuneInError as error:
+                    raise ValueError(f"{name}: {error}") from None
             if not isinstance(url, str) or urlparse(url).scheme not in ("http", "https") or not urlparse(url).netloc:
                 raise ValueError(f"{name}: stream must be an HTTP(S) URL")
             validate_gain_db(entry.get("gain_db", 0))

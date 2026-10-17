@@ -1,10 +1,10 @@
 # MPD web integration: stepwise implementation plan
 
-Date: 2026-10-14; updated 2026-10-17. Status: S01-S06 implemented for
-read-only playback status. S04 production identities and the S06 Pi-to-Docker
-deployment are complete; the healthy-LAN update-latency target is met. S07
-write controls are done, deployed and production-verified by the user on
-2026-10-17.
+Date: 2026-10-14; updated 2026-10-17. Status: S01-S08 local implementation
+complete; S08 production activation and acceptance remain pending. S04
+production identities and the S06 Pi-to-Docker deployment are complete; the
+healthy-LAN update-latency target is met. S07 write controls are done, deployed
+and production-verified by the user on 2026-10-17.
 
 ## 1. Confirmed scope and working rules
 
@@ -54,6 +54,10 @@ and the architecture document. Do not silently turn a recommendation into scope.
 | D04 | Manual playback precedence | Manual play/pause/stop switches that output to manual mode until explicitly returned to automatic. Accepted 2026-10-16 during S04 preparation; automation is not enabled by this decision. |
 | D07 | Browser access protection | Trusted-environment access without browser login, user permissions or roles for now. Lightweight admin authentication may be added later, but is out of current scope. Preserve existing request protections and web-to-agent authentication. Accepted 2026-10-17. |
 | D13 | Calibration-gain UI range and step | Slider normally -60 to 0 dB, step 0.1 dB; extend its minimum to include existing lower gains without clamping. Slider only, with number + dB display, inside the stream card's Config dialog alongside play/pause/stop. Use existing `gain_db` semantics. Accepted and refined 2026-10-17. |
+| D09 | Initial source selection scope | Do not accept user-entered stream URLs. Select direct MP3/AAC/Ogg radio stations from TuneIn search; resolve playback URLs on the Pi from validated TuneIn station IDs. |
+| D10 | Permission to adopt/manage MPD queues | Adopt an explicitly managed one-selected-source queue per output. Remove only identified managed song IDs; never silently clear unmanaged entries. Accepted 2026-10-17. |
+| D11 | Source-switch failure behavior | Keep the newly saved desired source visible and let normal recovery retry; restoring the prior source is an explicit user operation. Accepted 2026-10-17. |
+| D12 | Does source selection change playback intention? | Selecting a source always starts playback. Accepted 2026-10-17. |
 
 ### Open decisions, in discussion order
 
@@ -65,12 +69,7 @@ read-only status; the gate column states when the answer becomes necessary.
 | D02 | Which hardware demand rule should automatic mode use? | Any powered zone selecting the mapped input. Alternative: any powered zone starts all managed outputs. | S10 |
 | D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
 | D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
-| D06 | Web-to-agent transport security | **Selected:** Caddy terminates TLS on the Pi and forwards to the loopback agent. Use a self-signed certificate trusted by the Docker web client through `tls_ca_file` and retain the scoped bearer credential. The user explicitly declined a host firewall and approved Caddy's `192.168.1.0/24` source allowlist for trusted-LAN operation on 2026-10-17. | Agent deployment in S06; write access in S07 |
-| D09 | Initial source URL scope | Direct HTTP(S) radio feeds only. Alternative: explicitly supported playlist resolution or additional MPD URI schemes. | Source validation in S08 |
-| D10 | Permission to adopt/manage MPD queues | Explicit per-output adoption of a one-selected-source managed queue. Alternative: preserve unmanaged entries and expose that limitation. | S08 |
-| D11 | Source-switch failure behavior | Keep newly saved desired source visible and retry; explicit user operation restores old selection. Alternative: revision-safe rollback to old source. | S08 |
-| D12 | Does source selection change playback intention? | Preserve play/pause/stop and mode; provide separate select-and-play. Alternative: every selection explicitly starts playback. | S08 |
-| D14 | First external catalog provider | Choose one provider with MPD-playable radio URLs; defer catalog implementation until chosen. | S09 only |
+| D14 | First external catalog provider | TuneIn OPML station search and direct-stream resolution. Accepted 2026-10-17. | S09 only |
 | D15 | Automatic-mode stop delay | Suggested 30 seconds of continuously confirmed no-demand; alternative immediate stop or another interval. | S10 |
 | D16 | Freshness and lease timing | Suggested hardware stale/lease thresholds 30 seconds at 10-second poll/renew cadence; adjust to measured full-poll duration. | S10 |
 
@@ -348,6 +347,9 @@ See [target evidence](./playback-agent-deployment.md#approved-isolated-target-te
 **Production read-only rollout (2026-10-17):** after explicit approval, the
 production config received stable IDs/labels (`radio_886`, `fm4_radio`,
 `oe3_radio`) while names, stream URLs, ports, sinks and gains were preserved.
+These were later renamed to channel identities (`stereo_front`,
+`stereo_centerlfe`, `stereo_rear`); see
+[channel-based identities](./playback-agent-deployment.md#channel-based-output-identities-2026-10-17).
 The legacy intentions file remained byte-identical. Only the playback
 supervisor and read-only agent were stopped/restarted; all three MPD service
 PIDs remained unchanged. The read-only agent now observes the production
@@ -445,36 +447,48 @@ route/gain startup gating and saved intentions; restart restores changed gain.
 
 ### S08. Add manual source replacement
 
-1. Implement D09 URI validation on both boundaries; redact secrets. Account
-   for Pi-side redirects/DNS with egress policy, not web-only checks.
-2. Add normalized manual selection and backend mutation under the shared lock.
-   Persist configuration/revision atomically; no service/audio regeneration.
-3. Implement D10 queue adoption and bounded song-ID-based cleanup. Refuse to
-   silently clear unmanaged entries.
-4. Implement D11 failure policy and D12 intention semantics. Expose selected
-   desired versus actual current source, including pending silent selections.
+1. D09 accepts only direct HTTP(S) feed URLs. Validate in the web gateway and
+   again on the Pi; never echo the URL in errors or logs. Status shows only a
+   redacted scheme/host display. Production writes additionally require a Pi-side
+   egress policy that covers DNS and redirects; the application validator alone
+   does not constrain the destination reached by MPD.
+2. Persist the selected URL and queue ownership metadata atomically under the
+   shared backend lock. Update only the selected output; do not regenerate
+   service/audio configuration.
+3. D10 authorizes one managed queue item per output. Adopt only an empty queue
+   or a single queue item matching the prior configured source. Delete only the
+   persisted managed song ID; refuse queues with unowned entries.
+4. D11 keeps a saved new desired URL after apply failure so supervisor recovery
+   retries it. D12 makes every source selection set the play intention and start
+   playback. Report source-save, intention and actual-application outcomes
+   separately; show desired and observed current source separately.
 5. Reuse startup mute/route/gain checks when replacing active playback.
-6. Add per-output source editor and explicit operation outcomes to the UI.
+6. Add per-output source entry and explicit durable operation outcomes to the UI.
 
 **Tests:** repeated same/new selections, no queue accumulation, URL/persistence/
 cleanup failure, stop racing a switch, paused/stopped outputs, process restart
 mid-switch and preserving other config/outputs.
-**Acceptance:** supervisor uses selected source after restart; repeated switches
-stay bounded and silent intentions are honored.
+**Acceptance:** supervisor uses the selected source after restart; repeated
+switches stay bounded; and selecting a source explicitly changes the intention
+to play.
 
-### S09. Integrate one external catalog
+### S09. Integrate the TuneIn station catalog
 
-1. Resolve D14; keep this step deferred if no provider is chosen.
-2. Implement one server-side search/details/resolve adapter with timeouts,
-   bounded cache/rate limits and normalized provider/item identity.
-3. Send only resolved supported sources plus provenance to the existing S08
-   operation; do not give providers a separate playback control implementation.
-4. Keep credentials private; expose source capability limitations and errors.
-   Expiring URLs require a deliberate refresh design before claiming support.
-5. Add searchable selection UI and retain manual URL entry.
+1. Use TuneIn OPML search server-side; return only normalized station identity,
+   title and bounded display metadata to the browser. Do not expose the provider
+   stream URL or accept user-entered URLs.
+2. Resolve an `s<digits>` station identity on the Pi using the fixed TuneIn
+   endpoint; accept only direct MP3/AAC/Ogg public stream URLs.
+3. Store the resolved URL privately with the TuneIn station provenance. Refresh
+   it during supervisor reconciliation so a changed provider URL can recover.
+4. Use bounded request timeouts, response sizes, result counts and short-lived
+   search caching. Show provider failures without interrupting active playback.
+5. Keep the station operation separately opt-in; Pi-side egress policy remains
+   necessary because TuneIn-selected stream hosts and their redirects vary.
 
 **Acceptance:** catalog outage does not affect running audio or manual URLs;
-unsupported entries rejected, labels escaped and credentials redacted.
+unsupported entries rejected, labels escaped and arbitrary browser-supplied
+stream URLs rejected.
 
 ### S10. Implement hardware-driven automation
 
@@ -566,9 +580,28 @@ credentials and operational files must have an explicit owner.
   out-of-range values without clamping by extending the slider minimum.
   Controls live in a per-stream Config dialog with slider-only gain editing.
   S07 is done, deployed and production-verified (user sign-off, 2026-10-17).
-- D02-D03, D05, D09-D12 and D14-D16 remain open; no provider, physical input
+- D02-D03, D05 and D14-D16 remain open; no provider, physical input
   mapping or automation demand rule has been selected.
-- **Next gate: resolve S08 manual source-replacement decisions D09-D12.**
+- D09 accepts TuneIn station selection only: the browser submits a validated
+  TuneIn station identity, and the playback agent resolves a direct MP3, AAC or
+  Ogg stream from TuneIn. Arbitrary browser-supplied URLs, playlists and other
+  MPD URI schemes are out of scope.
+- D10 accepts a managed one-selected-source queue per output, with cleanup
+  limited to identified managed song IDs.
+- D11 keeps newly saved desired source on failure for recovery retry; restoring
+  the previous source is an explicit selection.
+- D12 means selecting a source explicitly changes that output's intention to
+  play; there is no separate silent selection action.
+- **S08 local implementation uses TuneIn station search/selection.** D09-D12
+  are accepted; a Pi-side DNS/redirect egress policy, explicit
+  `playback_agent_enable_tunein_selection` opt-in, and separate target
+  acceptance remain deployment gates. The opt-in stays disabled until those
+  deployment gates are resolved.
+- Because outputs now switch stations, output names, IDs and labels follow the
+  audio channel (`stereo_front`/Stereo Front, `stereo_centerlfe`/Stereo
+  CenterLFE, `stereo_rear`/Stereo Rear) and amend D08. Existing installations
+  migrate offline with `outputrename.py`; the dashboard shows the selected
+  station next to the playback state.
 
 After each answer, update its status/outcome above, amend affected architecture
 sections/steps and discuss only the next unresolved decision.

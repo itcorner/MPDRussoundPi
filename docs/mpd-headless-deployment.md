@@ -19,11 +19,39 @@ The first deployment copies the repository seed into
 `~/.local/state/mpdrussoundpi/playback.json`, including calibrated gains and
 pause/stop intentions. Initially all configured streams are intended playing.
 New streams default playing when intentions are initialized again.
+
+Each `streams` entry selects its source in one of two ways (the
+[seed configuration](../mpdrussoundpi/russound/config.json) contains both):
+
+```json
+{ "name": "Stereo Front", "stream": "https://radio.example/live.mp3", ... }
+```
+
+```json
+{
+  "name": "Stereo Rear",
+  "source_provider": "tunein",
+  "source_station_id": "s8007",
+  "source_station_name": "ORF Hitradio OE3",
+  "queue_managed": true,
+  ...
+}
+```
+
+A direct entry needs an HTTP(S) `stream` URL. A TuneIn entry needs a station
+ID (`s` + digits) and a display name; `stream` may be omitted. On the next
+start the supervisor resolves the station through TuneIn and saves the
+resolved URL in `stream`; it re-resolves whenever that saved URL is not
+already playing. `queue_managed` lets later re-resolutions replace the queued URL
+instead of adding a second entry. Dashboard station selection writes the same
+fields. `streamlevels.py` resolves TuneIn entries without `stream` before
+measuring.
+
 Use the operational configuration for **all** control and calibration commands:
 
 ```sh
-python mpdctrl.py --stop --stream "FM4 Radio" ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --pause --stream "Radio 88.6" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --stop --stream "Stereo CenterLFE" ~/.config/mpdrussoundpi/config.json
+python mpdctrl.py --pause --stream "Stereo Front" ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
 python mpdctrl.py --check-route ~/.config/mpdrussoundpi/config.json
 ```

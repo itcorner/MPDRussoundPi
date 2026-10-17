@@ -1,15 +1,18 @@
-# Manual playback operations (S07)
+# Manual playback operations (S07-S08)
 
-Status: implemented, tested locally and enabled on production, 2026-10-17.
-S07 is done and production-verified: the user confirmed successful production
-testing on 2026-10-17 after the contention and UI fixes.
-Source changes and automation are not implemented by S07.
+S07 is implemented, tested locally, enabled on production and user-verified on
+2026-10-17. S08 managed station selection and S09 TuneIn search/resolve are
+implemented and tested locally; station selection has not been enabled or
+accepted on production. Automation remains unimplemented.
 
 ## Activation and trust
 
 The agent remains read-only by default. Supplying `--operations-db` with a
 private persistent SQLite path enables play, pause, stop and calibration gain
-commands. Capabilities advertise only enabled actions in `write_operations`;
+commands, including TuneIn station selection. Pass
+`--disable-tunein-selection` (Ansible:
+`playback_agent_enable_tunein_selection=false`) to keep the other manual
+operations but reject station selection with `station_selection_disabled`. Capabilities advertise only enabled actions in `write_operations`;
 the web exposes controls only for advertised actions with usable revisions.
 Old read-only agents remain compatible.
 
@@ -55,6 +58,45 @@ Keys are scoped to this agent/output; reuse with different fields, including a
 different action, is a conflict. Retry a lost response with the **identical**
 fields/key, never a freshly generated command.
 
+TuneIn station selection request:
+
+```json
+{
+  "action": "set_tunein_station",
+  "station_id": "s231065",
+  "station_name": "Radio BBC News Haiti",
+  "expected_config_revision": "<64 lowercase hexadecimal characters>",
+  "expected_control_revision": "<64 lowercase hexadecimal characters>",
+  "idempotency_key": "a-client-generated-unique-key"
+}
+```
+
+The browser sends only the TuneIn station identity and display name; arbitrary
+stream URLs are rejected by the operation API. The web gateway exposes
+`GET /api/playback/catalogs/tunein/search?q=...` and returns normalized station
+results without provider URLs. A query that is a TuneIn station ID (for
+example `s25744`, case-insensitive) looks up only that station through
+`Describe.ashx` and returns it only if `Tune.ashx` offers a supported
+stream; otherwise the result list is empty. On selection, the Pi resolves the station ID
+through TuneIn's fixed OPML endpoint and accepts only MP3/AAC/Ogg stream URLs
+with public-literal hosts. Direct entries are preferred; otherwise the Pi reads
+TuneIn-listed M3U/PLS playlists (at most 16 KB, no redirects) and uses the
+first valid HTTP(S) entry that is not itself a playlist. A station without such
+a stream fails with `station_unavailable` before any config, intention or MPD
+change, and the previous station keeps playing. Resolved stream URLs are stored only in the private
+MPD config and the mode-0600 operation ledger does not contain them. Status
+shows the selected TuneIn station name and a redacted current host, never the
+stream path or query.
+
+A selection resolves the station once. Supervisor reconciliation re-resolves a
+TuneIn station only when its output is not already playing the saved URL
+without an MPD error, so healthy outputs do not query TuneIn while holding the
+shared lock. After (re)starting a stream, routing waits up to 12 seconds for
+MPD's PulseAudio client because internet streams may buffer for several
+seconds; steady-state route checks keep the 5-second window. `audio_failed`
+operation results log the underlying readiness/route/gain reason in the
+agent journal.
+
 Inventory exposes the config content revision and, when writes are enabled,
 each output's `control_revision` and `control: {mode: "manual", desired_state}`.
 The control revision hashes the legacy intentions file's bytes, inode and
@@ -80,13 +122,14 @@ Submission returns `202` only after the queued operation is committed to SQLite:
   "epoch": "<agent process epoch>",
   "operation": {
     "id": "<32 lowercase hexadecimal characters>",
-    "output_id": "front",
+    "output_id": "stereo_front",
     "action": "stop",
     "status": "queued",
     "phase": "accepted",
     "created_at": 1792230000.0,
     "deadline_at": 1792230030.0,
     "requested_intention_persisted": false,
+    "requested_source_persisted": false,
     "gain_persisted": false,
     "applied": false,
     "error": null
@@ -116,6 +159,31 @@ after saving play/pause/stop can leave an intention that the existing supervisor
 later fulfills. Failure is not cancellation. Gain-save and gain-rollback
 failures have distinct codes. Error messages are sanitized; upstream URLs,
 credentials and raw backend exceptions are not returned.
+
+## S08 source selection semantics
+
+- Source selection saves the new desired URL, changes that output's persisted
+  intention to `play`, and attempts playback. Selecting the same URL is safe
+  and does not add another queue entry.
+- The managed queue contains at most one selected source. Initial adoption is
+  allowed only for an empty queue or one song matching the previously configured
+  URL. Subsequent cleanup deletes only the persisted managed song ID; an
+  unowned queue entry causes an explicit failure without clearing the queue.
+  Queue inspection is limited to 64 entries.
+- The selected URL and queue ownership flag/song ID are atomically written to
+  the existing MPD config under the shared mutation lock. No MPD, PipeWire,
+  systemd or audio config regeneration is performed.
+- If the URL was saved but MPD or audio application fails, the result reports
+  `requested_source_persisted: true`; the selected URL remains visible and the
+  supervisor can retry through its normal reconciliation path. Restoring an
+  earlier source is another explicit selection.
+- Desired and current MPD source are reported separately. Display strings omit
+  URL path, user-info, query and fragment. The submitted URL is never reflected
+  in operation progress or errors.
+- TuneIn constrains the selection interface, not the destinations its station
+  URLs or later redirects reach. Selection is on by default with manual
+  operations; set `playback_agent_enable_tunein_selection=false` where a
+  Pi-side egress policy is required but not yet in place.
 
 Errors use `{api_version: 1, error: {code, message, retryable}}`: malformed
 requests `400`, authentication `401/403`, unknown IDs `404`, stale revisions,
@@ -173,10 +241,15 @@ one command, superseding unsent edits without a request per slider movement.
 Pending commands lock that output's controls. Progress, terminal errors and
 ambiguous outcomes appear only in the Config dialog, not the stream grid;
 closing and reopening preserves this feedback. Status polling is bounded.
-The dialog fits its controls with a compact, fixed-height feedback area that
-shows the draft hint when idle and command feedback in its place.
-Longer feedback scrolls within that area, so status changes do not resize or
-reposition the dialog. The dialog itself remains capped to the viewport.
+The dialog is headed by the output label, with agent and output id as a
+subtitle, and groups its controls into **Playback** (current station/state and
+transport), **Station** (TuneIn search row and scrollable results) and
+**Calibration gain** (slider, dB readout and Apply). The draft hint appears
+next to **Apply gain** only while the draft differs from the configured gain.
+Command feedback appears below the sections only when there is something to
+report and scrolls once it exceeds a compact maximum height. The dialog itself
+remains capped to the viewport. Stream cards show the station, track, gain and
+freshness; the raw MPD source host is no longer displayed there.
 After a changed gain is saved, commands for that agent remain disabled until
 the status cache supplies the updated configuration revision. The saved draft
 is retained during this refresh so consecutive edits cannot reuse the old

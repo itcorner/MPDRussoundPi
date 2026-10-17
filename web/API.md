@@ -254,6 +254,30 @@ Returns one output from the web process's cached inventories with its playback
 integration status. Returns `404` when playback is disabled or no configured
 agent has that output id.
 
+The output's `selection.source` and `playback.value.current_source` fields are
+redacted display values containing only the HTTP(S) scheme and host. They omit
+path, user-info, query and fragment. These are the configured desired source
+and MPD's observed current source, respectively; they can differ after a failed
+source switch.
+
+#### POST /api/playback/agents/{agent_id}/outputs/{output_id}/operations
+
+Submits a bounded, revision-checked operation to the configured playback agent.
+Supported actions depend on its advertised `write_operations` capabilities.
+S08/S09 provide TuneIn station selection; arbitrary browser-supplied stream
+URLs are rejected. Search with
+`GET /api/playback/catalogs/tunein/search?q=<station-name>`, or with a
+station ID such as `q=s25744` to get only that station (empty if it has no
+supported stream). Results contain
+only station IDs and display metadata. Submit `set_tunein_station` with the
+selected station ID/name plus current config/control revisions and an
+idempotency key. The Pi resolves the stream URL from TuneIn (directly or via
+a TuneIn-listed M3U/PLS playlist) and always starts playback. Stations without
+a supported stream fail with `station_unavailable` and leave playback unchanged. Selection is enabled on agents with manual operations unless they run with
+`--disable-tunein-selection`.
+The durable result reports whether the desired station was saved separately
+from whether MPD application succeeded; raw stream URLs are never returned.
+
 ### GET /api/state
 
 Returns the current view payload (`config`, `config_required`, `state`).

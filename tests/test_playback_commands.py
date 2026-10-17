@@ -19,7 +19,9 @@ class PlaybackCommandTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         client = self.create_client(Path(directory.name) / "token")
         self.addCleanup(client.close)
-        capabilities = dict(self.capabilities, write_operations=["play", "pause", "stop", "set_gain"] if writes else [])
+        capabilities = dict(self.capabilities, write_operations=[
+            "play", "pause", "stop", "set_gain", "set_tunein_station",
+        ] if writes else [])
         with patch("web.playback_status.build_opener", return_value=status_tests.FakeOpener([
             status_tests.FakeResponse(reply) for reply in
             (self.health, capabilities, self.fixture["healthy_inventory"])
@@ -49,7 +51,7 @@ class PlaybackCommandTests(unittest.TestCase):
     def test_capabilities_support_old_read_only_and_new_write_agents(self):
         client, browser = self.prepare()
         self.assertEqual(browser.get("/api/playback").json["agents"][0]["write_operations"],
-                         ["play", "pause", "stop", "set_gain"])
+                         ["play", "pause", "stop", "set_gain", "set_tunein_station"])
         self.assertNotIn("mock-value", json.dumps(client.snapshot()))
 
     def test_web_submission_is_typed_bounded_and_keeps_idempotency_fields(self):
@@ -91,13 +93,51 @@ class PlaybackCommandTests(unittest.TestCase):
         with patch("web.playback_status.build_opener") as opener:
             self.assertEqual(browser.post(route, json=self.request(), headers={"Origin": "http://evil.example"}).status_code, 403)
             for changes in ({"action": "shell"}, {"extra": "field"}, {"expected_control_revision": "old"},
-                            {"action": "set_gain", "gain_db": True}, {"action": "set_gain", "gain_db": -10**400}):
+                            {"action": "set_gain", "gain_db": True}, {"action": "set_gain", "gain_db": -10**400},
+                            {"action": "set_source", "source_url": "https://radio.example/live"},
+                            {"action": "set_tunein_station", "station_id": "https://radio.example", "station_name": "Radio"},
+                            {"action": "set_tunein_station", "station_id": "s123", "station_name": ""}):
                 response = browser.post(route, json=self.request(**changes))
                 self.assertEqual(response.status_code, 400)
                 self.assertIsInstance(response.json["error"]["message"], str)
             self.assertEqual(browser.post(route, data="{", content_type="application/json").status_code, 400)
             self.assertEqual(browser.post(route, data="x" * 3000, content_type="application/json").status_code, 400)
             opener.assert_not_called()
+
+    def test_tunein_station_submission_forwards_only_catalog_identity(self):
+        client, browser = self.prepare()
+        source_url = "https://radio-user:private-pass@radio.example/live?token=private-value"
+        request = self.request(
+            action="set_tunein_station", station_id="s231065", station_name="Radio Example",
+        )
+        calls = []
+
+        class Opener:
+            def open(inner, forwarded, timeout):
+                calls.append((forwarded, timeout))
+                return self.response(action="set_tunein_station", requested_source_persisted=False)
+
+        with patch("web.playback_status.build_opener", return_value=Opener()):
+            response = browser.post("/api/playback/agents/musicpi/outputs/front/operations", json=request)
+        self.assertEqual(response.status_code, 202)
+        self.assertNotIn("private-value", json.dumps(response.json))
+        forwarded, timeout = calls[0]
+        self.assertEqual(json.loads(forwarded.data), request)
+        self.assertEqual(timeout, 2)
+
+    def test_tunein_search_route_returns_normalized_station_results(self):
+        _, browser = self.prepare()
+        with patch.object(self.server._tunein, "search", return_value=[
+            {"id": "s231065", "name": "Radio Example", "description": "News"},
+        ]) as search:
+            response = browser.get("/api/playback/catalogs/tunein/search?q=radio")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {
+            "api_version": 1,
+            "provider": "tunein",
+            "stations": [{"id": "s231065", "name": "Radio Example", "description": "News"}],
+        })
+        search.assert_called_once_with("radio")
 
     def test_read_only_capability_prevents_writes(self):
         _, browser = self.prepare(writes=False)

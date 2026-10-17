@@ -52,6 +52,92 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(record, saved)
         self.assertEqual(manager.path.stat().st_mode & 0o777, 0o600)
 
+    def test_tunein_selection_is_enabled_by_default_and_can_be_disabled(self):
+        self.assertTrue(self.prepare().tunein_selection_enabled)
+        self.manager.close()
+        manager = self.prepare(tunein_selection_enabled=False)
+        request = self.request("set_tunein_station", station_id="s8007", station_name="ORF Hitradio OE3")
+        with self.assertRaises(operations.OperationError) as error:
+            manager.submit("output_0", request)
+        self.assertEqual(error.exception.code, "station_selection_disabled")
+
+    def test_tunein_selection_uses_durable_operation_without_transmitting_stream_url(self):
+        manager = self.prepare(tunein_selection_enabled=True)
+        queue = [{"file": self.config["streams"][0]["stream"], "id": "7"}]
+        state = {"state": "play", "songid": "7"}
+        self.client.playlistinfo.side_effect = lambda: [dict(song) for song in queue]
+        self.client.status.side_effect = lambda: dict(state)
+        self.client.stop.side_effect = lambda: state.update(state="stop")
+        self.client.deleteid.side_effect = lambda song_id: queue.__setitem__(
+            slice(None), [song for song in queue if song["id"] != song_id],
+        )
+
+        def addid(uri):
+            queue.append({"file": uri, "id": "8"})
+            return "8"
+
+        self.client.addid.side_effect = addid
+        self.client.playid.side_effect = lambda song_id: state.update(state="play", songid=song_id)
+        source_url = "https://stream.example/live.mp3"
+        self.api._tunein.resolve.return_value = source_url
+        request = self.request(
+            "set_tunein_station", station_id="s231065", station_name="Radio Example",
+        )
+        accepted = manager.submit("output_0", request)
+        self.assertEqual(accepted["status"], "queued")
+        self.assertFalse(accepted["requested_source_persisted"])
+        self.assertEqual(self.config["streams"][0]["stream"],
+                         json.loads(self.path.read_text())["streams"][0]["stream"])
+        manager.run_once()
+        result = manager.get(accepted["id"])
+        self.assertEqual(result["status"], "applied")
+        self.assertTrue(result["requested_source_persisted"])
+        self.assertTrue(result["requested_intention_persisted"])
+        self.assertNotIn(source_url, json.dumps(result))
+        self.assertEqual(json.loads(self.path.read_text())["streams"][0]["stream"], source_url)
+        self.assertEqual(json.loads(self.path.read_text())["streams"][0]["source_station_id"], "s231065")
+        self.assertEqual(queue, [{"file": source_url, "id": "8"}])
+
+    def test_unresolvable_tunein_station_reports_station_unavailable_without_changes(self):
+        manager = self.prepare(tunein_selection_enabled=True)
+        original = self.path.read_text()
+        self.api._tunein.resolve.side_effect = backend.TuneInError(
+            "TuneIn did not return a supported stream for this station.",
+        )
+        accepted = manager.submit("output_0", self.request(
+            "set_tunein_station", station_id="s260655", station_name="No Stream",
+        ))
+        manager.run_once()
+        result = manager.get(accepted["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], "station_unavailable")
+        self.assertIn("supported stream", result["error"]["message"])
+        self.assertIn("previous station remains selected", result["error"]["message"])
+        self.assertFalse(result["requested_source_persisted"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(self.path.read_text(), original)
+        self.client.addid.assert_not_called()
+
+    def test_newer_stop_supersedes_a_queued_tunein_selection(self):
+        manager = self.prepare(tunein_selection_enabled=True)
+        station = manager.submit(
+            "output_0",
+            self.request(
+                "set_tunein_station", station_id="s231065", station_name="Radio Example",
+            ),
+        )
+        stop = manager.submit(
+            "output_0",
+            self.request("stop", idempotency_key="a-different-unique-key"),
+        )
+        self.assertEqual(manager.get(station["id"])["status"], "superseded")
+        self.client.status.return_value = {"state": "stop"}
+        manager.run_once()
+        self.assertEqual(manager.get(stop["id"])["status"], "applied")
+        self.assertEqual(json.loads(self.path.read_text())["streams"][0]["stream"],
+                         self.config["streams"][0]["stream"])
+        self.client.addid.assert_not_called()
+
     def test_lost_response_retry_uses_same_id_even_after_execution(self):
         manager = self.prepare()
         request = self.request()
@@ -74,6 +160,8 @@ class PlaybackOperationTests(unittest.TestCase):
             {"action": "clear"}, {"gain_db": -3}, {"expected_control_revision": "invalid"},
             {"idempotency_key": "short"}, {"action": "set_gain", "gain_db": True},
             {"action": "set_gain", "gain_db": float("nan")}, {"action": "set_gain", "gain_db": 1},
+            {"action": "set_tunein_station", "station_id": "https://evil.example", "station_name": "evil"},
+            {"action": "set_tunein_station", "station_id": "s123", "station_name": ""},
         ):
             with self.assertRaises(operations.OperationError):
                 manager.submit("output_0", self.request(**changes))
@@ -120,9 +208,9 @@ class PlaybackOperationTests(unittest.TestCase):
     def test_cli_intention_write_even_same_value_invalidates_queued_operation(self):
         manager = self.prepare()
         self.client.status.return_value = {"state": "stop"}
-        self.api.stop("FM4 Radio")
+        self.api.stop("Stereo CenterLFE")
         accepted = manager.submit("output_0", self.request())
-        self.api.stop("FM4 Radio")
+        self.api.stop("Stereo CenterLFE")
         self.client.stop.reset_mock()
         manager.run_once()
         self.assertEqual(manager.get(accepted["id"])["error"]["code"], "revision_conflict")
@@ -191,7 +279,7 @@ class PlaybackOperationTests(unittest.TestCase):
             with patch.object(self.api, "manual_operation", side_effect=execute):
                 manager.run_once()
             self.assertEqual(manager.get(record["id"])["status"], "applied")
-            self.assertEqual(self.api.get_gain("Radio 88.6"), gain)
+            self.assertEqual(self.api.get_gain("Stereo Front"), gain)
             self.assertEqual(len(attempts), 2)
         self.assertEqual(self.set_sink_gain.call_count, 2)
 
@@ -233,7 +321,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertTrue(result["requested_intention_persisted"])
         self.assertIsNone(result["applied"])
         self.assertNotIn("private-stream-url", json.dumps(result))
-        self.assertEqual(json.loads(self.api.state_path.read_text()), {"Radio 88.6": "stop"})
+        self.assertEqual(json.loads(self.api.state_path.read_text()), {"Stereo Front": "stop"})
 
     def test_failed_audio_readiness_preserves_play_intention(self):
         manager = self.prepare()
@@ -265,7 +353,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(manager.get(record["id"])["status"], "applied")
         self.assertEqual(self.path.read_bytes(), config_before)
         self.assertEqual(json.loads(self.api.state_path.read_text()), {
-            "Radio 88.6": "stop", "FM4 Radio": "play", "OE3 Radio": "play",
+            "Stereo Front": "stop", "Stereo CenterLFE": "play", "Stereo Rear": "play",
         })
         self.client.connect.assert_called_once_with("localhost", self.config["streams"][0]["port"])
         self.set_sink_gain.assert_not_called()
@@ -281,9 +369,9 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertTrue(result["gain_persisted"])
         self.set_sink_gain.assert_not_called()
         self.client.playid.assert_not_called()
-        self.assertEqual(self.api.get_gain("Radio 88.6"), -65.1)
+        self.assertEqual(self.api.get_gain("Stereo Front"), -65.1)
         self.client.status.return_value = {"state": "play", "songid": "7"}
-        self.api.start("Radio 88.6")
+        self.api.start("Stereo Front")
         self.set_sink_gain.assert_called_once_with("stereo_front", -65.1)
 
     def test_active_gain_application_failure_is_explicit_and_does_not_save(self):
@@ -309,20 +397,47 @@ class PlaybackOperationTests(unittest.TestCase):
             self.assertEqual(result["error"]["code"], "gain_rollback_failed" if rollback_failed else "gain_save_failed")
             self.assertFalse(result["gain_persisted"])
 
-    def test_worker_restart_keeps_queued_and_marks_running_unknown_without_replay(self):
-        manager = self.prepare()
+    def test_worker_restart_keeps_queued_and_marks_interrupted_station_unknown(self):
+        manager = self.prepare(tunein_selection_enabled=True)
         queued = manager.submit("output_0", self.request())
-        interrupted = manager.submit("output_1", self.request())
-        manager._update(interrupted, status="running", phase="intention_persisted", requested_intention_persisted=True)
+        source_url = "https://stream.example/live.mp3"
+        interrupted = manager.submit(
+            "output_1",
+            self.request(
+                "set_tunein_station",
+                idempotency_key="a-second-unique-key",
+                station_id="s231065",
+                station_name="Radio Example",
+            ),
+        )
+        config = json.loads(self.path.read_text())
+        config["streams"][1].update(
+            stream=source_url, queue_managed=True, managed_song_id=None,
+            source_provider="tunein", source_station_id="s231065",
+            source_station_name="Radio Example",
+        )
+        self.api._save(config)
+        self.api._record_intention([self.api.list_streams()[1]], "play")
+        manager._update(
+            interrupted,
+            status="running",
+            phase="intention_persisted",
+            requested_source_persisted=True,
+            requested_intention_persisted=True,
+        )
         manager.close()
-        restarted = operations.OperationManager(self.api, manager.path)
+        restarted = operations.OperationManager(
+            self.api, manager.path, tunein_selection_enabled=True,
+        )
         self.addCleanup(restarted.close)
         self.assertEqual(restarted.get(queued["id"])["status"], "queued")
         result = restarted.get(interrupted["id"])
         self.assertEqual(result["status"], "outcome_unknown")
+        self.assertTrue(result["requested_source_persisted"])
         self.assertTrue(result["requested_intention_persisted"])
         self.assertIsNone(result["applied"])
         self.assertEqual(result["recovery_observation"]["observed_state"], "play")
+        self.assertEqual(json.loads(self.path.read_text())["streams"][1]["stream"], source_url)
         self.client.stop.assert_not_called()
 
     def test_only_one_worker_can_own_ledger(self):
@@ -357,7 +472,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 404)
 
     def test_http_authenticated_commands_and_lookup_and_read_only_default(self):
-        manager = self.prepare()
+        manager = self.prepare(tunein_selection_enabled=False)
         observer = agent.AgentObserver(self.path, backend=self.api, controls_enabled=True)
         self.addCleanup(observer.close)
         client = agent.create_app(observer, "musicpi", "x" * 32, manager).test_client()
@@ -368,7 +483,29 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         record = response.json["operation"]
         self.assertEqual(client.get("/v1/operations/" + record["id"], headers=auth).json["operation"], record)
-        self.assertEqual(client.get("/v1/capabilities", headers=auth).json["write_operations"], list(operations.ACTIONS))
+        actions = client.get("/v1/capabilities", headers=auth).json["write_operations"]
+        self.assertEqual(actions, [action for action in operations.ACTIONS if action != "set_tunein_station"])
+        station_request = self.request(
+            "set_tunein_station",
+            idempotency_key="station-selection-is-disabled-explicitly",
+            station_id="s231065",
+            station_name="Radio Example",
+        )
+        self.assertEqual(client.post(route, json=station_request, headers=auth).status_code, 403)
+        source_manager = operations.OperationManager(
+            self.api, self.path.parent / "source-operations.sqlite3",
+            tunein_selection_enabled=True,
+        )
+        self.addCleanup(source_manager.close)
+        source_client = agent.create_app(observer, "musicpi", "x" * 32, source_manager).test_client()
+        self.assertIn(
+            "set_tunein_station",
+            source_client.get("/v1/capabilities", headers=auth).json["write_operations"],
+        )
+        self.assertEqual(
+            source_client.post(route, json=station_request, headers=auth).status_code,
+            202,
+        )
         self.assertEqual(client.post(route, data="{}", headers=auth).status_code, 400)
         self.assertEqual(client.post(route, data="x" * 3000, content_type="application/json", headers=auth).status_code, 413)
         observer.tick()
@@ -407,4 +544,4 @@ class PlaybackOperationTests(unittest.TestCase):
         self.assertEqual(completed.status_code, 200)
         self.assertEqual(completed.json["operation"]["status"], "applied")
         self.assertTrue(completed.json["operation"]["requested_intention_persisted"])
-        self.assertEqual(json.loads(self.api.state_path.read_text()), {"Radio 88.6": "stop"})
+        self.assertEqual(json.loads(self.api.state_path.read_text()), {"Stereo Front": "stop"})

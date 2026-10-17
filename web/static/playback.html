@@ -22,7 +22,7 @@
           <a class="page-menu-link" href="/config">Configuration</a>
           <a class="page-menu-link" href="/status">Status</a>
         </nav>
-        <p class="panel-copy">Select Config on a stream to control playback and calibration gain where the agent permits writes. Gain edits are drafts until you select Apply gain.</p>
+        <p class="panel-copy">Select Config on a stream to control playback, choose a station and calibrate gain.</p>
       </section>
 
       <section class="panel playback-panel" aria-live="polite">
@@ -36,8 +36,11 @@
 
     <dialog id="playbackConfigDialog" class="playback-config-dialog" aria-labelledby="playbackConfigTitle">
       <div class="panel-header">
-        <h2 id="playbackConfigTitle" class="section-title">Stream configuration</h2>
-        <button id="playbackConfigClose" type="button">Close</button>
+        <div class="playback-config-heading">
+          <h2 id="playbackConfigTitle" class="section-title">Stream configuration</h2>
+          <p id="playbackConfigSubtitle" class="playback-config-subtitle"></p>
+        </div>
+        <button id="playbackConfigClose" type="button" aria-label="Close">✕</button>
       </div>
       <div id="playbackConfigControls"></div>
     </dialog>

@@ -8,9 +8,9 @@ interfaces use the same persisted intentions, route/gain helpers and lock.
 For planned remote web access, see the
 [MPD web integration architecture](./mpd-web-integration-architecture.md).
 It proposes a Pi-local agent around this backend. Web stream volume directly
-uses the existing `set_gain` calibration operation; metadata, runtime source
-selection and hardware-driven policy require extensions and are not part of
-the current API below.
+uses the existing `set_gain` calibration operation. S08 adds local-only manual
+source selection through the durable agent operation contract; hardware-driven
+policy remains a future extension.
 
 The [S01 read API contract](./mpd-playback-read-api.md) specifies the remote
 observation interface and fixtures. S02 implements the local collector and S03
@@ -20,8 +20,9 @@ Pi's TLS proxy. S05 exposes cached status/metadata only; existing `status()`
 behavior remains unchanged. S07 adds opt-in
 [durable manual operations](./mpd-playback-operations-api.md), implemented
 locally and deployed; S07 is done and production-verified by the user on
-2026-10-17. Source/provider controls remain
-future extensions.
+2026-10-17. S08 managed station selection and S09 TuneIn integration are
+implemented locally but not activated in production; the Pi needs an egress
+policy for DNS and redirects before station writes can be enabled.
 
 ## Opt-in USB hardware recovery
 
@@ -74,14 +75,14 @@ The CLI exposes these operations (examples only, not deployment instructions):
 
 ```sh
 python mpdctrl.py --config-revision local-config.json
-python mpdctrl.py --set-gain -6.1 --stream "FM4 Radio" \
+python mpdctrl.py --set-gain -6.1 --stream "Stereo CenterLFE" \
   --expected-revision SHA256_FROM_READ local-config.json
-python mpdctrl.py --set-label "Kitchen radio" --stream "FM4 Radio" \
+python mpdctrl.py --set-label "Kitchen radio" --stream "Stereo CenterLFE" \
   --expected-revision SHA256_FROM_READ local-config.json
 ```
 
 Read a new revision after each successful edit. Labels are display-only;
-`--stream` still uses the preserved legacy name.
+`--stream` uses the stream `name`, which also names the MPD unit.
 
 ### Offline bundle
 
@@ -90,11 +91,16 @@ for the installation; do not infer physical Russound input mappings from sinks:
 
 ```json
 {
-  "Radio 88.6": {"id": "front", "label": "Front stream"},
-  "FM4 Radio": {"id": "centerlfe", "label": "Center/LFE stream"},
-  "OE3 Radio": {"id": "rear", "label": "Rear stream"}
+  "Radio 88.6": {"id": "stereo_front", "label": "Stereo Front"},
+  "FM4 Radio": {"id": "stereo_centerlfe", "label": "Stereo CenterLFE"},
+  "OE3 Radio": {"id": "stereo_rear", "label": "Stereo Rear"}
 }
 ```
+
+The keys are the legacy, station-named stream names of an unmigrated config.
+The shipped sample config already uses channel names, IDs and labels. To also
+rename legacy stream names and MPD units to their channels, see
+[Channel-based output identities](#channel-based-output-identities).
 
 From the script directory, using copied input files:
 
@@ -184,6 +190,31 @@ Offline acceptance is preparation, not approval to migrate production. Later:
 Local fixtures verify field preservation, exact-byte rollback material,
 permissions, explicit schema rejection, stale edits and concurrent lock
 exclusion. No production migration or live rollback is claimed.
+
+### Channel-based output identities
+
+Outputs switch stations, so stream names, IDs and labels name the audio
+channel rather than a station. [outputrename.py](../mpdrussoundpi/russound/outputrename.py)
+derives them from each stream's sink (`stereo_front` becomes name/label
+`Stereo Front` and ID `stereo_front`; MPD unit `mpd_stereo_front.service`) and
+renames the intention keys. Each stream needs its own sink. Ports, sinks, gains
+and selected sources are unchanged.
+
+This is an offline maintenance step: stop the agent, supervisor, meta unit and
+MPD units first, because unit names change.
+
+```sh
+python outputrename.py ~/.config/mpdrussoundpi/config.json --dry-run
+python outputrename.py ~/.config/mpdrussoundpi/config.json \
+  --intentions ~/.local/state/mpdrussoundpi/playback.json \
+  --operations-db ~/.local/state/mpdrussoundpi-agent/operations.sqlite3
+```
+
+`--operations-db` refuses to run while agent operations are queued or running.
+Afterwards remove the old `mpd_*.service`/`mpd_*.conf` files, run
+`mpdsetup.py --install` and start the services again. Stored operation history
+keeps former output IDs. The production run is recorded in
+[playback-agent-deployment.md](playback-agent-deployment.md#channel-based-output-identities-2026-10-17).
 
 ## Read-only detailed observations (S02)
 
@@ -344,15 +375,15 @@ from pathlib import Path
 backend = MPDBackend(Path.home() / ".config/mpdrussoundpi/config.json")
 streams = backend.list_streams()
 states = backend.status()                  # All configured instances
-backend.start("Radio 88.6")
-backend.pause("Radio 88.6")
-backend.start("Radio 88.6")                 # Resume configured stream
-backend.set_gain("Radio 88.6", -6.0)        # Apply and persist attenuation
-gain = backend.get_gain("Radio 88.6")       # Persisted gain, not mixer reading
-route = backend.check_route("Radio 88.6")
+backend.start("Stereo Front")
+backend.pause("Stereo Front")
+backend.start("Stereo Front")                 # Resume configured stream
+backend.set_gain("Stereo Front", -6.0)        # Apply and persist attenuation
+gain = backend.get_gain("Stereo Front")       # Persisted gain, not mixer reading
+route = backend.check_route("Stereo Front")
 if not route.correct:
-    backend.recover_route("Radio 88.6")
-backend.stop("Radio 88.6")
+    backend.recover_route("Stereo Front")
+backend.stop("Stereo Front")
 ```
 
 ## Methods and results
@@ -367,6 +398,7 @@ backend.stop("Radio 88.6")
 | `get_gain(name)` | Read persisted configured gain. |
 | `set_gain(name, gain_db, *, expected_revision=None)` | Persist per-stream attenuation; optional stale-write guard under the mutation lock. When playing, recover/verify route and apply/read-verify gain before saving. When stopped or paused, save without starting audio; next `start` applies it. |
 | `set_label(name, label, *, expected_revision)` | Edit only the display label of an output with persisted identity; require a matching config revision and do not change audio. |
+| Durable `set_tunein_station` operation | Resolve a validated TuneIn station ID, set the output's play intention, and replace its one-item managed queue under the shared lock. See [station-selection semantics](./mpd-playback-operations-api.md#tunein-station-selection-request). |
 | `check_route(name)` | Return `StreamRoute` including actual/expected sink, current client ID and `correct`. Missing/ambiguous clients raise an error. |
 | `recover_route(name=None)` | Return tuple of verified `StreamRoute` objects; move only incorrectly routed matching MPD clients. |
 | `initialize_intentions()` | Initialize only unknown streams as playing; preserve previously saved choices. |
@@ -388,6 +420,9 @@ changes. It is validated before contacting MPD.
   matching entry is not restarted. Missing URLs are appended using `addid`;
   unrelated entries and pre-existing duplicates are not deleted. Stop/pause
   never change queues. CLI and supervisor share this idempotence.
+- Once an output explicitly adopts S08 managed-queue mode, startup verifies that
+  its queue contains only the tracked song ID and configured source. It never
+  clears unowned entries; source replacement is limited to one identified song.
 - MPD operations have a five-second timeout and guaranteed disconnect attempts.
   Route/gain helpers retain bounded checks and absolute, non-accumulating gain.
   Route/gain failure during start requests stop on the affected instance.

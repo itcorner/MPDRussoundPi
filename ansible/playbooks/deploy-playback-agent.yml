@@ -8,6 +8,7 @@
     playback_agent_port: 8081
     playback_agent_start: false
     playback_agent_enable_operations: false
+    playback_agent_enable_tunein_selection: true
     playback_agent_state_dir: "{{ playback_agent_home }}/.local/state/mpdrussoundpi-agent"
     playback_agent_home: "{{ ansible_facts['user_dir'] }}"
     playback_agent_dir: "{{ playback_agent_home }}/.local/share/mpdrussoundpi-agent"

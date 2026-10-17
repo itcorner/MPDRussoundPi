@@ -85,8 +85,8 @@ def inspect_route(sink_name: str) -> StreamRoute:
     return StreamRoute(index, sinks[sink_index], expected)
 
 
-def recover_route(sink_name: str) -> StreamRoute:
-    deadline = time.monotonic() + 5
+def recover_route(sink_name: str, timeout: float = 5) -> StreamRoute:
+    deadline = time.monotonic() + timeout
     stable_client: int | None = None
     last_problem = "route did not settle"
     while True:

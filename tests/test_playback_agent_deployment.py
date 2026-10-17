@@ -170,17 +170,26 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
 
     def test_manual_operations_require_explicit_agent_and_proxy_opt_in(self):
         self.assertFalse(self.deploy["vars"]["playback_agent_enable_operations"])
+        self.assertTrue(self.deploy["vars"]["playback_agent_enable_tunein_selection"])
         proxy = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
         self.assertFalse(proxy["vars"]["playback_proxy_enable_operations"])
         service = Environment(undefined=StrictUndefined, trim_blocks=True).from_string(SERVICE.read_text())
-        unit = service.render(
+        common = dict(
             playback_agent_dir="/home/musicpi/agent", playback_agent_venv="/home/musicpi/agent/venv",
             playback_agent_config="/home/musicpi/config.json", playback_agent_secret_dir="/home/musicpi/secrets",
             playback_agent_id="musicpi", playback_agent_port=8081,
-            playback_agent_enable_operations=True, playback_agent_state_dir="/home/musicpi/agent-state",
-            ansible_facts={"user_uid": 1000},
+            playback_agent_state_dir="/home/musicpi/agent-state", ansible_facts={"user_uid": 1000},
         )
+        read_only_unit = service.render(**common)
+        self.assertNotIn("--operations-db", read_only_unit)
+        self.assertNotIn("tunein-selection", read_only_unit)
+        unit = service.render(**common, playback_agent_enable_operations=True)
         self.assertIn("--operations-db /home/musicpi/agent-state/operations.sqlite3", unit)
+        self.assertNotIn("tunein-selection", unit)
+        tunein_disabled_unit = service.render(
+            **common, playback_agent_enable_operations=True, playback_agent_enable_tunein_selection=False,
+        )
+        self.assertIn("--disable-tunein-selection", tunein_disabled_unit)
         self.assertIn("\nEnvironment=PYTHONUNBUFFERED", unit)
         caddy = Environment(undefined=StrictUndefined).from_string(PROXY_CADDYFILE.read_text())
         variables = dict(

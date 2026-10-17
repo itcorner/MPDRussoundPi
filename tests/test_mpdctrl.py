@@ -24,7 +24,7 @@ class MPDControlTests(unittest.TestCase):
             method = getattr(self.api, option.replace("-", "_"))
             if option == "recover-route":
                 method.return_value = []
-            for name in (None, "FM4 Radio"):
+            for name in (None, "Stereo CenterLFE"):
                 with self.subTest(option=option, name=name):
                     method.reset_mock()
                     argv = [f"--{option}", "config.json"]
@@ -40,13 +40,13 @@ class MPDControlTests(unittest.TestCase):
         self.api.start.assert_not_called()
 
     def test_revision_guarded_gain_and_label(self):
-        mpdctrl.main(["--set-gain", "-6.1", "--stream", "FM4 Radio",
+        mpdctrl.main(["--set-gain", "-6.1", "--stream", "Stereo CenterLFE",
                       "--expected-revision", "revision", "config.json"])
-        self.api.set_gain.assert_called_once_with("FM4 Radio", -6.1, expected_revision="revision")
-        mpdctrl.main(["--set-label", "Kitchen", "--stream", "FM4 Radio",
+        self.api.set_gain.assert_called_once_with("Stereo CenterLFE", -6.1, expected_revision="revision")
+        mpdctrl.main(["--set-label", "Kitchen", "--stream", "Stereo CenterLFE",
                       "--expected-revision", "revision", "config.json"])
-        self.api.set_label.assert_called_once_with("FM4 Radio", "Kitchen", expected_revision="revision")
-        for argv in (["--set-gain", "-6"], ["--set-label", "Kitchen", "--stream", "FM4 Radio"],
+        self.api.set_label.assert_called_once_with("Stereo CenterLFE", "Kitchen", expected_revision="revision")
+        for argv in (["--set-gain", "-6"], ["--set-label", "Kitchen", "--stream", "Stereo CenterLFE"],
                      ["--status", "--expected-revision", "revision"]):
             with self.assertRaises(SystemExit):
                 mpdctrl.main([*argv, "config.json"])

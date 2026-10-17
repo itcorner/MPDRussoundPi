@@ -101,13 +101,13 @@ class MPDSetupTests(unittest.TestCase):
             mpdsetup.MPDInstance(
                 name, "127.0.0.1", port, stream.Stream("https://example.com/radio", name)
             )
-            for name, port in [("Radio 88.6", 6601), ("FM4 Radio", 6602), ("OE3 Radio", 6603)]
+            for name, port in [("Stereo Front", 6601), ("Stereo CenterLFE", 6602), ("Stereo Rear", 6603)]
         ]
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(mpdsetup, "SYSTEMD_USER_CONFIG_DIR", directory):
                 mpdsetup.create_mpd_metaservice(instances)
             config = (Path(directory) / mpdsetup.SYSTEMD_MPD_METASERVICE).read_text()
-        names = "mpd_radio_88.6.service mpd_fm4_radio.service mpd_oe3_radio.service"
+        names = "mpd_stereo_front.service mpd_stereo_centerlfe.service mpd_stereo_rear.service"
         self.assertIn(f"Wants={names}\n", config)
         self.assertIn(f"After={names}\n", config)
         self.assertNotIn("*", config)
@@ -125,14 +125,14 @@ class MPDSetupTests(unittest.TestCase):
 
     def test_instance_and_supervisor_units_include_headless_recovery(self):
         instance = mpdsetup.MPDInstance(
-            "Radio 88.6", "127.0.0.1", 6601, stream.Stream("https://example.com", "Radio")
+            "Stereo Front", "127.0.0.1", 6601, stream.Stream("https://example.com", "Radio")
         )
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(mpdsetup, "SYSTEMD_USER_CONFIG_DIR", directory):
                 mpdsetup.create_mpd_systemd_service(instance, "/home/user/audio config.json")
                 mpdsetup.create_supervisor_service("/home/user/audio config.json")
                 available = mpdsetup.get_available_systemd_mpd_services()
-            unit = (Path(directory) / "mpd_radio_88.6.service").read_text()
+            unit = (Path(directory) / "mpd_stereo_front.service").read_text()
             supervisor = (Path(directory) / mpdsetup.SYSTEMD_MPD_SUPERVISOR).read_text()
         for dependency in ("pipewire.service", "pipewire-pulse.service", "wireplumber.service"):
             self.assertIn(dependency, unit)
@@ -143,7 +143,7 @@ class MPDSetupTests(unittest.TestCase):
         self.assertIn("RestartSec=5", unit)
         self.assertIn("StartLimitBurst=10", unit)
         self.assertIn("mpdsupervisor.py", supervisor)
-        self.assertEqual(available, ["mpd_radio_88.6.service"])
+        self.assertEqual(available, ["mpd_stereo_front.service"])
 
     def test_output_generator_uses_software_mixer_for_startup_gate(self):
         config = json.loads((SCRIPTS_DIR / "config.json").read_text())

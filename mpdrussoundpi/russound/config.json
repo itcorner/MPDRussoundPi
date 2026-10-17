@@ -32,7 +32,9 @@
   },
   "streams": [
     {
-      "name": "Radio 88.6",
+      "name": "Stereo Front",
+      "id": "stereo_front",
+      "label": "Stereo Front",
       "gain_db": -7.1,
       "stream": "https://edge85.streamonkey.net/radio886-onair/stream/mp3?aggregator=886Website",
       "port": 6601,
@@ -43,9 +45,14 @@
       }
     },
     {
-      "name": "FM4 Radio",
+      "name": "Stereo CenterLFE",
+      "id": "stereo_centerlfe",
+      "label": "Stereo CenterLFE",
       "gain_db": 0.0,
-      "stream": "http://ors-sn10.ors-shoutcast.at/fm4-q2a",
+      "source_provider": "tunein",
+      "source_station_id": "s8235",
+      "source_station_name": "ORF Radio FM4",
+      "queue_managed": true,
       "port": 6602,
       "bind_to_address": "0.0.0.0",
       "audio_output": {
@@ -54,9 +61,14 @@
       }
     },
     {
-      "name": "OE3 Radio",
+      "name": "Stereo Rear",
+      "id": "stereo_rear",
+      "label": "Stereo Rear",
       "gain_db": -0.6,
-      "stream": "http://ors-sn07.ors-shoutcast.at/oe3-q2a",
+      "source_provider": "tunein",
+      "source_station_id": "s8007",
+      "source_station_name": "ORF Hitradio OE3",
+      "queue_managed": true,
       "port": 6603,
       "bind_to_address": "0.0.0.0",
       "audio_output": {
