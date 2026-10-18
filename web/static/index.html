@@ -11,18 +11,17 @@
     <main class="app-shell">
       <section class="panel system-panel">
         <div class="panel-header">
-          <div>
-            <p class="eyebrow">Multi-room audio</p>
-            <h1>Russound control</h1>
-          </div>
+          <h1>Russound control</h1>
+          <details class="page-navigation">
+            <summary class="menu-toggle"><span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>Menu</summary>
+            <nav class="page-menu" aria-label="Page navigation">
+              <a class="page-menu-link is-active" href="/" aria-current="page">Rooms</a>
+              <a class="page-menu-link" href="/playback">Playback</a>
+              <a class="page-menu-link" href="/config">Configuration</a>
+              <a class="page-menu-link" href="/status">Status</a>
+            </nav>
+          </details>
         </div>
-        <nav class="page-menu" aria-label="Page navigation">
-          <a class="page-menu-link is-active" href="/" aria-current="page">Controller</a>
-          <a class="page-menu-link" href="/playback">Playback</a>
-          <a class="page-menu-link" href="/config">Configuration</a>
-          <a class="page-menu-link" href="/status">Status</a>
-        </nav>
-        <p class="panel-copy">Control every zone from one responsive dashboard.</p>
         <p id="configHint" class="config-hint" hidden></p>
         <h2 id="shortcutsHeading" class="section-title" hidden>Shortcuts</h2>
         <div id="shortcuts" class="shortcuts" aria-label="Room shortcuts">

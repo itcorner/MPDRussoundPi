@@ -30,7 +30,7 @@ The repository currently includes:
 
 - Multi-zone Russound control (power, source, volume).
 - Physical zone addressing via controller/zone mapping.
-- Advanced sound controls for bass, treble, balance, and loudness.
+- Per-zone sound controls for turn-on volume, bass, treble, balance, and loudness in each zone's Configuration settings.
 - A prominent hardware connectivity warning banner when the backend cannot reach Russound hardware.
 - Global system power-off action.
 - Shortcut presets targeting multiple zones.

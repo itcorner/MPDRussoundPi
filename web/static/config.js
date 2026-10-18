@@ -30,6 +30,7 @@ let baselineConnectionHash = "";
 let statusInFlight = false;
 let baselineShortcutsHash = "";
 const draftZones = new Map();
+let currentSoundZones = [];
 
 function collectShortcuts() {
   return Array.from(configShortcuts.querySelectorAll(".shortcut-editor")).map((editor) => ({
@@ -147,6 +148,134 @@ function updateConnectionFields() {
   document.getElementById("backendBaudField").hidden = !serial;
 }
 
+function formatSoundValue(action, value) {
+  const numericValue = Number(value);
+  if (action === "turn_on_volume") return `${numericValue}%`;
+  if (numericValue === 0) return "0";
+  return numericValue > 0 ? `+${numericValue}` : String(numericValue);
+}
+
+function createSoundRange(zone, action, labelText, min, max, step, value, endpoints = null) {
+  const zoneKey = `${zone.controller}-${zone.zone}`;
+  const row = document.createElement("div");
+  row.className = "control-row";
+  const label = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "range";
+  input.id = `sound-${action}-${zoneKey}`;
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  input.dataset.action = action;
+  input.dataset.controllerId = String(zone.controller);
+  input.dataset.zoneNumber = String(zone.zone);
+  label.htmlFor = input.id;
+  label.append(document.createTextNode(`${labelText}: `));
+  const output = document.createElement("span");
+  output.className = "label-value";
+  output.dataset.valueOutput = action;
+  output.textContent = formatSoundValue(action, value);
+  label.appendChild(output);
+  row.appendChild(label);
+
+  if (endpoints) {
+    const range = document.createElement("div");
+    range.className = "range-with-endpoints";
+    for (const [index, endpoint] of endpoints.entries()) {
+      if (index === 1) range.appendChild(input);
+      const text = document.createElement("span");
+      text.setAttribute("aria-hidden", "true");
+      text.textContent = endpoint;
+      range.appendChild(text);
+    }
+    row.appendChild(range);
+  } else {
+    row.appendChild(input);
+  }
+  return row;
+}
+
+function renderSoundControls(zones) {
+  currentSoundZones = zones;
+  for (const zone of zones) {
+    const zoneKey = `${zone.controller}-${zone.zone}`;
+    const row = controllerZones.querySelector(
+      `.config-slot-row[data-controller="${zone.controller}"][data-zone="${zone.zone}"]`,
+    );
+    if (!row) continue;
+    let section = row.querySelector(".config-slot-sound");
+    if (!section) {
+      section = document.createElement("details");
+      section.className = "config-slot-sound";
+      section.innerHTML = `
+        <summary>Sound settings</summary>
+        <div class="config-slot-sound-controls"></div>
+        <p class="config-hint config-slot-sound-message" role="status" hidden></p>
+      `;
+      const controls = section.querySelector(".config-slot-sound-controls");
+      controls.append(
+        createSoundRange(zone, "turn_on_volume", "Turn-on volume", 0, 100, 2, zone.turn_on_volume ?? 0),
+        createSoundRange(zone, "bass", "Bass", -10, 10, 1, zone.bass ?? 0, ["-10", "+10"]),
+        createSoundRange(zone, "treble", "Treble", -10, 10, 1, zone.treble ?? 0, ["-10", "+10"]),
+        createSoundRange(zone, "balance", "Balance", -10, 10, 1, zone.balance ?? 0, ["L", "R"]),
+      );
+      const loudness = document.createElement("label");
+      loudness.className = "advanced-check";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.id = `sound-loudness-${zoneKey}`;
+      checkbox.checked = Boolean(zone.loudness);
+      checkbox.dataset.action = "loudness";
+      checkbox.dataset.controllerId = String(zone.controller);
+      checkbox.dataset.zoneNumber = String(zone.zone);
+      const loudnessText = document.createElement("span");
+      loudnessText.textContent = "Loudness";
+      loudness.append(checkbox, loudnessText);
+      controls.appendChild(loudness);
+      row.appendChild(section);
+    }
+    for (const action of ["turn_on_volume", "bass", "treble", "balance"]) {
+      const input = section.querySelector(`input[data-action="${action}"]`);
+      if (document.activeElement !== input) {
+        input.value = String(zone[action] ?? 0);
+        section.querySelector(`[data-value-output="${action}"]`).textContent = formatSoundValue(action, input.value);
+      }
+    }
+    const loudness = section.querySelector('input[data-action="loudness"]');
+    if (document.activeElement !== loudness) loudness.checked = Boolean(zone.loudness);
+  }
+}
+
+async function updateSoundControl(controllerId, zoneNumber, action, value) {
+  const row = controllerZones.querySelector(
+    `.config-slot-row[data-controller="${controllerId}"][data-zone="${zoneNumber}"]`,
+  );
+  const message = row?.querySelector(".config-slot-sound-message");
+  if (!message) return;
+  message.hidden = false;
+  message.classList.remove("is-error", "is-success");
+  message.textContent = "Saving sound setting…";
+  try {
+    const response = await apiFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [action]: value }),
+    });
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error || `Sound setting could not be saved (${response.status}).`);
+    }
+    message.textContent = "Sound setting updated.";
+    message.classList.add("is-success");
+  } catch (error) {
+    message.textContent = error instanceof Error
+      ? `Unable to update sound setting: ${error.message}`
+      : "Unable to update sound setting.";
+    message.classList.add("is-error");
+  }
+}
+
 async function refreshBackendStatus() {
   if (statusInFlight || document.hidden) return;
   statusInFlight = true;
@@ -154,6 +283,7 @@ async function refreshBackendStatus() {
     const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error("Status unavailable");
     const payload = await response.json();
+    renderSoundControls(payload.state?.zones || []);
     if (configPayload) {
       configPayload.resolved_inputs = payload.resolved_inputs || [];
       for (const row of configSources.querySelectorAll(".config-source-row")) updatePlaybackPreview(row);
@@ -392,6 +522,7 @@ function renderEditor(payload) {
     }
     controllerZones.appendChild(card);
   }
+  renderSoundControls(currentSoundZones);
   if (payload.config_required) {
     sourceConfigPanel.open = true;
     controllerZones.querySelectorAll("details").forEach((panel) => { panel.open = true; });
@@ -551,6 +682,9 @@ function hasRelevantTarget(target) {
   if (!(target instanceof Element)) {
     return false;
   }
+  if (target.closest(".config-slot-sound")) {
+    return false;
+  }
   return Boolean(target.closest(".config-slot-row, .config-source-row"));
 }
 
@@ -615,6 +749,24 @@ saveConfigButton.addEventListener("click", () => {
   saveConfig();
 });
 
+controllerZones.addEventListener("input", (event) => {
+  const control = event.target.closest('input[type="range"][data-action]');
+  if (!control) return;
+  const output = control.closest(".control-row")?.querySelector("[data-value-output]");
+  if (output) output.textContent = formatSoundValue(control.dataset.action, control.value);
+});
+controllerZones.addEventListener("change", (event) => {
+  const control = event.target.closest("input[data-action]");
+  if (!control) return;
+  const value = control.type === "checkbox" ? control.checked : Number(control.value);
+  updateSoundControl(
+    Number(control.dataset.controllerId),
+    Number(control.dataset.zoneNumber),
+    control.dataset.action,
+    value,
+  );
+});
+
 controllerZones.addEventListener("input", handleEditorInteraction);
 controllerZones.addEventListener("change", handleEditorInteraction);
 configSources.addEventListener("input", handleEditorInteraction);
@@ -638,7 +790,10 @@ addShortcutButton.addEventListener("click", () => {
   configShortcuts.lastElementChild.querySelector('[data-field="shortcut-name"]').focus();
 });
 for (const container of [controllerZones, configSources]) {
-  container.addEventListener("change", () => {
+  container.addEventListener("change", (event) => {
+    if (event.target instanceof Element && event.target.closest(".config-slot-sound")) {
+      return;
+    }
     renderShortcuts(collectShortcuts());
     recomputeUnsavedChanges();
   });

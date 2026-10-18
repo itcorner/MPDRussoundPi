@@ -11,18 +11,17 @@
     <main class="app-shell status-shell">
       <section class="panel system-panel">
         <div class="panel-header">
-          <div>
-            <p class="eyebrow">System monitor</p>
-            <h1>Russound status</h1>
-          </div>
+          <h1>Russound status</h1>
+          <details class="page-navigation">
+            <summary class="menu-toggle"><span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>Menu</summary>
+            <nav class="page-menu" aria-label="Page navigation">
+              <a class="page-menu-link" href="/">Rooms</a>
+              <a class="page-menu-link" href="/playback">Playback</a>
+              <a class="page-menu-link" href="/config">Configuration</a>
+              <a class="page-menu-link is-active" href="/status" aria-current="page">Status</a>
+            </nav>
+          </details>
         </div>
-        <nav class="page-menu" aria-label="Page navigation">
-          <a class="page-menu-link" href="/">Controller</a>
-          <a class="page-menu-link" href="/playback">Playback</a>
-          <a class="page-menu-link" href="/config">Configuration</a>
-          <a class="page-menu-link is-active" href="/status" aria-current="page">Status</a>
-        </nav>
-        <p class="panel-copy">See connected frontend clients and the most recent frontend-triggered actions.</p>
       </section>
 
       <section class="status-grid">
@@ -60,10 +59,10 @@
       <details class="panel status-panel collapsible-panel license-panel">
         <summary class="collapsible-summary">
           <span class="section-title">License notices</span>
-          <span class="status-count">6 components</span>
+          <span class="status-count">7 components</span>
         </summary>
         <div class="collapsible-body">
-          <p class="license-intro">Direct open-source dependencies used by the application and its supplied deployment options.</p>
+          <p class="license-intro">Direct open-source dependencies used by the application and its supplied deployment options. Links identify each project or the package license metadata.</p>
           <div class="license-table-wrap">
             <table class="license-table">
               <thead>
@@ -90,14 +89,19 @@
                   <td><a href="https://github.com/Pylons/waitress/blob/main/LICENSE.txt" target="_blank" rel="noopener noreferrer">ZPL-2.1</a></td>
                 </tr>
                 <tr>
-                  <td>russound</td>
-                  <td>Legacy MPD control setup</td>
-                  <td><a href="https://pypi.org/project/russound/0.2.0/" target="_blank" rel="noopener noreferrer">GPL-3.0</a></td>
+                  <td>python-mpd2</td>
+                  <td>MPD client library</td>
+                  <td><a href="https://github.com/Mic92/python-mpd2/blob/main/pyproject.toml" target="_blank" rel="noopener noreferrer">LGPL-3.0</a></td>
                 </tr>
                 <tr>
                   <td>ser2net</td>
                   <td>Bare-metal and hardware Docker gateway</td>
-                  <td><a href="https://github.com/ser2net/ser2net/blob/master/COPYING" target="_blank" rel="noopener noreferrer">GPL-2.0</a></td>
+                  <td><a href="https://metadata.ftp-master.debian.org/changelogs/main/s/ser2net/ser2net_4.3.11-1_copyright" target="_blank" rel="noopener noreferrer">GPL-2.0 with OpenSSL exception</a></td>
+                </tr>
+                <tr>
+                  <td>netcat-openbsd</td>
+                  <td>Health check for the hardware Docker gateway</td>
+                  <td><a href="https://metadata.ftp-master.debian.org/changelogs/main/n/netcat-openbsd/netcat-openbsd_1.219-1_copyright" target="_blank" rel="noopener noreferrer">BSD-3-Clause</a></td>
                 </tr>
                 <tr>
                   <td>tmux</td>

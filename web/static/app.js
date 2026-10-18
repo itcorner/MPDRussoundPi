@@ -24,65 +24,13 @@ let stateFetchQueued = false;
 // Zone changes still awaiting the backend; stale state payloads must not revert them in the UI.
 const pendingZoneUpdates = new Map();
 let zoneUpdateRevision = 0;
-const advancedStateStorageKey = "russound-advanced-open-zones-v1";
-const advancedOpenZones = loadAdvancedOpenZones();
 
 function zoneAddressKey(controllerId, zoneNumber) {
   return `${controllerId}-${zoneNumber}`;
 }
 
-function loadAdvancedOpenZones() {
-  try {
-    const savedState = window.localStorage.getItem(advancedStateStorageKey);
-    if (!savedState) {
-      return new Set();
-    }
-    const parsed = JSON.parse(savedState);
-    if (!Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(parsed.filter((entry) => typeof entry === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
-function saveAdvancedOpenZones() {
-  try {
-    window.localStorage.setItem(advancedStateStorageKey, JSON.stringify(Array.from(advancedOpenZones)));
-  } catch {
-    // Ignore storage errors so UI interactions still work in restricted environments.
-  }
-}
-
-function syncAdvancedPanelState(zoneKey, isOpen) {
-  if (!zoneKey) {
-    return;
-  }
-  if (isOpen) {
-    advancedOpenZones.add(zoneKey);
-  } else {
-    advancedOpenZones.delete(zoneKey);
-  }
-  saveAdvancedOpenZones();
-}
-
-function formatSignedValue(value) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue) || numericValue === 0) {
-    return "0";
-  }
-  return numericValue > 0 ? `+${numericValue}` : String(numericValue);
-}
-
-function formatControlValue(action, value) {
-  if (action === "volume") {
-    return `${value}%`;
-  }
-  if (action === "bass" || action === "treble" || action === "balance") {
-    return formatSignedValue(value);
-  }
-  return String(value);
+function formatControlValue(value) {
+  return `${value}%`;
 }
 
 function apiFetch(path, options = {}) {
@@ -285,83 +233,29 @@ function render() {
 
   zonesContainer.innerHTML = "";
   for (const zone of state.zones) {
-    const zoneDomId = zoneAddressKey(zone.controller, zone.zone);
-    const isAdvancedOpen = advancedOpenZones.has(zoneDomId);
-    const bass = Number(zone.bass ?? 0);
-    const treble = Number(zone.treble ?? 0);
-    const balance = Number(zone.balance ?? 0);
-    const turnOnVolume = Number(zone.turn_on_volume ?? 0);
-    const loudness = Boolean(zone.loudness);
+    const zoneDomId = `${zone.controller}-${zone.zone}`;
     const card = document.createElement("article");
     card.className = "zone-card";
-    card.dataset.zoneKey = zoneDomId;
-    card.classList.toggle("is-flipped", isAdvancedOpen);
     card.innerHTML = `
-      <div class="zone-card-face zone-card-front">
-        <div class="zone-header">
-          <h2 class="zone-name">${zone.name}</h2>
-          <button class="zone-toggle ${zone.power ? "" : "is-off"}" type="button" data-action="power" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-            ${zone.power ? "On" : "Off"}
-          </button>
-        </div>
-        <div class="zone-controls">
-          <div class="control-row">
-            <label for="source-${zoneDomId}">Source</label>
-            <select id="source-${zoneDomId}" data-action="source" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-            </select>
-          </div>
-          <div class="control-row">
-            <label for="volume-${zoneDomId}">Volume: <span class="label-value" data-value-output="volume">${zone.volume}%</span></label>
-            <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" ${zone.power ? "" : "disabled"} />
-          </div>
-        </div>
-        <button class="zone-advanced-toggle" type="button" data-action="toggle-advanced" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-          Advanced sound
+      <div class="zone-header">
+        <h2 class="zone-name"></h2>
+        <button class="zone-toggle ${zone.power ? "" : "is-off"}" type="button" data-action="power" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
+          ${zone.power ? "On" : "Off"}
         </button>
       </div>
-      <div class="zone-card-face zone-card-back">
-        <div class="zone-card-back-header">
-          <button class="zone-advanced-toggle zone-advanced-toggle--back" type="button" data-action="toggle-advanced" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-            Back
-          </button>
-          <h3 class="zone-card-back-title">Advanced sound</h3>
+      <div class="zone-controls">
+        <div class="control-row">
+          <label for="source-${zoneDomId}">Source</label>
+          <select id="source-${zoneDomId}" data-action="source" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
+          </select>
         </div>
-        <div class="zone-advanced-grid">
-          <div class="control-row">
-            <label for="turn-on-volume-${zoneDomId}">Turn-on volume: <span class="label-value" data-value-output="turn_on_volume">${turnOnVolume}%</span></label>
-            <input id="turn-on-volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${turnOnVolume}" data-action="turn_on_volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-          </div>
-          <div class="control-row">
-            <label for="bass-${zoneDomId}">Bass: <span class="label-value" data-value-output="bass">${formatSignedValue(bass)}</span></label>
-            <div class="range-with-endpoints">
-              <span aria-hidden="true">-10</span>
-              <input id="bass-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${bass}" data-action="bass" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-              <span aria-hidden="true">+10</span>
-            </div>
-          </div>
-          <div class="control-row">
-            <label for="treble-${zoneDomId}">Treble: <span class="label-value" data-value-output="treble">${formatSignedValue(treble)}</span></label>
-            <div class="range-with-endpoints">
-              <span aria-hidden="true">-10</span>
-              <input id="treble-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${treble}" data-action="treble" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-              <span aria-hidden="true">+10</span>
-            </div>
-          </div>
-          <div class="control-row">
-            <label for="balance-${zoneDomId}">Balance: <span class="label-value" data-value-output="balance">${formatSignedValue(balance)}</span></label>
-            <div class="range-with-endpoints">
-              <span aria-hidden="true">L</span>
-              <input id="balance-${zoneDomId}" type="range" min="-10" max="10" step="1" value="${balance}" data-action="balance" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" />
-              <span aria-hidden="true">R</span>
-            </div>
-          </div>
-          <label class="advanced-check" for="loudness-${zoneDomId}">
-            <input id="loudness-${zoneDomId}" type="checkbox" data-action="loudness" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" ${loudness ? "checked" : ""} />
-            <span>Loudness</span>
-          </label>
+        <div class="control-row">
+          <label for="volume-${zoneDomId}">Volume: <span class="label-value" data-value-output="volume">${zone.volume}%</span></label>
+          <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" ${zone.power ? "" : "disabled"} />
         </div>
       </div>
     `;
+    card.querySelector(".zone-name").textContent = zone.name;
 
     const sourceSelect = card.querySelector('select[data-action="source"]');
     for (const input of state.inputs) {
@@ -447,17 +341,6 @@ zonesContainer.addEventListener("click", (event) => {
   const controllerId = Number(button.dataset.controllerId);
   const zoneNumber = Number(button.dataset.zoneNumber);
   const action = button.dataset.action;
-  if (action === "toggle-advanced") {
-    const zoneCard = button.closest(".zone-card");
-    if (!zoneCard) {
-      return;
-    }
-    const zoneKey = zoneCard.dataset.zoneKey;
-    const nextOpenState = !zoneCard.classList.contains("is-flipped");
-    zoneCard.classList.toggle("is-flipped", nextOpenState);
-    syncAdvancedPanelState(zoneKey, nextOpenState);
-    return;
-  }
   if (action === "power") {
     const zone = state.zones.find((candidate) => candidate.controller === controllerId && candidate.zone === zoneNumber);
     if (zone) {
@@ -472,12 +355,12 @@ zonesContainer.addEventListener("input", (event) => {
     return;
   }
   const action = control.dataset.action;
-  if (action === "volume" || action === "turn_on_volume" || action === "bass" || action === "treble" || action === "balance") {
+  if (action === "volume") {
     const value = Number(control.value);
     const row = control.closest(".control-row");
     const valueElement = row?.querySelector("[data-value-output]");
     if (valueElement) {
-      valueElement.textContent = formatControlValue(action, value);
+      valueElement.textContent = formatControlValue(value);
     }
   }
 });
@@ -497,25 +380,6 @@ zonesContainer.addEventListener("change", (event) => {
   if (action === "volume") {
     updateZone(controllerId, zoneNumber, "volume", Number(event.target.value));
     return;
-  }
-  if (action === "turn_on_volume") {
-    updateZone(controllerId, zoneNumber, "turn_on_volume", Number(event.target.value));
-    return;
-  }
-  if (action === "bass") {
-    updateZone(controllerId, zoneNumber, "bass", Number(event.target.value));
-    return;
-  }
-  if (action === "treble") {
-    updateZone(controllerId, zoneNumber, "treble", Number(event.target.value));
-    return;
-  }
-  if (action === "balance") {
-    updateZone(controllerId, zoneNumber, "balance", Number(event.target.value));
-    return;
-  }
-  if (action === "loudness") {
-    updateZone(controllerId, zoneNumber, "loudness", Boolean(event.target.checked));
   }
 });
 

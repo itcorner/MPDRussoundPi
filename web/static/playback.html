@@ -12,18 +12,17 @@
       <div id="playbackMessage" class="playback-message" role="alert" hidden></div>
       <section class="panel system-panel">
         <div class="panel-header">
-          <div>
-            <p class="eyebrow">MPD playback</p>
-            <h1>Playback status</h1>
-          </div>
+          <h1>Playback status</h1>
+          <details class="page-navigation">
+            <summary class="menu-toggle"><span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>Menu</summary>
+            <nav class="page-menu" aria-label="Page navigation">
+              <a class="page-menu-link" href="/">Rooms</a>
+              <a class="page-menu-link is-active" href="/playback" aria-current="page">Playback</a>
+              <a class="page-menu-link" href="/config">Configuration</a>
+              <a class="page-menu-link" href="/status">Status</a>
+            </nav>
+          </details>
         </div>
-        <nav class="page-menu" aria-label="Page navigation">
-          <a class="page-menu-link" href="/">Controller</a>
-          <a class="page-menu-link is-active" href="/playback" aria-current="page">Playback</a>
-          <a class="page-menu-link" href="/config">Configuration</a>
-          <a class="page-menu-link" href="/status">Status</a>
-        </nav>
-        <p class="panel-copy">Select Config on a stream to control playback, choose a station and calibrate gain.</p>
       </section>
 
       <section class="panel playback-panel" aria-live="polite">

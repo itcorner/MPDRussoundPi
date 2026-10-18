@@ -138,11 +138,23 @@ class RussoundServerTests(unittest.TestCase):
             client = server.app.test_client()
             with client.get("/") as response:
                 self.assertEqual(response.status_code, 200)
+                self.assertIn(b'class="page-navigation"', response.data)
+                self.assertNotIn(b"Advanced sound", response.data)
             with client.get("/playback") as response:
                 self.assertEqual(response.status_code, 200)
-                self.assertIn(b"MPD playback", response.data)
+                self.assertIn(b"Playback status", response.data)
+                self.assertIn(b'class="page-navigation"', response.data)
             with client.get("/config") as response:
                 self.assertEqual(response.status_code, 200)
+                self.assertIn(b'id="controllerZones"', response.data)
+                self.assertNotIn(b"Zone sound controls", response.data)
+            with client.get("/status") as response:
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b"7 components", response.data)
+                self.assertIn(b"python-mpd2", response.data)
+                self.assertIn(b"netcat-openbsd", response.data)
+                self.assertIn(b"GPL-2.0 with OpenSSL exception", response.data)
+                self.assertNotIn(b"Legacy MPD control setup", response.data)
             self.assertTrue(client.get("/api/config").json["config_required"])
             self.assertTrue(client.get("/api/state").json["config_required"])
             old_backend = Mock()

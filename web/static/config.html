@@ -11,17 +11,17 @@
     <main class="app-shell status-shell">
       <section class="panel system-panel">
         <div class="panel-header">
-          <div>
-            <p class="eyebrow">Configuration</p>
-            <h1 id="configTitle">Russound configuration</h1>
-          </div>
+          <h1 id="configTitle">Russound configuration</h1>
+          <details class="page-navigation">
+            <summary class="menu-toggle"><span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>Menu</summary>
+            <nav class="page-menu" aria-label="Page navigation">
+              <a class="page-menu-link" href="/">Rooms</a>
+              <a class="page-menu-link" href="/playback">Playback</a>
+              <a class="page-menu-link is-active" href="/config" aria-current="page">Configuration</a>
+              <a class="page-menu-link" href="/status">Status</a>
+            </nav>
+          </details>
         </div>
-        <nav class="page-menu" aria-label="Page navigation">
-          <a class="page-menu-link" href="/">Controller</a>
-          <a class="page-menu-link" href="/playback">Playback</a>
-          <a class="page-menu-link is-active" href="/config" aria-current="page">Configuration</a>
-          <a class="page-menu-link" href="/status">Status</a>
-        </nav>
         <p id="configEditorMessage" class="config-hint" role="status" hidden></p>
         <div class="header-actions-bottom">
           <button id="saveConfigButton" class="power-button" type="button">Save configuration</button>
