@@ -46,6 +46,28 @@ class Element {
     item.parent = this.parent;
   }
 
+  get firstChild() {
+    return this.children[0] || null;
+  }
+
+  get nextSibling() {
+    return this.parent ? this.parent.children[this.parent.children.indexOf(this) + 1] || null : null;
+  }
+
+  insertBefore(item, reference) {
+    if (item.parent?.children.includes(item)) item.parent.children.splice(item.parent.children.indexOf(item), 1);
+    const index = reference ? this.children.indexOf(reference) : -1;
+    this.children.splice(index < 0 ? this.children.length : index, 0, item);
+    item.parent = this;
+    return item;
+  }
+
+  remove() {
+    if (!this.parent?.children.includes(this)) return;
+    this.parent.children.splice(this.parent.children.indexOf(this), 1);
+    this.parent = null;
+  }
+
   setAttribute(key, value) {
     this.attributes[key] = value;
   }
@@ -1000,4 +1022,63 @@ test("an output without a station disables Play instead of hiding it", async () 
   assert.equal(h.button("Play").disabled, false);
   assert.equal(h.button("Play").title, "");
   assert.equal(h.posts().length, 0);
+});
+
+test("output cards and their Config button survive snapshot changes", async () => {
+  const h = harness();
+  await settle();
+  const card = h.ids.playbackOutputs.children[0];
+  const config = card.querySelector(".playback-config-button");
+  const output = h.snapshot.agents[0].snapshot.outputs[0];
+  output.playback.value = { state: "play", now_playing: { artist: "Artist", title: "Next song" } };
+  h.render();
+  assert.equal(h.ids.playbackOutputs.children[0], card);
+  assert.equal(card.querySelector(".playback-config-button"), config);
+  assert.equal(card.children.at(-1), config);
+  assert.equal(card.querySelector(".playback-track").title, "Artist — Next song");
+  assert.equal(card.querySelectorAll(".playback-state").length, 1);
+  assert.match(card.querySelector(".playback-state").textContent, /^play/);
+  h.snapshot.agents[0].snapshot.outputs = [];
+  h.render();
+  assert.equal(h.ids.playbackOutputs.children.length, 0);
+});
+
+test("dialog favorites and station results keep their buttons when only availability changes", async () => {
+  const snapshot = favoritesFixture();
+  const h = harness(snapshot);
+  await settle();
+  h.open();
+  const controls = h.ids.playbackConfigControls;
+  h.edit("search", "FM4");
+  h.plan.push(response(200, { api_version: 1, provider: "tunein", stations: [{ id: "s8235", name: "ORF Radio FM4" }] }));
+  h.click("Search");
+  await settle();
+  const rows = controls.querySelectorAll(".playback-favorite");
+  const play = rows[0].querySelector(".playback-favorite-actions").children[0];
+  const result = controls.querySelector(".playback-station-results").children[0];
+  const select = result.children[1].children[0];
+  const current = controls.querySelector(".playback-current-favorite").children[0];
+  assert.equal(play.disabled, false);
+  assert.equal(select.disabled, false);
+
+  snapshot.agents[0].status = "unavailable";
+  snapshot.agents[0].snapshot.outputs[0].playback.value.now_playing = { title: "Other song" };
+  h.render();
+  assert.deepEqual(controls.querySelectorAll(".playback-favorite"), rows);
+  assert.equal(controls.querySelector(".playback-station-results").children[0], result);
+  assert.equal(controls.querySelector(".playback-current-favorite").children[0], current);
+  assert.equal(play.disabled, true);
+  assert.equal(select.disabled, true);
+  assert.equal(current.disabled, true);
+
+  snapshot.agents[0].status = "ok";
+  h.render();
+  assert.equal(play.disabled, false);
+  assert.equal(select.disabled, false);
+
+  snapshot.agents[0].snapshot.favorites.stations.reverse();
+  h.render();
+  const reordered = controls.querySelectorAll(".playback-favorite");
+  assert.notEqual(reordered[0], rows[0]);
+  assert.match(reordered[0].querySelector(".playback-station-name").textContent, /\(current\)/);
 });

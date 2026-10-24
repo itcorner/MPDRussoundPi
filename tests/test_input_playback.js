@@ -34,29 +34,11 @@ function load(script) {
   return { context, elements, element };
 }
 
-test("dashboard resolves names and updates only option text on playback events", async () => {
-  const { context, elements } = load("app");
-  const option = { value: "1", selected: true };
-  const select = { options: [option], value: "1" };
-  const zoneCard = {};
-  const shortcut = { dataset: { shortcutId: "morning" } };
-  elements.get("zones").querySelectorAll = () => [select];
-  elements.get("zones").zoneCard = zoneCard;
-  elements.get("shortcuts").querySelectorAll = () => [shortcut];
-  vm.runInContext('state.shortcuts = [{id: "morning", source: 1}]', context);
-  context.fetch = async () => ({
-    ok: true,
-    json: async () => ({
-      resolved_inputs: [{ id: 1, name: "Radio", display_name: "<Station & name>", playback_status: "ok" }],
-    }),
-  });
-  await vm.runInContext("refreshInputNames()", context);
-  assert.equal(option.textContent, "<Station & name>");
-  assert.equal(option.selected, true);
-  assert.equal(select.value, "1");
-  assert.equal(elements.get("zones").zoneCard, zoneCard);
-  assert.equal(shortcut.title, "<Station & name>");
+// Name updates on playback events are covered with a fuller DOM in tests/test_rooms_ui.js.
+test("dashboard formats resolved input names", () => {
+  const { context } = load("app");
   assert.equal(vm.runInContext('inputDisplayName({name:"Radio", display_name:"OE3", playback_status:"unavailable"})', context), "OE3 (unavailable)");
+  assert.equal(vm.runInContext('inputDisplayName({name:"Radio", display_name:"OE3", playback_status:"unmapped"})', context), "OE3 (unavailable)");
   assert.equal(vm.runInContext('inputDisplayName({name:"TV"})', context), "TV");
 });
 

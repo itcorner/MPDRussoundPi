@@ -21,6 +21,10 @@ def _close_server(server: RussoundHTTPServer) -> None:
         close_fn()
 
 
+def _without_revision(payload: dict) -> dict:
+    return {key: value for key, value in payload.items() if key not in {"revision", "epoch"}}
+
+
 class RussoundServerTests(unittest.TestCase):
     def test_tunein_search_api_returns_normalized_station_results(self):
         server = RussoundHTTPServer(None, None)
@@ -104,7 +108,9 @@ class RussoundServerTests(unittest.TestCase):
             self.assertTrue(poll_entered.wait(2))
             reader.start()
             self.assertTrue(read_done.wait(1), "State reads waited for hardware polling")
-            self.assertEqual(result, {"http": 200, "payload": previous, "event": previous})
+            self.assertEqual(result["http"], 200)
+            self.assertEqual(_without_revision(result["payload"]), previous)
+            self.assertEqual(_without_revision(result["event"]), previous)
         finally:
             release_poll.set()
             poller.join(2)
@@ -113,7 +119,7 @@ class RussoundServerTests(unittest.TestCase):
         self.assertFalse(poller.is_alive())
         controller.persist_state.assert_called_once_with(new_state)
         with server.state_lock:
-            self.assertEqual(server.app.test_client().get("/api/state").json, refreshed)
+            self.assertEqual(_without_revision(server.app.test_client().get("/api/state").json), refreshed)
 
     def test_state_api_returns_latest_command_snapshot_while_lock_is_busy(self):
         server = RussoundHTTPServer(None, None)
@@ -128,7 +134,40 @@ class RussoundServerTests(unittest.TestCase):
             response = client.post("/api/controller/1/zone/1/volume", json={"volume": 60})
             self.assertEqual(response.status_code, 200)
             with server.state_lock:
-                self.assertEqual(client.get("/api/state").json, updated)
+                state = client.get("/api/state").json
+                self.assertEqual(_without_revision(state), updated)
+                self.assertGreaterEqual(state["revision"], response.json["revision"])
+
+    def test_state_revision_tracks_published_changes_and_broadcasts(self):
+        server = RussoundHTTPServer(None, None)
+        server.controller = Mock()
+        first = {"state": {"zones": [{"volume": 20}]}}
+        second = {"state": {"zones": [{"volume": 40}]}}
+        server.controller.build_view_payload.return_value = first
+        try:
+            client = server.app.test_client()
+            initial = client.get("/api/state").json
+            self.assertEqual(client.get("/api/state").json["revision"], initial["revision"])
+            self.assertRegex(initial["epoch"], r"^[0-9a-f]{16}$")
+
+            server.controller.build_view_payload.return_value = second
+            changed = client.get("/api/state").json
+            self.assertEqual(changed["revision"], initial["revision"] + 1)
+            self.assertEqual(changed["epoch"], initial["epoch"])
+
+            _client_id, event_queue = server.register_event_client("127.0.0.1", "test-agent")
+            server.broadcast_state_change()
+            event = json.loads(event_queue.get_nowait())
+            self.assertEqual(event["revision"], changed["revision"] + 1)
+            self.assertEqual(event["payload"]["revision"], event["revision"])
+            self.assertEqual(client.get("/api/state").json["revision"], event["revision"])
+
+            server.controller.handle_zone_setting_change.return_value = first
+            response = client.post("/api/controller/1/zone/1/volume", json={"volume": 20})
+            self.assertEqual(response.json["epoch"], initial["epoch"])
+            self.assertGreater(response.json["revision"], event["revision"])
+        finally:
+            _close_server(server)
 
     def test_setup_routes_recover_invalid_config_and_replace_backend(self):
         with tempfile.TemporaryDirectory() as directory:

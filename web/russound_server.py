@@ -164,7 +164,9 @@ class RussoundHTTPServer:
         # Empty means any Host is accepted; set it to block DNS-rebinding attacks.
         self._allowed_hosts = {_hostname(host) for host in allowed_hosts or []}
         self._allowed_origins = {origin.rstrip("/").lower() for origin in allowed_origins or []}
+        # Bumped whenever the published state changes or is broadcast; the epoch lets clients detect restarts.
         self.state_revision = 0
+        self.state_epoch = secrets.token_hex(8)
         self.state_lock = threading.Lock()
         self._state_payload_lock = threading.Lock()
         self._event_clients: dict[int, dict[str, Any]] = {}
@@ -431,10 +433,10 @@ class RussoundHTTPServer:
                     response_payload = self.controller.handle_system_power_change(power=power)
                 except RuntimeError as exc:
                     return jsonify({"error": str(exc)}), 502
-                self._publish_state_payload(response_payload)
+                revision = self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(response_payload))
+            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
 
         @app.post("/api/source")
         def api_source():
@@ -447,10 +449,10 @@ class RussoundHTTPServer:
                     response_payload = self.controller.handle_source_change(source=source_value)
                 except LookupError:
                     return jsonify({"error": "Source not found"}), 404
-                self._publish_state_payload(response_payload)
+                revision = self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(response_payload))
+            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
 
         @app.post("/api/shortcuts/<shortcut_id>/activate")
         def api_shortcut_activate(shortcut_id: str):
@@ -462,10 +464,10 @@ class RussoundHTTPServer:
                     return jsonify({"error": str(exc)}), 404
                 except RuntimeError as exc:
                     return jsonify({"error": str(exc)}), 500
-                self._publish_state_payload(response_payload)
+                revision = self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(response_payload))
+            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
 
         @app.post("/api/controller/<int:controller_id>/zone/<int:zone_number>/<action>")
         def api_zone_action(controller_id: int, zone_number: int, action: str):
@@ -490,7 +492,7 @@ class RussoundHTTPServer:
                     return jsonify({"error": "Zone not found"}), 404
                 except RuntimeError as exc:
                     return jsonify({"error": str(exc)}), 502
-                self._publish_state_payload(response_payload)
+                revision = self._publish_state_payload(response_payload)
             logging.debug(
                 "API zone update applied controller=%d zone=%d action=%s value=%s",
                 controller_id,
@@ -499,7 +501,7 @@ class RussoundHTTPServer:
                 value,
             )
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(response_payload))
+            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
 
         @app.get("/static/<path:filename>")
         def static_files(filename: str) -> Response:
@@ -880,11 +882,11 @@ class RussoundHTTPServer:
 
     def broadcast_state_change(self) -> None:
         state_payload = self._build_state_payload_for_event()
+        revision = state_payload["revision"]
         with self._event_clients_lock:
-            self.state_revision += 1
             event_text = json.dumps(
                 {
-                    "revision": self.state_revision,
+                    "revision": revision,
                     "payload": state_payload,
                 }
             )
@@ -893,7 +895,7 @@ class RussoundHTTPServer:
             recipients = len(self._event_clients)
         logging.info(
             "SSE state update broadcast revision=%d recipients=%d",
-            self.state_revision,
+            revision,
             recipients,
         )
 
@@ -942,23 +944,32 @@ class RussoundHTTPServer:
         }
 
     def _build_state_payload_for_event(self) -> dict[str, Any]:
-        return self._read_state_payload()
+        # Every broadcast gets its own revision so clients can drop older payloads that arrive late.
+        return self._read_state_payload(bump_revision=True)
 
-    def _publish_state_payload(self, payload: dict[str, Any]) -> None:
+    def _publish_state_payload(self, payload: dict[str, Any]) -> int:
         with self._state_payload_lock:
+            if payload != self._state_payload:
+                self.state_revision += 1
             self._state_payload = payload
+            return self.state_revision
 
     def _publish_state_payload_locked(self) -> None:
         self._publish_state_payload(self.controller.build_view_payload(refresh_backend=False))
 
-    def _read_state_payload(self) -> dict[str, Any]:
+    def _with_state_revision(self, payload: dict[str, Any], revision: int) -> dict[str, Any]:
+        return {**payload, "revision": revision, "epoch": self.state_epoch}
+
+    def _read_state_payload(self, bump_revision: bool = False) -> dict[str, Any]:
         if self.state_lock.acquire(blocking=False):
             try:
                 self._publish_state_payload_locked()
             finally:
                 self.state_lock.release()
         with self._state_payload_lock:
-            payload = self._state_payload
+            if bump_revision:
+                self.state_revision += 1
+            payload = self._with_state_revision(self._state_payload, self.state_revision)
         return self._with_input_names(payload)
 
     def _with_input_names(self, payload: dict[str, Any]) -> dict[str, Any]:

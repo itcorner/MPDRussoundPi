@@ -15,6 +15,7 @@ let playbackFetchInFlight = false;
 let playbackFetchQueued = false;
 let lastPlaybackSignature = null;
 const outputControls = new Map();
+const outputCards = new Map();
 const trackResizeObserver = new ResizeObserver((entries) => {
   for (const { target } of entries) {
     const line = target.className === "playback-track" ? target : target.parentElement;
@@ -143,19 +144,27 @@ function iconButton(parent, label, title, disabled, handler) {
   return button;
 }
 
+function commandBlocked(state) {
+  return Boolean(state.command?.pending || state.command?.unknown);
+}
+
+function outputPlaying(state) {
+  return state.output.playback?.value?.state === "play";
+}
+
 // ☆ adds a TuneIn station, ★ removes it; URL stations can only come from config.json.
-function favoriteToggle(parent, state, station, blocked) {
+function favoriteToggle(parent, state, station) {
   const key = favoriteKey(station);
   const favorites = favoriteStations(state);
   const existing = favorites.find((item) => item.key === key);
   if (existing) {
     return iconButton(parent, "★", `Remove ${existing.name} from favorites`,
-      blocked || !canWrite(state, "remove_favorite"),
+      () => commandBlocked(state) || !canWrite(state, "remove_favorite"),
       () => submitOutputOperation(state, "remove_favorite", existing));
   }
   const full = favorites.length >= 20;
   const button = iconButton(parent, "☆", full ? "Favorites are full (20)" : `Add ${station.name} to favorites`,
-    blocked || full || !station.id || !canWrite(state, "add_favorite"),
+    () => commandBlocked(state) || full || !station.id || !canWrite(state, "add_favorite"),
     () => submitOutputOperation(state, "add_favorite", station));
   return button;
 }
@@ -164,14 +173,48 @@ function validGain(draft) {
   return draft.trim() !== "" && Number.isFinite(Number(draft)) && Number(draft) <= 0;
 }
 
+// A function as `disabled` is re-evaluated by syncButtons, so list buttons survive updates that only change availability.
 function commandButton(parent, label, disabled, handler) {
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = label;
-  button.disabled = disabled;
+  if (typeof disabled === "function") {
+    button.syncDisabled = disabled;
+    button.disabled = disabled();
+  } else {
+    button.disabled = disabled;
+  }
   button.addEventListener("click", handler);
   parent.appendChild(button);
   return button;
+}
+
+function syncButtons(container) {
+  for (const child of Array.from(container.children)) {
+    if (typeof child.syncDisabled === "function") {
+      const disabled = child.syncDisabled();
+      if (child.disabled !== disabled) child.disabled = disabled;
+    }
+    syncButtons(child);
+  }
+}
+
+// Rebuilds a list only when its structure changed; otherwise just refreshes button availability.
+function syncList(elements, name, container, signature, build) {
+  if (elements.signatures[name] === signature) {
+    syncButtons(container);
+    return;
+  }
+  elements.signatures[name] = signature;
+  const active = document.activeElement;
+  const focusedLabel = active && typeof container.contains === "function" && container.contains(active)
+    ? active.getAttribute("aria-label") || active.textContent : null;
+  container.replaceChildren();
+  build();
+  if (focusedLabel) {
+    Array.from(container.querySelectorAll("button"))
+      .find((button) => (button.getAttribute("aria-label") || button.textContent) === focusedLabel)?.focus();
+  }
 }
 
 function dialogSection(parent, title) {
@@ -285,6 +328,7 @@ function renderOutputControls(state) {
   state.dialogElements = {
     buttons, nowPlaying, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
     searchStations, stationStatus, stationResults, validation, availability, status, retry, feedback,
+    signatures: {},
   };
   updateOutputDialog(state);
   return controls;
@@ -321,41 +365,52 @@ function updateOutputDialog(state) {
   nowPlaying.textContent = station ? `${station} · ${playbackState}`
     : stationless ? `No station · ${playbackState}` : playbackState;
   const selection = state.output.selection || {};
-  currentFavorite.replaceChildren();
-  if (typeof selection.key === "string" && selection.key) {
-    const current = { key: selection.key, id: selection.provider === "tunein" ? selection.station_id : null,
-      name: selection.station_name || selection.label || selection.key };
-    favoriteToggle(currentFavorite, state, current, blocked);
-  }
   const favorites = favoriteStations(state);
-  favoritesList.replaceChildren();
-  if (!favorites.length) {
-    appendPlaybackText(favoritesList, "playback-gain-hint",
-      state.agent.snapshot?.favorites ? "No favorites yet. Add stations with ☆." : "Favorites unavailable.");
-  }
-  favorites.forEach((favorite, index) => {
-    const row = document.createElement("div");
-    const isCurrent = favorite.key === selection.key;
-    row.className = isCurrent ? "playback-favorite playback-favorite-current" : "playback-favorite";
-    const logo = favorite.type === "tunein" ? stationLogo("favorites", favorite.station_id) : null;
-    const name = document.createElement("span");
-    name.className = "playback-station-name";
-    name.textContent = isCurrent ? `${favorite.name} (current)` : favorite.name;
-    const actions = document.createElement("div");
-    actions.className = "playback-favorite-actions";
-    const play = commandButton(actions, "Play", blocked || !canWrite(state, "select_favorite")
-      || (isCurrent && playing), () => submitOutputOperation(state, "select_favorite", favorite));
-    play.setAttribute("aria-label", `Play ${favorite.name}`);
-    iconButton(actions, "↑", `Move ${favorite.name} up`, blocked || index === 0 || !canWrite(state, "move_favorite"),
-      () => submitOutputOperation(state, "move_favorite", favorite, index - 1));
-    iconButton(actions, "↓", `Move ${favorite.name} down`,
-      blocked || index === favorites.length - 1 || !canWrite(state, "move_favorite"),
-      () => submitOutputOperation(state, "move_favorite", favorite, index + 1));
-    iconButton(actions, "✕", `Remove ${favorite.name} from favorites`,
-      blocked || !canWrite(state, "remove_favorite"),
-      () => submitOutputOperation(state, "remove_favorite", favorite));
-    row.append(...(logo ? [logo] : []), name, actions);
-    favoritesList.appendChild(row);
+  // Favorite names and count decide the ☆/★ toggles, so every list depending on them includes this.
+  const favoritesSignature = JSON.stringify(favorites.map((favorite) =>
+    [favorite.key, favorite.name, favorite.type, favorite.station_id]));
+  const { dialogElements } = state;
+  syncList(dialogElements, "currentFavorite", currentFavorite, JSON.stringify([
+    selection.key, selection.provider, selection.station_id, selection.station_name, selection.label, favoritesSignature,
+  ]), () => {
+    if (typeof selection.key === "string" && selection.key) {
+      const current = { key: selection.key, id: selection.provider === "tunein" ? selection.station_id : null,
+        name: selection.station_name || selection.label || selection.key };
+      favoriteToggle(currentFavorite, state, current);
+    }
+  });
+  syncList(dialogElements, "favorites", favoritesList, JSON.stringify([
+    favoritesSignature, selection.key, Boolean(state.agent.snapshot?.favorites),
+  ]), () => {
+    if (!favorites.length) {
+      appendPlaybackText(favoritesList, "playback-gain-hint",
+        state.agent.snapshot?.favorites ? "No favorites yet. Add stations with ☆." : "Favorites unavailable.");
+    }
+    favorites.forEach((favorite, index) => {
+      const row = document.createElement("div");
+      const isCurrent = favorite.key === selection.key;
+      row.className = isCurrent ? "playback-favorite playback-favorite-current" : "playback-favorite";
+      const logo = favorite.type === "tunein" ? stationLogo("favorites", favorite.station_id) : null;
+      const name = document.createElement("span");
+      name.className = "playback-station-name";
+      name.textContent = isCurrent ? `${favorite.name} (current)` : favorite.name;
+      const actions = document.createElement("div");
+      actions.className = "playback-favorite-actions";
+      const play = commandButton(actions, "Play", () => commandBlocked(state) || !canWrite(state, "select_favorite")
+        || (isCurrent && outputPlaying(state)), () => submitOutputOperation(state, "select_favorite", favorite));
+      play.setAttribute("aria-label", `Play ${favorite.name}`);
+      iconButton(actions, "↑", `Move ${favorite.name} up`,
+        () => commandBlocked(state) || index === 0 || !canWrite(state, "move_favorite"),
+        () => submitOutputOperation(state, "move_favorite", favorite, index - 1));
+      iconButton(actions, "↓", `Move ${favorite.name} down`,
+        () => commandBlocked(state) || index === favorites.length - 1 || !canWrite(state, "move_favorite"),
+        () => submitOutputOperation(state, "move_favorite", favorite, index + 1));
+      iconButton(actions, "✕", `Remove ${favorite.name} from favorites`,
+        () => commandBlocked(state) || !canWrite(state, "remove_favorite"),
+        () => submitOutputOperation(state, "remove_favorite", favorite));
+      row.append(...(logo ? [logo] : []), name, actions);
+      favoritesList.appendChild(row);
+    });
   });
   const valid = validGain(state.draft);
   // Include both configured and draft gain without rounding or clamping the saved value.
@@ -369,34 +424,38 @@ function updateOutputDialog(state) {
   stationStatus.textContent = state.stationError || (state.stationSearching ? "Searching TuneIn…" : "");
   stationStatus.hidden = !stationStatus.textContent;
   stationStatus.setAttribute("role", state.stationError ? "alert" : "status");
-  stationResults.replaceChildren();
-  for (const station of state.stationResults) {
-    const result = document.createElement("div");
-    result.className = "playback-station-result";
-    const details = document.createElement("div");
-    details.className = "playback-station-details";
-    const name = document.createElement("span");
-    name.className = "playback-station-name";
-    name.textContent = station.name;
-    details.appendChild(name);
-    const metadata = [station.description, station.formats, station.bitrate_kbps
-      ? `${station.bitrate_kbps} kbps` : null].filter((value) => typeof value === "string" && value);
-    if (metadata.length) {
-      const meta = document.createElement("span");
-      meta.className = "playback-station-meta";
-      meta.textContent = metadata.join(" · ");
-      details.appendChild(meta);
+  syncList(dialogElements, "stationResults", stationResults, JSON.stringify([
+    state.stationResults.map((station) => [station.id, station.name, station.description, station.formats, station.bitrate_kbps]),
+    favoritesSignature,
+  ]), () => {
+    for (const station of state.stationResults) {
+      const result = document.createElement("div");
+      result.className = "playback-station-result";
+      const details = document.createElement("div");
+      details.className = "playback-station-details";
+      const name = document.createElement("span");
+      name.className = "playback-station-name";
+      name.textContent = station.name;
+      details.appendChild(name);
+      const metadata = [station.description, station.formats, station.bitrate_kbps
+        ? `${station.bitrate_kbps} kbps` : null].filter((value) => typeof value === "string" && value);
+      if (metadata.length) {
+        const meta = document.createElement("span");
+        meta.className = "playback-station-meta";
+        meta.textContent = metadata.join(" · ");
+        details.appendChild(meta);
+      }
+      const actions = document.createElement("div");
+      actions.className = "playback-favorite-actions";
+      commandButton(
+        actions, "Select and play", () => commandBlocked(state) || !canWrite(state, "set_tunein_station"),
+        () => submitOutputOperation(state, "set_tunein_station", station),
+      );
+      favoriteToggle(actions, state, station);
+      result.replaceChildren(details, actions);
+      stationResults.appendChild(result);
     }
-    const actions = document.createElement("div");
-    actions.className = "playback-favorite-actions";
-    commandButton(
-      actions, "Select and play", blocked || !canWrite(state, "set_tunein_station"),
-      () => submitOutputOperation(state, "set_tunein_station", station),
-    );
-    favoriteToggle(actions, state, station, blocked);
-    result.replaceChildren(details, actions);
-    stationResults.appendChild(result);
-  }
+  });
   gainValue.textContent = valid ? `${state.draft} dB` : "Gain unavailable";
   apply.disabled = slider.disabled || !valid;
   validation.textContent = valid
@@ -749,6 +808,22 @@ function updatePlaybackFreshness(playback) {
   }
 }
 
+// Cards stay in the DOM across snapshots so their Config button keeps focus and accepts taps during updates.
+function outputCardEntry(controlState) {
+  let entry = outputCards.get(controlState.key);
+  if (!entry) {
+    const card = document.createElement("article");
+    card.className = "playback-card";
+    card.dataset.outputKey = controlState.key;
+    const config = commandButton(card, "Config", false, () => openOutputConfig(controlState));
+    config.className = "playback-config-button";
+    config.setAttribute("aria-haspopup", "dialog");
+    entry = { card, config };
+    outputCards.set(controlState.key, entry);
+  }
+  return entry;
+}
+
 function renderPlayback(playback) {
   trackResizeObserver.disconnect();
   playbackAvailable = true;
@@ -756,7 +831,13 @@ function renderPlayback(playback) {
   const presentKeys = new Set((playback.configured ? playback.agents || [] : [])
     .flatMap((agent) => (agent.snapshot?.outputs || []).map((output) => JSON.stringify([agent.agent_id, output.id]))));
   if (activeOutputKey && !presentKeys.has(activeOutputKey)) configDialog.close();
-  outputsContainer.replaceChildren();
+  for (const [key, entry] of outputCards) {
+    if (!presentKeys.has(key)) {
+      entry.card.remove();
+      outputCards.delete(key);
+    }
+  }
+  let previousCard = null;
   message.replaceChildren();
   message.hidden = true;
 
@@ -782,25 +863,28 @@ function renderPlayback(playback) {
       continue;
     }
     for (const output of outputs) {
-      const card = document.createElement("article");
-      card.className = "playback-card";
-      card.dataset.outputKey = JSON.stringify([agent.agent_id, output.id]);
       const playbackProbe = output.playback || {};
       const controlState = outputControlState(agent, output);
+      const { card, config } = outputCardEntry(controlState);
+      // Replace the card content around the Config button; detaching the button would drop focus and taps.
+      for (const child of Array.from(card.children)) {
+        if (child !== config) child.remove();
+      }
+      const content = document.createElement("div");
       const observed = playbackProbe.value || playbackProbe.last_known?.value || {};
       const nowPlaying = observed.now_playing || {};
       const stationId = output.selection?.provider === "tunein" ? output.selection.station_id : null;
       const logo = stationLogo(card.dataset.outputKey, stationId);
-      if (logo) card.appendChild(logo);
+      if (logo) content.appendChild(logo);
       const title = document.createElement("h3");
       title.textContent = `${agent.agent_id} · ${output.label}`;
-      card.appendChild(title);
+      content.appendChild(title);
 
       const station = [output.selection?.station_name, nowPlaying.station]
         .find((value) => typeof value === "string" && value);
       const playbackState = observed.state || playbackProbe.status || "unknown";
       const stationText = station || (output.control?.has_station === false ? "No station" : "");
-      appendPlaybackText(card, "playback-state", `${playbackState}${stationText ? ` · ${stationText}` : ""}`);
+      appendPlaybackText(content, "playback-state", `${playbackState}${stationText ? ` · ${stationText}` : ""}`);
       const track = [nowPlaying.artist, nowPlaying.title].filter((value) => typeof value === "string" && value).join(" — ");
       if (track) {
         const line = document.createElement("p");
@@ -809,27 +893,27 @@ function renderPlayback(playback) {
         const text = document.createElement("span");
         text.textContent = track;
         line.appendChild(text);
-        card.appendChild(line);
+        content.appendChild(line);
         trackResizeObserver.observe(line);
         trackResizeObserver.observe(text);
       }
       if (typeof nowPlaying.album === "string" && nowPlaying.album) {
-        appendPlaybackText(card, "playback-meta", nowPlaying.album);
+        appendPlaybackText(content, "playback-meta", nowPlaying.album);
       }
       if (typeof output.gain?.configured_db === "number" && Number.isFinite(output.gain.configured_db)) {
-        appendPlaybackText(card, "playback-meta", `Configured gain: ${output.gain.configured_db.toFixed(1)} dB`);
+        appendPlaybackText(content, "playback-meta", `Configured gain: ${output.gain.configured_db.toFixed(1)} dB`);
       }
-      appendPlaybackText(card, "playback-meta playback-freshness", playbackFreshness(playbackProbe, agent));
+      appendPlaybackText(content, "playback-meta playback-freshness", playbackFreshness(playbackProbe, agent));
       if (playbackProbe.error?.message) {
-        appendPlaybackText(card, "playback-error", playbackProbe.error.message);
+        appendPlaybackText(content, "playback-error", playbackProbe.error.message);
       }
-      const config = commandButton(card, "Config", false, () => openOutputConfig(controlState));
-      config.className = "playback-config-button";
-      config.setAttribute("aria-haspopup", "dialog");
+      for (const child of Array.from(content.children)) card.insertBefore(child, config);
       config.setAttribute("aria-label", `Config ${agent.agent_id}, ${output.label}, ${output.id}`);
       updateOutputDialog(controlState);
       card.setAttribute("aria-label", `${agent.agent_id}, ${output.label}, ${playbackState}`);
-      outputsContainer.appendChild(card);
+      const expected = previousCard ? previousCard.nextSibling : outputsContainer.firstChild;
+      if (card !== expected) outputsContainer.insertBefore(card, expected);
+      previousCard = card;
     }
     if (agent.error?.message) {
       appendPlaybackWarning(

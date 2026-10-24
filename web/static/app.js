@@ -1,17 +1,13 @@
 const state = {
-  config: null,
-  configRequired: false,
-  configMessage: "",
-  backendStatus: { connected: true, message: "" },
-  zones: [],
-  systemPower: false,
-  inputs: [],
-  shortcuts: [],
+  view: null,
+  lastRevision: null,
+  lastEpoch: null,
 };
 
 const zonesContainer = document.getElementById("zones");
 const systemButton = document.getElementById("systemPower");
 const shortcutsContainer = document.getElementById("shortcuts");
+const shortcutsHeading = document.getElementById("shortcutsHeading");
 const configHint = document.getElementById("configHint");
 const appShell = document.querySelector("main.app-shell");
 let eventSource = null;
@@ -24,6 +20,14 @@ let stateFetchQueued = false;
 // Zone changes still awaiting the backend; stale state payloads must not revert them in the UI.
 const pendingZoneUpdates = new Map();
 let zoneUpdateRevision = 0;
+// Cards are kept across updates so open dropdowns, slider drags and taps survive live state changes.
+const zoneCards = new Map();
+// Controls the user is operating; live updates leave their value alone until the interaction ends.
+const engagedControls = new Set();
+let backendBanner = null;
+let emptyState = null;
+let shortcutsSignature = null;
+let lastRenderSignature = null;
 
 function zoneAddressKey(controllerId, zoneNumber) {
   return `${controllerId}-${zoneNumber}`;
@@ -42,55 +46,74 @@ function inputDisplayName(input) {
   return `${input.display_name || input.name}${unavailable ? " (unavailable)" : ""}`;
 }
 
-function applyInputNames(payload) {
+// Projects a state payload onto the fields the Rooms page uses (the planned Rooms snapshot allowlist).
+function toRoomsView(payload) {
   const inputs = payload.resolved_inputs || payload.config?.inputs || payload.state?.inputs || [];
-  state.inputs = inputs.filter((input) => input.enabled !== false);
+  const backendStatus = payload.backend_status || { connected: true, message: "" };
+  return {
+    configRequired: Boolean(payload.config_required),
+    message: payload.message || "",
+    backendStatus: { connected: backendStatus.connected !== false, message: backendStatus.message || "" },
+    systemPower: Boolean(payload.state?.system_power),
+    zones: (payload.state?.zones || []).map((zone) => ({
+      controller: zone.controller,
+      zone: zone.zone,
+      name: zone.name,
+      power: Boolean(zone.power),
+      source: zone.source,
+      volume: zone.volume,
+    })),
+    inputs: inputs.filter((input) => input.enabled !== false).map((input) => ({
+      id: input.id,
+      name: input.name,
+      display_name: input.display_name,
+      playback_status: input.playback_status,
+      playback_message: input.playback_message,
+    })),
+    shortcuts: (payload.config?.shortcuts || []).map((shortcut) => ({
+      id: shortcut.id,
+      name: shortcut.name,
+      source: shortcut.source,
+    })),
+  };
 }
 
-async function refreshInputNames() {
-  try {
-    const response = await apiFetch("/api/state");
-    if (!response.ok) throw new Error(`Source names unavailable (${response.status})`);
-    applyInputNames(await response.json());
-  } catch (error) {
-    console.error("Unable to refresh playback input names", error);
-    return;
+function isStalePayload(payload) {
+  if (!Number.isInteger(payload.revision)) {
+    return false;
   }
-  for (const select of zonesContainer.querySelectorAll('select[data-action="source"]')) {
-    for (const option of select.options) {
-      const input = state.inputs.find((input) => input.id === Number(option.value));
-      if (input) {
-        option.textContent = inputDisplayName(input);
-        option.title = input.playback_message || "";
-      }
-      for (const button of shortcutsContainer.querySelectorAll("button[data-shortcut-id]")) {
-        const shortcut = state.shortcuts.find((shortcut) => shortcut.id === button.dataset.shortcutId);
-        const input = state.inputs.find((input) => input.id === shortcut?.source);
-        button.title = input ? inputDisplayName(input) : "";
-      }
+  if (payload.epoch !== state.lastEpoch) {
+    state.lastEpoch = payload.epoch;
+  } else if (payload.revision < state.lastRevision) {
+    return true;
+  }
+  state.lastRevision = payload.revision;
+  return false;
+}
+
+function applyPendingZoneUpdates(view) {
+  for (const pending of pendingZoneUpdates.values()) {
+    const zone = view.zones.find((candidate) => candidate.controller === pending.controllerId && candidate.zone === pending.zoneNumber);
+    if (zone) {
+      zone[pending.action] = pending.value;
     }
   }
 }
 
 function applyPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
   if (payload.config_required) {
     window.location.replace("/config");
     return;
   }
-  state.config = payload.config || null;
-  state.configRequired = Boolean(payload.config_required);
-  state.configMessage = payload.message || "";
-  state.backendStatus = payload.backend_status || { connected: true, message: "" };
-  state.zones = payload.state?.zones || [];
-  for (const pending of pendingZoneUpdates.values()) {
-    const zone = state.zones.find((candidate) => candidate.controller === pending.controllerId && candidate.zone === pending.zoneNumber);
-    if (zone) {
-      zone[pending.action] = pending.value;
-    }
+  if (isStalePayload(payload)) {
+    return;
   }
-  state.systemPower = Boolean(payload.state?.system_power);
-  applyInputNames(payload);
-  state.shortcuts = state.config?.shortcuts || [];
+  const view = toRoomsView(payload);
+  applyPendingZoneUpdates(view);
+  state.view = view;
   render();
 }
 
@@ -125,7 +148,8 @@ function startStateSync() {
     return;
   }
   eventSource = new EventSource("/api/events");
-  eventSource.addEventListener("playback-change", refreshInputNames);
+  // Playback availability changes the resolved source names, which are part of the state payload.
+  eventSource.addEventListener("playback-change", () => fetchState());
   eventSource.addEventListener("state-change", (event) => {
     try {
       const data = JSON.parse(event.data || "{}");
@@ -175,95 +199,241 @@ function stopStatePolling() {
   }
 }
 
-function render() {
-  document.getElementById("shortcutsHeading").hidden = state.shortcuts.length === 0;
-  if (appShell) {
-    let banner = appShell.querySelector(".backend-warning-banner");
-    if (!state.backendStatus.connected) {
-      if (!banner) {
-        banner = document.createElement("div");
-        banner.className = "backend-warning-banner";
-        appShell.insertBefore(banner, appShell.firstChild);
-      }
-      banner.innerHTML = `<strong>Hardware communication unavailable</strong><span>${state.backendStatus.message || "Communication with Russound hardware is currently unavailable."}</span>`;
-    } else if (banner) {
-      banner.remove();
+function setText(element, text) {
+  if (element.textContent !== text) {
+    element.textContent = text;
+  }
+}
+
+function createElement(tagName, className, attributes = {}) {
+  const element = document.createElement(tagName);
+  if (className) {
+    element.className = className;
+  }
+  for (const [name, value] of Object.entries(attributes)) {
+    element.setAttribute(name, value);
+  }
+  return element;
+}
+
+function renderBackendBanner(status) {
+  if (!appShell) {
+    return;
+  }
+  if (status.connected) {
+    backendBanner?.remove();
+    backendBanner = null;
+    return;
+  }
+  if (!backendBanner) {
+    backendBanner = createElement("div", "backend-warning-banner");
+    const title = createElement("strong");
+    title.textContent = "Hardware communication unavailable";
+    backendBanner.append(title, createElement("span"));
+    appShell.insertBefore(backendBanner, appShell.firstChild);
+  }
+  setText(backendBanner.lastChild, status.message || "Communication with Russound hardware is currently unavailable.");
+}
+
+function renderShortcuts(view) {
+  shortcutsHeading.hidden = view.shortcuts.length === 0;
+  const signature = JSON.stringify(view.shortcuts.map((shortcut) => [shortcut.id, shortcut.name]));
+  if (signature !== shortcutsSignature) {
+    shortcutsSignature = signature;
+    for (const button of Array.from(shortcutsContainer.querySelectorAll("button[data-shortcut-id]"))) {
+      button.remove();
+    }
+    if (systemButton.parentNode !== shortcutsContainer) {
+      shortcutsContainer.appendChild(systemButton);
+    }
+    for (const shortcut of view.shortcuts) {
+      const button = createElement("button", "shortcut-button", { type: "button" });
+      button.textContent = shortcut.name;
+      button.dataset.shortcutId = shortcut.id;
+      shortcutsContainer.insertBefore(button, systemButton);
+    }
+  }
+  for (const button of shortcutsContainer.querySelectorAll("button[data-shortcut-id]")) {
+    const shortcut = view.shortcuts.find((candidate) => candidate.id === button.dataset.shortcutId);
+    const input = view.inputs.find((candidate) => candidate.id === shortcut?.source);
+    const title = input ? inputDisplayName(input) : "";
+    if (button.title !== title) {
+      button.title = title;
+    }
+  }
+}
+
+function renderSystemButton(text, isOff, disabled) {
+  setText(systemButton, text);
+  systemButton.classList.toggle("is-off", isOff);
+  if (systemButton.disabled !== disabled) {
+    systemButton.disabled = disabled;
+  }
+}
+
+function renderConfigRequired(view) {
+  renderSystemButton("Config required", true, true);
+  for (const button of Array.from(shortcutsContainer.querySelectorAll("button[data-shortcut-id]"))) {
+    button.remove();
+  }
+  shortcutsSignature = null;
+  for (const refs of zoneCards.values()) {
+    refs.card.remove();
+  }
+  zoneCards.clear();
+  if (!emptyState) {
+    emptyState = createElement("article", "empty-state");
+    const eyebrow = createElement("p", "empty-state-eyebrow");
+    eyebrow.textContent = "Configuration required";
+    const title = createElement("h2");
+    title.textContent = "Provide a Russound config file";
+    emptyState.append(eyebrow, title, createElement("p"));
+    zonesContainer.appendChild(emptyState);
+  }
+  setText(emptyState.lastChild, view.message || "Copy web/config_example.json to your own config file and launch the server with --config.");
+  if (configHint) {
+    setText(configHint, view.message);
+    configHint.hidden = false;
+  }
+}
+
+function createZoneCard(zone) {
+  const zoneDomId = zoneAddressKey(zone.controller, zone.zone);
+  const address = { "data-controller-id": String(zone.controller), "data-zone-number": String(zone.zone) };
+  const card = createElement("article", "zone-card");
+  const header = createElement("div", "zone-header");
+  const name = createElement("h2", "zone-name");
+  const power = createElement("button", "zone-toggle", { type: "button", "data-action": "power", ...address });
+  header.append(name, power);
+
+  const controls = createElement("div", "zone-controls");
+  const sourceRow = createElement("div", "control-row");
+  const sourceLabel = createElement("label", "", { for: `source-${zoneDomId}` });
+  sourceLabel.textContent = "Source";
+  const select = createElement("select", "", { id: `source-${zoneDomId}`, "data-action": "source", ...address });
+  sourceRow.append(sourceLabel, select);
+
+  const volumeRow = createElement("div", "control-row");
+  const volumeLabel = createElement("label", "", { for: `volume-${zoneDomId}` });
+  const volumeValue = createElement("span", "label-value", { "data-value-output": "volume" });
+  volumeLabel.append("Volume: ", volumeValue);
+  const volume = createElement("input", "", {
+    id: `volume-${zoneDomId}`, type: "range", min: "0", max: "100", step: "2", "data-action": "volume", ...address,
+  });
+  volumeRow.append(volumeLabel, volume);
+  controls.append(sourceRow, volumeRow);
+  card.append(header, controls);
+  return { card, name, power, select, volume, volumeValue, inputsSignature: null };
+}
+
+function updateSourceOptions(refs, inputs, inputsSignature) {
+  if (refs.inputsSignature === inputsSignature) {
+    return;
+  }
+  refs.inputsSignature = inputsSignature;
+  const options = inputs.map((input) => {
+    const option = new Option(inputDisplayName(input), String(input.id));
+    option.title = input.playback_message || "";
+    return option;
+  });
+  refs.select.replaceChildren(...options);
+}
+
+function updateZoneCard(refs, zone, view, inputsSignature) {
+  setText(refs.name, zone.name);
+  setText(refs.power, zone.power ? "On" : "Off");
+  refs.power.classList.toggle("is-off", !zone.power);
+
+  if (!engagedControls.has(refs.select)) {
+    updateSourceOptions(refs, view.inputs, inputsSignature);
+    const sourceIndex = view.inputs.findIndex((input) => input.id === zone.source);
+    // Unknown sources fall back to the first option, as a freshly built select would.
+    const selectedIndex = sourceIndex >= 0 ? sourceIndex : refs.select.options.length > 0 ? 0 : -1;
+    if (refs.select.selectedIndex !== selectedIndex) {
+      refs.select.selectedIndex = selectedIndex;
     }
   }
 
-  if (state.configRequired) {
-    systemButton.textContent = "Config required";
-    systemButton.classList.add("is-off");
-    systemButton.disabled = true;
-    shortcutsContainer.replaceChildren(systemButton);
-    zonesContainer.innerHTML = `
-      <article class="empty-state">
-        <p class="empty-state-eyebrow">Configuration required</p>
-        <h2>Provide a Russound config file</h2>
-        <p>${state.configMessage || "Copy web/config_example.json to your own config file and launch the server with --config."}</p>
-      </article>
-    `;
-    if (configHint) {
-      configHint.textContent = state.configMessage || "";
-      configHint.hidden = false;
+  if (refs.volume.disabled !== !zone.power) {
+    refs.volume.disabled = !zone.power;
+  }
+  if (!engagedControls.has(refs.volume)) {
+    const volume = String(zone.volume);
+    if (refs.volume.value !== volume) {
+      refs.volume.value = volume;
     }
+    setText(refs.volumeValue, formatControlValue(zone.volume));
+  }
+}
+
+function renderZones(view) {
+  emptyState?.remove();
+  emptyState = null;
+  const inputsSignature = JSON.stringify(view.inputs.map((input) => [input.id, inputDisplayName(input), input.playback_message || ""]));
+  const presentKeys = new Set();
+  let previousCard = null;
+  for (const zone of view.zones) {
+    const key = zoneAddressKey(zone.controller, zone.zone);
+    presentKeys.add(key);
+    let refs = zoneCards.get(key);
+    if (!refs) {
+      refs = createZoneCard(zone);
+      zoneCards.set(key, refs);
+    }
+    updateZoneCard(refs, zone, view, inputsSignature);
+    // Only move cards whose position changed; moving a card would still close its open dropdown.
+    const expected = previousCard ? previousCard.nextSibling : zonesContainer.firstChild;
+    if (refs.card !== expected) {
+      zonesContainer.insertBefore(refs.card, expected);
+    }
+    previousCard = refs.card;
+  }
+  for (const [key, refs] of zoneCards) {
+    if (!presentKeys.has(key)) {
+      engagedControls.delete(refs.select);
+      engagedControls.delete(refs.volume);
+      refs.card.remove();
+      zoneCards.delete(key);
+    }
+  }
+}
+
+function render({ force = false } = {}) {
+  const view = state.view;
+  if (!view) {
+    return;
+  }
+  const signature = JSON.stringify(view);
+  if (!force && signature === lastRenderSignature) {
+    return;
+  }
+  lastRenderSignature = signature;
+  renderBackendBanner(view.backendStatus);
+
+  if (view.configRequired) {
+    renderConfigRequired(view);
     return;
   }
 
-  systemButton.textContent = "System off";
-  systemButton.classList.toggle("is-off", !state.systemPower);
-  systemButton.disabled = !state.systemPower;
+  renderSystemButton("System off", !view.systemPower, !view.systemPower);
   if (configHint) {
-    configHint.textContent = "";
+    setText(configHint, "");
     configHint.hidden = true;
   }
+  renderShortcuts(view);
+  renderZones(view);
+}
 
-  shortcutsContainer.innerHTML = "";
-  for (const shortcut of state.shortcuts) {
-    const button = document.createElement("button");
-    button.className = "shortcut-button";
-    button.type = "button";
-    button.textContent = shortcut.name;
-    button.dataset.shortcutId = shortcut.id;
-    const input = state.inputs.find((input) => input.id === shortcut.source);
-    button.title = input ? inputDisplayName(input) : "";
-    shortcutsContainer.appendChild(button);
+function engageControl(control) {
+  if (control && ["source", "volume"].includes(control.dataset.action)) {
+    engagedControls.add(control);
   }
-  shortcutsContainer.appendChild(systemButton);
+}
 
-  zonesContainer.innerHTML = "";
-  for (const zone of state.zones) {
-    const zoneDomId = `${zone.controller}-${zone.zone}`;
-    const card = document.createElement("article");
-    card.className = "zone-card";
-    card.innerHTML = `
-      <div class="zone-header">
-        <h2 class="zone-name"></h2>
-        <button class="zone-toggle ${zone.power ? "" : "is-off"}" type="button" data-action="power" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-          ${zone.power ? "On" : "Off"}
-        </button>
-      </div>
-      <div class="zone-controls">
-        <div class="control-row">
-          <label for="source-${zoneDomId}">Source</label>
-          <select id="source-${zoneDomId}" data-action="source" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}">
-          </select>
-        </div>
-        <div class="control-row">
-          <label for="volume-${zoneDomId}">Volume: <span class="label-value" data-value-output="volume">${zone.volume}%</span></label>
-          <input id="volume-${zoneDomId}" type="range" min="0" max="100" step="2" value="${zone.volume}" data-action="volume" data-controller-id="${zone.controller}" data-zone-number="${zone.zone}" ${zone.power ? "" : "disabled"} />
-        </div>
-      </div>
-    `;
-    card.querySelector(".zone-name").textContent = zone.name;
-
-    const sourceSelect = card.querySelector('select[data-action="source"]');
-    for (const input of state.inputs) {
-      const option = new Option(inputDisplayName(input), String(input.id), false, input.id === zone.source);
-      option.title = input.playback_message || "";
-      sourceSelect.add(option);
-    }
-    zonesContainer.appendChild(card);
+function releaseControl(control) {
+  if (control && engagedControls.delete(control)) {
+    // Catch up on updates that were held back while the control was in use.
+    render({ force: true });
   }
 }
 
@@ -272,6 +442,10 @@ async function updateZone(controllerId, zoneNumber, action, value) {
   const pending = { controllerId, zoneNumber, action, value };
   pendingZoneUpdates.set(pendingKey, pending);
   zoneUpdateRevision += 1;
+  if (state.view) {
+    applyPendingZoneUpdates(state.view);
+    render();
+  }
   let payload = null;
   try {
     const response = await apiFetch(`/api/controller/${controllerId}/zone/${zoneNumber}/${action}`, {
@@ -342,11 +516,33 @@ zonesContainer.addEventListener("click", (event) => {
   const zoneNumber = Number(button.dataset.zoneNumber);
   const action = button.dataset.action;
   if (action === "power") {
-    const zone = state.zones.find((candidate) => candidate.controller === controllerId && candidate.zone === zoneNumber);
+    const zone = state.view?.zones.find((candidate) => candidate.controller === controllerId && candidate.zone === zoneNumber);
     if (zone) {
       updateZone(controllerId, zoneNumber, "power", !zone.power);
     }
   }
+});
+
+zonesContainer.addEventListener("pointerdown", (event) => {
+  engageControl(event.target.closest("[data-action]"));
+});
+
+zonesContainer.addEventListener("keydown", (event) => {
+  engageControl(event.target.closest("[data-action]"));
+});
+
+// A slider click that does not change the value fires no change event.
+for (const type of ["pointerup", "pointercancel"]) {
+  zonesContainer.addEventListener(type, (event) => {
+    const control = event.target.closest('[data-action="volume"]');
+    if (control) {
+      window.setTimeout(() => releaseControl(control), 0);
+    }
+  });
+}
+
+zonesContainer.addEventListener("focusout", (event) => {
+  releaseControl(event.target.closest("[data-action]"));
 });
 
 zonesContainer.addEventListener("input", (event) => {
@@ -356,6 +552,7 @@ zonesContainer.addEventListener("input", (event) => {
   }
   const action = control.dataset.action;
   if (action === "volume") {
+    engageControl(control);
     const value = Number(control.value);
     const row = control.closest(".control-row");
     const valueElement = row?.querySelector("[data-value-output]");
@@ -375,10 +572,12 @@ zonesContainer.addEventListener("change", (event) => {
   const action = control.dataset.action;
   if (action === "source") {
     updateZone(controllerId, zoneNumber, "source", Number(event.target.value));
+    releaseControl(control);
     return;
   }
   if (action === "volume") {
     updateZone(controllerId, zoneNumber, "volume", Number(event.target.value));
+    releaseControl(control);
     return;
   }
 });
