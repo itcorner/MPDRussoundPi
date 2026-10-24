@@ -284,8 +284,10 @@ ambiguous outcomes appear only in the Config dialog, not the stream grid;
 closing and reopening preserves this feedback. Status polling is bounded.
 The dialog is headed by the output label, with agent and output id as a
 subtitle, and groups its controls into **Playback** (current station/state and
-transport), **Station** (TuneIn search row and scrollable results) and
-**Calibration gain** (slider, dB readout and Apply). The draft hint appears
+transport, with a ★ favorite toggle), **Favorites** (play, reorder, remove),
+**Find a station** (TuneIn search row and scrollable results with Select and
+play and a ☆ favorite toggle) and **Calibration gain** (slider, dB readout and
+Apply). The draft hint appears
 next to **Apply gain** only while the draft differs from the configured gain.
 Command feedback appears below the sections only when there is something to
 report and scrolls once it exceeds a compact maximum height. The dialog itself

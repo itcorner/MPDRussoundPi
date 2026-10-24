@@ -7,7 +7,7 @@ The repository currently includes:
 - Russound + MPD setup automation for target hosts (Ansible playbooks).
 - Runtime scripts for audio setup and MPD orchestration.
 - A Flask-based web control server with cross-site request protection and live synchronization.
-- A controller dashboard with flip-card advanced sound controls and a visible hardware warning banner.
+- A controller dashboard for power, source and volume per zone, with a visible hardware warning banner.
 - A configuration editor for zones and sources.
 - A status monitor for connected clients and recent frontend actions.
 - Per-output MPD playback, TuneIn station selection, favorites and calibration.
@@ -18,9 +18,31 @@ The repository currently includes:
 
 ![Controller Dashboard](docs/documentation/screenshots/controller-dashboard.png)
 
+### Playback
+
+![Playback](docs/documentation/screenshots/playback.png)
+
+### Stream Configuration
+
+Each stream card's **Config** button opens the configuration dialog for that output:
+
+- **Playback** shows the current station and state with Play/Pause and Stop. The ★ adds or removes the current station as a favorite.
+- **Favorites** is the shared station list of the playback agent. **Play** switches the output to a favorite; the arrows reorder the list and ✕ removes an entry.
+- **Find a station** searches TuneIn by name or station ID (e.g. `s25744`). **Select and play** tunes the output to a result; ☆ saves it as a favorite.
+
+![Stream Configuration](docs/documentation/screenshots/playback-stream-config.png)
+
+**Calibration gain** is a per-output attenuation (−60 to 0 dB in 0.1 dB steps) that levels the streams so every output plays at a similar loudness on the Russound inputs. Moving the slider only edits a draft; **Apply gain** sends the new value, which the agent persists and applies immediately if the output is playing. `streamlevels.py` on the Pi measures the streams and recommends starting values (see [MPD Headless Deployment](docs/documentation/mpd-headless-deployment.md)).
+
+![Calibration Gain](docs/documentation/screenshots/playback-gain-calibration.png)
+
 ### Configuration Editor
 
 ![Configuration Editor](docs/documentation/screenshots/configuration-editor.png)
+
+### Zone Sound Settings
+
+![Zone Sound Settings](docs/documentation/screenshots/configuration-sound-settings.png)
 
 ### Status Monitor
 
@@ -71,9 +93,11 @@ The [software architecture](docs/documentation/software-architecture.md) describ
 ### Frontend
 
 - `web/static/index.html` + `web/static/app.js`
-  - Main control dashboard with the flip-card advanced audio controls and backend warning banner.
+  - Main control dashboard (power, source, volume) with the backend warning banner.
 - `web/static/config.html` + `web/static/config.js`
-  - Configuration editor for zones and input names.
+  - Configuration editor for the backend connection, controllers, inputs and stream mapping, zones with their sound settings, and shortcuts.
+- `web/static/playback.html` + `web/static/playback.js`
+  - Playback page: per-output stream status, station selection, favorites and gain.
 - `web/static/status.html` + `web/static/status.js`
   - Runtime status page for clients/events.
 - `web/static/styles.css`
