@@ -12,7 +12,7 @@ Provides a TCP Russound simulator with configurable zone/keypad state, RNET requ
 
 ## Test Cases
 
-[Dummy backend integration tests](../../tests/test_dummy_backend.py) cover read/write round trips, all-zone power, persistence, unsolicited broadcasts, checksum generation, broadcast and targeted keypad displays, and ignored unsimulated keypads.
+[Dummy backend integration tests](../../../tests/test_dummy_backend.py) cover read/write round trips, all-zone power, persistence, unsolicited broadcasts, checksum generation, broadcast and targeted keypad displays, and ignored unsimulated keypads.
 
 ## Blind Spots
 

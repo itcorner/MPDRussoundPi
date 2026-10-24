@@ -14,15 +14,15 @@ TuneIn station selection is enabled by default on agents with manual
 operations; `--disable-tunein-selection` turns it off. Pi-side public-only
 egress enforcement now covers resolved destinations and redirects through
 connection-pinned Python fetching and an MPD-only cgroup packet filter; see the
-[egress plan and evidence](./playback-egress-hardening-plan.md). Live deployment
+[egress plan and evidence](../plans/mpd_done_playback-egress-hardening.md). Live deployment
 is not full production/lifecycle sign-off.
 
 Implementation progress: S01-S07 are complete, including the
-[production Pi-to-Docker rollout](./playback-deployment-evidence.md#production-read-only-rollout-2026-10-17).
-S08/S09 and the [configuration split](./config-split-plan.md) are deployed;
+[production Pi-to-Docker rollout](../plans/general_open_mpd-web-integration.md#acceptance-record).
+S08/S09 and the [configuration split](../plans/mpd_done_config-split.md) are deployed;
 remaining live checks and hardening are recorded in the
-[rollout record](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17).
-See the [implementation plan](./mpd-web-integration-implementation-plan.md)
+[implementation plan](../plans/general_open_mpd-web-integration.md#remaining-acceptance).
+See the [implementation plan](../plans/general_open_mpd-web-integration.md)
 for remaining decisions and [collector usage](./mpd-backend-api.md).
 
 ## 1. Selected architecture
@@ -43,7 +43,7 @@ hardware-driven automation last, as an explicit opt-in.
 Do not deploy or mutate the production audio configuration while the current
 endurance test is running.
 
-See the [stepwise implementation plan and decision register](./mpd-web-integration-implementation-plan.md)
+See the [stepwise implementation plan and decision register](../plans/general_open_mpd-web-integration.md)
 for dependencies, acceptance gates and open decisions to resolve one at a time.
 Architecture selection is not authorization to implement all phases. All new
 endpoints, schemas, modules and timing values below remain proposed until agreed.
@@ -88,26 +88,26 @@ the web container is required: the Pi fetches and decodes the stream itself.
 ## 3. Existing interfaces and integration gaps
 
 The following facts were checked in repository source. The
-[Pi insights](./musicpi-insights-2026-10-11.md) supply deployment context, not
-proof that the proposed integration already exists.
+[audio graph and hardware notes](./mpd-headless-deployment.md#audio-graph-and-hardware-notes)
+supply deployment context, not proof that the proposed integration already exists.
 
 ### 3.1 Interface inventory
 
 | Existing interface | Current behavior | Reuse / required extension |
 | --- | --- | --- |
-| [Web server](../web/russound_server.py): `GET /api/state` | Returns a published/cached Russound view; does not wait for a busy hardware lock | Preserve fast reads; add a separately cached playback view |
+| [Web server](../../web/russound_server.py): `GET /api/state` | Returns a published/cached Russound view; does not wait for a busy hardware lock | Preserve fast reads; add a separately cached playback view |
 | `GET /api/events` | SSE `state-change` with revision **and full view payload**, keepalives and reconnect support | Keep one browser stream; add a distinct playback event without breaking existing clients |
 | `POST /api/system/power`, `/api/source`, zone power/source/volume, shortcuts | Hardware commands publish state; keypad updates also refresh state | Feed policy from resulting hardware observations, not only HTTP command handlers |
-| [Controller](../web/russound_controller.py): `backend_health_snapshot()` | Cached `connected`/`message`; at least one responding zone can mark the backend connected | Add per-zone successful-read timestamps and explicit unknown/partial health |
-| [State](../web/russound_state.py): `sync_system_power()` | `system_power = any(zone.power)` across represented zones | This is aggregate zone demand, not a measurement of controller mains/standby power |
-| [MPDBackend](../mpdrussoundpi/russound/lib/mpdbackend.py): `list_outputs()` | Immutable settings: output ID, label, port, sink, runtime gain, selected station, intention | Inventory keyed by output ID (after the [configuration split](./config-split-plan.md)) |
+| [Controller](../../web/russound_controller.py): `backend_health_snapshot()` | Cached `connected`/`message`; at least one responding zone can mark the backend connected | Add per-zone successful-read timestamps and explicit unknown/partial health |
+| [State](../../web/russound_state.py): `sync_system_power()` | `system_power = any(zone.power)` across represented zones | This is aggregate zone demand, not a measurement of controller mains/standby power |
+| [MPDBackend](../../mpdrussoundpi/russound/lib/mpdbackend.py): `list_outputs()` | Immutable settings: output ID, label, port, sink, runtime gain, selected station, intention | Inventory keyed by output ID (after the [configuration split](../plans/mpd_done_config-split.md)) |
 | `status(name=None)` | State, configured gain and expected sink only; sequential, first error aborts | Add per-output detailed observations and failure isolation; metadata is missing today |
 | `start`, `pause`, `stop` | Persist intention before MPD commands; use the common mutation lock | Reuse for manual control; report requested versus actually applied state separately |
 | `set_gain`, `check_route`, `recover_route` | Pi-local `pactl`, route verification and atomic gain persistence | Keep on the audio host; expose measured versus configured values honestly |
-| [Supervisor](../mpdrussoundpi/russound/mpdsupervisor.py) | Starts local daemon units and reconciles saved intentions/URL/gain, with backoff | Remains the only continuous playback recovery loop |
-| [CLI](../mpdrussoundpi/russound/mpdctrl.py) | Delegates to `MPDBackend`, exact stream names | Keep a first-class cooperating control path, including future policy override semantics |
-| [Audio readiness](../mpdrussoundpi/russound/lib/audioready.py) | Read-only inspection is available; waiting for readiness can enforce the card profile | Status uses inspection only; never run enforcing readiness from a GET request |
-| [Recorder](../mpdrussoundpi/russound/playbackaudit.py) | Records status/queue/route/gain/signal without controlling playback | Reuse observation concepts, not its audit process or FFmpeg probes as a UI server |
+| [Supervisor](../../mpdrussoundpi/russound/mpdsupervisor.py) | Starts local daemon units and reconciles saved intentions/URL/gain, with backoff | Remains the only continuous playback recovery loop |
+| [CLI](../../mpdrussoundpi/russound/mpdctrl.py) | Delegates to `MPDBackend`, exact stream names | Keep a first-class cooperating control path, including future policy override semantics |
+| [Audio readiness](../../mpdrussoundpi/russound/lib/audioready.py) | Read-only inspection is available; waiting for readiness can enforce the card profile | Status uses inspection only; never run enforcing readiness from a GET request |
+| [Recorder](../../mpdrussoundpi/russound/playbackaudit.py) | Records status/queue/route/gain/signal without controlling playback | Reuse observation concepts, not its audit process or FFmpeg probes as a UI server |
 | Operational config and playback intentions | Pi-local JSON; config reload per operation; atomic cooperating writes | Agent/CLI/supervisor share these authoritative files; web must not maintain a second copy |
 
 The current Pi layout is output `stereo_front` (Stereo Front) on port 6601,
@@ -117,7 +117,7 @@ are **not established by those MPD ports or sink names** and must be
 configured/verified explicitly.
 
 See the existing [Python backend contract](./mpd-backend-api.md),
-[web API](../web/API.md) and [headless deployment](./mpd-headless-deployment.md).
+[web API](../../web/API.md) and [headless deployment](./mpd-headless-deployment.md).
 Source is authoritative where old web API prose conflicts: API-token wording
 is obsolete; the current code uses origin/content-type/host protections, not
 user authentication. The current SSE implementation includes the view payload.
@@ -129,7 +129,7 @@ user authentication. The current SSE implementation includes the view payload.
   operations remote. Sharing its files with the Docker container is not enough.
 - Its existing `status()` result does not include `currentsong`, queue length, elapsed time,
   MPD errors, intention or daemon status. The older
-  [MPDInstance](../mpdrussoundpi/russound/lib/mpdinstance.py) logs a title but
+  [MPDInstance](../../mpdrussoundpi/russound/lib/mpdinstance.py) logs a title but
   returns only a state string; it is not the integration boundary. S02 adds a
   separate read-only collector supplying these fields without changing `status()`.
 - There is no supported runtime source-change method today. Changing a raw MPD
@@ -473,7 +473,7 @@ offline maintenance step: stop the agent, supervisor and MPD units, run it,
 remove the old `mpd_*` units/configs and regenerate them with
 `mpdsetup.py --install`. Ports, sinks, gain and selected sources are unchanged;
 historical operations keep their former output IDs. The dashboard shows the
-selected station (TuneIn name, else MPD's ICY station name) next to the state. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
+selected station (TuneIn name, else MPD's ICY station name) next to the state. Superseded by the [configuration split](../plans/mpd_done_config-split.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 
 A single-host stable ID is sufficient initially; multi-host identity is
 `(agent_id, output_id)`. Selection edits never regenerate systemd units/audio.
@@ -787,8 +787,8 @@ and fenced ownership before automation resumes after reconnect.
 Test layers:
 
 - Backend regression tests extend existing
-  [MPD backend tests](../tests/test_mpdbackend.py),
-  [supervisor tests](../tests/test_mpdsupervisor.py), route/gain/readiness tests
+  [MPD backend tests](../../tests/test_mpdbackend.py),
+  [supervisor tests](../../tests/test_mpdsupervisor.py), route/gain/readiness tests
   and CLI tests. Assert mute -> play -> route -> configured calibration gain -> unmute;
   stream volume edits use the same persisted `gain_db` and survive reconciliation;
   stop/pause never start audio; invalid config and failed persistence are explicit.
@@ -813,7 +813,7 @@ instead of rewriting them into asynchronous implementations.
 
 ## 13. Decisions to confirm before implementation
 
-The [implementation plan's decision register](./mpd-web-integration-implementation-plan.md)
+The [implementation plan's decision register](../plans/general_open_mpd-web-integration.md)
 tracks these topics as individual decisions, their status and implementation gates.
 Solution D, direct calibration-gain stream volume and web-hosted policy with
 last-intention recovery during web-host loss (D01), plus persisted immutable

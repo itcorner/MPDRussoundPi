@@ -34,7 +34,7 @@ class OutputConfigurationTests(unittest.TestCase):
         self.raw["streams"] = []
         with self.assertRaises(ValueError) as caught:
             self.parse()
-        self.assertEqual(str(caught.exception), "old config format; see docs/mpd-headless-deployment.md")
+        self.assertEqual(str(caught.exception), "old config format; see docs/documentation/mpd-headless-deployment.md")
 
     def test_invalid_json_and_nonobject_are_rejected(self):
         for raw in (b"{", b"\xff", b"[]", b"null"):

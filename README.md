@@ -16,15 +16,15 @@ The repository currently includes:
 
 ### Controller Dashboard
 
-![Controller Dashboard](docs/screenshots/controller-dashboard.png)
+![Controller Dashboard](docs/documentation/screenshots/controller-dashboard.png)
 
 ### Configuration Editor
 
-![Configuration Editor](docs/screenshots/configuration-editor.png)
+![Configuration Editor](docs/documentation/screenshots/configuration-editor.png)
 
 ### Status Monitor
 
-![Status Monitor](docs/screenshots/status-monitor.png)
+![Status Monitor](docs/documentation/screenshots/status-monitor.png)
 
 ## Key Features
 
@@ -45,9 +45,12 @@ The repository currently includes:
 - `tests/`: unit tests for controller logic, backend abstraction, server routing, and zone model.
 - `ansible/`: provisioning and setup playbooks/tasks for deployment targets.
 - `mpdrussoundpi/`: Pi audio setup, MPD backend/supervisor and playback agent.
+- `docs/`: [documentation and plans](docs/README.md).
 - `AI_USAGE_DISCLAIMER.md`: policy statement on AI-assisted development.
 
 ## Architecture Overview
+
+The [software architecture](docs/documentation/software-architecture.md) describes how all parts work together at runtime. Summary:
 
 ### Backend
 
@@ -85,9 +88,9 @@ Admin configuration and runtime selections/gains/favorites are separate.
 Public-only stream enforcement checks DNS/redirect destinations.
 Hardware-driven automatic playback is not implemented.
 
-Start with the [playback deployment guide](docs/playback-agent-deployment.md).
-The [architecture](docs/mpd-web-integration-architecture.md) and
-[implementation roadmap](docs/mpd-web-integration-implementation-plan.md) cover
+Start with the [playback deployment guide](docs/documentation/playback-agent-deployment.md).
+The [architecture](docs/documentation/mpd-web-integration-architecture.md) and
+[implementation roadmap](docs/plans/general_open_mpd-web-integration.md) cover
 design and outstanding acceptance, not installation instructions.
 
 ## Requirements
@@ -135,7 +138,7 @@ An offline hardware warning is separate from web service health.
 | Web container with an existing Pi/LAN serial gateway | [Web-only Docker](#first-run-setup-and-recovery) |
 | Web plus a USB serial gateway container on Linux | [Serial gateway](#serial-gateway-container-ser2net) |
 | Native Linux web service | [Native web deployment](#native-web-deployment) |
-| Pi playback, agent, TLS and outbound enforcement | [Playback deployment](docs/playback-agent-deployment.md) |
+| Pi playback, agent, TLS and outbound enforcement | [Playback deployment](docs/documentation/playback-agent-deployment.md) |
 
 Web deployment does not install MPD/audio. Pi playback setup is separate and
 can interrupt audio. Do not run two serial gateways against the same device.
@@ -219,7 +222,7 @@ Or run focused modules:
 python -m unittest tests.test_zone tests.test_russound_backend tests.test_russound_controller tests.test_russound_server -q
 ```
 
-See [the module-by-module coverage review](docs/test-coverage.md) for requirements, test links, and known blind spots.
+See [the module-by-module coverage review](docs/documentation/test-coverage.md) for requirements, test links, and known blind spots.
 
 ## Docker
 
@@ -380,7 +383,7 @@ Remove an explicit override to let browser edits take effect for that field.
 Core server settings also have command-line flags (`--host`, `--port`,
 `--config`, `--state`, `--debug`); an explicit flag wins over its environment
 default. `RUSSOUND_PLAYBACK_AGENTS` is an optional JSON list of agent URLs and
-token/certificate file paths; see the [playback guide](docs/playback-agent-deployment.md).
+token/certificate file paths; see the [playback guide](docs/documentation/playback-agent-deployment.md).
 
 On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the container may write the bind-mounted directories.
 

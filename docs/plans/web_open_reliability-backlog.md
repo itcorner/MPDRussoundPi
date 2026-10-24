@@ -16,7 +16,7 @@ degradation / resource growth, **L** = edge cases.
 | 5 | H | SSE streams pin waitress worker threads | [x] |
 | 6 | M | Protocol audit log grows unbounded | [ ] |
 | 7 | M | SSE client registry never pruned | [x] |
-| 8 | M | Unbounded per-client SSE queues | [ ] |
+| 8 | M | Unbounded per-client SSE queues | [x] |
 | 9 | M | Silent zones hold `state_lock` for ~9 s per poll | [ ] |
 | 10 | L | Receive buffers unbounded on line noise | [ ] |
 | 11 | L | Frontend fetches have no timeout | [ ] |
@@ -159,6 +159,11 @@ degradation / resource growth, **L** = edge cases.
 
 ## 8. Unbounded per-client SSE queues (M)
 
+> **Done** in `ab3f967`: queues are bounded at `EVENT_QUEUE_MAXSIZE` (8). When a
+> queue is full, its pending events are discarded before the newest one is
+> added, so the client still gets the latest state. Covered by
+> `tests/test_playback_status.py`.
+
 - **Where:** `web/russound_server.py` `register_event_client()` (`Queue()`),
   `broadcast_state_change()`.
 - **Problem:** If a stream is blocked (waitress output buffer full on a dead
@@ -175,8 +180,11 @@ degradation / resource growth, **L** = edge cases.
   `get_power()`, `get_source()`, `get_volume()` – the same All Zone Info
   request three more times, each with its own ~2.2 s timeout. The watcher
   holds `state_lock` throughout, blocking all API requests.
-- **Impact:** With a configured but absent controller (currently controller 2)
-  every poll blocks the UI for ~9 s.
+- **Impact:** Every configured zone that doesn't answer blocks the UI for ~9 s
+  per poll. The original trigger, an absent controller 2, is no longer in the
+  deployed config. The same delay still applies when the hardware is switched
+  off or a zone stops responding. Since the review, the poll also reports
+  "hardware not responding", but it still waits for every timeout.
 - **Fix idea:** Drop the redundant fallback reads (return `None` when the
   extended read fails), and/or skip zones that failed repeatedly for a backoff
   period. Consider releasing `state_lock` during hardware I/O.
@@ -193,7 +201,10 @@ degradation / resource growth, **L** = edge cases.
 
 ## 11. Frontend fetches have no timeout (L)
 
-- **Where:** `web/static/app.js` `authorizedFetch()`, `fetchState()`.
+- **Where:** `apiFetch()` in `web/static/app.js`, `status.js` and `config.js`;
+  `fetchState()` in `app.js`. (`authorizedFetch()` was renamed when the API
+  token was removed.) `playback.js` already aborts its operation requests and
+  station search after a timeout, but its other `apiFetch()` calls don't.
 - **Problem:** A request hanging on a dead connection keeps
   `stateFetchInFlight` true and suppresses the 5 s refresh until the browser
   gives up.

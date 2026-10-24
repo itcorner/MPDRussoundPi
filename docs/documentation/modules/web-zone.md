@@ -12,7 +12,7 @@ Models one logical Russound zone, including its physical controller/zone address
 
 ## Test Cases
 
-See [zone tests](../../tests/test_zone.py) for construction, serialization, normalization, addressing, direct power updates, and applying all settings to a backend. [Controller tests](../../tests/test_russound_controller.py) add persistence and targeted-update coverage.
+See [zone tests](../../../tests/test_zone.py) for construction, serialization, normalization, addressing, direct power updates, and applying all settings to a backend. [Controller tests](../../../tests/test_russound_controller.py) add persistence and targeted-update coverage.
 
 ## Blind Spots
 

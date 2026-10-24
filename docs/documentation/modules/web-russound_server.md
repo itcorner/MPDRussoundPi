@@ -12,7 +12,7 @@ Hosts the Flask application, static pages, token-protected API routes, SSE event
 
 ## Test Cases
 
-[Server tests](../../tests/test_russound_server.py) cover session cookies, token authorization, SSE delimiters, event broadcasts, polling configuration, unsolicited updates, route parsing, validation helpers, client status, history, and logging configuration.
+[Server tests](../../../tests/test_russound_server.py) cover session cookies, token authorization, SSE delimiters, event broadcasts, polling configuration, unsolicited updates, route parsing, validation helpers, client status, history, and logging configuration.
 
 ## Blind Spots
 

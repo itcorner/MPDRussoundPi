@@ -2,14 +2,14 @@
 
 Status: all phases implemented and rolled out to the Pi on 2026-10-17
 (loopback MPD, `id` keys, config/state split, favorites backend and web UI).
-The rollout record is in [deployment evidence](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17). Decisions C1-C6 are
+The rollout record is in the [implementation plan](./general_open_mpd-web-integration.md#acceptance-record). Decisions C1-C6 are
 settled (see below).
 
 Implementation and rollout are complete, not full lifecycle acceptance.
 Remaining live checks: URL-type favorite selection, no-default-station
 behavior, persistence of edited runtime state across restarts and an approved
-Pi reboot/outage test. O12's loopback-binding fix is now recorded as closed in
-the [hardware audit](./musicpi-hardware-audit-2026-10-11.md).
+Pi reboot/outage test. O12 (the MPD bind-address finding of the 2026-10-11
+hardware audit) is closed by the loopback-only MPD generation.
 
 Implementation deviations from this plan:
 
@@ -248,7 +248,7 @@ and a commit. Phases 1 and 2 are small and reduce the risk of the split.
    `mpdinstance.py` and `playbackaudit.py`.
 3. Remove `bind_to_address` from the seed config. Test that the generated
    MPD conf always contains `127.0.0.1`.
-4. Close O12 in the hardware audit.
+4. Close O12 (done: MPD is generated loopback-only).
 
 ### Phase 2: `id` replaces `name` as the internal key
 

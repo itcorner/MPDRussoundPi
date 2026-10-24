@@ -5,11 +5,11 @@ to the web dashboard. Run Ansible commands from the repository root on the
 deployment controller. Replace example addresses, paths and DNS resolver IPs
 with your installation values.
 
-For a web-only start, see the [README](../README.md#quick-start-local-development).
+For a web-only start, see the [README](../../README.md#quick-start-local-development).
 For MPD hardware/configuration details, see
 [headless playback](./mpd-headless-deployment.md).
-Historical checks and outstanding acceptance are in
-[deployment evidence](./playback-deployment-evidence.md), not in the procedure.
+Historical checks and outstanding acceptance are in the
+[implementation plan](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance), not in the procedure.
 
 ## Components and prerequisites
 
@@ -26,7 +26,7 @@ Required:
 - Linux Pi with systemd user services/cgroup v2, a supported USB audio device,
   network access and a non-root audio account (`musicpi` in the inventory).
 - Ansible on the controller, SSH access and sudo on the Pi. Review
-  [inventory.yaml](../ansible/inventory.yaml) before running any play.
+  [inventory.yaml](../../ansible/inventory.yaml) before running any play.
 - Matching source revisions on the controller and Pi checkout. Agent/proxy/
   egress plays copy files from the controller checkout; audio setup normally
   pulls Git. Commit/publish reviewed code before remote Git deployment.
@@ -90,7 +90,7 @@ MPD startup fails if the root service is unavailable or its recorded cgroup
 inode no longer matches. Restart the root service after recreating the slice.
 Stopping the root service does not remove its loaded rules. Private/LAN URL
 stations are deliberately unsupported. See the
-[egress policy](./playback-egress-hardening-plan.md) for details.
+[egress policy](../plans/mpd_done_playback-egress-hardening.md) for details.
 
 On the Pi, initialize/reconcile once, then enable supervision:
 
@@ -276,4 +276,4 @@ For an audio/schema rollback, stop the supervisor, agent and MPD writers first,
 then restore matching code/config/state/units from a private backup. Never
 overwrite newer station/favorite/gain edits without explicitly choosing to
 restore them. Keep egress protection unless deliberately reverting that policy.
-Its removal procedure is in the [egress guide](./playback-egress-hardening-plan.md#deployment-and-rollback).
+Its removal procedure is in the [egress guide](../plans/mpd_done_playback-egress-hardening.md#deployment-and-rollback).

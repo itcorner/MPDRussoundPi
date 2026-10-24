@@ -42,13 +42,13 @@ This review covers the Python production modules in `web/` and `tool/`.
   active lock, and it must not be deleted while setup may be running.
 - Several web tests exercise private helpers or mocks rather than full HTTP request flows for every route.
 - Hardware-dependent behavior, systemd/PulseAudio/PipeWire commands, and real MPD connections are not tested in this environment.
-- The opt-in [USB recovery implementation](./usb-audio-recovery-fix.md#step-4-coordinated-opt-in-implementation)
+- The opt-in [USB recovery implementation](../plans/usb_done_audio-recovery.md#step-4-coordinated-opt-in-implementation)
   adds model-selection, shared-readiness and downstream graph tests in
-  [test_audioidentity.py](../tests/test_audioidentity.py), plus standalone Lua
-  [decision-core](../tests/usb-target-policy-test.lua) and
-  [hook-adapter](../tests/usb-target-hook-test.lua) harnesses. The hook harness
+  [test_audioidentity.py](../../tests/test_audioidentity.py), plus standalone Lua
+  [decision-core](../../tests/usb-target-policy-test.lua) and
+  [hook-adapter](../../tests/usb-target-hook-test.lua) harnesses. The hook harness
   mocks WirePlumber APIs. The separate
-  [runtime harness](../tests/usb-target-runtime.sh) exercises an actual isolated
+  [runtime harness](../../tests/usb-target-runtime.sh) exercises an actual isolated
   PipeWire/WirePlumber graph with synthetic exported devices, not production
   ALSA/USB hotplug. Setup tests cover generated policy ownership, guarded
   loopbacks, legacy reinstall and ambiguity preflight; backend/collector tests
@@ -58,14 +58,14 @@ This review covers the Python production modules in `web/` and `tool/`.
   refusal/removal recovery subsequently passed on the target. The first
   mixed-intention attempt was contaminated by extra physical adjustments and
   descriptor failures. USB bandwidth limits remain unresolved; see the
-  [acceptance qualifications](./usb-audio-recovery-fix.md#final-checkpoint-after-guided-tests).
+  [acceptance qualifications](../plans/usb_done_audio-recovery.md#final-checkpoint-after-guided-tests).
 
 ## Configuration split (config.json / playback.json)
 
-[Config tests](../tests/test_outputconfig.py) cover the `outputs`/`stations`
+[Config tests](../../tests/test_outputconfig.py) cover the `outputs`/`stations`
 schema, rejection of the old `streams` format, unknown fields, duplicate
 IDs/ports/sinks, unknown `default_station` keys, URL and TuneIn station
-validation and the 20-station limit. [State tests](../tests/test_playbackstate.py)
+validation and the 20-station limit. [State tests](../../tests/test_playbackstate.py)
 cover defaults (optional `default_station`/`default_gain_db`), stationless
 outputs, favorites seeding, add/remove/move, duplicate no-ops, the cap and
 atomic writes. Backend, agent, operations, status, CLI, supervisor, setup,
@@ -73,16 +73,16 @@ audit and loudness tests verify that `config.json` stays byte-identical, that
 outputs without a station cannot play, URL/TuneIn favorite selection, favorites
 HTTP endpoints and capability opt-out, URL privacy in favorites responses and
 probe preservation across runtime station/gain changes.
-[playbackfixtures.py](../tests/playbackfixtures.py) provides the small shared
-configuration. [Web command tests](../tests/test_playback_commands.py) cover
+[playbackfixtures.py](../../tests/playbackfixtures.py) provides the small shared
+configuration. [Web command tests](../../tests/test_playback_commands.py) cover
 favorites polling/validation (no URL field accepted), the favorites proxy route,
-CSRF rejection and `output_id: null` checks; [dashboard tests](../tests/test_playback_controls.js)
+CSRF rejection and `output_id: null` checks; [dashboard tests](../../tests/test_playback_controls.js)
 cover the favorites list, current marker, Play/↑/↓/✕, ☆/★ toggles including the
 20-entry cap, and Play disabled ("Select a station first") without a station.
 
 ## S04 offline preparation (2026-10-16)
 
-Migration/revision tests (removed with the tool by the [configuration split](./config-split-plan.md)) covered exact
+Migration/revision tests (removed with the tool by the [configuration split](../plans/mpd_done_config-split.md)) covered exact
 original-byte rollback material, preservation of all nonidentity fields,
 private bundle permissions, unchanged input files, exclusive destination
 creation and failed-write cleanup. They reject duplicate/partial mappings,
@@ -91,7 +91,7 @@ preview versions. Current runtime readers reject the preview rather than
 initializing playing defaults. Backend tests verify stale gain edits fail
 before audio effects, legacy edits invalidate revisions, label edits preserve
 IDs/operational fields and concurrent gain edits respect the existing lock.
-[CLI tests](../tests/test_mpdctrl.py) cover revision preconditions and argument
+[CLI tests](../../tests/test_mpdctrl.py) cover revision preconditions and argument
 requirements. The offline CLI test verifies preparation does not create an
 MPD client.
 
@@ -103,20 +103,20 @@ control-state replacement or production rollback was performed for S04.
 
 ## Test Links
 
-- [Zone tests](../tests/test_zone.py)
-- [Backend tests](../tests/test_russound_backend.py)
-- [Connector tests](../tests/test_russound_connector.py)
-- [Controller tests](../tests/test_russound_controller.py)
-- [Server tests](../tests/test_russound_server.py)
-- [Dummy backend integration tests](../tests/test_dummy_backend.py)
-- [Audio setup tests](../tests/test_audiosetup.py)
-- [MPD setup tests](../tests/test_mpdsetup.py) verify explicit meta-service
+- [Zone tests](../../tests/test_zone.py)
+- [Backend tests](../../tests/test_russound_backend.py)
+- [Connector tests](../../tests/test_russound_connector.py)
+- [Controller tests](../../tests/test_russound_controller.py)
+- [Server tests](../../tests/test_russound_server.py)
+- [Dummy backend integration tests](../../tests/test_dummy_backend.py)
+- [Audio setup tests](../../tests/test_audiosetup.py)
+- [MPD setup tests](../../tests/test_mpdsetup.py) verify explicit meta-service
   dependencies and ordering, including an empty instance list. Installation
   reloads the user systemd manager after writing units; enabling the meta-service
   pulls in the configured instances on its next activation. Reloading unit
   definitions alone does not start previously inactive instances.
 - MPD setup and audio setup share the kernel-lock implementation in
-  [setuplock.py](../mpdrussoundpi/russound/lib/setuplock.py), with separate
+  [setuplock.py](../../mpdrussoundpi/russound/lib/setuplock.py), with separate
   per-user filenames. MPD installation holds `mpd_setup.lock` through
   daemon reload; cleanup acquires the same lock before stopping services or
   removing files. Tests cover contention, audio/MPD lock independence,
@@ -124,35 +124,35 @@ control-state replacement or production rollback was performed for S04.
   The shared lock's exception, interrupt and SIGKILL behavior is covered by
   the audio setup tests. Both require a private mode-0700 `XDG_RUNTIME_DIR`;
   persistent lock files must not be deleted while setup may be running.
-- [MPD controller tests](../tests/test_mpdctrl.py) cover shared-backend
+- [MPD controller tests](../../tests/test_mpdctrl.py) cover shared-backend
   delegation, selected/all actions, pause, read-only status/routes,
   unavailable/wrong routes, unknown names and truthful exit status.
-  [Backend tests](../tests/test_mpdbackend.py) cover locking, protocol behavior,
+  [Backend tests](../../tests/test_mpdbackend.py) cover locking, protocol behavior,
   queue idempotence, persistence, saved intentions and startup gating.
-- [Readiness tests](../tests/test_audioready.py) cover missing hardware/sinks,
+- [Readiness tests](../../tests/test_audioready.py) cover missing hardware/sinks,
   profile enforcement with mandatory re-verification and bounded retries.
-  [Supervisor tests](../tests/test_mpdsupervisor.py) cover independent
+  [Supervisor tests](../../tests/test_mpdsupervisor.py) cover independent
   recovery, service failures, initialization and per-stream backoff.
-- [Audio cleanup tests](../tests/test_audiosetup.py) cover CLI dispatch,
+- [Audio cleanup tests](../../tests/test_audiosetup.py) cover CLI dispatch,
   install/cleanup/reinstall, ownership preflight, symlink refusal, byte-preserved
   PulseAudio settings, idempotent includes/cleanup, safe wrapper removal,
   legacy/malformed configuration refusal, backend selection, partial installs,
   locking and checked restart failures. Audio service commands are mocked;
   this is not a live production teardown test.
-- [Endurance recorder tests](../tests/test_playbackaudit.py) cover read-only
+- [Endurance recorder tests](../../tests/test_playbackaudit.py) cover read-only
   protocol calls, playback/route/gain/silence anomalies, bounded observations,
   failure isolation, cursor handling, persistent deadline/counters and
   independent service generation. See [test procedure](./mpd-playback-endurance-test.md).
-- [Playback observation tests](../tests/test_playbackstatus.py) cover S02's
+- [Playback observation tests](../../tests/test_playbackstatus.py) cover S02's
   immutable ID-sorted snapshots, detailed metadata and bounded race retry,
   failed/last-known probes, monotonic stale thresholds, sanitized errors,
   captured config revision, read-only audio/MPD calls and independent healthy
   publication while another MPD/audio read is blocked. They consume the
-  [S01 contract fixtures](../tests/fixtures/playback-read-v1.json). Local
+  [S01 contract fixtures](../../tests/fixtures/playback-read-v1.json). Local
   focused observation/backend/readiness/CLI/supervisor/audit/measurement run:
   100 tests, 99 passed and one existing real-FFmpeg skip (2026-10-14).
   HTTP agent, browser integration and real-Pi latency are not tested by S02.
-- [Read-only agent tests](../tests/test_playbackagent.py) cover S03 bearer
+- [Read-only agent tests](../../tests/test_playbackagent.py) cover S03 bearer
   authentication on every route/method, cached inventory/individual reads,
   HEAD/JSON/no-store, missing/invalid configuration, cold/stale/partial
   observations, epoch renewal, bounded independent retries, config replacement
@@ -164,12 +164,12 @@ control-state replacement or production rollback was performed for S04.
   Targeted agent/collector/backend/readiness/CLI/supervisor run: 94 passed
   (2026-10-15). No Pi deployment, production transport, browser integration or
   real-LAN latency claim is made.
-- [Agent deployment tests](../tests/test_playback_agent_deployment.py) perform
+- [Agent deployment tests](../../tests/test_playback_agent_deployment.py) perform
   static YAML/template validation only: loopback user unit, opt-in activation,
   isolated sources/venv, private credentials, no audio/MPD service operations
   and limited rollback. They execute no deployment or target commands.
   Six static tests and both Ansible syntax checks passed (2026-10-15).
-- [Isolated target acceptance](./playback-deployment-evidence.md#approved-isolated-target-test-2026-10-15)
+- [Isolated target acceptance](../plans/general_open_mpd-web-integration.md#acceptance-record)
   verifies real Pi cached reads, metadata, routes/gain and HTTP authentication
   with a separate private config copy. Production config/intentions hashes and
   existing audio/MPD/supervisor/recorder PIDs/restarts were unchanged; recorder
@@ -178,16 +178,16 @@ control-state replacement or production rollback was performed for S04.
 
 ## Playback input bindings
 
-[Python mapping tests](../tests/test_input_playback.py) cover binding validation,
+[Python mapping tests](../../tests/test_input_playback.py) cover binding validation,
 editor persistence/removal, cached HTTP/event resolution, station changes,
 no-station fallbacks and offline/missing mappings.
-[JavaScript mapping tests](../tests/test_input_playback.js) cover dirty tracking,
+[JavaScript mapping tests](../../tests/test_input_playback.js) cover dirty tracking,
 offline selector preservation, previews and in-place source-name updates that
 keep the selected hardware input unchanged and render station labels as text.
 
 ## Deployment workflows
 
-[Workflow tests](../tests/test_deployment_workflows.py) check non-forcing Git
+[Workflow tests](../../tests/test_deployment_workflows.py) check non-forcing Git
 updates, external-gateway mode, writable mounts/private secret directories,
 playback agent environment rendering, native persistent state and isolated
 dependencies, and staging audio without starting/enabling playback.
@@ -196,18 +196,18 @@ checks, not execution of the native/Docker provisioning paths on a new Pi.
 
 ## Public-only playback egress
 
-[Public network tests](../tests/test_publicnetwork.py) cover IPv4/IPv6 public
+[Public network tests](../../tests/test_publicnetwork.py) cover IPv4/IPv6 public
 classification, mixed/empty/private DNS answers, rebinding between validation
 and connection, pinned socket addresses, original HTTP Host/TLS hostname,
 certificate validation, redirect revalidation and disabled environment proxies.
-[Filter tests](../tests/test_playbackegress.py) cover cgroup-only scoping,
+[Filter tests](../../tests/test_playbackegress.py) cover cgroup-only scoping,
 control replies, exact UDP DNS exceptions, shared address sets, input rejection,
 fail-closed startup, cgroup identity changes and persistent unit configuration.
-[TuneIn tests](../tests/test_tunein.py) retain search/cache and bounded
+[TuneIn tests](../../tests/test_tunein.py) retain search/cache and bounded
 playlist/error coverage with deterministic DNS.
 
 Local baseline: 551 Python tests, one skipped; 27 JavaScript tests passed.
-The [egress rollout evidence](./playback-egress-hardening-plan.md#rollout-evidence-2026-10-17)
+The [egress rollout evidence](../plans/mpd_done_playback-egress-hardening.md#rollout-evidence-2026-10-17)
 separately records real Pi public playback and direct/DNS/redirect blocking,
 including an isolated MPD and zero private fixture requests. Live IPv6 transport,
 user-manager restart and whole-Pi reboot were not tested.
@@ -216,7 +216,7 @@ user-manager restart and whole-Pi reboot were not tested.
 
 A reusable [Python MPD backend API](./mpd-backend-api.md) also provides
 playback/status/route control and persistent per-output gain changes without
-an HTTP server. [Backend tests](../tests/test_mpdbackend.py) cover queue
+an HTTP server. [Backend tests](../../tests/test_mpdbackend.py) cover queue
 idempotence, protocol errors, locking, gain persistence and rollback.
 
 From `mpdrussoundpi/russound/`, with MPD services already running:
@@ -261,7 +261,7 @@ idempotent queue handling, explicit protocol failures and saved intention.
 
 ## Explicit route verification and recovery
 
-The controller uses [streamroute.py](../mpdrussoundpi/russound/lib/streamroute.py)
+The controller uses [streamroute.py](../../mpdrussoundpi/russound/lib/streamroute.py)
 to inspect actual PulseAudio/PipeWire sink-input routing, rather than trusting
 the requested `target.object` property. `--check-route` is read-only, requires
 no runtime lock and checks every selected stream. It prints the stream,
@@ -299,7 +299,7 @@ after a later USB reconnect or audio-stack restart, run `--check-route` and
 verification is a current observation, not a guarantee against future policy
 rerouting. Gain-only and recovery-only operations do not add queue entries.
 
-[Route tests](../tests/test_streamroute.py) reproduce a front client whose
+[Route tests](../../tests/test_streamroute.py) reproduce a front client whose
 requested sink is correct but actual route bypasses it. Tests cover dynamic
 client IDs, idempotence, post-move verification, startup waiting, ignored
 moves, missing/ambiguous clients, command errors and JSON validation.
@@ -336,7 +336,7 @@ Gain commands use absolute PulseAudio volume units, converted using its cubic
 volume scale, rather than signed dB arguments (which apply relative changes).
 Repeated gain application therefore does not accumulate attenuation.
 
-The [measurement helper](../mpdrussoundpi/russound/streamlevels.py) requires
+The [measurement helper](../../mpdrussoundpi/russound/streamlevels.py) requires
 FFmpeg with the `ebur128` filter (Debian/Raspberry Pi: `sudo apt install ffmpeg`).
 From `mpdrussoundpi/russound/`, measure all configured feeds concurrently:
 
@@ -380,7 +380,7 @@ python mpdctrl.py --set-gain -6.1 --output stereo_centerlfe ~/.config/mpdrussoun
 Copy accepted values into `default_gain_db` of the authoritative configuration
 so a reset of `playback.json` starts from them.
 
-[Loudness tests](../tests/test_streamlevels.py) cover FFmpeg summary/duration
+[Loudness tests](../../tests/test_streamlevels.py) cover FFmpeg summary/duration
 parsing, rejection of silence and failures, concurrent process cleanup,
 attenuation/peak calculations, safe output configuration and checked dB gain
 commands. An optional real-FFmpeg test compares equal reference tones with a

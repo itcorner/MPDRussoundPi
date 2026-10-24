@@ -5,7 +5,7 @@ below are verified on the Pi; full reboot/lifecycle acceptance remains separate.
 
 This document describes policy/design and verification, not installation order.
 For first install, updates, prerequisites and commands use the
-[current deployment guide](./playback-agent-deployment.md).
+[current deployment guide](../documentation/playback-agent-deployment.md).
 
 Scope approved 2026-10-17: allow public internet streams, block loopback,
 private LAN and link-local stream destinations, and enforce the policy after

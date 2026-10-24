@@ -1,6 +1,6 @@
 # Python MPD Backend API
 
-[MPDBackend](../mpdrussoundpi/russound/lib/mpdbackend.py) is a reusable Python
+[MPDBackend](../../mpdrussoundpi/russound/lib/mpdbackend.py) is a reusable Python
 API for configured local MPD instances. It runs no HTTP server and manages
 playback, not daemon services. The CLI now delegates to this backend. Both
 interfaces use the same persisted intentions, route/gain helpers and lock.
@@ -24,7 +24,7 @@ locally and deployed; S07 is done and production-verified by the user on
 config/state split with favorites are active in the approved trusted-LAN Pi
 test deployment. Public-only DNS/redirect egress enforcement is deployed;
 full lifecycle acceptance remains outstanding. See the
-[deployment record](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17).
+[deployment acceptance](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance).
 
 ## Opt-in USB hardware recovery
 
@@ -41,7 +41,7 @@ only on the uniquely selected card and must re-observe readiness afterward.
 Read-only collection and audit do not set profiles. Saved intentions and
 `gain_db` still belong to the existing backend/supervisor; no extra recovery
 daemon is introduced. See the [coordinated recovery design and validation
-gates](./usb-audio-recovery-fix.md) before deploying the opt-in configuration.
+gates](../plans/usb_done_audio-recovery.md) before deploying the opt-in configuration.
 
 ## Configuration, runtime state and revisions
 
@@ -51,12 +51,12 @@ The backend reads two files (format details in
 - `config.json` (admin-owned, never written by the backend): `outputmappers`,
   `outputs` (`id`, `label`, `port`, `sink`, optional `default_station` and
   `default_gain_db`) and up to 20 seed `stations`. Parsed and validated by
-  [outputconfig.py](../mpdrussoundpi/russound/lib/outputconfig.py); station values by
-  [stations.py](../mpdrussoundpi/russound/lib/stations.py). The old `streams`
+  [outputconfig.py](../../mpdrussoundpi/russound/lib/outputconfig.py); station values by
+  [stations.py](../../mpdrussoundpi/russound/lib/stations.py). The old `streams`
   format is rejected.
 - `playback.json` (backend-owned runtime state): favorites plus, per output ID,
   station, cached resolved URL, managed song ID, gain and intention. Handled by
-  [playbackstate.py](../mpdrussoundpi/russound/lib/playbackstate.py) and written
+  [playbackstate.py](../../mpdrussoundpi/russound/lib/playbackstate.py) and written
   atomically under `mpd_control.lock`.
 
 Revisions:
@@ -80,7 +80,7 @@ python mpdctrl.py --set-gain -6.1 --output stereo_centerlfe ~/.config/mpdrussoun
 
 ## Read-only detailed observations (S02)
 
-[playbackstatus.py](../mpdrussoundpi/russound/lib/playbackstatus.py) provides
+[playbackstatus.py](../../mpdrussoundpi/russound/lib/playbackstatus.py) provides
 `PlaybackCollector`, immutable `OutputObservation`/`Probe` results and MPD
 metadata normalization. It uses the backend's new `configuration_snapshot()`
 and independent `observation_connection()` helpers; it does not write config,
@@ -147,8 +147,8 @@ finally:
   unexpected worker failures. Operational errors are explicit probes; programming
   errors are not converted into successful/default snapshots.
 
-Validation: [collector tests](../tests/test_playbackstatus.py) consume the
-[S01 fixtures](../tests/fixtures/playback-read-v1.json) and cover serialization,
+Validation: [collector tests](../../tests/test_playbackstatus.py) consume the
+[S01 fixtures](../../tests/fixtures/playback-read-v1.json) and cover serialization,
 race retries, null tags, errors/cleanup, monotonic freshness, identity validation,
 read-only calls and blocked-output/audio isolation. Local mocked acceptance
 only; S03's agent acceptance is separate below. No Pi deployment or live
@@ -156,12 +156,12 @@ latency acceptance is claimed.
 
 ## Read-only HTTP agent (S03)
 
-[playbackagent.py](../mpdrussoundpi/russound/playbackagent.py) runs Waitress;
-[lib/playbackagent.py](../mpdrussoundpi/russound/lib/playbackagent.py) implements
+[playbackagent.py](../../mpdrussoundpi/russound/playbackagent.py) runs Waitress;
+[lib/playbackagent.py](../../mpdrussoundpi/russound/lib/playbackagent.py) implements
 the Flask adapter, immutable cache and background scheduler. It does not
 initialize intentions, start services, reconcile playback or write configuration.
 
-Install [agent dependencies](../mpdrussoundpi/russound/requirements-agent.txt)
+Install [agent dependencies](../../mpdrussoundpi/russound/requirements-agent.txt)
 in the audio user's environment, separately from web dependencies:
 
 ```sh
@@ -330,7 +330,7 @@ changes. It is validated before contacting MPD.
 
 ## Validation
 
-[Backend tests](../tests/test_mpdbackend.py) cover repeated starts, URL reuse,
+[Backend tests](../../tests/test_mpdbackend.py) cover repeated starts, URL reuse,
 status, pause/stop, route-before-gain, configuration validation, lock contention,
 protocol/cleanup failure, atomic persistence, rollback failures and deferred
 gain application. MPD and mixer effects are mocked; shared helpers have their

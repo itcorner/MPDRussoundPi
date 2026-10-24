@@ -12,7 +12,7 @@ Implements the TCP RNET connector: frame construction, checksum handling, respon
 
 ## Test Cases
 
-[Connector tests](../../tests/test_russound_connector.py) cover update parsing, reset handling, checksums, all-zone targeting, protocol audit logs, extended zone information, parameter normalization, and display frames. [Dummy backend tests](../../tests/test_dummy_backend.py) provide wire-level round trips.
+[Connector tests](../../../tests/test_russound_connector.py) cover update parsing, reset handling, checksums, all-zone targeting, protocol audit logs, extended zone information, parameter normalization, and display frames. [Dummy backend tests](../../../tests/test_dummy_backend.py) provide wire-level round trips.
 
 ## Blind Spots
 

@@ -12,7 +12,7 @@ Provides the application-facing adapter around the Russound connector. It resolv
 
 ## Test Cases
 
-[Backend tests](../../tests/test_russound_backend.py) cover connection reuse/failure, endpoint configuration, parameter reads/writes, source mapping, scope validation, global power, and keypad display validation. [Dummy backend tests](../../tests/test_dummy_backend.py) exercise selected connector behavior end to end.
+[Backend tests](../../../tests/test_russound_backend.py) cover connection reuse/failure, endpoint configuration, parameter reads/writes, source mapping, scope validation, global power, and keypad display validation. [Dummy backend tests](../../../tests/test_dummy_backend.py) exercise selected connector behavior end to end.
 
 ## Blind Spots
 

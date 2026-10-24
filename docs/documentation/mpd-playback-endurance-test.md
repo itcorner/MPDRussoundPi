@@ -1,6 +1,6 @@
 # Read-only playback endurance and USB reconnect recorder
 
-The [approved Oct 16 USB maintenance deployment](./usb-audio-recovery-fix.md#approved-maintenance-deployment-2026-10-16)
+The [approved Oct 16 USB maintenance deployment](../plans/usb_done_audio-recovery.md#approved-maintenance-deployment-2026-10-16)
 restored a verified 5.1 baseline, including user-confirmed physical output.
 Its explicit audio restart is maintenance, not a passed reconnect cycle.
 A subsequent short physical cycle disconnected at 20:50:31, enumerated at
@@ -13,7 +13,7 @@ intentions and audible outputs passed without service restarts. The first
 mixed-intention attempt was contaminated by additional physical adjustments
 and USB descriptor failures; a stable-port retry passed. USB bandwidth failures
 remain a separate limitation, including errors from the second adapter.
-See the [detailed acceptance record](./usb-audio-recovery-fix.md#resumed-physical-tests-short-cycles-25-and-long-disconnect)
+See the [detailed acceptance record](../plans/usb_done_audio-recovery.md#resumed-physical-tests-short-cycles-25-and-long-disconnect)
 for timing and scope qualifications.
 The fresh two-hour recorder (started at 20:49:43) completed successfully at
 **22:49:44.918 CEST**, with no open incidents and zero recorder restarts.
@@ -22,9 +22,9 @@ approximately 45-minute tail added no recorded problems. Fresh post-completion
 readiness/routes/gains/intentions and unchanged service lifecycles passed.
 The fault-injection run was not interruption-free; the initial failed test and
 completed 72-hour run remain separate evidence. See the
-[completion record](./usb-audio-recovery-fix.md#observation-period-completed-2026-10-16).
+[completion record](../plans/usb_done_audio-recovery.md#observation-period-completed-2026-10-16).
 
-[playbackaudit.py](../mpdrussoundpi/russound/playbackaudit.py) observes the existing
+[playbackaudit.py](../../mpdrussoundpi/russound/playbackaudit.py) observes the existing
 recovery supervisor. It never calls play/stop, moves clients, changes gains,
 selects profiles or starts/restarts audio/MPD services. Monitor recordings
 create temporary capture clients but do not store programme audio.
@@ -140,7 +140,7 @@ produced.
 The 2026-10-16 initial reconnect did not restore 5.1: WirePlumber returned the
 adapter with a suffixed runtime name, defeating exact-name rules/readiness and
 hardware loopback targets. Controlled cycles are paused pending the
-[coordinated hardware identity/routing fix](./usb-audio-recovery-fix.md).
+[coordinated hardware identity/routing fix](../plans/usb_done_audio-recovery.md).
 Do not count a software-repaired baseline as automatic reconnect acceptance.
 
 Keep the recorder and recovery supervisor running. In an approved maintenance
@@ -164,7 +164,7 @@ login suppression, reboot or playback restoration is performed by this script.
 
 ## Validation
 
-[Recorder tests](../tests/test_playbackaudit.py) exercise read-only MPD calls,
+[Recorder tests](../../tests/test_playbackaudit.py) exercise read-only MPD calls,
 state/progress/route/gain/signal anomalies, error isolation, persisted deadlines
 and counters, journal cursors/overflow, bounded rotation and log-write failures,
 signal duration parsing, expired runs, lock contention and independent unit

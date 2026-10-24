@@ -10,7 +10,7 @@ from lib.stations import Station, parse_station_list
 from lib.streamgain import validate_gain_db
 
 
-OLD_FORMAT_MESSAGE = "old config format; see docs/mpd-headless-deployment.md"
+OLD_FORMAT_MESSAGE = "old config format; see docs/documentation/mpd-headless-deployment.md"
 OUTPUT_FIELDS = {"id", "label", "port", "sink", "default_station", "default_gain_db"}
 
 

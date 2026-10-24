@@ -12,7 +12,7 @@ Defines typed configuration shapes and normalizers for backend endpoints, contro
 
 ## Test Cases
 
-No dedicated test currently covers this module. Related behavior is reached indirectly through [backend tests](../../tests/test_russound_backend.py) and [server tests](../../tests/test_russound_server.py).
+No dedicated test currently covers this module. Related behavior is reached indirectly through [backend tests](../../../tests/test_russound_backend.py) and [server tests](../../../tests/test_russound_server.py).
 
 ## Blind Spots
 

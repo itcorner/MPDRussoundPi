@@ -8,7 +8,7 @@ Naming note: this is a dated record. Stream names (Radio 88.6, FM4 Radio,
 OE3 Radio) and observer IDs (`front`, `centerlfe`, `rear`) are as they were at
 the time. The outputs are now Stereo Front (`stereo_front`), Stereo CenterLFE
 (`stereo_centerlfe`) and Stereo Rear (`stereo_rear`); see
-[channel-based identities](./playback-deployment-evidence.md#channel-based-output-identities-2026-10-17).
+[output identities](../documentation/mpd-playback-read-api.md).
 
 ## Observed failure
 
@@ -162,15 +162,15 @@ it does not automatically inherit operational config changes.
 
 Relevant implementation surfaces:
 
-- [Audio-device parsing and rule generation](../mpdrussoundpi/russound/lib/audiodevice.py)
-- [Loopback generation](../mpdrussoundpi/russound/lib/sink.py)
-- [Audio setup](../mpdrussoundpi/russound/audiosetup.py)
-- [Shared readiness](../mpdrussoundpi/russound/lib/audioready.py)
-- [Backend recovery](../mpdrussoundpi/russound/lib/mpdbackend.py)
-- [Route inspection](../mpdrussoundpi/russound/lib/streamroute.py)
-- [Read-only collector](../mpdrussoundpi/russound/lib/playbackstatus.py)
-- [Test recorder](../mpdrussoundpi/russound/playbackaudit.py)
-- [Pi provisioning](../ansible/playbooks/setup-musicpi.yml)
+- [Audio-device parsing and rule generation](../../mpdrussoundpi/russound/lib/audiodevice.py)
+- [Loopback generation](../../mpdrussoundpi/russound/lib/sink.py)
+- [Audio setup](../../mpdrussoundpi/russound/audiosetup.py)
+- [Shared readiness](../../mpdrussoundpi/russound/lib/audioready.py)
+- [Backend recovery](../../mpdrussoundpi/russound/lib/mpdbackend.py)
+- [Route inspection](../../mpdrussoundpi/russound/lib/streamroute.py)
+- [Read-only collector](../../mpdrussoundpi/russound/lib/playbackstatus.py)
+- [Test recorder](../../mpdrussoundpi/russound/playbackaudit.py)
+- [Pi provisioning](../../ansible/playbooks/setup-musicpi.yml)
 
 ## Required validation before deployment
 
@@ -201,7 +201,7 @@ Target validation must begin with an approved maintenance deployment:
    channel mapping and calibrated gains.
 4. Resume five 10-second disconnects and one two-minute disconnect, then repeat
    with one stopped and one paused stream, using the
-   [USB test procedure](./mpd-playback-endurance-test.md#physical-reconnect-procedure).
+   [USB test procedure](../documentation/mpd-playback-endurance-test.md#physical-reconnect-procedure).
 5. Verify model selection across a port move and ambiguity refusal with an
    identical adapter if one is available. Mark unperformed cases unverified.
 6. Accept recovery only when hardware, profile, downstream routing, intention,
@@ -273,16 +273,16 @@ The sound card remains connected in the failed baseline configuration.
 Implemented without installing policy, changing the audio configuration or
 restarting services:
 
-- [Python inventory validator](../mpdrussoundpi/russound/lib/audioidentity.py):
+- [Python inventory validator](../../mpdrussoundpi/russound/lib/audioidentity.py):
   normalized USB vendor/product IDs; unique ALSA/USB model selection independent
   of card suffix, ALSA index and USB port; explicit missing/ambiguous failures.
   The pure `pw-dump` validator checks the card-to-six-channel-output association
   and every configured playback loopback's downstream links, channel identity,
   port direction/node ownership and active/paused state. Empty/overlapping
   mappings, missing/duplicate links and malformed graph identities fail closed.
-- [Lua decision core](../mpdrussoundpi/russound/policy/usb-target.lua):
+- [Lua decision core](../../mpdrussoundpi/russound/policy/usb-target.lua):
   matching model/card/output selection and explicit refusal states.
-- [WirePlumber hook prototype](../mpdrussoundpi/russound/policy/usb-target-hook.lua):
+- [WirePlumber hook prototype](../../mpdrussoundpi/russound/policy/usb-target-hook.lua):
   maps the selected hardware node to its `SiLinkable`, selects before stock
   defined-target policy, and validates the result after stock `prepare-link`.
   It never replaces a target rejected by stock availability checks.
@@ -304,11 +304,11 @@ Do not manually copy only the hook into the live session.
   and 14 mocked-hook assertions passed**. Pylance reports no diagnostics in the
   new Python module/tests. Existing service/profile mutation calls in regression
   tests are mocked; their expected failure-path logs are not target failures.
-- [Python tests](../tests/test_audioidentity.py) cover complete graphs, the three
+- [Python tests](../../tests/test_audioidentity.py) cover complete graphs, the three
   channel pairs, suffix/index/port independence, ambiguity, stereo/wrong-card
   output, inactive/wrong/missing links, invalid configuration and no mutation.
-- [Core Lua harness](../tests/usb-target-policy-test.lua) runs in standalone Lua.
-- [Hook harness](../tests/usb-target-hook-test.lua) supplies mock event sources,
+- [Core Lua harness](../../tests/usb-target-policy-test.lua) runs in standalone Lua.
+- [Hook harness](../../tests/usb-target-hook-test.lua) supplies mock event sources,
   object managers, session items, flags and links. It checks selection, removal
   of both peers' stale state, rescan scheduling, ambiguity, recovery, final
   fallback rejection, already-linked handling and unmanaged streams.
@@ -374,7 +374,7 @@ are not changed by this work.
 
 ### Generated configuration and ownership
 
-[Audio setup](../mpdrussoundpi/russound/audiosetup.py) now preflights owned
+[Audio setup](../../mpdrussoundpi/russound/audiosetup.py) now preflights owned
 fragments and current unique hardware before an opt-in installation writes
 files. The coordinated artifacts are:
 
@@ -405,7 +405,7 @@ backup/rollback and do not start services until all files are installed.
 
 ### Shared readiness, recovery and observations
 
-[Shared readiness](../mpdrussoundpi/russound/lib/audioready.py) uses the same
+[Shared readiness](../../mpdrussoundpi/russound/lib/audioready.py) uses the same
 selector/config validator as setup and backend configuration parsing. It
 correlates PulseAudio cards to PipeWire Device IDs, rejects inventory disagreement,
 checks the actual six-channel hardware node and validates every configured
@@ -424,7 +424,7 @@ start playback, change gain or overwrite saved intentions. Collector and audit
 already use its read-only mode, so they now check downstream links without
 repairing them. The agent retains sanitized error messages and adds distinct
 readiness codes for missing/ambiguous hardware, wrong profile/output and invalid
-downstream routes; see the [read API](./mpd-playback-read-api.md#audio-values).
+downstream routes; see the [read API](../documentation/mpd-playback-read-api.md#audio-values).
 
 ### Validation status
 
@@ -439,7 +439,7 @@ Concluding results:
 - **194 Python tests passed** across selector/readiness, setup, backend, CLI,
   supervisor, collector, HTTP agent, audit and agent deployment regression tests.
 - Standalone Lua: **20 core + 17 adapter assertions passed**.
-- The [isolated runtime harness](../tests/usb-target-runtime.sh) passed with
+- The [isolated runtime harness](../../tests/usb-target-runtime.sh) passed with
   actual PipeWire 1.4.2/WirePlumber 0.5.8, synthetic exported Device/Node objects
   and real session-item links (**13 runtime checks**). It tested component loading, all three channel
   pairs, duplicate-card link removal/recovery, missing hardware, rejection of

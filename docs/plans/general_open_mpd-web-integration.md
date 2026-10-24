@@ -13,7 +13,7 @@ target is met, and S07 has user production sign-off.
 
 The user has selected **solution D: Pi-local HTTP/JSON playback agent with
 the existing web application as the same-origin browser gateway**.
-The [architecture document](./mpd-web-integration-architecture.md) explains
+The [architecture document](../documentation/mpd-web-integration-architecture.md) explains
 the alternatives and proposed contracts.
 
 Confirmed requirements:
@@ -134,7 +134,7 @@ are independent; catalog availability must not delay manual control/automation.
 D14 is accepted and S09 is included. Its remaining hardening and lifecycle
 acceptance must not be confused with local implementation or deployment.
 
-The deployed [configuration split](./config-split-plan.md) supersedes the
+The deployed [configuration split](./mpd_done_config-split.md) supersedes the
 legacy configuration/migration details in the historical S04/S07 records:
 `config.json` holds outputs, optional defaults and station seeds;
 `playback.json` holds runtime selections, gains, intentions and favorites.
@@ -144,8 +144,8 @@ state. Old formats are rejected; no compatibility migration is required.
 ### S01. Freeze boundaries and read contracts
 
 **Complete (2026-10-14):** D08 accepted; read baseline defined in
-[Playback read API v1](./mpd-playback-read-api.md), with reusable
-[JSON fixtures](../tests/fixtures/playback-read-v1.json). Documentation and fixture
+[Playback read API v1](../documentation/mpd-playback-read-api.md), with reusable
+[JSON fixtures](../../tests/fixtures/playback-read-v1.json). Documentation and fixture
 validation passed. This freezes design only: no runtime API/migration deployed.
 
 1. Record solution D and gain semantics; resolve D08 before implementing IDs.
@@ -168,14 +168,14 @@ unknown/error states are explicit; existing hardware clients remain compatible.
 ### S02. Implement detailed read-only observations
 
 **Complete locally (2026-10-14):** immutable collector/probes in
-[playbackstatus.py](../mpdrussoundpi/russound/lib/playbackstatus.py), shared
+[playbackstatus.py](../../mpdrussoundpi/russound/lib/playbackstatus.py), shared
 configuration/connection/readiness helpers and stereo mixer inspection.
-[Usage and limits](./mpd-backend-api.md) document its captured inventory and
+[Usage and limits](../documentation/mpd-backend-api.md) document its captured inventory and
 nonblocking, independent worker API. 31 new collector/helper tests; focused
 suite 100 tests, 99 passed and one existing FFmpeg-dependent skip. Runtime
 Pylance checks clean. No deployment or changes to running Pi playback.
 
-Primary surface: [MPDBackend](../mpdrussoundpi/russound/lib/mpdbackend.py).
+Primary surface: [MPDBackend](../../mpdrussoundpi/russound/lib/mpdbackend.py).
 Keep existing `status()` callers compatible, either by an additive detailed
 method or a separate collector reusing backend connection/settings helpers.
 
@@ -189,7 +189,7 @@ method or a separate collector reusing backend connection/settings helpers.
 5. Keep client instances thread-confined and bound failed-output work. Initial
    collector should not start playback, alter queues or call `set_gain`.
 
-**Tests:** extend [backend tests](../tests/test_mpdbackend.py); add collector
+**Tests:** extend [backend tests](../../tests/test_mpdbackend.py); add collector
 fixtures for missing metadata, tag changes, malformed state, disconnect failure,
 one unreachable MPD, race retry and inactive outputs.
 **Acceptance:** command-recording fakes prove GET/observer paths are read-only;
@@ -200,14 +200,14 @@ healthy outputs remain observable during another output's timeout.
 **Complete locally (2026-10-15):** authenticated Flask/Waitress adapter,
 immutable cached reads, background collector replacement/config failure
 handling, independent playback/audio scheduling and bounded read retry backoff.
-See [agent usage](./mpd-backend-api.md#read-only-http-agent-s03) and
-[contract acceptance](./mpd-playback-read-api.md#s03-acceptance-local-2026-10-15).
+See [agent usage](../documentation/mpd-backend-api.md#read-only-http-agent-s03) and
+[contract acceptance](../documentation/mpd-playback-read-api.md#s03-acceptance-local-2026-10-15).
 No Pi deployment or ID migration is implied; D06 transport provisioning remains
 separate from this local agent implementation.
 
 1. Add a thin HTTP adapter, observer scheduler and immutable snapshot cache.
    Reuse Flask/Waitress; declare/install agent-specific dependencies separately
-   from the [web requirements](../web/requirements.txt).
+   from the [web requirements](../../web/requirements.txt).
 2. Implement liveness, capabilities, inventory and per-output reads; return
    cached snapshots rather than initiating several MPD calls per HTTP request.
 3. Enforce D06-compatible authentication from the start. A fake/test service
@@ -238,9 +238,9 @@ reads do not wait for background I/O; no second recovery loop exists.
    possible. Before automation, design the coordinated versioned control
    record after D04; migrate preserving play/pause/stop, with manual defaults.
 4. Inventory every state reader/writer, including the
-   [CLI](../mpdrussoundpi/russound/mpdctrl.py),
-   [supervisor](../mpdrussoundpi/russound/mpdsupervisor.py),
-   [recorder](../mpdrussoundpi/russound/playbackaudit.py) and deployment initializer.
+   [CLI](../../mpdrussoundpi/russound/mpdctrl.py),
+   [supervisor](../../mpdrussoundpi/russound/mpdsupervisor.py),
+   [recorder](../../mpdrussoundpi/russound/playbackaudit.py) and deployment initializer.
    The recorder currently reads the name-to-intention JSON directly: a later
    schema change must update it or provide a shared compatible reader.
 5. Use temporary migration fixtures and named backups. Reject unsupported
@@ -265,9 +265,9 @@ name-to-ID/label mapping. It preserves exact originals and every nonidentity
 config field, retains legacy intentions, and generates a strictly validated
 manual-mode control-v1 preview. Missing, corrupt, partial or unknown intentions
 fail rather than defaulting to play. Existing persisted IDs cannot be reassigned.
-The tool does not install files, regenerate units, contact MPD or restart services. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
+The tool does not install files, regenerate units, contact MPD or restart services. Superseded by the [configuration split](./mpd_done_config-split.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 
-The [current config/state contract](./mpd-backend-api.md#configuration-runtime-state-and-revisions)
+The [current config/state contract](../documentation/mpd-backend-api.md#configuration-runtime-state-and-revisions)
 records the reader/writer inventory, revision contract, rollout and rollback.
 The preview is deliberately **not** a live schema migration: runtime readers
 continue using legacy intentions and reject the preview. S10 must coordinate
@@ -281,9 +281,9 @@ CLI test. Changed Python production files have no reported Pylance diagnostics.
 
 ### S05. Integrate read-only web status
 
-Primary surfaces: [web server](../web/russound_server.py),
-[controller](../web/russound_controller.py), [frontend](../web/static/app.js),
-[web API](../web/API.md). Agent identities, URLs and secret-file references
+Primary surfaces: [web server](../../web/russound_server.py),
+[controller](../../web/russound_controller.py), [frontend](../../web/static/app.js),
+[web API](../../web/API.md). Agent identities, URLs and secret-file references
 are deployment configuration, not editable browser settings.
 
 1. Add validated agent endpoint/identity configuration and a playback client.
@@ -301,8 +301,8 @@ are deployment configuration, not editable browser settings.
    Correct touched conflicting token/SSE documentation based on current code.
 
 **Tests:** fake-agent web integration; existing
-[server](../tests/test_russound_server.py) and
-[controller](../tests/test_russound_controller.py) regressions; frontend browser
+[server](../../tests/test_russound_server.py) and
+[controller](../../tests/test_russound_controller.py) regressions; frontend browser
 checks for stale status, metadata escaping, reconnect and disabled integration.
 **Acceptance:** agent failure does not freeze zone controls; several browser
 tabs do not multiply Pi polling; measured update latency meets the agreed target.
@@ -335,13 +335,13 @@ rollout and current status verification are recorded below.
 ### S06. Provision and verify read-only deployment
 
 **Deployment preparation (2026-10-15–16):** separate
-[agent-only install](../ansible/playbooks/deploy-playback-agent.yml),
-[user service](../ansible/templates/playback-agent.service.j2),
-[TLS proxy play](../ansible/playbooks/deploy-playback-agent-proxy.yml),
-[Caddyfile](../ansible/templates/playback-agent.Caddyfile.j2),
-[proxy system service](../ansible/templates/playback-agent-proxy.service.j2)
-and [rollback](../ansible/playbooks/remove-playback-agent.yml) are prepared.
-See [operator instructions](./playback-agent-deployment.md). Agent and proxy
+[agent-only install](../../ansible/playbooks/deploy-playback-agent.yml),
+[user service](../../ansible/templates/playback-agent.service.j2),
+[TLS proxy play](../../ansible/playbooks/deploy-playback-agent-proxy.yml),
+[Caddyfile](../../ansible/templates/playback-agent.Caddyfile.j2),
+[proxy system service](../../ansible/templates/playback-agent-proxy.service.j2)
+and [rollback](../../ansible/playbooks/remove-playback-agent.yml) are prepared.
+See [operator instructions](../documentation/playback-agent-deployment.md). Agent and proxy
 activation are opt-in; the agent remains loopback-only. The proxy play
 generates a self-signed certificate on the Pi, copies only its public
 certificate to the ignored Docker secrets directory, limits routes to the
@@ -353,14 +353,14 @@ separate private observation-test config during endurance. Agent running on
 Pi loopback; authenticated reads, real MPD metadata, routes/gains and unchanged
 production config/intentions/service lifecycle verified. Existing Radio 88.6
 faults continued; no zero-impact or uninterrupted-playback claim.
-See [target evidence](./playback-deployment-evidence.md#approved-isolated-target-test-2026-10-15).
+See [target evidence](#acceptance-record).
 
 **Production read-only rollout (2026-10-17):** after explicit approval, the
 production config received stable IDs/labels (`radio_886`, `fm4_radio`,
 `oe3_radio`) while names, stream URLs, ports, sinks and gains were preserved.
 These were later renamed to channel identities (`stereo_front`,
 `stereo_centerlfe`, `stereo_rear`); see
-[channel-based identities](./playback-deployment-evidence.md#channel-based-output-identities-2026-10-17).
+[channel-based identities](#acceptance-record).
 The legacy intentions file remained byte-identical. Only the playback
 supervisor and read-only agent were stopped/restarted; all three MPD service
 PIDs remained unchanged. The read-only agent now observes the production
@@ -402,7 +402,7 @@ legacy intentions were preserved, and no MPD/PipeWire service was restarted.
 The user explicitly declined a host firewall; the trusted-LAN assumption and
 Caddy `/24` source filter are recorded above. S06 read-only deployment is complete.
 The Pi-to-web healthy-LAN p95 latency target is met; measurement details and
-the maximum observed outlier are recorded in the deployment record. S07's
+the maximum observed outlier are recorded in the [acceptance record](#acceptance-record). S07's
 subsequent implementation and production write activation are recorded below.
 Writes were disabled at the S06 read-only checkpoint.
 
@@ -412,7 +412,7 @@ Writes were disabled at the S06 read-only checkpoint.
 play/pause/stop/set-gain submissions, a bounded persistent SQLite ledger and
 single worker, idempotency/revision checks, explicit partial/unknown outcomes,
 web gateway routes and capability-gated Playback controls. D07/D13 are accepted.
-The [S07 operation contract](./mpd-playback-operations-api.md) records request
+The [S07 operation contract](../documentation/mpd-playback-operations-api.md) records request
 shapes, retention/deadline/restart semantics and gain behavior. Agent and proxy
 activation each require a separate opt-in; defaults remain read-only.
 Fake-backed HTTP, backend/CLI/supervisor regressions and dependency-free
@@ -460,11 +460,11 @@ route/gain startup gating and saved intentions; restart restores changed gain.
 
 **Implemented and active in the approved Pi test deployment (2026-10-17).**
 TuneIn selection, managed queues and recovery are deployed together with S09.
-The [deployment record](./playback-deployment-evidence.md#manual-controls-and-tunein-2026-10-17)
+The [acceptance record](#acceptance-record)
 records live station changes, contention and playlist-resolution fixes. The
-[configuration split rollout](./playback-deployment-evidence.md#configuration-split-rollout-2026-10-17)
+[configuration split rollout](#acceptance-record)
 records favorites, preserved stations/gains and service restarts.
-The [public-only egress plan](./playback-egress-hardening-plan.md) records the
+The [public-only egress plan](./mpd_done_playback-egress-hardening.md) records the
 subsequently deployed DNS/redirect restrictions. Full lifecycle sign-off remains
 outstanding.
 
@@ -615,9 +615,9 @@ credentials and operational files must have an explicit owner.
   live agent and dashboard are healthy. A 156-second Pi-to-web LAN sample
   measured a conservative web-visible playback-age p95 of 4.819 seconds
   against the proposed 5-second target; details and limitations are recorded
-  in the [deployment record](./playback-deployment-evidence.md#s06-lan-latency-acceptance-2026-10-17).
+  in the [acceptance record](#acceptance-record).
 - D06 transport is deployed with Caddy's approved LAN-subnet `/24` filter. The user
-  declined host firewall changes; the deployment record documents the
+  declined host firewall changes; the [acceptance record](#acceptance-record) documents the
   trusted-LAN assumption and residual network exposure.
 - D07 accepts trusted-environment browser access without login or user
   permissions for now; lightweight admin authentication is deferred.
@@ -646,12 +646,15 @@ credentials and operational files must have an explicit owner.
   audio channel (`stereo_front`/Stereo Front, `stereo_centerlfe`/Stereo
   CenterLFE, `stereo_rear`/Stereo Rear) and amend D08. Existing installations
   migrated offline with the since-removed `outputrename.py`; the dashboard shows the selected
-  station next to the playback state. Superseded by the [configuration split](./config-split-plan.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
+  station next to the playback state. Superseded by the [configuration split](./mpd_done_config-split.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 - The config/state split, optional default station/gain and favorites (maximum
   20) are implemented and deployed. No station means initially silent/stopped,
   with Play visible but disabled; omitted gain means 0 dB. Live no-station and
   URL-favorite acceptance remain pending. O12 is closed by hardcoded loopback
   MPD generation and the verified Pi listeners.
+
+- Unscheduled idea: a [live per-output level meter](general_idea_live-level-meter.md)
+  (validated external proposal and architecture-conformant sketch).
 
 Next: finish the outstanding manual-playback acceptance,
 then resolve D02 before implementing S10. Schedule reboot/fault tests explicitly;
@@ -659,3 +662,71 @@ do not infer approval from this status update.
 
 After each answer, update its status/outcome above, amend affected architecture
 sections/steps and discuss only the next unresolved decision.
+
+## 6. Deployment acceptance
+
+Checks on the Pi certify only the code that was deployed at the time; they do
+not certify later code or full lifecycle behavior. Installation steps are in
+the [deployment guide](../documentation/playback-agent-deployment.md).
+
+### Acceptance record
+
+- **Isolated target test (2026-10-15).** An isolated agent with a private
+  config copy verified cached observations, metadata, routes/gain, HTTP
+  authentication, bounded errors and liveness on the real Pi. Production
+  config/intentions hashes and playback/audio processes were unchanged. This
+  was not a production write or LAN latency test.
+- **Production read-only rollout (2026-10-17).** Agent, Caddy TLS and Docker
+  playback reads were verified: authenticated reads returned 200,
+  unauthenticated 401, disallowed sources 403 and unsupported routes 404. The
+  web cache and all three output cards were healthy, and activation restarted
+  no MPD instance. Endpoint `https://192.168.1.105:8443`; Caddy allows the
+  source CIDR `192.168.1.0/24`. This is an HTTP source filter, not an inbound
+  firewall.
+- **S06 LAN latency (2026-10-17).** A 156-second sample made 240 fetches with
+  720 healthy observations and no stale or failed reads. Metadata change
+  intervals: p50 2.458 s, p95 2.971 s, max 3.394 s. Conservative web-visible
+  age: p50 2.978 s, p95 4.819 s, max 5.806 s, so the 5-second p95 target was
+  met. The estimate can overstate age by up to one second because the web
+  cache timestamp has second precision. It is not a browser measurement or an
+  audio-dropout guarantee.
+- **Manual controls and TuneIn (2026-10-17).** The user accepted S07
+  transport/gain controls after production testing (individual cases not
+  enumerated; not restart or endurance acceptance). TuneIn selection went live;
+  follow-up fixes removed repeated resolution contention and added bounded
+  M3U/PLS extraction. Playlist-backed `s260655` played.
+- **Channel-based identities (2026-10-17).** Outputs were renamed to
+  `stereo_front`, `stereo_centerlfe` and `stereo_rear` with stations, routes
+  and gains preserved. The one-off migration tool was removed; there is no
+  old-schema migration path.
+- **Configuration split (2026-10-17).** Backup with checksums at
+  `~/.local/state/mpdrussoundpi/config-split-backup-20261017-205452/` on the
+  Pi. MPD listened only on `127.0.0.1:6601-6603`; a connection to the LAN
+  address failed. All outputs resumed their stations and gains. Dashboard
+  checks switched an output to another favorite and back and exercised
+  favorite add/move/remove. The admin config stayed byte-identical.
+- **Public-only egress (2026-10-17).** See the
+  [egress plan](./mpd_done_playback-egress-hardening.md): public playback
+  succeeded; literal-private, DNS-to-private and public-to-private redirects
+  were blocked.
+
+### Remaining acceptance
+
+- Live URL-type favorite and no-default-station behavior.
+- Persistence of edited favorites, gains and selections across restarts.
+- Current-version whole-Pi reboot, user-manager restart and outage/fault tests,
+  including recovery after a network outage.
+- Live IPv6 transport (policy and rule generation have unit coverage).
+- Physical/analog audio and S10 hardware-driven automation acceptance.
+
+### Pi platform follow-ups
+
+Open findings from the October 2026 hardware audit that are outside the
+playback code. None of them is scheduled.
+
+| Issue | Next step |
+|---|---|
+| The Pi's DNS name returns both an A record and a CNAME; SSH sessions time out intermittently. The Pi runs on Wi-Fi; Ethernet had no carrier. | Fix the authoritative DNS records, check that the resolvers agree and investigate the timeouts. Until then use the direct IP with strict host-key checking. |
+| The original WirePlumber stall and some shutdown warnings are unexplained. | Capture diagnostics when it recurs and test under long load and reconnects. |
+| RTKit is missing, so PipeWire logs fallback scheduling warnings. No dropout has been linked to it. | Measure under representative load; add real-time scheduling only if that shows a need. |
+| Analog output levels and center/LFE frequency response were never measured (only digital levels and jack mapping). | Measure if needed, with per-channel metering and listening during longer concurrent runs. |

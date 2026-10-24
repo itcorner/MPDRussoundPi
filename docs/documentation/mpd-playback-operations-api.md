@@ -220,7 +220,7 @@ TuneIn selection is enabled; `select_favorite` is always available with writes.
   URL path, user-info, query and fragment. The submitted URL is never reflected
   in operation progress or errors.
 - TuneIn alone does not constrain the destinations its station URLs or later
-  redirects reach. The deployed [public-only egress policy](./playback-egress-hardening-plan.md)
+  redirects reach. The deployed [public-only egress policy](../plans/mpd_done_playback-egress-hardening.md)
   validates DNS/redirects in Python and blocks non-public actual MPD connections.
   Selection is on by default with manual operations; set
   `playback_agent_enable_tunein_selection=false` on installations without the

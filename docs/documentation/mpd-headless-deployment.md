@@ -1,6 +1,6 @@
 # Headless MPD deployment and recovery
 
-The [setup playbook](../ansible/playbooks/setup-musicpi.yml) provisions
+The [setup playbook](../../ansible/playbooks/setup-musicpi.yml) provisions
 PipeWire, its Pulse server, WirePlumber, FFmpeg and python-mpd2. Run it as the
 audio-owning user with passwordless sudo:
 
@@ -34,7 +34,7 @@ the runtime state `~/.local/state/mpdrussoundpi/playback.json`.
 `config.json` describes the hardware, the MPD instances (outputs) and the seed
 station list. The agent and supervisor only read it, so `config_revision`
 changes only when an admin edits it. The
-[seed configuration](../mpdrussoundpi/russound/config.json) shows every option:
+[seed configuration](../../mpdrussoundpi/russound/config.json) shows every option:
 
 ```json
 {
@@ -186,6 +186,40 @@ python audiosetup.py --install --audio-processor pipewire ~/.config/mpdrussoundp
 python mpdsetup.py --start ~/.config/mpdrussoundpi/config.json
 ```
 
+## Audio graph and hardware notes
+
+Lessons from the October 2026 hardware audit that still constrain the design:
+
+- **Reference platform.** Debian 13 on aarch64 with MPD 0.24, PipeWire/Pulse
+  1.4 and WirePlumber 0.5, driving C-Media `0d8c:0102` USB cards. The hardware
+  PCM is six-channel S16_LE at 48 kHz.
+- **Linked channels and an MPD `play` state do not prove delivered audio.** The
+  old loopback layout showed valid links while rear and LFE were digitally
+  silent. Only per-channel digital metering or physical listening confirms
+  output.
+- **Loopback layout.** [sink.py](../../mpdrussoundpi/russound/lib/sink.py)
+  keeps the FL/FR input layout in `capture.props`, sets the pair-specific
+  `audio.position` in `playback.props` and sets `stream.dont-remix = true`. A
+  global loopback `audio.position` makes PipeWire convert to a common layout
+  instead of remapping the pair directly.
+- **Use the 5.1 profile (`analog-surround-51`).** With 7.1, the rear pair goes
+  to a side jack that one of the deployed cards does not have. A saved
+  WirePlumber profile can override the configured fallback, so readiness sets
+  the profile explicitly. Generated ALSA rules belong under
+  `monitor.alsa.rules`.
+- **USB full speed is expected.** The card advertises USB 1.1 and negotiates
+  12 Mb/s. The six-channel stream needs about 4.6 Mb/s (calculated, not
+  benchmarked). Bandwidth errors seen with a second card on the same controller
+  are a separate problem; see the
+  [USB recovery plan](../plans/usb_done_audio-recovery.md).
+- **Treat warnings as clues, not proof.** WirePlumber stalls, shutdown warnings
+  and wrong-port errors were correlated with USB loss or profile changes. A
+  warning alone is not evidence of a dropout, and a restart that clears it does
+  not prevent it.
+- **Keep target backups.** Manual backups made before audio changes are under
+  `~/.local/state/mpdrussoundpi/backups/` on the Pi. Keep them, and don't
+  broadly clean the Pi checkout: it can contain unrelated work in progress.
+
 ## Validation evidence
 
 For an independent read-only endurance/USB recorder, see
@@ -197,9 +231,6 @@ Focused tests cover first-boot defaults, preserving intentions, audio-error
 recovery, mute/route/gain/unmute ordering, failed readiness, atomic persistence,
 queue idempotence, per-output failure isolation/backoff, CLI delegation and
 generated service policies. Ansible syntax is checked separately. These do
-not prove analog output, startup transients, USB unplug or network recovery;
-hardware lifecycle acceptance must be recorded in the hardware audit.
-
-Historical target checks and remaining current-version acceptance are
-separate from these setup instructions; see
-[deployment evidence](./playback-deployment-evidence.md).
+not prove analog output, startup transients, USB unplug or network recovery.
+Outstanding hardware and lifecycle acceptance is tracked in the
+[implementation plan](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance).

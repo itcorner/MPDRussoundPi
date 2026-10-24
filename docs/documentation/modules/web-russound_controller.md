@@ -12,7 +12,7 @@ Coordinates configuration and persisted state, synchronizes hardware state, appl
 
 ## Test Cases
 
-[Controller tests](../../tests/test_russound_controller.py) cover singleton loading, initial and legacy state, persistence, backend failures, view/config payloads, zone updates, shortcuts, mappings, and system power. [Backend tests](../../tests/test_russound_backend.py) cover the adapter boundary.
+[Controller tests](../../../tests/test_russound_controller.py) cover singleton loading, initial and legacy state, persistence, backend failures, view/config payloads, zone updates, shortcuts, mappings, and system power. [Backend tests](../../../tests/test_russound_backend.py) cover the adapter boundary.
 
 ## Blind Spots
 

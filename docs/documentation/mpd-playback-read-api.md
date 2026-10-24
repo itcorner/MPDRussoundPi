@@ -10,8 +10,8 @@ control-revision fields are additive; existing read-only agents/fixtures remain
 valid. Production S07 writes were enabled with approval on 2026-10-17;
 S07 is done and production-verified by the user on that date.
 Changes to this baseline require updating this document and its
-[contract fixtures](../tests/fixtures/playback-read-v1.json) together.
-See the [implementation plan](./mpd-web-integration-implementation-plan.md).
+[contract fixtures](../../tests/fixtures/playback-read-v1.json) together.
+See the [implementation plan](../plans/general_open_mpd-web-integration.md).
 
 ## 1. Scope and component boundaries
 
@@ -34,11 +34,11 @@ must be capability-advertised and must not change these read semantics.
 
 ## 2. Identity and persisted configuration
 
-Accepted D08, simplified by the [configuration split](./config-split-plan.md):
+Accepted D08, simplified by the [configuration split](../plans/mpd_done_config-split.md):
 each `config.json` output has an `id` (the only identity; it also derives the
 MPD unit name) and a display `label`. Outputs are named after their audio
 channel, not a station, because the selected station can change. Example
-output entry, matching the [sample config](../mpdrussoundpi/russound/config.json):
+output entry, matching the [sample config](../../mpdrussoundpi/russound/config.json):
 
 ```json
 {
@@ -343,7 +343,7 @@ must match an already published cache. SSE is not durable/replayable.
 | Surface | Planned responsibility |
 | --- | --- |
 | Existing `lib.mpdbackend` | Shared settings/connection helpers, additive detailed read result |
-| [Pi-local `lib.playbackstatus`](../mpdrussoundpi/russound/lib/playbackstatus.py) (S02 implemented) | Normalization, independent probes/cache collection; no mutation |
+| [Pi-local `lib.playbackstatus`](../../mpdrussoundpi/russound/lib/playbackstatus.py) (S02 implemented) | Normalization, independent probes/cache collection; no mutation |
 | New `playbackagent.py` beside Pi scripts | Thin agent HTTP adapter and lifecycle entry point |
 | New `web/playback_client.py` | Remote contract decoding, timeout/age handling |
 | Existing web server/frontend | Optional registry, cache publication, same-origin reads, SSE and cards |
@@ -352,7 +352,7 @@ At the S02/S03 local acceptance checkpoint, the collector/helpers and agent
 were tested on Pi loopback with a separate config copy, while web modules and
 production transport/migration were still future work. The later production
 deployment is recorded in the
-[implementation plan](./mpd-web-integration-implementation-plan.md). Use
+[implementation plan](../plans/general_open_mpd-web-integration.md). Use
 the Pi script directory's existing `lib` import layout initially; do not perform
 an unrelated package migration. Agent dependency manifest belongs with Pi
 scripts. Web client dependencies stay in web requirements; the Docker image
@@ -378,7 +378,7 @@ S01 acceptance evidence:
 
 S02 acceptance (local, 2026-10-14):
 
-- Collector/helpers and [31 collector/helper tests](../tests/test_playbackstatus.py)
+- Collector/helpers and [31 collector/helper tests](../../tests/test_playbackstatus.py)
   implemented. 100 focused tests ran: 99 passed, one existing real-FFmpeg test
   skipped because FFmpeg is unavailable. Modified runtime modules have no
   Pylance diagnostics.
