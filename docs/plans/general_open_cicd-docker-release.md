@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1 and 2 accepted, Stage 3 rules active; protected PR acceptance in progress.
+Status: open; Stages 1-3 implemented; protected PR acceptance is recorded in PR #4. Stage 4 awaits approval.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -202,8 +202,10 @@ Stage 3 configuration (2026-10-26):
   updates, deletion and force updates blocked with no bypass. No tag created.
 - Read back both branches' effective rules and every ruleset's active state
   and bypass list. No destructive or direct-push probe was used.
-- Protected documentation PR acceptance remains to be recorded after CI and
-  merge. No CI publishing, registry credentials or deployment was enabled.
+- [PR #4](https://github.com/itcorner/MPDRussoundPi/pull/4) contains the
+  housekeeping and protection documentation; its checks, merge state and
+  acceptance comment record validation of the normal protected PR path.
+  No CI publishing, registry credentials or deployment was enabled.
 
 ### Stage 4: Prepare publication without enabling it
 
