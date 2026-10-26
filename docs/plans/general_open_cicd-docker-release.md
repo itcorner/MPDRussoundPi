@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stage 1 established, Stage 2 implementation and acceptance in progress.
+Status: open; Stages 1-3 implemented; protected PR acceptance is recorded in PR #4. Stage 4 awaits approval.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -85,8 +85,8 @@ Stage 1 implementation (2026-10-26):
 - Created and pushed `develop` at `39e3e91e5364cdc06c09ac1bcb280435ba029563`,
   matching local and remote `main`, and configured tracking of `origin/develop`.
 - Switched through `develop` to `feature/cicd-branch-workflow` for the
-  documentation changes. These remain uncommitted; a PR into `develop` is
-  pending commit and publication of this feature branch.
+  documentation changes. These were subsequently committed and merged into
+  `develop` through PR #1 during Stage 2.
 - Added maintained [branch workflow documentation](../documentation/development-workflow.md)
   and linked it from the README and documentation index.
 - Preserved the unrelated local `.vscode/` files. No deployment, tag, workflow,
@@ -110,7 +110,7 @@ Stage 1 implementation (2026-10-26):
       runners; report which runtime checks actually ran on each platform.
 - [x] Always clean up test containers and volumes, and expose useful failure
       logs without credentials or runtime secrets.
-- [ ] Bootstrap the workflows from `develop` into `main` through a PR.
+- [x] Bootstrap the workflows from `develop` into `main` through a PR.
 
 Acceptance: CI succeeds on both branches and a representative PR, stable check
 names are known, and no registry credentials or image pushes were needed.
@@ -134,7 +134,7 @@ Stage 2 local validation (2026-10-26):
 - Documentation for the check names, local reproduction, isolation and
   publication restrictions is in the maintained development workflow guide.
 - PR bootstrap and successful GitHub checks on the PR and both long-lived
-  branches are still required before Stage 2 acceptance.
+  branches were completed as recorded below.
 - The first GitHub PR run passed both platform smoke checks but exposed
   host-uptime-dependent float rounding in a playback age test (19,999 rather
   than 20,000 ms). Its initial sample now uses a fixed monotonic timestamp;
@@ -144,23 +144,68 @@ Stage 2 local validation (2026-10-26):
   now also uses a fixed initial timestamp, without loosening its threshold
   assertions or changing production code.
 
+Stage 2 accepted (2026-10-26):
+
+- [PR #1](https://github.com/itcorner/MPDRussoundPi/pull/1) introduced validation
+  and the branch workflow into `develop` after successful checks.
+- [PR #3](https://github.com/itcorner/MPDRussoundPi/pull/3) corrected the second
+  deterministic-clock test through a separate successful PR into `develop`.
+- [PR #2](https://github.com/itcorner/MPDRussoundPi/pull/2) bootstrapped
+  `develop` into `main` using a merge commit after both
+  [develop push CI](https://github.com/itcorner/MPDRussoundPi/actions/runs/40349751340)
+  and [bootstrap PR CI](https://github.com/itcorner/MPDRussoundPi/actions/runs/40349760448)
+  passed.
+- The final [main push CI](https://github.com/itcorner/MPDRussoundPi/actions/runs/40350054112)
+  passed at `b0ba436ce2a02162062d0f89113e0471e65717e8`.
+  `develop` is at `8fa7ac8249c301e6ebb0f6a48d01f5f0675931e3`; its tree matches
+  the bootstrap merge, with ancestry preserved. `main` remains the default.
+- The actual final gate name is `CI passed`. All three validation jobs
+  (Python/JavaScript, AMD64 container, ARM64 container) succeeded on GitHub.
+- No images were published and no deployments, release tags, registry secrets
+  or branch rules were changed. Stage 3 has not started.
+- The malformed local ref noted in Stage 1 was subsequently backed up outside
+  Git's refs directory and removed with approval. Normal `git fetch origin`
+  and `git fsck --full --no-dangling` passed on 2026-10-26. Local `main` and
+  `develop` were then fast-forwarded to their remote commits without changing
+  working files.
+
 ### Stage 3: Enforce branch protection
 
-- [ ] Confirm repository visibility/plan supports the intended rules and review
+- [x] Confirm repository visibility/plan supports the intended rules and review
       existing server-side settings before changing them.
-- [ ] Add active rulesets for `main` and `develop`: PRs required, established CI
+- [x] Add active rulesets for `main` and `develop`: PRs required, established CI
       checks required, force pushes and deletion blocked.
-- [ ] Require resolved conversations and validation against the current target
+- [x] Require resolved conversations and validation against the current target
       branch, using up-to-date branches or a configured merge queue.
-- [ ] Avoid routine bypass permissions, including for administrators, so direct
+- [x] Avoid routine bypass permissions, including for administrators, so direct
       pushes to `main` are genuinely blocked.
-- [ ] For a solo maintainer, require PRs but zero approving reviews; require an
+- [x] For a solo maintainer, require PRs but zero approving reviews; require an
       independent approval only when another reviewer is available.
-- [ ] Define protected `v*` tag creation/update/deletion rules before releases;
+- [x] Define protected `v*` tag creation/update/deletion rules before releases;
       limit release-tag creation to designated maintainers or release automation.
 
 Acceptance: inspect the effective rules and verify the PR-only path without
 making a direct test commit to `main`; normal PRs remain mergeable after CI.
+
+Stage 3 configuration (2026-10-26):
+
+- Confirmed public repository visibility, a single administrator (`itcorner`),
+  no existing rulesets or classic protection, and successful `CI passed` checks
+  from GitHub Actions (integration ID `15368`).
+- Activated [branch ruleset 25892348](https://github.com/itcorner/MPDRussoundPi/rules/25892348)
+  for `main` and `develop`: PRs, strict/up-to-date `CI passed`, resolved threads,
+  zero approving reviews, no force pushes or deletion, and no bypass actors.
+- Activated [tag-creation ruleset 25892349](https://github.com/itcorner/MPDRussoundPi/rules/25892349)
+  for `v*`: creation restricted, with repository administrators allowed to
+  bypass only this creation restriction.
+- Activated separate [tag-immutability ruleset 25892351](https://github.com/itcorner/MPDRussoundPi/rules/25892351):
+  updates, deletion and force updates blocked with no bypass. No tag created.
+- Read back both branches' effective rules and every ruleset's active state
+  and bypass list. No destructive or direct-push probe was used.
+- [PR #4](https://github.com/itcorner/MPDRussoundPi/pull/4) contains the
+  housekeeping and protection documentation; its checks, merge state and
+  acceptance comment record validation of the normal protected PR path.
+  No CI publishing, registry credentials or deployment was enabled.
 
 ### Stage 4: Prepare publication without enabling it
 
