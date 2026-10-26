@@ -425,7 +425,8 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertEqual(self.output().route.status, "ok")
 
     def test_freshness_uses_monotonic_time_and_exact_thresholds(self):
-        self.refresh()
+        with patch.object(status.time, "monotonic", return_value=100.0):
+            self.refresh()
         probe = self.output().playback
         now = probe.current.monotonic
         self.assertFalse(probe.to_dict(now + 9.999, 10)["stale"])
