@@ -13,6 +13,7 @@ record deployment acceptance in the plan it belongs to.
 
 **Guides**
 
+- [Development and release workflow](./documentation/development-workflow.md): branch roles, feature PRs, release promotion and hotfix back-merges.
 - [Playback deployment](./documentation/playback-agent-deployment.md): install or update the Pi playback stack and connect it to the web dashboard.
 - [Headless MPD deployment and recovery](./documentation/mpd-headless-deployment.md), including [audio graph and hardware notes](./documentation/mpd-headless-deployment.md#audio-graph-and-hardware-notes).
 - [Playback endurance and USB reconnect recorder](./documentation/mpd-playback-endurance-test.md)
@@ -47,6 +48,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 
 | Plan | Status |
 |---|---|
+| [CI/CD pipeline and Docker image release path](./plans/general_open_cicd-docker-release.md) | Stage 2 validation implemented; GitHub acceptance and branch protection pending; no image publication authorized yet |
 | [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; S10 automation and S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |

@@ -304,7 +304,9 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertEqual(self.output().playback.error.code, "mpd_unavailable")
 
     def test_error_retains_last_known_then_recovers(self):
-        self.refresh()
+        # Keep the exact age assertion independent of host-uptime float rounding.
+        with patch.object(status.time, "monotonic", return_value=100.0):
+            self.refresh()
         first = self.output().playback.current
         client = self.client()
         client.connect.side_effect = OSError("offline")
@@ -423,7 +425,8 @@ class PlaybackStatusTests(unittest.TestCase):
         self.assertEqual(self.output().route.status, "ok")
 
     def test_freshness_uses_monotonic_time_and_exact_thresholds(self):
-        self.refresh()
+        with patch.object(status.time, "monotonic", return_value=100.0):
+            self.refresh()
         probe = self.output().playback
         now = probe.current.monotonic
         self.assertFalse(probe.to_dict(now + 9.999, 10)["stale"])

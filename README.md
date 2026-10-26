@@ -126,6 +126,10 @@ design and outstanding acceptance, not installation instructions.
 
 ## Quick Start (Local Development)
 
+The default branch is `main` (stable target). For development, select `develop`
+and create a feature branch before making changes; feature PRs target `develop`.
+See the [development and release workflow](docs/documentation/development-workflow.md).
+
 1. Clone the repository.
 2. Create and activate a virtual environment.
 3. Install dependencies.
@@ -231,6 +235,11 @@ Common endpoints:
 - `POST /api/controller/{controllerId}/zone/{zoneNumber}/balance`
 
 ## Testing
+
+GitHub Actions runs these suites and clean AMD64/ARM64 image smoke tests on
+PRs to `develop`/`main` and pushes to those branches. See
+[automated validation](docs/documentation/development-workflow.md#automated-validation).
+This validates images locally on the runner; it does not publish or deploy them.
 
 Install the test dependencies in your development environment, then run:
 
