@@ -135,6 +135,10 @@ Stage 2 local validation (2026-10-26):
   publication restrictions is in the maintained development workflow guide.
 - PR bootstrap and successful GitHub checks on the PR and both long-lived
   branches are still required before Stage 2 acceptance.
+- The first GitHub PR run passed both platform smoke checks but exposed
+  host-uptime-dependent float rounding in a playback age test (19,999 rather
+  than 20,000 ms). Its initial sample now uses a fixed monotonic timestamp;
+  production age serialization is unchanged.
 
 ### Stage 3: Enforce branch protection
 
