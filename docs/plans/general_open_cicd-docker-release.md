@@ -139,6 +139,10 @@ Stage 2 local validation (2026-10-26):
   host-uptime-dependent float rounding in a playback age test (19,999 rather
   than 20,000 ms). Its initial sample now uses a fixed monotonic timestamp;
   production age serialization is unchanged.
+- Feature PR #1 and the first `develop` push passed CI. Bootstrap PR #2 exposed
+  the same clock dependence in the exact freshness-threshold test. That test
+  now also uses a fixed initial timestamp, without loosening its threshold
+  assertions or changing production code.
 
 ### Stage 3: Enforce branch protection
 
