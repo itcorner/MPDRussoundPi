@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validation:
+    name: Validation
+    uses: ./.github/workflows/validation.yml
+
+  passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    needs: validation
+    if: always()
+    timeout-minutes: 2
+    steps:
+      - name: Require all validation jobs to succeed
+        env:
+          VALIDATION_RESULT: ${{ needs.validation.result }}
+        run: test "$VALIDATION_RESULT" = success
