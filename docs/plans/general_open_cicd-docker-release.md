@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-3 implemented; protected PR acceptance is recorded in PR #4. Stage 4 awaits approval.
+Status: open; Stages 1-3 implemented; Stage 4 preparation in progress, publication disabled.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -15,11 +15,11 @@ repository-setting changes, creation of release tags, or image publication.
 **Do not publish any Docker image until explicitly approved.** Keep publication
 disabled while introducing and validating CI.
 
-Initial image scope is the web application built by the root
-[Dockerfile](../../Dockerfile), targeting `linux/amd64` and `linux/arm64`.
-The Pi playback agent remains a separate native deployment. Publishing the
-ser2net and dummy backend images, 32-bit ARM support, and automatic deployment
-are outside the initial scope.
+Stage 4 scope was expanded with approval on 2026-11-01 to web and ser2net,
+targeting `linux/amd64` and `linux/arm64`, under Docker Hub namespace
+`itcornernet`. The Pi agent remains native; its
+[containerization plan](./mpd_new_agent-containerization.md) is separate.
+Dummy image publication, 32-bit ARM and automatic deployment remain outside scope.
 
 ## Current baseline
 
@@ -208,6 +208,26 @@ Stage 3 configuration (2026-10-26):
   No CI publishing, registry credentials or deployment was enabled.
 
 ### Stage 4: Prepare publication without enabling it
+
+Implementation record (2026-11-01):
+
+- Namespace/publishing username chosen: `itcornernet`; repositories
+  `mpdrussoundpi-web` and `mpdrussoundpi-ser2net`. Web is confirmed public;
+  ser2net returns 404 and still needs account-owner confirmation.
+- The user added `DOCKERHUB_TOKEN` directly in GitHub. Its existence metadata
+  was verified without accessing the value. Both agreed Docker Hub variables
+  are configured. Token permissions have not been exercised.
+- Manual build-only workflow exports both architectures of both images with
+  provenance/SBOM, caches builds, and smoke-tests the exported runtime artifacts.
+  No login/push path is enabled. OCI archives are retained for seven days.
+- Tag policy covers strict versions, candidates, write-once tags and
+  non-regressing stable aliases. Registry inventory checks and actual serialized
+  alias publication are deliberately not wired while publication is disabled;
+  they remain prerequisites before Stage 5.
+- Maintained procedures and pending gates are in
+  [Docker image preparation](../documentation/docker-image-release.md).
+- GitHub build-only acceptance, repository confirmation and credential setup
+  verification remain pending. No version tag or Docker Hub image has been created.
 
 - [ ] Choose the Docker Hub namespace and create/confirm the repository
       `<namespace>/mpdrussoundpi-web`.

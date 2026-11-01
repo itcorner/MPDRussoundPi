@@ -13,6 +13,7 @@ record deployment acceptance in the plan it belongs to.
 
 **Guides**
 
+- [Docker image preparation and release](./documentation/docker-image-release.md): build-only artifacts, image boundaries and publication prerequisites.
 - [Development and release workflow](./documentation/development-workflow.md): branch roles, feature PRs, release promotion and hotfix back-merges.
 - [Playback deployment](./documentation/playback-agent-deployment.md): install or update the Pi playback stack and connect it to the web dashboard.
 - [Headless MPD deployment and recovery](./documentation/mpd-headless-deployment.md), including [audio graph and hardware notes](./documentation/mpd-headless-deployment.md#audio-graph-and-hardware-notes).
@@ -48,6 +49,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 
 | Plan | Status |
 |---|---|
+| [MPD agent containerization](./plans/mpd_new_agent-containerization.md) | Planned; design required before adding an agent image |
 | [CI/CD pipeline and Docker image release path](./plans/general_open_cicd-docker-release.md) | Stages 1–3 implemented; protected PR acceptance recorded in [PR #4](https://github.com/itcorner/MPDRussoundPi/pull/4); Stage 4 awaits approval; no image publication authorized yet |
 | [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; S10 automation and S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |

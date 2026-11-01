@@ -1,0 +1,134 @@
+name: Images (build only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Publication is disabled; only build-only is supported
+        required: true
+        type: choice
+        options: [build-only]
+      channel:
+        description: Tag policy to exercise (no tag or registry image is created)
+        required: true
+        type: choice
+        options: [development, candidate, stable]
+      version:
+        description: For candidate/stable, X.Y.Z-rc.N or X.Y.Z without v
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-preparation
+  cancel-in-progress: false
+
+jobs:
+  validation:
+    uses: ./.github/workflows/validation.yml
+
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.policy.outputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Validate mode and source ancestry
+        id: policy
+        env:
+          MODE: ${{ inputs.mode }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          test "$MODE" = build-only
+          node tool/ci/image-policy.mjs
+
+  images:
+    needs: [validation, policy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [web, ser2net]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Select Dockerfile
+        id: file
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          if [ "$IMAGE" = web ]; then
+            echo 'path=Dockerfile' >> "$GITHUB_OUTPUT"
+          else
+            echo 'path=Dockerfile.ser2net' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Export OCI image locally (never push)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ steps.file.outputs.path }}
+          platforms: linux/${{ matrix.arch }}
+          push: false
+          outputs: type=oci,dest=${{ runner.temp }}/image.tar
+          tags: itcornernet/mpdrussoundpi-${{ matrix.image }}:${{ needs.policy.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/itcorner/MPDRussoundPi
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.policy.outputs.version }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=prepared-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=prepared-${{ matrix.image }}-${{ matrix.arch }}
+      - name: Load the exported artifact and test it
+        env:
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+          ARCHIVE: ${{ runner.temp }}/image.tar
+          VERSION: ${{ needs.policy.outputs.version }}
+        run: |
+          node tool/ci/verify-image-archive.mjs "$ARCHIVE" "$ARCH" "$GITHUB_SHA" "$VERSION" > "$ARCHIVE.metadata.json"
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          skopeo copy --override-arch "$ARCH" "oci-archive:$ARCHIVE" "docker-daemon:mpdrussoundpi-$IMAGE:prepared"
+          if [ "$IMAGE" = web ]; then
+            bash tool/ci/smoke-web-image.sh "mpdrussoundpi-$IMAGE:prepared" "$ARCH"
+          else
+            bash tool/ci/smoke-ser2net-image.sh "mpdrussoundpi-$IMAGE:prepared" "$ARCH"
+          fi
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          {
+            echo "### $IMAGE / $ARCH"
+            echo 'Build-only: no registry login, push or deployment.'
+            cat "$ARCHIVE.sha256"
+            cat "$ARCHIVE.metadata.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Save tested OCI artifact with attestations
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: prepared-${{ matrix.image }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/image.tar
+            ${{ runner.temp }}/image.tar.sha256
+            ${{ runner.temp }}/image.tar.metadata.json
+          retention-days: 7
+          if-no-files-found: error
