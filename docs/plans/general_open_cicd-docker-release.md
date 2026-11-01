@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-3 implemented; Stage 4 preparation in progress, publication disabled.
+Status: open; Stages 1-3 implemented; Stage 4 build-only validation accepted, registry/publication prerequisites remain. Publication disabled.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -226,31 +226,59 @@ Implementation record (2026-11-01):
   they remain prerequisites before Stage 5.
 - Maintained procedures and pending gates are in
   [Docker image preparation](../documentation/docker-image-release.md).
-- GitHub build-only acceptance, repository confirmation and credential setup
-  verification remain pending. No version tag or Docker Hub image has been created.
+- GitHub build-only acceptance passed as recorded below. Ser2net repository
+  confirmation and token permission verification remain pending. No version tag
+  or Docker Hub image has been created.
 
 - [ ] Choose the Docker Hub namespace and create/confirm the repository
       `<namespace>/mpdrussoundpi-web`.
 - [ ] Configure `DOCKERHUB_NAMESPACE` and `DOCKERHUB_USERNAME` variables and a
       minimally scoped `DOCKERHUB_TOKEN` secret; never commit the token.
-- [ ] Add a separate image-publication workflow that reuses CI validation.
+- [x] Add a separate image-publication workflow that reuses CI validation.
       Initially allow only an explicitly selected build-only mode, with login
       and push disabled; do not create version tags as a test.
 - [ ] Implement the event/tag policy, source-branch ancestry validation,
       write-once version checks, and serialized, non-regressing alias updates.
-- [ ] Validate the per-platform artifacts that will be published, rather than
+- [x] Validate the per-platform artifacts that will be published, rather than
       testing one image and rebuilding a different one for publication.
-- [ ] Add Buildx caching, OCI source/revision/version labels, provenance and SBOM.
-- [ ] Pin third-party Actions to reviewed commit SHAs. Default to
+- [x] Add Buildx caching, OCI source/revision/version labels, provenance and SBOM.
+- [x] Pin third-party Actions to reviewed commit SHAs. Default to
       `contents: read`; isolate registry credentials to trusted publishing jobs.
       Use `pull_request`, not `pull_request_target`, to test submitted code.
-- [ ] Document environment approval for stable publication, Docker Hub tag
+- [x] Document environment approval for stable publication, Docker Hub tag
       retention/immutability capabilities, and how failed publication is retried
       without silently replacing an existing version.
 
 Acceptance: build-only runs demonstrate architecture, metadata and tag
 selection for development, prerelease and stable cases. No image is pushed.
 Review exact workflow enabling steps before moving to Stage 5.
+
+Stage 4 build-only acceptance (2026-11-01):
+
+- [PR #6](https://github.com/itcorner/MPDRussoundPi/pull/6) passed required CI
+  and merged into `develop`; [PR #7](https://github.com/itcorner/MPDRussoundPi/pull/7)
+  passed CI and bootstrapped the workflow into `main` using a merge commit.
+- [Development simulation](https://github.com/itcorner/MPDRussoundPi/actions/runs/41359721867),
+  [candidate simulation](https://github.com/itcorner/MPDRussoundPi/actions/runs/41360244091)
+  (`0.1.0-rc.1`) and
+  [stable simulation](https://github.com/itcorner/MPDRussoundPi/actions/runs/41359725618)
+  (`0.1.0`) all passed. These are input values, not created version tags.
+- Each run passed reusable CI, source/tag policy and all four image jobs:
+  web/ser2net on AMD64/ARM64. Every job verified OCI labels/digests,
+  SPDX SBOM and SLSA provenance subjects, then loaded and smoke-tested the
+  exported runtime. All four prepared archives are available in each run.
+- The initially queued candidate run was cancelled by GitHub's concurrency
+  pending-run replacement; it was dispatched alone and passed. Future manual
+  scenarios should be submitted sequentially.
+- Local verification passed 54 JavaScript tests and actionlint. Local ARM64
+  ser2net startup and tagged OCI archive checks passed; validation images,
+  archives and logs were cleaned up. Running deployments were not changed.
+- Pending before publication: confirm ser2net repository visibility; validate
+  minimally scoped token permissions; wire complete registry inventory and
+  write-once checks, serialized/current-tip alias promotion, and explicit
+  recovery gates. No production registry operations are implemented in this
+  build-only workflow. Stable environment/approval remains a later gate.
+- No Docker Hub login or push occurred. Stage 5 is not authorized.
 
 ### Stage 5: Enable development publication (explicit approval required)
 

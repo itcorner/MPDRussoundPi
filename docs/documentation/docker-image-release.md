@@ -40,6 +40,12 @@ No secret is passed to these jobs. All publication stages need separate approval
 To appear in the Actions UI, the manual workflow must also reach the default
 branch through a reviewed bootstrap PR.
 
+The workflow is available on both branches after PRs #6 and #7. Development,
+candidate and stable build-only runs passed on 2026-11-01 (links in the
+[acceptance record](../plans/general_open_cicd-docker-release.md#stage-4-prepare-publication-without-enabling-it)).
+Dispatch manual scenarios sequentially: the shared concurrency group preserves
+the running job, but GitHub can replace an older pending job with a newer one.
+
 ## Intended tags and publication safeguards
 
 The [policy helper](../../tool/ci/image-policy.mjs) and its tests define:
