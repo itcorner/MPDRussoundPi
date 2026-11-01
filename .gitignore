@@ -19,3 +19,4 @@ docker/logs/*
 .env
 docker/secrets/*
 russound_capture.log.bak
+.vscode/settings.json
