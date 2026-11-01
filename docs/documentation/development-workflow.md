@@ -9,9 +9,16 @@
 - `feature/*` and `fix/*` are short-lived branches, normally based on `develop`.
 
 Use pull requests rather than committing or pushing directly to either
-long-lived branch. CI validation is configured, but branch rules requiring it
-and preventing direct pushes are not configured yet. Until Stage 3 is complete,
-the PR-only policy is a working convention, not a server-side restriction.
+long-lived branch. Active GitHub rules require PRs, a successful **CI passed**
+check from GitHub Actions, validation against the current target branch, and
+resolved review conversations on both `main` and `develop`. Direct pushes,
+force pushes and branch deletion are blocked, with no administrator or bot
+bypass. If the target branch changes, update the PR branch and let CI run again.
+
+No approving review is required for the current solo-maintainer setup; you can
+inspect and merge your own PR after checks pass. This does not waive the PR or
+CI requirement. The [branch ruleset](https://github.com/itcorner/MPDRussoundPi/rules/25892348)
+is maintained in GitHub settings, not by the CI workflow.
 
 ## Starting development
 
@@ -53,8 +60,8 @@ The [CI workflow](../../.github/workflows/ci.yml) runs on PRs targeting
   rejection of invalid setup, and offline configuration save/persistence.
 
 The final **CI passed** check fails unless every validation job succeeds.
-Use this stable check name when configuring branch rules; confirm its displayed
-name from an actual run first. Validation jobs have bounded timeouts.
+Branch rules require this verified check name, bound to the GitHub Actions
+integration. Validation jobs have bounded timeouts.
 
 Smoke containers have no external network, published host ports or host mounts.
 An exit trap removes their anonymous configuration, state and log volumes on
@@ -89,6 +96,13 @@ credentials. There are no tag-triggered release workflows yet.
 Version tagging and Docker Hub publication are not enabled yet. Future stable
 tags will identify validated commits on `main`; development images will come
 from `develop`. Creating or merging a PR does not itself authorize a release.
+
+Active rules restrict `v*` tag creation to repository administrators. A separate
+ruleset blocks updating or deleting those tags with no bypass, including for
+administrators. The administrator exception applies only to tag creation, never
+branch protection or tag replacement. Do not create a tag to test these rules.
+These rules protect refs; SemVer and source-branch validation belong to the
+future release pipeline and are not implemented yet.
 
 ## Urgent stable hotfix
 
