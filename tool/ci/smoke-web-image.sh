@@ -99,7 +99,7 @@ for path, marker in (
 editor = json.loads(request("/api/config"))
 require(editor["config_required"] is True, "Empty config must enter setup")
 require(editor["config_writable"] is True, "Setup must allow saving configuration")
-require(json.loads(request("/api/state"))["config_required"] is True, "State must report setup")
+require(json.loads(request("/api/rooms"))["config_required"] is True, "Rooms snapshot must report setup")
 
 try:
     request("/api/config", {"backend": {}, "controllers": []})
@@ -120,6 +120,6 @@ require(saved["config_required"] is False, "Valid offline setup was not accepted
 persisted = json.loads(Path("/config/russound_config.json").read_text())
 require(persisted["backend"]["host"] == "127.0.0.1", "Saved backend was not persisted")
 require(persisted["backend"]["port"] == 9, "Saved backend port was not persisted")
-require(json.loads(request("/api/state"))["config_required"] is False, "State did not leave setup")
+require(json.loads(request("/api/rooms"))["config_required"] is False, "Rooms snapshot did not leave setup")
 print(f"PASS: {sys.argv[1]} health, UI, setup validation, offline save and persistence")
 PY

@@ -103,7 +103,7 @@ class RussoundController:
             )
 
         return {
-            "config": config,
+            "config": {key: value for key, value in config.items() if key != "notes"},
             "config_required": config_required,
             "message": self.config_error if config_required else "",
             "config_writable": self.config_path is not None,
@@ -796,6 +796,8 @@ def _visible_zone_addresses(config: dict[str, Any]) -> set[tuple[int, int]]:
 def _filter_config_for_overview(config: dict[str, Any]) -> dict[str, Any]:
     visible_zone_addresses = _visible_zone_addresses(config)
     filtered_config = dict(config)
+    # notes are file-only documentation; no API response carries them.
+    filtered_config.pop("notes", None)
     filtered_config["zones"] = [
         zone for zone in _config_dict_list(config, "zones")
         if _zone_address(zone) in visible_zone_addresses

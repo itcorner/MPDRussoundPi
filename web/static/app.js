@@ -46,16 +46,15 @@ function inputDisplayName(input) {
   return `${input.display_name || input.name}${unavailable ? " (unavailable)" : ""}`;
 }
 
-// Projects a state payload onto the fields the Rooms page uses (the planned Rooms snapshot allowlist).
+// Maps the server's allowlisted Rooms snapshot (GET /api/rooms and mutation responses) onto the view model.
 function toRoomsView(payload) {
-  const inputs = payload.resolved_inputs || payload.config?.inputs || payload.state?.inputs || [];
   const backendStatus = payload.backend_status || { connected: true, message: "" };
   return {
     configRequired: Boolean(payload.config_required),
     message: payload.message || "",
     backendStatus: { connected: backendStatus.connected !== false, message: backendStatus.message || "" },
-    systemPower: Boolean(payload.state?.system_power),
-    zones: (payload.state?.zones || []).map((zone) => ({
+    systemPower: Boolean(payload.system_power),
+    zones: (payload.zones || []).map((zone) => ({
       controller: zone.controller,
       zone: zone.zone,
       name: zone.name,
@@ -63,14 +62,14 @@ function toRoomsView(payload) {
       source: zone.source,
       volume: zone.volume,
     })),
-    inputs: inputs.filter((input) => input.enabled !== false).map((input) => ({
+    inputs: (payload.inputs || []).map((input) => ({
       id: input.id,
       name: input.name,
       display_name: input.display_name,
       playback_status: input.playback_status,
       playback_message: input.playback_message,
     })),
-    shortcuts: (payload.config?.shortcuts || []).map((shortcut) => ({
+    shortcuts: (payload.shortcuts || []).map((shortcut) => ({
       id: shortcut.id,
       name: shortcut.name,
       source: shortcut.source,
@@ -125,7 +124,7 @@ async function fetchState() {
   stateFetchInFlight = true;
   const revisionAtRequest = zoneUpdateRevision;
   try {
-    const response = await apiFetch("/api/state");
+    const response = await apiFetch("/api/rooms");
     if (!response.ok) {
       return;
     }
@@ -150,16 +149,8 @@ function startStateSync() {
   eventSource = new EventSource("/api/events");
   // Playback availability changes the resolved source names, which are part of the state payload.
   eventSource.addEventListener("playback-change", () => fetchState());
-  eventSource.addEventListener("state-change", (event) => {
-    try {
-      const data = JSON.parse(event.data || "{}");
-      if (data && typeof data === "object" && data.payload && typeof data.payload === "object") {
-        applyPayload(data.payload);
-        return;
-      }
-    } catch {
-      // Fall back to explicit state fetch when event payload cannot be parsed.
-    }
+  eventSource.addEventListener("state-change", () => {
+    // The event is an invalidation with revision only; fetch the Rooms snapshot.
     fetchState();
   });
   // Catch up on changes missed while the stream was reconnecting.
