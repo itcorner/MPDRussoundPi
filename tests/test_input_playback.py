@@ -103,7 +103,11 @@ class InputPlaybackTests(unittest.TestCase):
                 state = client.get("/api/state").json
                 self.assertEqual(state["resolved_inputs"][0]["display_name"], "OE3")
                 self.assertEqual(state["config"]["inputs"][0]["name"], "Radio")
-                self.assertEqual(server._build_state_payload_for_event()["resolved_inputs"], state["resolved_inputs"])
+                rooms = client.get("/api/rooms").json
+                self.assertEqual(rooms["inputs"][0]["display_name"], "OE3")
+                self.assertEqual(rooms["inputs"][0]["name"], "Radio")
+                config_state = client.get("/api/config/state").json
+                self.assertEqual(config_state["resolved_inputs"][0]["display_name"], "OE3")
                 editor = client.get("/api/config").json
                 self.assertEqual(editor["playback_outputs"][0]["output_id"], "stereo_front")
                 self.assertEqual(editor["source_slots"][0]["playback_output"], BINDING)

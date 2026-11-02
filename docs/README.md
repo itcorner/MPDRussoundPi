@@ -59,5 +59,5 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Playback egress hardening](./plans/mpd_done_playback-egress-hardening.md) | Deployed 2026-10-17 |
 | [USB audio recovery](./plans/usb_done_audio-recovery.md) | Deployed 2026-10-16 |
 | [Web UI live-update rerender fix](./plans/web_done_live-update-rerender.md) | Implemented 2026-10-24 |
-| [API payload cleanup](./plans/web_new_api-payload-cleanup.md) | Planned, partly prepared by the live-update fix |
+| [API payload cleanup](./plans/web_open_api-payload-cleanup.md) | Implemented 2026-11-02; removal of the deprecated `/api/state` endpoint remains |
 | [Long-uptime reliability backlog](./plans/web_open_reliability-backlog.md) | 7 of 12 items done |

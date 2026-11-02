@@ -95,8 +95,8 @@ supply deployment context, not proof that the proposed integration already exist
 
 | Existing interface | Current behavior | Reuse / required extension |
 | --- | --- | --- |
-| [Web server](../../web/russound_server.py): `GET /api/state` | Returns a published/cached Russound view; does not wait for a busy hardware lock | Preserve fast reads; add a separately cached playback view |
-| `GET /api/events` | SSE `state-change` with revision **and full view payload**, keepalives and reconnect support | Keep one browser stream; add a distinct playback event without breaking existing clients |
+| [Web server](../../web/russound_server.py): `GET /api/rooms` (and the deprecated `GET /api/state`) | Returns a published/cached Russound view; does not wait for a busy hardware lock | Preserve fast reads; add a separately cached playback view |
+| `GET /api/events` | SSE `state-change` invalidation (`revision`/`epoch` only), keepalives and reconnect support | Keep one browser stream; add a distinct playback event without breaking existing clients |
 | `POST /api/system/power`, `/api/source`, zone power/source/volume, shortcuts | Hardware commands publish state; keypad updates also refresh state | Feed policy from resulting hardware observations, not only HTTP command handlers |
 | [Controller](../../web/russound_controller.py): `backend_health_snapshot()` | Cached `connected`/`message`; at least one responding zone can mark the backend connected | Add per-zone successful-read timestamps and explicit unknown/partial health |
 | [State](../../web/russound_state.py): `sync_system_power()` | `system_power = any(zone.power)` across represented zones | This is aggregate zone demand, not a measurement of controller mains/standby power |
@@ -120,7 +120,8 @@ See the existing [Python backend contract](./mpd-backend-api.md),
 [web API](../../web/API.md) and [headless deployment](./mpd-headless-deployment.md).
 Source is authoritative where old web API prose conflicts: API-token wording
 is obsolete; the current code uses origin/content-type/host protections, not
-user authentication. The current SSE implementation includes the view payload.
+user authentication. Since the API payload cleanup, `state-change` SSE events
+are invalidations without the view payload.
 
 ### 3.2 Constraints that affect the architecture
 
@@ -438,7 +439,8 @@ an agent epoch so reconnecting clients recognize a revision reset.
    Do not capture FFmpeg audio or run calibration on every web refresh.
 6. Web caches playback separately and emits `playback-change` on the existing
    browser SSE connection. The frontend handles it and refetches the playback
-   snapshot; retain existing hardware `state-change` behavior. On every
+   snapshot; hardware `state-change` is likewise an invalidation-only event
+   since the API payload cleanup. On every
    reconnect fetch both snapshots, and retain visible-page polling fallback.
 
 The existing SSE service uses finite-lived connections, worker limits and

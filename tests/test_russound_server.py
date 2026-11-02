@@ -97,7 +97,7 @@ class RussoundServerTests(unittest.TestCase):
                 response = client.get("/api/state")
                 result["http"] = response.status_code
                 result["payload"] = response.json
-            result["event"] = server._build_state_payload_for_event()
+                result["rooms"] = client.get("/api/rooms").json
             read_done.set()
 
         controller.load_state.side_effect = load_state
@@ -110,7 +110,7 @@ class RussoundServerTests(unittest.TestCase):
             self.assertTrue(read_done.wait(1), "State reads waited for hardware polling")
             self.assertEqual(result["http"], 200)
             self.assertEqual(_without_revision(result["payload"]), previous)
-            self.assertEqual(_without_revision(result["event"]), previous)
+            self.assertEqual(result["rooms"]["zones"][0]["volume"], 20)
         finally:
             release_poll.set()
             poller.join(2)
@@ -138,6 +138,57 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertEqual(_without_revision(state), updated)
                 self.assertGreaterEqual(state["revision"], response.json["revision"])
 
+    def test_rooms_and_config_state_snapshots_expose_only_allowlisted_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps({
+                "notes": "admin-only documentation",
+                "backend": {"host": "gateway", "port": 6666},
+                "controllers": [{"id": 1, "zone_count": 6}],
+                "zones": [
+                    {"name": "Living Room", "controller": 1, "zone": 1},
+                    {"name": "Hidden", "controller": 1, "zone": 2, "visible": False},
+                ],
+                "inputs": [{"id": 1, "name": "Radio"}, {"id": 2, "name": "Off-air", "enabled": False}],
+                "shortcuts": [{"id": "party", "name": "Party", "source": 1,
+                               "zone_addresses": [{"controller": 1, "zone": 1}]}],
+            }))
+            server = RussoundHTTPServer(config_path, Path(directory) / "state.json")
+            try:
+                client = server.app.test_client()
+                rooms = client.get("/api/rooms").json
+                self.assertEqual(set(rooms), {
+                    "api_version", "config_required", "message", "backend_status", "system_power",
+                    "zones", "inputs", "shortcuts", "revision", "epoch",
+                })
+                self.assertEqual([zone["name"] for zone in rooms["zones"]], ["Living Room"])
+                self.assertEqual(set(rooms["zones"][0]), {"controller", "zone", "name", "power", "source", "volume"})
+                self.assertEqual([item["id"] for item in rooms["inputs"]], [1])
+                self.assertEqual(set(rooms["inputs"][0]), {"id", "name", "display_name"})
+                self.assertEqual(rooms["inputs"][0]["display_name"], "Radio")
+                self.assertEqual(rooms["shortcuts"], [{"id": "party", "name": "Party", "source": 1}])
+
+                config_state = client.get("/api/config/state").json
+                self.assertEqual(set(config_state), {
+                    "api_version", "config_required", "backend_status", "backend",
+                    "zones", "resolved_inputs", "revision", "epoch",
+                })
+                self.assertEqual(config_state["backend"], {"host": "gateway", "port": 6666})
+                self.assertEqual(set(config_state["zones"][0]), {
+                    "controller", "zone", "name", "bass", "treble", "balance", "loudness", "turn_on_volume",
+                })
+                self.assertEqual(config_state["resolved_inputs"][0]["display_name"], "Radio")
+
+                # notes stay in the config file but never reach any API response.
+                for path in ("/api/rooms", "/api/config/state", "/api/state", "/api/config"):
+                    self.assertNotIn("admin-only documentation", client.get(path).get_data(as_text=True))
+                self.assertIn("admin-only documentation", config_path.read_text())
+
+                response = client.post("/api/system/power", json={"power": False})
+                self.assertEqual(set(response.json), set(rooms))
+            finally:
+                _close_server(server)
+
     def test_state_revision_tracks_published_changes_and_broadcasts(self):
         server = RussoundHTTPServer(None, None)
         server.controller = Mock()
@@ -159,7 +210,8 @@ class RussoundServerTests(unittest.TestCase):
             server.broadcast_state_change()
             event = json.loads(event_queue.get_nowait())
             self.assertEqual(event["revision"], changed["revision"] + 1)
-            self.assertEqual(event["payload"]["revision"], event["revision"])
+            self.assertEqual(event["epoch"], initial["epoch"])
+            self.assertNotIn("payload", event)
             self.assertEqual(client.get("/api/state").json["revision"], event["revision"])
 
             server.controller.handle_zone_setting_change.return_value = first
@@ -289,7 +341,10 @@ class RussoundServerTests(unittest.TestCase):
             self.assertTrue(state.zones[0].power)
             self.assertEqual(state.zones[0].volume, 46)
             self.assertEqual(controller.persist_state.call_count, 2)
-            self.assertEqual(json.loads(event_queue.get_nowait())["payload"]["state"]["zones"][0]["volume"], 46)
+            first_event = json.loads(event_queue.get_nowait())
+            second_event = json.loads(event_queue.get_nowait())
+            self.assertNotIn("payload", first_event)
+            self.assertGreater(second_event["revision"], first_event["revision"])
         finally:
             _close_server(server)
 
@@ -598,7 +653,9 @@ class RussoundServerTests(unittest.TestCase):
             self.assertEqual(server.state_revision, 1)
             event_payload = json.loads(event_queue.get_nowait())
             self.assertEqual(event_payload.get("revision"), 1)
-            self.assertIsInstance(event_payload.get("payload"), dict)
+            self.assertEqual(event_payload.get("epoch"), server.state_epoch)
+            # Invalidation only: clients fetch their own page snapshot.
+            self.assertNotIn("payload", event_payload)
         finally:
             _close_server(server)
 

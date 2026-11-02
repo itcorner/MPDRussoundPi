@@ -244,16 +244,17 @@ function zone(controller, number, extra = {}) {
 function payload({ zones = [zone(1, 1), zone(1, 2)], revision, epoch = "epoch-1", inputs, backend, shortcuts } = {}) {
   return {
     ...(revision === undefined ? {} : { revision, epoch }),
+    api_version: 1,
     config_required: false,
+    message: "",
     backend_status: backend || { connected: true, message: "" },
-    config: {
-      shortcuts: shortcuts || [{ id: "radio", name: "Radio", source: 2 }],
-    },
-    resolved_inputs: inputs || [
-      { id: 1, name: "Tuner", display_name: "Tuner", enabled: true },
-      { id: 2, name: "Pi", display_name: "Kitchen radio", enabled: true, playback_status: "ok" },
+    system_power: true,
+    zones,
+    inputs: inputs || [
+      { id: 1, name: "Tuner", display_name: "Tuner" },
+      { id: 2, name: "Pi", display_name: "Kitchen radio", playback_status: "ok" },
     ],
-    state: { system_power: true, zones },
+    shortcuts: shortcuts || [{ id: "radio", name: "Radio", source: 2 }],
   };
 }
 
@@ -389,8 +390,9 @@ test("rendering the same state again keeps every element and does not touch the 
 test("fields the Rooms page does not show cause no DOM work", async () => {
   const ui = await harness();
   const count = ui.mutationCount();
+  // Extra zone fields and unknown top-level fields are ignored by the view model.
   const changed = payload({ revision: 2, zones: [zone(1, 1, { bass: 7, treble: 3, loudness: true }), zone(1, 2)] });
-  changed.config.notes = ["documentation only"];
+  changed.unknown_extra = ["ignored"];
   ui.apply(changed);
   assert.equal(ui.mutationCount(), count);
 });
@@ -540,10 +542,13 @@ test("the backend warning renders the message as text and is removed when connec
   assert.equal(ui.appShell.querySelector(".backend-warning-banner"), null);
 });
 
-test("state-change events apply their payload in place", async () => {
+test("state-change events refetch the rooms snapshot instead of carrying a payload", async () => {
   const ui = await harness();
   const { volume } = ui.card(0);
-  ui.stream().emit("state-change", { revision: 2, payload: payload({ revision: 2, zones: [zone(1, 1, { volume: 58 }), zone(1, 2)] }) });
+  ui.setStateResponse(payload({ revision: 2, zones: [zone(1, 1, { volume: 58 }), zone(1, 2)] }));
+  ui.stream().emit("state-change", { revision: 2, epoch: "epoch-1" });
+  await settle();
+  assert.equal(ui.requests.at(-1).url, "/api/rooms");
   assert.equal(ui.card(0).volume, volume);
   assert.equal(volume.value, "58");
 });
@@ -557,13 +562,13 @@ test("playback events refresh source names as text without rebuilding cards or l
     revision: 1,
     zones: [zone(1, 1, { source: 2 }), zone(1, 2)],
     inputs: [
-      { id: 1, name: "Tuner", display_name: "Tuner", enabled: true },
-      { id: 2, name: "Pi", display_name: name, enabled: true, playback_status: "ok", playback_message: "Streaming" },
+      { id: 1, name: "Tuner", display_name: "Tuner" },
+      { id: 2, name: "Pi", display_name: name, playback_status: "ok", playback_message: "Streaming" },
     ],
   }));
   ui.stream().emit("playback-change", { event: "playback-change" });
   await settle();
-  assert.equal(ui.requests.at(-1).url, "/api/state");
+  assert.equal(ui.requests.at(-1).url, "/api/rooms");
   assert.equal(ui.card(0).element, element);
   assert.equal(ui.card(0).select, select);
   assert.equal(select.value, "2");

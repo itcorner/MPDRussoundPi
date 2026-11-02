@@ -280,15 +280,15 @@ async function refreshBackendStatus() {
   if (statusInFlight || document.hidden) return;
   statusInFlight = true;
   try {
-    const response = await apiFetch("/api/state");
+    const response = await apiFetch("/api/config/state");
     if (!response.ok) throw new Error("Status unavailable");
     const payload = await response.json();
-    renderSoundControls(payload.state?.zones || []);
+    renderSoundControls(payload.zones || []);
     if (configPayload) {
       configPayload.resolved_inputs = payload.resolved_inputs || [];
       for (const row of configSources.querySelectorAll(".config-source-row")) updatePlaybackPreview(row);
     }
-    const backend = payload.config?.backend || {};
+    const backend = payload.backend || {};
     const overrides = configPayload?.backend_overrides || {};
     const hasOverrides = Boolean(overrides.RUSSOUND_BACKEND_HOST || overrides.RUSSOUND_BACKEND_PORT);
     const host = overrides.RUSSOUND_BACKEND_HOST || backend.host;

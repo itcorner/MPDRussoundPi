@@ -108,7 +108,8 @@ flowchart TB
 | [input_playback.py](../../web/input_playback.py) | Resolves Russound input names from the station currently selected on the linked playback output. |
 
 The frontend is plain JavaScript without a build step. Each page loads its
-data through `GET /api/state`, `/api/playback`, `/api/config` or `/api/status/*`,
+data through `GET /api/rooms`, `/api/config/state`, `/api/playback`,
+`/api/config` or `/api/status/*`,
 opens one `EventSource` on `/api/events` while visible, and closes it when hidden.
 The HTTP contract is documented in [web/API.md](../../web/API.md).
 
@@ -130,21 +131,24 @@ sequenceDiagram
     participant B as Browser
     participant S as Web server
     participant C as Controller
-    B->>S: GET /api/state
+    B->>S: GET /api/rooms
     S->>C: build_view_payload()
-    S-->>B: payload + revision + epoch
+    S-->>B: Rooms snapshot + revision + epoch
     B->>S: GET /api/events (SSE)
     S->>S: request full poll and zone refresh
     loop on every state change
-        S-->>B: message {revision, payload}
+        S-->>B: message {revision, epoch}
+        B->>S: GET /api/rooms or /api/config/state
     end
     loop on playback change (coalesced)
         S-->>B: event playback-change {revision}
-        B->>S: GET /api/playback or /api/state
+        B->>S: GET /api/playback or /api/rooms
     end
 ```
 
-- **State events** carry the complete view payload. Each broadcast gets a new
+- **State events** are invalidations carrying only `revision` and `epoch`;
+  each page fetches its own allowlisted snapshot (`/api/rooms` for Rooms,
+  `/api/config/state` for Configuration). Each broadcast gets a new
   `revision`, and `epoch` changes with every server start. Clients drop a
   payload only if its revision is lower than the last one they applied in the
   same epoch.
@@ -174,7 +178,7 @@ sequenceDiagram
     R->>H: RNET frame via ser2net
     C->>C: persist russound_state.json
     C-->>S: view payload
-    S-->>B: payload + new revision
+    S-->>B: Rooms snapshot + new revision
     S-->>B: SSE broadcast to all clients
 ```
 
