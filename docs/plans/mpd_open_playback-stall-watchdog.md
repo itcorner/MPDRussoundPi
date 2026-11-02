@@ -275,8 +275,12 @@ Deployed as an explicitly staged local deployment: the four changed files
 `mpdsetup.py`) were copied onto the Pi's clone, units regenerated with
 `mpdsetup.py --install` (verified `TimeoutStopSec=120` in
 `mpd_stereo_front.service`), instances restarted, `mpdsupervisor.py --once`
-passed and the supervisor was restarted. A normal git deployment must follow
-once the branch is merged.
+passed and the supervisor was restarted. The staging was converted into a
+normal git deployment the same evening: PR #9 was merged into `develop`
+(`ebd529d`) after CI passed, every staged file on the Pi was verified
+byte-identical to the merged tree, and the Pi clone was switched to a clean
+checkout of `origin/develop` at that commit with services untouched and
+healthy afterwards.
 
 **Incidental outage found during deployment:** the C-Media card had been off
 the bus since 10:15 (`device descriptor read/64, error -32`, `device not
