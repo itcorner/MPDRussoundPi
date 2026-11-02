@@ -89,6 +89,44 @@ class OutputConfigurationTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.parse()
 
+    def test_watchdog_defaults_apply_without_section(self):
+        config = self.parse()
+        self.assertEqual(config.watchdog, outputconfig.WatchdogConfig())
+        self.assertTrue(config.watchdog.enabled)
+        self.assertEqual(config.watchdog.stall_threshold_s, 120.0)
+
+    def test_watchdog_overrides_merge_with_defaults(self):
+        self.raw["watchdog"] = {"enabled": False, "stall_threshold_s": 60, "restart_limit": 5}
+        config = self.parse()
+        self.assertFalse(config.watchdog.enabled)
+        self.assertEqual(config.watchdog.stall_threshold_s, 60.0)
+        self.assertEqual(config.watchdog.restart_limit, 5)
+        self.assertEqual(config.watchdog.probe_interval_s, 10.0)
+
+    def test_watchdog_unknown_fields_rejected(self):
+        self.raw["watchdog"] = {"stall_seconds": 60}
+        with self.assertRaisesRegex(ValueError, "unsupported watchdog fields"):
+            self.parse()
+
+    def test_watchdog_invalid_values_rejected(self):
+        for field, value in (("enabled", 1), ("unresponsive_probes", 0),
+                             ("unresponsive_probes", True), ("restart_limit", 101),
+                             ("restart_limit", 2.0), ("probe_interval_s", 0),
+                             ("stall_threshold_s", float("nan")), ("restart_window_s", -1),
+                             ("restart_grace_s", -1), ("escalation_window_s", "3600"),
+                             ("probe_interval_s", True), ("stall_threshold_s", 86401)):
+            with self.subTest(field=field, value=value):
+                self.raw["watchdog"] = {field: value}
+                with self.assertRaises(ValueError):
+                    self.parse()
+        self.raw["watchdog"] = []
+        with self.assertRaisesRegex(ValueError, "watchdog must be an object"):
+            self.parse()
+
+    def test_watchdog_grace_may_be_zero(self):
+        self.raw["watchdog"] = {"restart_grace_s": 0}
+        self.assertEqual(self.parse().watchdog.restart_grace_s, 0.0)
+
 
 class StationTests(unittest.TestCase):
     def test_url_roundtrip_and_public_view_never_exposes_url(self):
