@@ -4,7 +4,8 @@ Status: in progress (recorded 2026-10-29). The stall watchdog (item 1) is
 implemented per the
 [implementation proposal](#implementation-proposal-stall-watchdog) and
 [live-validated on the Pi on 2026-11-02](#live-validation-2026-11-02).
-Items 2–4 are open.
+Item 2 is deferred; the premise of item 3 was corrected on 2026-11-02
+(the VIA hub is the Pi 4's onboard hub); items 3–4 are open.
 
 ## Incident (2026-10-29)
 
@@ -79,6 +80,8 @@ other outputs.
 
 ### 2. Optional: signal-level check
 
+Deferred on 2026-11-02; revisit only if item 1 proves insufficient.
+
 Read the sink monitor peak (as done manually during the incident) to detect
 silent output while MPD reports progress. Only if item 1 proves insufficient;
 needs a quiet-content threshold so silence in a stream is not treated as a
@@ -86,10 +89,54 @@ fault.
 
 ### 3. USB topology (hardware, no code)
 
-Connect the C-Media card directly to a Pi USB port instead of through the VIA
-hub, or use a powered hub, and keep additional peripherals off that branch.
-Re-evaluate the kernel log for `Not enough bandwidth` and USB disconnects
-over at least one week afterwards.
+Original assumption: connect the C-Media card directly to a Pi USB port
+instead of through the VIA hub, or use a powered hub, and keep additional
+peripherals off that branch. Re-evaluate the kernel log for `Not enough
+bandwidth` and USB disconnects over at least one week afterwards.
+
+**Premise corrected (2026-11-02):** the card already is connected directly to
+the Pi. The host is a Raspberry Pi 4 Model B, and the `2109:3431` VIA Labs
+hub from the incident log is the Pi 4's **onboard** hub inside its VL805 USB
+controller — every USB-A socket (USB 2.0 and 3.0 alike) leads through it, so
+no better-suited port exists; a 12 Mbit/s device always enumerates behind
+this hub. The only electrically separate port is the USB-C connector (DWC2
+controller), which is the power input and not practical.
+
+Measured facts (2026-11-02, remote inspection):
+
+- The onboard hub reports **Single TT** (`bDeviceProtocol 1`): all full- and
+  low-speed devices on any Pi port share one transaction-translator
+  bandwidth budget with the full-speed audio card. This matches the
+  2026-10-29 failures coinciding with added keyboard/mouse receivers.
+  Operating rule: never attach full-/low-speed peripherals directly to the
+  Pi while audio plays; use a separate external multi-TT hub for them.
+- Power is clean: zero over-current kernel events, `throttled=0x0`.
+- The 1294 `Not enough bandwidth` messages in the current boot cluster only
+  around the card's own enumeration storms (2026-10-30, 2026-11-02 10:18)
+  with no peripherals attached — a symptom of failed re-enumeration (stale
+  TT reservations), not of actual contention.
+
+Revised assessment: the suspect is the card (CM106 clone) or its
+cable/connector wedging, not the topology. On 2026-11-02 the card was off
+the bus from 10:15 (`error -32`/`-71`, kernel port power cycle
+unsuccessful) and recovered remotely without a reboot by rebinding the
+onboard hub: `echo 1-1 > /sys/bus/usb/drivers/usb/unbind`, then `bind`.
+
+Revised options, by value:
+
+1. Status quo plus discipline: card alone on the Pi, peripherals only via an
+   external multi-TT hub when needed; stall watchdog plus the proven hub
+   rebind as remote recovery. In place since 2026-11-02.
+2. Powered external **multi-TT** hub for the card — the inverse of the
+   original assumption, but on a Pi 4 it gives the card its own TT and
+   isolated power; the hub itself becomes a new failure mode.
+3. Replace the card with a high-speed (480 Mbit/s) USB audio interface,
+   eliminating the TT path entirely; the structural fix if wedges recur.
+4. Possible software follow-up: wire the hub rebind into the watchdog's
+   escalation path, since it recovers this failure class without a reboot.
+
+Keep the original validation: re-evaluate the kernel log for `Not enough
+bandwidth` and USB disconnects over at least one week after any change.
 
 ### 4. Management reachability
 
