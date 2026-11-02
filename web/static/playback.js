@@ -865,49 +865,62 @@ function renderPlayback(playback) {
     for (const output of outputs) {
       const playbackProbe = output.playback || {};
       const controlState = outputControlState(agent, output);
-      const { card, config } = outputCardEntry(controlState);
-      // Replace the card content around the Config button; detaching the button would drop focus and taps.
-      for (const child of Array.from(card.children)) {
-        if (child !== config) child.remove();
-      }
-      const content = document.createElement("div");
+      const entry = outputCardEntry(controlState);
+      const { card, config } = entry;
       const observed = playbackProbe.value || playbackProbe.last_known?.value || {};
       const nowPlaying = observed.now_playing || {};
+      const track = [nowPlaying.artist, nowPlaying.title].filter((value) => typeof value === "string" && value).join(" — ");
+      // An unchanged scrolling title keeps its element; detaching or rebuilding it would restart the scroll animation.
+      const keepTrack = Boolean(track) && entry.trackLine != null && entry.trackText === track;
+      // Replace the card content around the Config button and the unchanged track line; detaching the button would drop focus and taps.
+      for (const child of Array.from(card.children)) {
+        if (child !== config && !(keepTrack && child === entry.trackLine)) child.remove();
+      }
+      const before = document.createElement("div");
       const stationId = output.selection?.provider === "tunein" ? output.selection.station_id : null;
       const logo = stationLogo(card.dataset.outputKey, stationId);
-      if (logo) content.appendChild(logo);
+      if (logo) before.appendChild(logo);
       const title = document.createElement("h3");
       title.textContent = `${agent.agent_id} · ${output.label}`;
-      content.appendChild(title);
+      before.appendChild(title);
 
       const station = [output.selection?.station_name, nowPlaying.station]
         .find((value) => typeof value === "string" && value);
       const playbackState = observed.state || playbackProbe.status || "unknown";
       const stationText = station || (output.control?.has_station === false ? "No station" : "");
-      appendPlaybackText(content, "playback-state", `${playbackState}${stationText ? ` · ${stationText}` : ""}`);
-      const track = [nowPlaying.artist, nowPlaying.title].filter((value) => typeof value === "string" && value).join(" — ");
-      if (track) {
+      appendPlaybackText(before, "playback-state", `${playbackState}${stationText ? ` · ${stationText}` : ""}`);
+      const beforeAnchor = keepTrack ? entry.trackLine : config;
+      for (const child of Array.from(before.children)) card.insertBefore(child, beforeAnchor);
+      if (track && !keepTrack) {
         const line = document.createElement("p");
         line.className = "playback-track";
         line.title = track;
         const text = document.createElement("span");
         text.textContent = track;
         line.appendChild(text);
-        content.appendChild(line);
-        trackResizeObserver.observe(line);
-        trackResizeObserver.observe(text);
+        card.insertBefore(line, config);
+        entry.trackLine = line;
+        entry.trackText = track;
+      } else if (!track) {
+        entry.trackLine = null;
+        entry.trackText = null;
       }
+      if (entry.trackLine) {
+        trackResizeObserver.observe(entry.trackLine);
+        trackResizeObserver.observe(entry.trackLine.firstChild);
+      }
+      const after = document.createElement("div");
       if (typeof nowPlaying.album === "string" && nowPlaying.album) {
-        appendPlaybackText(content, "playback-meta", nowPlaying.album);
+        appendPlaybackText(after, "playback-meta", nowPlaying.album);
       }
       if (typeof output.gain?.configured_db === "number" && Number.isFinite(output.gain.configured_db)) {
-        appendPlaybackText(content, "playback-meta", `Configured gain: ${output.gain.configured_db.toFixed(1)} dB`);
+        appendPlaybackText(after, "playback-meta", `Configured gain: ${output.gain.configured_db.toFixed(1)} dB`);
       }
-      appendPlaybackText(content, "playback-meta playback-freshness", playbackFreshness(playbackProbe, agent));
+      appendPlaybackText(after, "playback-meta playback-freshness", playbackFreshness(playbackProbe, agent));
       if (playbackProbe.error?.message) {
-        appendPlaybackText(content, "playback-error", playbackProbe.error.message);
+        appendPlaybackText(after, "playback-error", playbackProbe.error.message);
       }
-      for (const child of Array.from(content.children)) card.insertBefore(child, config);
+      for (const child of Array.from(after.children)) card.insertBefore(child, config);
       config.setAttribute("aria-label", `Config ${agent.agent_id}, ${output.label}, ${output.id}`);
       updateOutputDialog(controlState);
       card.setAttribute("aria-label", `${agent.agent_id}, ${output.label}, ${playbackState}`);

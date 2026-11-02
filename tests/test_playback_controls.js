@@ -1043,6 +1043,35 @@ test("output cards and their Config button survive snapshot changes", async () =
   assert.equal(h.ids.playbackOutputs.children.length, 0);
 });
 
+test("an unchanged scrolling title keeps its element and position across snapshot changes", async () => {
+  const h = harness();
+  await settle();
+  const output = h.snapshot.agents[0].snapshot.outputs[0];
+  output.playback.value = { state: "play", now_playing: { artist: "Artist", title: "Long song" } };
+  h.render();
+  const card = h.ids.playbackOutputs.children[0];
+  const line = card.querySelector(".playback-track");
+  const text = line.firstChild;
+  // An unrelated change re-renders the card; the title element must survive so the scroll animation continues.
+  output.playback.error = { message: "MPD observation failed." };
+  h.render();
+  assert.equal(card.querySelector(".playback-track"), line);
+  assert.equal(card.querySelector(".playback-track").firstChild, text);
+  const classNames = card.children.map((child) => child.className);
+  assert.ok(classNames.indexOf("playback-state") < classNames.indexOf("playback-track"));
+  assert.ok(classNames.indexOf("playback-track") < classNames.indexOf("playback-meta playback-freshness"));
+  assert.equal(card.querySelector(".playback-error").textContent, "MPD observation failed.");
+  // A changed title rebuilds the line so the scroll starts from the beginning.
+  output.playback.value = { state: "play", now_playing: { artist: "Artist", title: "Other song" } };
+  h.render();
+  assert.notEqual(card.querySelector(".playback-track"), line);
+  assert.equal(card.querySelector(".playback-track").title, "Artist — Other song");
+  // Dropping the title removes the line entirely.
+  output.playback.value = { state: "play", now_playing: {} };
+  h.render();
+  assert.equal(card.querySelector(".playback-track"), undefined);
+});
+
 test("dialog favorites and station results keep their buttons when only availability changes", async () => {
   const snapshot = favoritesFixture();
   const h = harness(snapshot);
