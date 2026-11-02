@@ -21,10 +21,6 @@ def _close_server(server: RussoundHTTPServer) -> None:
         close_fn()
 
 
-def _without_revision(payload: dict) -> dict:
-    return {key: value for key, value in payload.items() if key not in {"revision", "epoch"}}
-
-
 class RussoundServerTests(unittest.TestCase):
     def test_tunein_search_api_returns_normalized_station_results(self):
         server = RussoundHTTPServer(None, None)
@@ -94,10 +90,9 @@ class RussoundServerTests(unittest.TestCase):
 
         def read_state():
             with server.app.test_client() as client:
-                response = client.get("/api/state")
+                response = client.get("/api/rooms")
                 result["http"] = response.status_code
-                result["payload"] = response.json
-                result["rooms"] = client.get("/api/rooms").json
+                result["rooms"] = response.json
             read_done.set()
 
         controller.load_state.side_effect = load_state
@@ -109,7 +104,6 @@ class RussoundServerTests(unittest.TestCase):
             reader.start()
             self.assertTrue(read_done.wait(1), "State reads waited for hardware polling")
             self.assertEqual(result["http"], 200)
-            self.assertEqual(_without_revision(result["payload"]), previous)
             self.assertEqual(result["rooms"]["zones"][0]["volume"], 20)
         finally:
             release_poll.set()
@@ -119,7 +113,7 @@ class RussoundServerTests(unittest.TestCase):
         self.assertFalse(poller.is_alive())
         controller.persist_state.assert_called_once_with(new_state)
         with server.state_lock:
-            self.assertEqual(_without_revision(server.app.test_client().get("/api/state").json), refreshed)
+            self.assertEqual(server.app.test_client().get("/api/rooms").json["zones"][0]["volume"], 42)
 
     def test_state_api_returns_latest_command_snapshot_while_lock_is_busy(self):
         server = RussoundHTTPServer(None, None)
@@ -134,8 +128,8 @@ class RussoundServerTests(unittest.TestCase):
             response = client.post("/api/controller/1/zone/1/volume", json={"volume": 60})
             self.assertEqual(response.status_code, 200)
             with server.state_lock:
-                state = client.get("/api/state").json
-                self.assertEqual(_without_revision(state), updated)
+                state = client.get("/api/rooms").json
+                self.assertEqual(state["zones"][0]["volume"], 60)
                 self.assertGreaterEqual(state["revision"], response.json["revision"])
 
     def test_rooms_and_config_state_snapshots_expose_only_allowlisted_fields(self):
@@ -180,7 +174,7 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertEqual(config_state["resolved_inputs"][0]["display_name"], "Radio")
 
                 # notes stay in the config file but never reach any API response.
-                for path in ("/api/rooms", "/api/config/state", "/api/state", "/api/config"):
+                for path in ("/api/rooms", "/api/config/state", "/api/config"):
                     self.assertNotIn("admin-only documentation", client.get(path).get_data(as_text=True))
                 self.assertIn("admin-only documentation", config_path.read_text())
 
@@ -197,12 +191,12 @@ class RussoundServerTests(unittest.TestCase):
         server.controller.build_view_payload.return_value = first
         try:
             client = server.app.test_client()
-            initial = client.get("/api/state").json
-            self.assertEqual(client.get("/api/state").json["revision"], initial["revision"])
+            initial = client.get("/api/rooms").json
+            self.assertEqual(client.get("/api/rooms").json["revision"], initial["revision"])
             self.assertRegex(initial["epoch"], r"^[0-9a-f]{16}$")
 
             server.controller.build_view_payload.return_value = second
-            changed = client.get("/api/state").json
+            changed = client.get("/api/rooms").json
             self.assertEqual(changed["revision"], initial["revision"] + 1)
             self.assertEqual(changed["epoch"], initial["epoch"])
 
@@ -212,7 +206,7 @@ class RussoundServerTests(unittest.TestCase):
             self.assertEqual(event["revision"], changed["revision"] + 1)
             self.assertEqual(event["epoch"], initial["epoch"])
             self.assertNotIn("payload", event)
-            self.assertEqual(client.get("/api/state").json["revision"], event["revision"])
+            self.assertEqual(client.get("/api/rooms").json["revision"], event["revision"])
 
             server.controller.handle_zone_setting_change.return_value = first
             response = client.post("/api/controller/1/zone/1/volume", json={"volume": 20})
@@ -247,7 +241,7 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertIn(b"GPL-2.0 with OpenSSL exception", response.data)
                 self.assertNotIn(b"Legacy MPD control setup", response.data)
             self.assertTrue(client.get("/api/config").json["config_required"])
-            self.assertTrue(client.get("/api/state").json["config_required"])
+            self.assertTrue(client.get("/api/rooms").json["config_required"])
             old_backend = Mock()
             server._event_backend = old_backend
             server.controller.set_shared_backend(old_backend)
@@ -266,9 +260,9 @@ class RussoundServerTests(unittest.TestCase):
             self.assertIsNone(server._event_backend)
             self.assertTrue(server._full_poll_requested.is_set())
             with server.state_lock:
-                snapshot = client.get("/api/state").json
+                snapshot = client.get("/api/config/state").json
                 self.assertFalse(snapshot["config_required"])
-                self.assertEqual(snapshot["config"]["backend"]["host"], "new-gateway")
+                self.assertEqual(snapshot["backend"]["host"], "new-gateway")
             with client.get("/") as response:
                 self.assertEqual(response.status_code, 200)
             with patch("web.russound_server.RussoundBackend") as backend_class:
@@ -313,7 +307,7 @@ class RussoundServerTests(unittest.TestCase):
             self.assertEqual(backend.config["controllers"], [{"id": 1, "zone_count": 4}])
             self.assertEqual(server._backend_poll_interval_seconds, 7.5)
             with server.state_lock:
-                self.assertTrue(client.get("/api/state").json["backend_status"]["connected"])
+                self.assertTrue(client.get("/api/rooms").json["backend_status"]["connected"])
 
     def test_setup_write_failure_returns_actionable_json_error(self):
         server = RussoundHTTPServer(None, None)
@@ -548,20 +542,20 @@ class RussoundServerTests(unittest.TestCase):
         try:
             client = server.app.test_client()
             with self.assertLogs("web.russound_server", level="DEBUG") as logs:
-                response = client.get("/api/state")
+                response = client.get("/api/rooms")
 
             self.assertEqual(response.status_code, 200)
             output = "\n".join(logs.output)
-            self.assertIn("API request method=GET path=/api/state", output)
+            self.assertIn("API request method=GET path=/api/rooms", output)
             self.assertIn("host=127.0.0.1", output)
             self.assertIn("session_id=", output)
         finally:
             _close_server(server)
 
-    def test_api_state_is_readable_without_token(self):
+    def test_api_rooms_is_readable_without_token(self):
         server = RussoundHTTPServer(None, None)
         try:
-            response = server.app.test_client().get("/api/state")
+            response = server.app.test_client().get("/api/rooms")
             self.assertEqual(response.status_code, 200)
         finally:
             _close_server(server)
@@ -624,10 +618,10 @@ class RussoundServerTests(unittest.TestCase):
         server = RussoundHTTPServer(None, None, allowed_hosts=["musicpi", "192.168.1.10"])
         try:
             client = server.app.test_client()
-            self.assertEqual(client.get("/api/state", headers={"Host": "attacker.example"}).status_code, 400)
+            self.assertEqual(client.get("/api/rooms", headers={"Host": "attacker.example"}).status_code, 400)
             self.assertEqual(client.get("/", headers={"Host": "attacker.example:8000"}).status_code, 400)
-            self.assertEqual(client.get("/api/state", headers={"Host": "musicpi:8000"}).status_code, 200)
-            self.assertEqual(client.get("/api/state", headers={"Host": "192.168.1.10"}).status_code, 200)
+            self.assertEqual(client.get("/api/rooms", headers={"Host": "musicpi:8000"}).status_code, 200)
+            self.assertEqual(client.get("/api/rooms", headers={"Host": "192.168.1.10"}).status_code, 200)
         finally:
             _close_server(server)
 

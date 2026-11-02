@@ -220,7 +220,6 @@ Common endpoints:
 - `GET /api/rooms`
 - `GET /api/config`
 - `GET /api/config/state`
-- `GET /api/state` (deprecated full view)
 - `GET /api/status`
 - `GET /api/events` (SSE)
 - `GET /api/playback` (optional, read-only MPD inventory)

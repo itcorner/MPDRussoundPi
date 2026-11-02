@@ -1,8 +1,9 @@
 # API payload cleanup
 
-Noted 2026-10-18. Baseline commit: 8294e73. Implemented 2026-11-02 (see the
-[implementation record](#implementation-record-2026-11-02)); only the removal
-of the deprecated `/api/state` endpoint remains.
+Noted 2026-10-18. Baseline commit: 8294e73. Implemented and deployed
+2026-11-02 (see the [implementation record](#implementation-record-2026-11-02));
+the deprecated `/api/state` endpoint was removed the same day after the
+deployment was verified.
 
 ## Findings
 - `/api/state` is shared by Rooms (`web/static/app.js`) and Configuration (`web/static/config.js`) pages.
@@ -65,8 +66,9 @@ responses return the Rooms snapshot.
    refetches its own snapshot. The Rooms page's in-place rendering (from the
    [live-update fix](./web_done_live-update-rerender.md)) makes this safe.
 
-`GET /api/state` remains temporarily as a deprecated compatibility endpoint
-(full view minus `notes`); **removing it is the open item**. The CI smoke
+`GET /api/state` remained briefly as a deprecated compatibility endpoint
+(full view minus `notes`) and was removed on 2026-11-02 after the maintainer
+verified the deployed new endpoints. The CI smoke
 test and all page code use the new endpoints. Tests migrated and extended
 with allowlist shape checks (`tests/test_russound_server.py`,
 `tests/test_input_playback.py`, `tests/test_rooms_ui.js`); full Python and

@@ -100,9 +100,6 @@ class InputPlaybackTests(unittest.TestCase):
             client = server.app.test_client()
             try:
                 before = path.read_bytes()
-                state = client.get("/api/state").json
-                self.assertEqual(state["resolved_inputs"][0]["display_name"], "OE3")
-                self.assertEqual(state["config"]["inputs"][0]["name"], "Radio")
                 rooms = client.get("/api/rooms").json
                 self.assertEqual(rooms["inputs"][0]["display_name"], "OE3")
                 self.assertEqual(rooms["inputs"][0]["name"], "Radio")
@@ -113,7 +110,7 @@ class InputPlaybackTests(unittest.TestCase):
                 self.assertEqual(editor["source_slots"][0]["playback_output"], BINDING)
                 updated = playback(selection={"key": "tunein:s25744", "label": "Radio 88.6"})
                 agent.snapshot.return_value = {**updated, "revision": 2}
-                self.assertEqual(client.get("/api/state").json["resolved_inputs"][0]["display_name"], "Radio 88.6")
+                self.assertEqual(client.get("/api/rooms").json["inputs"][0]["display_name"], "Radio 88.6")
                 self.assertEqual(path.read_bytes(), before)
                 with patch.object(server, "broadcast_state_change"):
                     saved = client.post("/api/config", json={"zone_slots": [], "source_slots": editor["source_slots"]})

@@ -319,14 +319,6 @@ as `/api/rooms`.
   `treble`, `balance`, `loudness`, `turn_on_volume`), `resolved_inputs`,
   `revision` and `epoch`.
 
-### GET /api/state (deprecated)
-
-Returns the previous full view payload (`config`, `config_required`, `state`)
-minus `notes`. Deprecated: pages use `/api/rooms` and `/api/config/state`;
-this endpoint remains temporarily for compatibility and will be removed.
-
-- Response type: JSON.
-
 ### GET /api/events
 
 Server-Sent Events stream used for multi-client synchronization.
