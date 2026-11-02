@@ -139,6 +139,7 @@ class MPDSetupTests(unittest.TestCase):
         self.assertIn(mpdsetup.systemd_quote(str(Path("/home/user/audio config.json").resolve())), unit)
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("RestartSec=5", unit)
+        self.assertIn("TimeoutStopSec=120", unit)
         self.assertIn("StartLimitBurst=10", unit)
         self.assertIn("mpdsupervisor.py", supervisor)
         self.assertEqual(available, ["mpd_stereo_front.service"])

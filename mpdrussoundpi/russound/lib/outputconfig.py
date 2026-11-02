@@ -1,7 +1,8 @@
-"""Parse the admin-owned config.json: audio hardware, MPD outputs and seed stations."""
+"""Parse the admin-owned config.json: audio hardware, MPD outputs, seed stations and watchdog."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import json
+import math
 from typing import cast
 
 from lib.audioidentity import validate_hardware_devices
@@ -12,6 +13,19 @@ from lib.streamgain import validate_gain_db
 
 OLD_FORMAT_MESSAGE = "old config format; see docs/documentation/mpd-headless-deployment.md"
 OUTPUT_FIELDS = {"id", "label", "port", "sink", "default_station", "default_gain_db"}
+
+
+@dataclass(frozen=True)
+class WatchdogConfig:
+    """Stall watchdog thresholds; every config.json field is optional."""
+    enabled: bool = True
+    probe_interval_s: float = 10.0
+    stall_threshold_s: float = 120.0
+    unresponsive_probes: int = 3
+    restart_limit: int = 3
+    restart_window_s: float = 1800.0
+    restart_grace_s: float = 90.0
+    escalation_window_s: float = 3600.0
 
 
 @dataclass(frozen=True)
@@ -29,6 +43,7 @@ class Configuration:
     raw: dict[str, object]
     outputs: tuple[OutputConfig, ...]
     stations: tuple[Station, ...]
+    watchdog: WatchdogConfig = WatchdogConfig()
 
     def output(self, identity: str) -> OutputConfig:
         for output in self.outputs:
@@ -56,6 +71,36 @@ def _sinks(config: dict[str, object]) -> set[str]:
                 raise ValueError("Invalid sink name")
             sinks.add(name)
     return sinks
+
+
+def _watchdog(config: dict[str, object]) -> WatchdogConfig:
+    entry = config.get("watchdog")
+    if entry is None:
+        return WatchdogConfig()
+    if not isinstance(entry, dict):
+        raise ValueError("watchdog must be an object")
+    item = cast(dict[str, object], entry)
+    known = {field.name for field in fields(WatchdogConfig)}
+    unknown = set(item) - known
+    if unknown:
+        raise ValueError(f"unsupported watchdog fields {sorted(unknown)}")
+    values: dict[str, object] = {}
+    for name, value in item.items():
+        if name == "enabled":
+            if not isinstance(value, bool):
+                raise ValueError("watchdog enabled must be a boolean")
+        elif name in ("unresponsive_probes", "restart_limit"):
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+                raise ValueError(f"watchdog {name} must be an integer between 1 and 100")
+        else:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"watchdog {name} must be a finite number of seconds")
+            minimum = 0.0 if name == "restart_grace_s" else 1.0
+            if not minimum <= value <= 86400:
+                raise ValueError(f"watchdog {name} must be between {minimum:g} and 86400 seconds")
+            value = float(value)
+        values[name] = value
+    return WatchdogConfig(**values)  # type: ignore[arg-type]
 
 
 def parse_configuration(raw: bytes) -> Configuration:
@@ -102,4 +147,4 @@ def parse_configuration(raw: bytes) -> Configuration:
         values = [getattr(output, field) for output in outputs]
         if len(set(values)) != len(values):
             raise ValueError(f"Output {field} values must be unique")
-    return Configuration(config, tuple(outputs), stations)
+    return Configuration(config, tuple(outputs), stations, _watchdog(config))

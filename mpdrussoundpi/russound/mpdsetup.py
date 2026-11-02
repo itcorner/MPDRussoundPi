@@ -114,7 +114,10 @@ def create_mpd_systemd_service(mpd_instance: MPDInstance, config_path: str = "co
         ))
         f.write(f"[Service]\nExecStartPre={command}\n")
         f.write(f"ExecStart=/usr/bin/mpd --no-daemon {systemd_quote(config_file)}\n"
-                "Restart=on-failure\nRestartSec=5\nTimeoutStartSec=40\n")
+                "Restart=on-failure\nRestartSec=5\nTimeoutStartSec=40\n"
+                # A hung instance is killed after a bounded stop phase so the watchdog
+                # restart completes deterministically (stall watchdog plan).
+                "TimeoutStopSec=120\n")
         #f.write("LimitRTPRIO=50\nLimitRTTIME=-1\nControlGroup=cpu:/mpd\nControlGroupAttribute=cpu.rt_runtime_us 500000\n")
         #f.write("\n[Install]\nWantedBy=default.target\n")
     print(f"Created systemd service: {service_file}")

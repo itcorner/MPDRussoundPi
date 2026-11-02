@@ -54,7 +54,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; S10 automation and S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
 | [User-triggered Docker image updates](./plans/general_idea_user-triggered-image-updates.md) | Idea, depends on versioned deployment images; not scheduled |
-| [MPD playback stall watchdog and USB audio stability](./plans/mpd_new_playback-stall-watchdog.md) | Planned after the 2026-10-29 outage; not started |
+| [MPD playback stall watchdog and USB audio stability](./plans/mpd_open_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; USB topology and management reachability items remain |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |
 | [Playback egress hardening](./plans/mpd_done_playback-egress-hardening.md) | Deployed 2026-10-17 |
 | [USB audio recovery](./plans/usb_done_audio-recovery.md) | Deployed 2026-10-16 |
