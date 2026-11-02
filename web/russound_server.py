@@ -265,11 +265,6 @@ class RussoundHTTPServer:
         def config_page():
             return send_from_directory(WEB_STATIC, "config.html")
 
-        @app.get("/api/state")
-        def api_state():
-            # Deprecated full view; Rooms and Configuration use /api/rooms and /api/config/state.
-            return jsonify(self._read_state_payload())
-
         @app.get("/api/rooms")
         def api_rooms():
             return jsonify(self._rooms_view(self._read_state_payload()))

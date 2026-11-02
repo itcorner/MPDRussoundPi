@@ -95,7 +95,7 @@ supply deployment context, not proof that the proposed integration already exist
 
 | Existing interface | Current behavior | Reuse / required extension |
 | --- | --- | --- |
-| [Web server](../../web/russound_server.py): `GET /api/rooms` (and the deprecated `GET /api/state`) | Returns a published/cached Russound view; does not wait for a busy hardware lock | Preserve fast reads; add a separately cached playback view |
+| [Web server](../../web/russound_server.py): `GET /api/rooms` | Returns a published/cached Russound view; does not wait for a busy hardware lock | Preserve fast reads; add a separately cached playback view |
 | `GET /api/events` | SSE `state-change` invalidation (`revision`/`epoch` only), keepalives and reconnect support | Keep one browser stream; add a distinct playback event without breaking existing clients |
 | `POST /api/system/power`, `/api/source`, zone power/source/volume, shortcuts | Hardware commands publish state; keypad updates also refresh state | Feed policy from resulting hardware observations, not only HTTP command handlers |
 | [Controller](../../web/russound_controller.py): `backend_health_snapshot()` | Cached `connected`/`message`; at least one responding zone can mark the backend connected | Add per-zone successful-read timestamps and explicit unknown/partial health |

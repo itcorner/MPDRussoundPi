@@ -146,7 +146,7 @@ the second: the dropdown must stay open, the drag must complete and send its
 value; on `/playback`, keep the config dialog open across track changes and
 check that favorites buttons keep focus and accept taps.
 
-## Relation to the API payload cleanup ([web_open_api-payload-cleanup.md](./web_open_api-payload-cleanup.md))
+## Relation to the API payload cleanup ([web_done_api-payload-cleanup.md](./web_done_api-payload-cleanup.md))
 
 The two plans are independent in cause (this bug is purely client-side DOM
 rebuilding; slimmer payloads alone would not fix it) but touch the same code
