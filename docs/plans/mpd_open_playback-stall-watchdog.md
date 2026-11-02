@@ -5,7 +5,8 @@ implemented per the
 [implementation proposal](#implementation-proposal-stall-watchdog) and
 [live-validated on the Pi on 2026-11-02](#live-validation-2026-11-02).
 Item 2 is deferred; the premise of item 3 was corrected on 2026-11-02
-(the VIA hub is the Pi 4's onboard hub); items 3–4 are open.
+(the VIA hub is the Pi 4's onboard hub); item 4's Wi-Fi mitigation was
+applied on 2026-11-02; items 3–4 await their one-week observation windows.
 
 ## Incident (2026-10-29)
 
@@ -144,6 +145,31 @@ During verification on 2026-10-29 the Pi was unreachable (ping and SSH) for
 about a minute without a reboot; Wi-Fi scan errors (`brcmf_run_escan: error
 (-52)`) were logged on 2026-10-26. Investigate whether wired Ethernet or Wi-Fi
 power-save settings are needed.
+
+**Findings and mitigation (2026-11-02):** management is Wi-Fi-only
+(NetworkManager, signal −59 dBm — link quality is not the problem); `eth0`
+has no cable. Wi-Fi power save was enabled (brcmfmac driver default;
+NetworkManager `powersave: 0 (default)` does not override it), a known cause
+of brief stalls and scan errors on Pi brcmfmac. The 2026-10-26 `brcmf` log
+entries had already rotated out of the volatile journal, so past windows
+could not be diagnosed.
+
+Applied on 2026-11-02 (both verified, connectivity uninterrupted):
+
+- Wi-Fi power save disabled: runtime `iw dev wlan0 set power_save off` plus
+  persistent `/etc/NetworkManager/conf.d/wifi-powersave.conf` with
+  `wifi.powersave = 2`.
+- Persistent journald with a 200M cap
+  (`/etc/systemd/journald.conf.d/persistent.conf`, `Storage=persistent`) so
+  the next unreachability window leaves diagnosable kernel/NetworkManager
+  logs.
+
+Open: wired Ethernet remains the structural fix (physical task). The Pi 4's
+Ethernet is native GbE (not USB-attached), so it cannot interact with the
+item 3 USB/audio path; NetworkManager prefers the wired link automatically
+once a cable is plugged in. Validation: observe reachability and
+`brcmf`/NetworkManager disconnect events for at least one week, then record
+the outcome here.
 
 ## Implementation proposal: stall watchdog
 
