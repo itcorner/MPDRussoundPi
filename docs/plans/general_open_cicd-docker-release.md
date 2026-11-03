@@ -242,8 +242,8 @@ Implementation record (2026-11-01):
       token.
 - [x] Confirm the token is configured for Read & Write, without Delete
       permission; do not expose the token value.
-- [ ] Verify token authentication and intended repository write access without
-      publishing an image; do not expose the token value.
+- [x] Verify token authentication and granted pull/push scopes for both intended
+      repositories without publishing an image; actual uploads remain untested.
 - [x] Add a main-only manual credential check requesting repository pull/push
       grants and validating registry authentication without writes.
 - [x] Add a separate image-publication workflow that reuses CI validation.
@@ -370,6 +370,25 @@ Stage 4 no-write safeguards (2026-11-03):
 - Stage 4 is not yet accepted: the new workflows need GitHub execution, token
   grants need verification, and actual serialized write/recovery implementation
   and registry immutability remain prerequisites before Stage 5.
+
+Stage 4 GitHub no-write verification (2026-11-03):
+
+- [PR #16](https://github.com/itcorner/MPDRussoundPi/pull/16) passed required CI
+  and merged into `develop`. [PR #17](https://github.com/itcorner/MPDRussoundPi/pull/17)
+  passed CI and bootstrapped the changes to `main` with a merge commit.
+- [Credential check](https://github.com/itcorner/MPDRussoundPi/actions/runs/41731056726)
+  succeeded on `main`: the authorization server granted pull/push scopes for
+  both intended repositories and the registry accepted authentication.
+  No token value was accessed locally or logged, and no upload was attempted.
+- [Development build-only verification](https://github.com/itcorner/MPDRussoundPi/actions/runs/41731060294)
+  succeeded on `develop` at `6e539a5a7f441a70606fe70ccedf26289340562d`
+  with `check_registry=true`. Reusable CI, live inventory, all four image jobs
+  and serialized publication planning passed. Tested artifacts were downloaded
+  and re-verified, and fresh source/inventory checks passed without registry writes.
+- These results supersede the pending GitHub credential/development dry-run
+  verification notes above. Stage 4 remains open for actual serialized
+  write/recovery implementation and registry immutability review.
+  Stage 5 is not authorized; no Docker Hub image or Git version tag was created.
 
 ### Stage 5: Enable development publication (explicit approval required)
 
