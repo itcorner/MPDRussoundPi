@@ -77,6 +77,22 @@ Stations (at most 20) seed the dashboard favorites:
   `tunein:<station_id>`. The backend resolves the playable stream when it
   starts the station and re-resolves whenever the cached URL is not playing.
 
+An optional top-level `watchdog` object tunes the supervisor's stall
+watchdog; every field is optional and unknown fields are rejected. Defaults:
+
+```json
+"watchdog": {
+  "enabled": true,
+  "probe_interval_s": 10,
+  "stall_threshold_s": 120,
+  "unresponsive_probes": 3,
+  "restart_limit": 3,
+  "restart_window_s": 1800,
+  "restart_grace_s": 90,
+  "escalation_window_s": 3600
+}
+```
+
 Only the schema above is supported; there is no compatibility/migration mode.
 
 ## Runtime state: `playback.json` (agent-owned)
@@ -124,6 +140,20 @@ mixer muted, verifies routes, reapplies/read-verifies absolute gains, and
 unmutes to software volume 100. It verifies final playback state. Stopped and
 paused intentions remain silent after reboot; an empty paused queue is left
 stopped. This is playback recovery, not retired Russound power polling.
+
+The supervisor also runs a stall watchdog for outputs intended to play: a
+bounded probe (default every 10 s) detects an MPD that no longer answers or
+reports `play` with a frozen `elapsed` (default threshold 2 minutes), then
+restarts only that `mpd_<id>.service` — at most 3 times per 30 minutes per
+output. If restarts do not help, it restarts the PipeWire stack and all
+outputs once per hour, then holds. Restarts are deferred while the shared
+audio readiness check reports the USB card missing and fire once it is back.
+Restart and escalation history is written to
+`~/.local/state/mpdrussoundpi/watchdog.json`; generated MPD units carry
+`TimeoutStopSec=120` so a hung instance stops deterministically. Thresholds
+are tunable through the optional `watchdog` section in `config.json`; design
+background is in the
+[stall watchdog plan](../plans/mpd_open_playback-stall-watchdog.md).
 
 With `mpd_russoundpi_start_playback=true` (the audio play's default),
 deployment stops an existing supervisor, regenerates/restarts audio and MPD,

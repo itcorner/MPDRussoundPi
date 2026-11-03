@@ -324,8 +324,9 @@ Probe codes include `mpd_unavailable`, `snapshot_inconsistent`,
 `agent_unauthorized`, `agent_configuration_invalid`, `agent_protocol_error`.
 Remote credentials/schema errors are not an HTTP browser-login error.
 
-Keep `/api/state` and hardware `state-change` SSE payloads unchanged. Add
-`playback-change` on **the same** `/api/events` connection:
+Hardware `state-change` and `playback-change` share **the same** `/api/events`
+connection. Since the API payload cleanup, both are invalidation events;
+`state-change` carries only `revision` and `epoch`, and `playback-change` is:
 
 ```json
 {"api_version": 1, "epoch": "web-process-identifier", "revision": 8}

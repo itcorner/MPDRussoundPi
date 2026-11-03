@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-3 implemented; Stage 4 preparation in progress, publication disabled.
+Status: open; Stages 1-3 implemented; Stage 4 build-only validation accepted, registry/publication prerequisites remain. Publication disabled.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -213,10 +213,13 @@ Implementation record (2026-11-01):
 
 - Namespace/publishing username chosen: `itcornernet`; repositories
   `mpdrussoundpi-web` and `mpdrussoundpi-ser2net`. Web is confirmed public;
-  ser2net returns 404 and still needs account-owner confirmation.
+  ser2net initially returned 404. After the user created it on 2026-11-03,
+  anonymous inventory reads succeeded for both repositories.
 - The user added `DOCKERHUB_TOKEN` directly in GitHub. Its existence metadata
   was verified without accessing the value. Both agreed Docker Hub variables
-  are configured. Token permissions have not been exercised.
+  are configured as repository variables; the token is a repository secret.
+  The user confirmed the token is configured with Read & Write permissions;
+  its authentication and repository access have not been exercised.
 - Manual build-only workflow exports both architectures of both images with
   provenance/SBOM, caches builds, and smoke-tests the exported runtime artifacts.
   No login/push path is enabled. OCI archives are retained for seven days.
@@ -226,31 +229,147 @@ Implementation record (2026-11-01):
   they remain prerequisites before Stage 5.
 - Maintained procedures and pending gates are in
   [Docker image preparation](../documentation/docker-image-release.md).
-- GitHub build-only acceptance, repository confirmation and credential setup
-  verification remain pending. No version tag or Docker Hub image has been created.
+- GitHub build-only acceptance passed as recorded below. Both repositories are
+  publicly readable; token authentication/repository access verification remains
+  pending. No version tag or Docker Hub image has been created.
 
-- [ ] Choose the Docker Hub namespace and create/confirm the repository
+- [x] Choose the Docker Hub namespace and create/confirm the repository
       `<namespace>/mpdrussoundpi-web`.
-- [ ] Configure `DOCKERHUB_NAMESPACE` and `DOCKERHUB_USERNAME` variables and a
-      minimally scoped `DOCKERHUB_TOKEN` secret; never commit the token.
-- [ ] Add a separate image-publication workflow that reuses CI validation.
+- [x] Create/confirm the public repository
+      `<namespace>/mpdrussoundpi-ser2net`.
+- [x] Configure `DOCKERHUB_NAMESPACE` and `DOCKERHUB_USERNAME` as repository
+      variables and `DOCKERHUB_TOKEN` as a repository secret; never commit the
+      token.
+- [x] Confirm the token is configured for Read & Write, without Delete
+      permission; do not expose the token value.
+- [ ] Verify token authentication and intended repository write access without
+      publishing an image; do not expose the token value.
+- [x] Add a main-only manual credential check requesting repository pull/push
+      grants and validating registry authentication without writes.
+- [x] Add a separate image-publication workflow that reuses CI validation.
       Initially allow only an explicitly selected build-only mode, with login
       and push disabled; do not create version tags as a test.
-- [ ] Implement the event/tag policy, source-branch ancestry validation,
-      write-once version checks, and serialized, non-regressing alias updates.
-- [ ] Validate the per-platform artifacts that will be published, rather than
+- [x] Implement and locally test the event/ref matrix, strict tag policy and
+      source-branch ancestry checks, keeping publication disabled.
+- [x] Test write-once tag collisions, non-regressing stable alias decisions and
+      current-tip validation for `dev` using inventory/Git fixtures.
+- [x] Wire opt-in, read-only public registry inventory and write-once version
+      checks into build-only preparation.
+- [x] Verify live read-only inventory checks locally for both intended
+      repositories.
+- [ ] Require a fresh inventory in the future trusted publisher.
+- [x] Add serialized, no-write publication planning with verified artifacts,
+      fresh source/inventory checks and tested digest/approval recovery gates.
+- [ ] Implement serialized, non-regressing alias publication and explicit
+      recovery gates; enabling registry writes requires separate approval.
+- [x] Validate the per-platform artifacts that will be published, rather than
       testing one image and rebuilding a different one for publication.
-- [ ] Add Buildx caching, OCI source/revision/version labels, provenance and SBOM.
-- [ ] Pin third-party Actions to reviewed commit SHAs. Default to
+- [x] Add Buildx caching, OCI source/revision/version labels, provenance and SBOM.
+- [x] Pin third-party Actions to reviewed commit SHAs. Default to
       `contents: read`; isolate registry credentials to trusted publishing jobs.
       Use `pull_request`, not `pull_request_target`, to test submitted code.
-- [ ] Document environment approval for stable publication, Docker Hub tag
+- [x] Document environment approval for stable publication, Docker Hub tag
       retention/immutability capabilities, and how failed publication is retried
       without silently replacing an existing version.
 
 Acceptance: build-only runs demonstrate architecture, metadata and tag
 selection for development, prerelease and stable cases. No image is pushed.
 Review exact workflow enabling steps before moving to Stage 5.
+
+Stage 4 build-only acceptance (2026-11-01):
+
+- [PR #6](https://github.com/itcorner/MPDRussoundPi/pull/6) passed required CI
+  and merged into `develop`; [PR #7](https://github.com/itcorner/MPDRussoundPi/pull/7)
+  passed CI and bootstrapped the workflow into `main` using a merge commit.
+- [Development simulation](https://github.com/itcorner/MPDRussoundPi/actions/runs/41359721867),
+  [candidate simulation](https://github.com/itcorner/MPDRussoundPi/actions/runs/41360244091)
+  (`0.1.0-rc.1`) and
+  [stable simulation](https://github.com/itcorner/MPDRussoundPi/actions/runs/41359725618)
+  (`0.1.0`) all passed. These are input values, not created version tags.
+- Each run passed reusable CI, source/tag policy and all four image jobs:
+  web/ser2net on AMD64/ARM64. Every job verified OCI labels/digests,
+  SPDX SBOM and SLSA provenance subjects, then loaded and smoke-tested the
+  exported runtime. All four prepared archives are available in each run.
+- The initially queued candidate run was cancelled by GitHub's concurrency
+  pending-run replacement; it was dispatched alone and passed. Future manual
+  scenarios should be submitted sequentially.
+- Local verification passed 54 JavaScript tests and actionlint. Local ARM64
+  ser2net startup and tagged OCI archive checks passed; validation images,
+  archives and logs were cleaned up. Running deployments were not changed.
+- Pending before publication: verify token authentication and intended
+  repository access; require fresh publisher-side registry inventory and
+  write-once checks, serialized/current-tip alias promotion, and explicit
+  recovery gates. No registry writes are implemented in this build-only
+  workflow. Stable environment/approval remains a later gate.
+- On 2026-11-03, the user confirmed `DOCKERHUB_NAMESPACE` and
+  `DOCKERHUB_USERNAME` are repository variables and `DOCKERHUB_TOKEN` is a
+  repository secret. Token authentication and Docker Hub repository write
+  access remain unverified.
+- On 2026-11-03, the user confirmed the token's Docker Hub permission setting is
+  Read & Write. The token value was not accessed; authentication and repository
+  write access have not been tested.
+- No Docker Hub login or push occurred. Stage 5 is not authorized.
+
+Stage 4 policy implementation (2026-11-03):
+
+- The build-only CLI validates manual branch dispatches, channel/version input
+  and ancestry. Publication mode remains rejected by the CLI.
+- Library event rules derive future development/candidate/stable publication
+  channels from allowed push refs only; PRs, `main` pushes and manual publication
+  are rejected. No new workflow trigger or registry operation was added.
+- Local tests cover exact-tag collisions, numeric stable-version ordering,
+  prerelease exclusions, real Git ancestry failures and stale `dev` promotion.
+  A current-tip helper is available for the future serialized publisher; it
+  must refresh remote state before checking. Registry inventory and actual
+  alias promotion remain unwired.
+- Maintained rules and the event matrix are documented in
+  [Docker image preparation](../documentation/docker-image-release.md#event-and-source-matrix).
+- Local JavaScript regression validation passed all 63 tests, including 12
+  image-policy tests. Publication remains disabled; no registry credentials
+  were used.
+
+Stage 4 registry inventory implementation (2026-11-03):
+
+- Added opt-in `check_registry` to the build-only workflow (default false).
+  Anonymous Docker Hub API reads collect all pages for web and ser2net, then
+  check exact-tag collisions and planned aliases independently per repository.
+  Prepared image names and inventory use the same required namespace variable.
+- The helper fails explicitly on HTTP/transport/JSON errors, malformed pages,
+  duplicate tags, changing/incomplete counts and unsafe/looping pagination.
+  No token, registry login, push or alias update is used.
+- Live local verification returned an empty web tag inventory and HTTP 404 for
+  ser2net initially; the 404 was not treated as an empty repository.
+- After the user created ser2net on 2026-11-03, live local policy checks succeeded
+  for both public repositories. Each returned an empty tag inventory and planned
+  the current commit's exact development tag plus `dev`, without writing either.
+  GitHub execution of the updated workflow remains to be validated after merge.
+- Inventory is a read-only snapshot. Fresh publisher-side inventory,
+  serialization, registry immutability and recovery gates remain prerequisites
+  before enabling writes.
+- Live pagination validation collected all 219 tags from the public
+  `library/busybox` repository across multiple pages. Local JavaScript regression
+  validation passed all 73 tests, including 10 registry-inventory tests;
+  actionlint passed for the updated workflow.
+
+Stage 4 no-write safeguards (2026-11-03):
+
+- Added a manual credential-check workflow restricted to `main`. It uses the
+  repository secret only in its check step, requests pull/push grants for both
+  intended repositories and verifies registry acceptance without any upload.
+  The actual secret was not accessed locally; GitHub credential-check acceptance
+  remains pending after reviewed changes reach `main`.
+- Added a final serialized dry-run job to registry-enabled build-only runs.
+  It downloads and re-verifies all four tested OCI artifacts, refreshes source
+  ancestry/current development tip and obtains fresh inventory. Its report
+  specifies exact manifests before aliases and preserves attestations.
+- Recovery checks require matching recorded/registry manifest digests and
+  separate explicit approval, rejecting overwrite or evidence-free retries.
+  No actual upload, alias promotion or recovery workflow is enabled.
+- Local JavaScript validation passed all 82 tests, including end-to-end dry-run
+  artifact/Git/inventory verification; all workflows passed actionlint.
+- Stage 4 is not yet accepted: the new workflows need GitHub execution, token
+  grants need verification, and actual serialized write/recovery implementation
+  and registry immutability remain prerequisites before Stage 5.
 
 ### Stage 5: Enable development publication (explicit approval required)
 

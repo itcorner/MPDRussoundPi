@@ -33,7 +33,7 @@ The server exposes three response types:
 - HTML pages from `/`, `/index.html`, `/config`, and `/status`
 - Server-Sent Events from `/api/events`
 
-Most mutating API routes return the latest full view payload after the change is applied, including the latest backend connectivity banner state.
+Most mutating API routes return the latest Rooms snapshot after the change is applied, including the latest backend connectivity banner state.
 
 Exceptions:
 
@@ -53,7 +53,7 @@ The server currently expects these request body field types:
 - `loudness`: boolean
 - `balance`: integer
 
-The dashboard also exposes `backend_status` in the main view payload so the frontend can display a warning banner whenever hardware communication is unavailable.
+The dashboard also exposes `backend_status` in the Rooms and configuration state snapshots so the frontend can display a warning banner whenever hardware communication is unavailable.
 
 ## Request protection
 
@@ -84,7 +84,7 @@ The backend tracks frontend sessions using an HTTP cookie (`russound_session_id`
 Examples:
 
 ```http
-GET /api/state
+GET /api/rooms
 ```
 
 ```http
@@ -102,9 +102,11 @@ Mapped inputs may contain `playback_output: {"agent_id":"musicpi",
 Configuration `inputs[].name` remains the fallback and is never replaced by
 station metadata.
 
-When bindings exist, view payloads add `resolved_inputs`, copies of configured
-inputs with `display_name` and (for mapped inputs) `playback_status`
-(`ok`, `no_station`, `unavailable`, `unmapped`) and `playback_message`.
+When bindings exist, the deprecated full view payload adds `resolved_inputs`,
+copies of configured inputs with `display_name` and (for mapped inputs)
+`playback_status` (`ok`, `no_station`, `unavailable`, `unmapped`) and
+`playback_message`. The Rooms snapshot carries the same display data directly
+on its `inputs`, and `GET /api/config/state` always returns `resolved_inputs`.
 Resolution uses cached playback observations only, including last-known station
 names during outages; it never contacts agents on the request path.
 The `playback-change` SSE event prompts the dashboard to refresh names in place.
@@ -116,79 +118,46 @@ optional `playback_output` object. On save, null explicitly removes a binding;
 omitting the property preserves an existing binding. Unknown but syntactically
 valid identities are retained, allowing configuration while an agent is offline.
 
-Most endpoints return the same payload shape:
+The optional `notes` key in the configuration file is admin documentation; no
+API response carries it.
+
+`GET /api/rooms` and every mutation endpoint (`/api/system/power`,
+`/api/source`, `/api/shortcuts/{id}/activate`,
+`/api/controller/{c}/zone/{z}/{action}`) return the allowlisted Rooms
+snapshot:
 
 ```json
 {
-  "config": {
-    "controllers": [
-      {
-        "id": 1,
-        "ip": "192.168.1.50",
-        "port": 9621
-      }
-    ],
-    "inputs": [
-      { "id": 1, "name": "Radio" },
-      { "id": 2, "name": "TV" }
-    ],
-    "zones": [
-      {
-        "name": "Living Room",
-        "controller": 1,
-        "zone": 1
-      }
-    ],
-    "shortcuts": [
-      {
-        "id": "party",
-        "name": "Party",
-        "source": 1,
-        "zone_addresses": [
-          { "controller": 1, "zone": 1 }
-        ]
-      }
-    ]
-  },
+  "api_version": 1,
   "config_required": false,
-  "state": {
-    "system_power": false,
-    "inputs": [
-      { "id": 1, "name": "Radio" },
-      { "id": 2, "name": "TV" }
-    ],
-    "zones": [
-      {
-        "name": "Living Room",
-        "power": false,
-        "source": 1,
-        "volume": 20,
-        "bass": 0,
-        "treble": 0,
-        "loudness": false,
-        "balance": 0,
-        "controller": 1,
-        "zone": 1
-      }
-    ]
-  }
+  "message": "",
+  "backend_status": {"connected": true, "message": ""},
+  "system_power": true,
+  "zones": [
+    {
+      "controller": 1,
+      "zone": 1,
+      "name": "Living Room",
+      "power": false,
+      "source": 1,
+      "volume": 20
+    }
+  ],
+  "inputs": [
+    {"id": 1, "name": "Radio", "display_name": "Radio 88.6", "playback_status": "ok", "playback_message": ""}
+  ],
+  "shortcuts": [
+    {"id": "party", "name": "Party", "source": 1}
+  ],
+  "revision": 7,
+  "epoch": "f3a81c90d2e44b17"
 }
 ```
 
-If no valid config file is supplied to the server (`--config`), `GET /api/state` returns:
-
-```json
-{
-  "config": null,
-  "config_required": true,
-  "message": "A config file is required. Complete setup on the Configuration page.",
-  "state": {
-    "system_power": false,
-    "zones": [],
-    "inputs": []
-  }
-}
-```
+Only visible zones and enabled inputs are listed; advanced sound values,
+zone addresses and the raw configuration are not part of this snapshot.
+Without a valid config file, `config_required` is `true`, `message` describes
+the setup step and `zones`, `inputs` and `shortcuts` are empty.
 
 ## Endpoints
 
@@ -327,9 +296,10 @@ The returned operation has `output_id: null`; poll it with
 `GET /api/playback/agents/{agent_id}/operations/{operation_id}`. Errors include
 `favorites_full` and `favorite_not_found`.
 
-### GET /api/state
+### GET /api/rooms
 
-Returns the current view payload (`config`, `config_required`, `state`).
+Returns the allowlisted Rooms snapshot described in
+[View payload](#view-payload).
 
 - Response type: JSON.
 - While a backend operation holds the state lock, returns the last published
@@ -338,19 +308,35 @@ Returns the current view payload (`config`, `config_required`, `state`).
   releasing that lock. Hardware refreshes remain serialized with commands to
   prevent stale polls from overwriting newer changes; SSE announces refreshed state.
 
+### GET /api/config/state
+
+Live values for the configuration page, with the same snapshot-read behavior
+as `/api/rooms`.
+
+- Response type: JSON.
+- Returns `config_required`, `backend_status`, `backend` (the saved backend
+  settings), visible `zones` with their advanced sound values (`bass`,
+  `treble`, `balance`, `loudness`, `turn_on_volume`), `resolved_inputs`,
+  `revision` and `epoch`.
+
 ### GET /api/events
 
 Server-Sent Events stream used for multi-client synchronization.
 
 - Content type: `text/event-stream; charset=utf-8`
 - Event names: `state-change` and `playback-change`.
-- `state-change` carries the latest Russound view payload.
+- `state-change` is an invalidation carrying only `revision` and `epoch`;
+  clients fetch their own page snapshot (`/api/rooms` or `/api/config/state`).
 - `playback-change` is a coalesced invalidation; clients fetch `/api/playback`
   for the latest cached snapshot.
 - Both event types share a bounded per-browser queue. When a slow client falls
   behind, queued notifications are replaced by the latest state notification.
-- On connection/reconnection, the frontend fetches both `/api/state` and
+- On connection/reconnection, the frontend fetches both `/api/rooms` and
   `/api/playback`.
+
+```json
+{ "revision": 7, "epoch": "f3a81c90d2e44b17" }
+```
 
 ```json
 { "event": "playback-change", "api_version": 1, "revision": 8 }
@@ -454,7 +440,7 @@ Returns the editable zone-configuration payload used by the configuration page.
   OS permission check; save errors describe filesystem/permission failures.
 - `backend_overrides` lists non-empty `RUSSOUND_BACKEND_HOST` and
   `RUSSOUND_BACKEND_PORT` values. Environment overrides take precedence over saved settings.
-- Read `/api/state.backend_status` for recorded backend connectivity independently of configuration validity.
+- Read `/api/config/state.backend_status` for recorded backend connectivity independently of configuration validity.
 
 Response shape:
 
@@ -486,7 +472,7 @@ Response shape:
 
 Sets system power for all zones.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 - System Off sends addressed power-off commands to every zone in each configured
   controller's scope, including zones hidden from the overview. Without controller
   scope it retains the broadcast fallback. Backend write failures return `502`
@@ -502,7 +488,7 @@ Request body:
 
 Sets one shared source for all zones.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -516,7 +502,7 @@ Request body:
 
 Activates a shortcut from `config.shortcuts` by id.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 - No request body is required, but the request must still be sent with `Content-Type: application/json`.
 - If the shortcut id is unknown, state is unchanged and the current view payload is still returned.
 
@@ -584,7 +570,7 @@ a string name, and a boolean `enabled`. New source ids can be enabled during set
 
 Sets power for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -598,7 +584,7 @@ Request body:
 
 Sets source for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -612,7 +598,7 @@ Request body:
 
 Sets volume for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -626,7 +612,7 @@ Volume is clamped to the range `0..100`.
 
 Sets bass for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -640,7 +626,7 @@ Bass is normalized to the range `-10..10`.
 
 Sets treble for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -654,7 +640,7 @@ Treble is normalized to the range `-10..10`.
 
 Sets loudness for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 
@@ -666,7 +652,7 @@ Request body:
 
 Sets balance for a single zone.
 
-- Returns the updated main view payload.
+- Returns the updated Rooms snapshot.
 
 Request body:
 

@@ -265,9 +265,13 @@ class RussoundHTTPServer:
         def config_page():
             return send_from_directory(WEB_STATIC, "config.html")
 
-        @app.get("/api/state")
-        def api_state():
-            return jsonify(self._read_state_payload())
+        @app.get("/api/rooms")
+        def api_rooms():
+            return jsonify(self._rooms_view(self._read_state_payload()))
+
+        @app.get("/api/config/state")
+        def api_config_state():
+            return jsonify(self._config_state_view(self._read_state_payload()))
 
         @app.get("/api/playback")
         def api_playback():
@@ -436,7 +440,7 @@ class RussoundHTTPServer:
                 revision = self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
+            return jsonify(self._rooms_response(response_payload, revision))
 
         @app.post("/api/source")
         def api_source():
@@ -452,7 +456,7 @@ class RussoundHTTPServer:
                 revision = self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
+            return jsonify(self._rooms_response(response_payload, revision))
 
         @app.post("/api/shortcuts/<shortcut_id>/activate")
         def api_shortcut_activate(shortcut_id: str):
@@ -467,7 +471,7 @@ class RussoundHTTPServer:
                 revision = self._publish_state_payload(response_payload)
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
+            return jsonify(self._rooms_response(response_payload, revision))
 
         @app.post("/api/controller/<int:controller_id>/zone/<int:zone_number>/<action>")
         def api_zone_action(controller_id: int, zone_number: int, action: str):
@@ -501,7 +505,7 @@ class RussoundHTTPServer:
                 value,
             )
             self.broadcast_state_change()
-            return jsonify(self._with_input_names(self._with_state_revision(response_payload, revision)))
+            return jsonify(self._rooms_response(response_payload, revision))
 
         @app.get("/static/<path:filename>")
         def static_files(filename: str) -> Response:
@@ -881,15 +885,13 @@ class RussoundHTTPServer:
             self._event_clients.pop(client_id, None)
 
     def broadcast_state_change(self) -> None:
-        state_payload = self._build_state_payload_for_event()
-        revision = state_payload["revision"]
+        # Invalidation only: clients fetch their own page snapshot. Bump the
+        # revision so refetched snapshots are never ordered before the event.
+        with self._state_payload_lock:
+            self.state_revision += 1
+            revision = self.state_revision
         with self._event_clients_lock:
-            event_text = json.dumps(
-                {
-                    "revision": revision,
-                    "payload": state_payload,
-                }
-            )
+            event_text = json.dumps({"revision": revision, "epoch": self.state_epoch})
             for client in self._event_clients.values():
                 self._enqueue_event_locked(client, event_text)
             recipients = len(self._event_clients)
@@ -943,10 +945,6 @@ class RussoundHTTPServer:
             ],
         }
 
-    def _build_state_payload_for_event(self) -> dict[str, Any]:
-        # Every broadcast gets its own revision so clients can drop older payloads that arrive late.
-        return self._read_state_payload(bump_revision=True)
-
     def _publish_state_payload(self, payload: dict[str, Any]) -> int:
         with self._state_payload_lock:
             if payload != self._state_payload:
@@ -971,6 +969,68 @@ class RussoundHTTPServer:
                 self.state_revision += 1
             payload = self._with_state_revision(self._state_payload, self.state_revision)
         return self._with_input_names(payload)
+
+    def _rooms_response(self, payload: dict[str, Any], revision: int) -> dict[str, Any]:
+        """Project a mutation's view payload onto the Rooms snapshot."""
+        return self._rooms_view(self._with_input_names(self._with_state_revision(payload, revision)))
+
+    def _rooms_view(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Allowlisted Rooms page snapshot; nothing else from config or state leaks out."""
+        config: dict[str, Any] = payload.get("config") or {}
+        state: dict[str, Any] = payload.get("state") or {}
+        config_required = bool(payload.get("config_required"))
+        inputs: list[dict[str, Any]] = payload.get("resolved_inputs") or config.get("inputs") or []
+        return {
+            "api_version": 1,
+            "config_required": config_required,
+            "message": payload.get("message", ""),
+            "backend_status": payload.get("backend_status"),
+            "system_power": bool(state.get("system_power")),
+            "zones": [] if config_required else [
+                {field: zone.get(field) for field in ("controller", "zone", "name", "power", "source", "volume")}
+                for zone in state.get("zones", [])
+            ],
+            "inputs": [] if config_required else [
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "display_name": item.get("display_name") or item.get("name"),
+                    **({"playback_status": item["playback_status"]} if "playback_status" in item else {}),
+                    **({"playback_message": item["playback_message"]} if "playback_message" in item else {}),
+                }
+                for item in inputs if item.get("enabled", True) is not False
+            ],
+            "shortcuts": [] if config_required else [
+                {field: shortcut.get(field) for field in ("id", "name", "source")}
+                for shortcut in config.get("shortcuts", [])
+            ],
+            "revision": payload.get("revision"),
+            "epoch": payload.get("epoch"),
+        }
+
+    def _config_state_view(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Configuration page live view: advanced sound values, resolved inputs, backend status."""
+        config: dict[str, Any] = payload.get("config") or {}
+        state: dict[str, Any] = payload.get("state") or {}
+        resolved = payload.get("resolved_inputs")
+        if resolved is None:
+            resolved = resolve_input_names(config.get("inputs", []), self._read_playback_snapshot())
+        return {
+            "api_version": 1,
+            "config_required": bool(payload.get("config_required")),
+            "backend_status": payload.get("backend_status"),
+            "backend": config.get("backend") or {},
+            "zones": [
+                {
+                    field: zone.get(field)
+                    for field in ("controller", "zone", "name", "bass", "treble", "balance", "loudness", "turn_on_volume")
+                }
+                for zone in state.get("zones", [])
+            ],
+            "resolved_inputs": resolved,
+            "revision": payload.get("revision"),
+            "epoch": payload.get("epoch"),
+        }
 
     def _with_input_names(self, payload: dict[str, Any]) -> dict[str, Any]:
         config: dict[str, Any] = payload.get("config") or {}

@@ -17,6 +17,10 @@ on:
         description: For candidate/stable, X.Y.Z-rc.N or X.Y.Z without v
         type: string
         default: ""
+      check_registry:
+        description: Check public Docker Hub tag inventory (read-only; fails if inaccessible)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,15 +46,27 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - name: Validate mode and source ancestry
+      - name: Validate manual event, tag policy and source ancestry
         id: policy
         env:
           MODE: ${{ inputs.mode }}
           CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ inputs.version }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
         run: |
-          test "$MODE" = build-only
+          if [ -z "$DOCKERHUB_NAMESPACE" ]; then
+            echo 'DOCKERHUB_NAMESPACE repository variable is required' >&2
+            exit 1
+          fi
           node tool/ci/image-policy.mjs
+      - name: Check live public inventory and write-once tags (never publish)
+        if: ${{ inputs.check_registry }}
+        env:
+          MODE: ${{ inputs.mode }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: node tool/ci/registry-inventory.mjs
 
   images:
     needs: [validation, policy]
@@ -90,7 +106,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           push: false
           outputs: type=oci,dest=${{ runner.temp }}/image.tar
-          tags: itcornernet/mpdrussoundpi-${{ matrix.image }}:${{ needs.policy.outputs.version }}
+          tags: ${{ vars.DOCKERHUB_NAMESPACE }}/mpdrussoundpi-${{ matrix.image }}:${{ needs.policy.outputs.version }}
           labels: |
             org.opencontainers.image.source=https://github.com/itcorner/MPDRussoundPi
             org.opencontainers.image.revision=${{ github.sha }}
@@ -132,3 +148,32 @@ jobs:
             ${{ runner.temp }}/image.tar.metadata.json
           retention-days: 7
           if-no-files-found: error
+
+  publication-plan:
+    needs: [policy, images]
+    if: ${{ inputs.check_registry }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: image-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: prepared-*
+          path: ${{ runner.temp }}/prepared
+      - name: Verify tested artifacts and plan publication under serialization (no writes)
+        env:
+          MODE: ${{ inputs.mode }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          ARTIFACT_ROOT: ${{ runner.temp }}/prepared
+        run: node tool/ci/publication-plan.mjs

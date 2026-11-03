@@ -17,6 +17,11 @@ class SupervisorTests(unittest.TestCase):
         patcher = patch.object(supervisor, "MPDBackend")
         self.api = patcher.start().return_value
         self.addCleanup(patcher.stop)
+        watchdog_patcher = patch.object(supervisor, "create_watchdog")
+        self.create_watchdog = watchdog_patcher.start()
+        self.addCleanup(watchdog_patcher.stop)
+        self.watchdog = self.create_watchdog.return_value
+        self.watchdog.tick.return_value = ()
         self.streams = []
         for name in ("stereo_front", "stereo_centerlfe", "stereo_rear"):
             stream = Mock()
@@ -67,3 +72,35 @@ class SupervisorTests(unittest.TestCase):
                         with self.assertLogs(level="ERROR"), self.assertRaises(KeyboardInterrupt):
                             supervisor.main()
         self.assertEqual(self.api.reconcile.call_count, 5)
+
+    def run_continuous(self, loops=2):
+        with patch.object(sys, "argv", ["mpdsupervisor.py", "config.json"]):
+            with patch.object(supervisor.subprocess, "run"):
+                with patch.object(supervisor.time, "monotonic", return_value=0):
+                    sleeps = [None] * (loops - 1) + [KeyboardInterrupt]
+                    with patch.object(supervisor.time, "sleep", side_effect=sleeps):
+                        with self.assertRaises(KeyboardInterrupt):
+                            supervisor.main()
+
+    def test_once_mode_does_not_create_or_tick_a_watchdog(self):
+        self.run_once()
+        self.create_watchdog.assert_not_called()
+
+    def test_continuous_mode_creates_watchdog_from_configuration(self):
+        self.run_continuous(loops=1)
+        config = self.api.configuration_snapshot.return_value[0].watchdog
+        self.create_watchdog.assert_called_once_with(self.api, config)
+        self.watchdog.tick.assert_called_once_with(self.streams)
+
+    def test_disabled_watchdog_configuration_skips_the_watchdog(self):
+        self.api.configuration_snapshot.return_value[0].watchdog.enabled = False
+        self.run_continuous(loops=1)
+        self.create_watchdog.assert_not_called()
+
+    def test_watchdog_restart_clears_the_reconcile_backoff(self):
+        self.api.reconcile.side_effect = [supervisor.BackendError("offline")] + [None] * 5
+        self.watchdog.tick.return_value = ("stereo_front",)
+        with self.assertLogs(level="ERROR"):
+            self.run_continuous(loops=2)
+        # Without the watchdog clearing the backoff, the failed output would be skipped.
+        self.assertEqual(self.api.reconcile.call_count, 6)

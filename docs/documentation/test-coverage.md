@@ -132,7 +132,13 @@ control-state replacement or production rollback was performed for S04.
 - [Readiness tests](../../tests/test_audioready.py) cover missing hardware/sinks,
   profile enforcement with mandatory re-verification and bounded retries.
   [Supervisor tests](../../tests/test_mpdsupervisor.py) cover independent
-  recovery, service failures, initialization and per-stream backoff.
+  recovery, service failures, initialization, per-stream backoff and watchdog
+  wiring (continuous-mode only, disabled configuration, backoff clearing).
+- [Stall watchdog tests](../../tests/test_playbackwatchdog.py) cover
+  unresponsive and frozen-elapsed detection with a fake clock and scripted
+  probes, baseline resets on progress and station changes, intention
+  exclusions, restart rate limiting, audio-stack escalation and its window,
+  audio-not-ready deferral, failed-restart backoff and the state file.
 - [Audio cleanup tests](../../tests/test_audiosetup.py) cover CLI dispatch,
   install/cleanup/reinstall, ownership preflight, symlink refusal, byte-preserved
   PulseAudio settings, idempotent includes/cleanup, safe wrapper removal,

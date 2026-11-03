@@ -50,14 +50,14 @@ When the status changes, rename the file with `git mv` and update the links to i
 | Plan | Status |
 |---|---|
 | [MPD agent containerization](./plans/mpd_new_agent-containerization.md) | Planned; design required before adding an agent image |
-| [CI/CD pipeline and Docker image release path](./plans/general_open_cicd-docker-release.md) | Stages 1–3 implemented; protected PR acceptance recorded in [PR #4](https://github.com/itcorner/MPDRussoundPi/pull/4); Stage 4 awaits approval; no image publication authorized yet |
+| [CI/CD pipeline and Docker image release path](./plans/general_open_cicd-docker-release.md) | Stages 1–3 implemented; Stage 4 build-only simulations passed for web/ser2net; registry prerequisites remain; no image publication authorized yet |
 | [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; S10 automation and S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
 | [User-triggered Docker image updates](./plans/general_idea_user-triggered-image-updates.md) | Idea, depends on versioned deployment images; not scheduled |
-| [MPD playback stall watchdog and USB audio stability](./plans/mpd_new_playback-stall-watchdog.md) | Planned after the 2026-10-29 outage; not started |
+| [MPD playback stall watchdog and USB audio stability](./plans/mpd_open_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; USB topology and management reachability items remain |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |
 | [Playback egress hardening](./plans/mpd_done_playback-egress-hardening.md) | Deployed 2026-10-17 |
 | [USB audio recovery](./plans/usb_done_audio-recovery.md) | Deployed 2026-10-16 |
 | [Web UI live-update rerender fix](./plans/web_done_live-update-rerender.md) | Implemented 2026-10-24 |
-| [API payload cleanup](./plans/web_new_api-payload-cleanup.md) | Planned, partly prepared by the live-update fix |
+| [API payload cleanup](./plans/web_done_api-payload-cleanup.md) | Implemented and deployed 2026-11-02; deprecated `/api/state` removed the same day |
 | [Long-uptime reliability backlog](./plans/web_open_reliability-backlog.md) | 7 of 12 items done |

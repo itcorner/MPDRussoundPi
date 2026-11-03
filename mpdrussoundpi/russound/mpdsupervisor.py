@@ -4,6 +4,7 @@ import time
 import subprocess
 
 from lib.mpdbackend import BackendError, MPDBackend
+from lib.playbackwatchdog import create_watchdog
 
 
 def main() -> None:
@@ -19,11 +20,17 @@ def main() -> None:
         backend.initialize_intentions()
         return
     backend.initialize_intentions()
+    watchdog = None
+    if not args.once:
+        watchdog_config = backend.configuration_snapshot()[0].watchdog
+        if watchdog_config.enabled:
+            watchdog = create_watchdog(backend, watchdog_config)
     failures: dict[str, tuple[float, float]] = {}
     while True:
         now = time.monotonic()
         failed = False
-        for output in backend.list_outputs():
+        outputs = backend.list_outputs()
+        for output in outputs:
             next_attempt, delay = failures.get(output.id, (0.0, 1.0))
             if now < next_attempt:
                 continue
@@ -46,6 +53,10 @@ def main() -> None:
             if failed:
                 parser.exit(1, "One or more outputs failed reconciliation\n")
             return
+        if watchdog is not None:
+            # A restarted instance reconciles immediately instead of waiting out its backoff.
+            for identity in watchdog.tick(outputs):
+                failures.pop(identity, None)
         time.sleep(2)
 
 
