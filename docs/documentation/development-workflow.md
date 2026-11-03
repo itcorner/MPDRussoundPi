@@ -78,8 +78,11 @@ bash tool/ci/smoke-web-image.sh mpdrussoundpi-web:ci-arm64 arm64
 ```
 
 Use `amd64` in place of `arm64` to check the other platform. Local validation
-images are not pushed. The workflows contain no registry login or publication
-job, require no Docker Hub credentials, and use read-only repository permissions.
+images are not pushed. CI validation requires no Docker Hub credentials and uses
+read-only repository permissions. A separate development image publisher is
+gated by `DEVELOPMENT_PUBLICATION_ENABLED=true`, consumes tested artifacts and
+uses credentials only in its trusted publishing step. See the
+[image release guide](./docker-image-release.md).
 Third-party Actions are pinned to commit SHAs and checkout does not persist
 credentials. There are no tag-triggered release workflows yet.
 
@@ -93,9 +96,10 @@ credentials. There are no tag-triggered release workflows yet.
 5. Merge `main` back into `develop` through a PR when needed to bring the
    branches back together, particularly after release-only changes.
 
-Version tagging and Docker Hub publication are not enabled yet. Future stable
-tags will identify validated commits on `main`; development images will come
-from `develop`. Creating or merging a PR does not itself authorize a release.
+Version-tag publication remains disabled. Development image publication was
+separately approved and is controlled by its explicit repository enable variable.
+Stable tags will identify validated commits on `main`; development images come
+from `develop`. Creating or merging a PR does not itself authorize a stable release.
 
 Active rules restrict `v*` tag creation to repository administrators. A separate
 ruleset blocks updating or deleting those tags with no bypass, including for

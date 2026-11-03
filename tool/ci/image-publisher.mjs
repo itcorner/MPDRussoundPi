@@ -4,7 +4,8 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {execFileSync} from "node:child_process";
 import {pathToFileURL} from "node:url";
-import {imagePolicy, validateImageSource} from "./image-policy.mjs";
+import {imagePolicy, imageEventPolicy, validateImageSource} from "./image-policy.mjs";
+import {registryToken} from "./check-registry-access.mjs";
 import {recoveryGate, loadPreparedArtifacts} from "./publication-plan.mjs";
 import {verifyArchive} from "./verify-image-archive.mjs";
 
@@ -50,14 +51,9 @@ export function assembleImage(readers, sha, version) {
   return {bytes, digest: digestOf(bytes), blobs, manifests, sha, version};
 }
 
-// Until Stage 5 approval, the concrete write transport is restricted to loopback.
-export class LocalRegistry {
+class Registry {
   constructor(endpoint) {
     this.endpoint = new URL(endpoint);
-    if (this.endpoint.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(this.endpoint.hostname) ||
-        this.endpoint.username || this.endpoint.password || this.endpoint.pathname !== "/") {
-      throw new Error("Registry writes are restricted to a disposable local registry");
-    }
   }
 
   async request(path, options = {}, allowMissing = false) {
@@ -153,6 +149,66 @@ export class LocalRegistry {
   }
 }
 
+export class LocalRegistry extends Registry {
+  constructor(endpoint) {
+    super(endpoint);
+    if (this.endpoint.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(this.endpoint.hostname) ||
+        this.endpoint.username || this.endpoint.password || this.endpoint.pathname !== "/") {
+      throw new Error("Registry writes are restricted to a disposable local registry");
+    }
+  }
+}
+
+export class DockerHubRegistry extends Registry {
+  constructor(namespace, username, password, fetchRequest = fetch) {
+    super("https://registry-1.docker.io");
+    if (!/^[a-z0-9_-]+(?![\s\S])/.test(namespace) || !username || !password) {
+      throw new Error("Docker Hub namespace, username and token are required");
+    }
+    this.namespace = namespace;
+    this.username = username;
+    this.password = password;
+    this.fetchRequest = fetchRequest;
+    this.tokens = new Map();
+  }
+
+  async request(path, options = {}, allowMissing = false) {
+    const url = new URL(path, this.endpoint);
+    const match = /^\/v2\/([a-z0-9_-]+\/mpdrussoundpi-(?:web|ser2net))\//.exec(url.pathname);
+    if (url.origin !== this.endpoint.origin || url.username || url.password || url.hash ||
+        !match || !match[1].startsWith(`${this.namespace}/`)) {
+      throw new Error("Docker Hub request left the intended repositories");
+    }
+    const repository = match[1];
+    let grant = this.tokens.get(repository);
+    if (!grant || Date.now() - grant.created > 60_000) {
+      grant = {token: await registryToken(repository, this.username, this.password, this.fetchRequest), created: Date.now()};
+      this.tokens.set(repository, grant);
+    }
+    let response = await this.fetchRequest(url.href, {...options, redirect: "manual",
+      signal: AbortSignal.timeout(120_000), headers: {...options.headers, Authorization: `Bearer ${grant.token}`}});
+    if ([302, 307].includes(response.status) && ["GET", "HEAD"].includes(options.method ?? "GET")) {
+      const location = new URL(response.headers.get("location"), url);
+      if (location.protocol !== "https:" || location.username || location.password) {
+        throw new Error("Unsafe registry download redirect");
+      }
+      response = await this.fetchRequest(location.href, {method: options.method ?? "GET",
+        redirect: "error", signal: AbortSignal.timeout(120_000)});
+    }
+    if (allowMissing && response.status === 404) {
+      if (options.method === "HEAD") return null;
+      const body = await response.json();
+      if (!Array.isArray(body.errors) || body.errors.length === 0 || !body.errors.every(error =>
+        ["MANIFEST_UNKNOWN", "BLOB_UNKNOWN", "NAME_UNKNOWN"].includes(error.code))) {
+        throw new Error("Unexpected Docker Hub missing-resource response");
+      }
+      return null;
+    }
+    if (!response.ok) throw new Error(`Docker Hub registry request failed: HTTP ${response.status}`);
+    return response;
+  }
+}
+
 async function publishLocked({registry, namespace, channel, version, sha, images, journalPath,
   checkSource, recoveryApproved = false}) {
   const exact = imagePolicy(channel, version, sha).exact;
@@ -218,8 +274,8 @@ async function publishLocked({registry, namespace, channel, version, sha, images
 
 export async function publishImages(options) {
   const {registry, namespace} = options;
-  if (!(registry instanceof LocalRegistry) || !/^[a-z0-9_-]+(?![\s\S])/.test(namespace)) {
-    throw new Error("Publication requires the local registry transport and a valid namespace");
+  if (!(registry instanceof Registry) || !/^[a-z0-9_-]+(?![\s\S])/.test(namespace)) {
+    throw new Error("Publication requires a registry transport and a valid namespace");
   }
   const key = createHash("sha256").update(`${registry.endpoint.href}/${namespace}`).digest("hex");
   const lock = join(tmpdir(), `mpdrussoundpi-publication-${key}.lock`);
@@ -234,9 +290,20 @@ export async function publishImages(options) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const {MODE, LOCAL_REGISTRY_URL, DOCKERHUB_NAMESPACE, CHANNEL, VERSION = "", GITHUB_SHA,
-    ARTIFACT_ROOT, PUBLICATION_JOURNAL, RECOVERY_APPROVED} = process.env;
-  if (MODE !== "local-test") throw new Error("Docker Hub publication is disabled; only local-test mode is supported");
-  const registry = new LocalRegistry(LOCAL_REGISTRY_URL);
+    ARTIFACT_ROOT, PUBLICATION_JOURNAL, RECOVERY_APPROVED, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN,
+    DEVELOPMENT_PUBLICATION_ENABLED, GITHUB_EVENT_NAME, GITHUB_REF} = process.env;
+  let registry;
+  if (MODE === "local-test") registry = new LocalRegistry(LOCAL_REGISTRY_URL);
+  else if (MODE === "publish-development" && DEVELOPMENT_PUBLICATION_ENABLED === "true" &&
+      CHANNEL === "development" && VERSION === "" && RECOVERY_APPROVED !== "true") {
+    const event = imageEventPolicy({mode: "publish", eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF});
+    if (event.channel !== "development") throw new Error("Only develop branch pushes can publish");
+    registry = new DockerHubRegistry(DOCKERHUB_NAMESPACE, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN);
+  } else if (MODE === "recover-development" && DEVELOPMENT_PUBLICATION_ENABLED === "true" &&
+      GITHUB_EVENT_NAME === "workflow_dispatch" && GITHUB_REF === "refs/heads/main" &&
+      CHANNEL === "development" && VERSION === "" && RECOVERY_APPROVED === "true") {
+    registry = new DockerHubRegistry(DOCKERHUB_NAMESPACE, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN);
+  } else throw new Error("Docker Hub publication is disabled for this mode, event or channel");
   const exact = imagePolicy(CHANNEL, VERSION, GITHUB_SHA).exact;
   const {readers} = await loadPreparedArtifacts(ARTIFACT_ROOT, GITHUB_SHA, exact);
   const images = Object.fromEntries(["web", "ser2net"].map(image =>
