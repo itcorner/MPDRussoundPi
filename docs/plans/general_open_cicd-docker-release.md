@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-4 preparation implemented with deferred registry immutability; Stage 5 first development images uploaded, registry runtime verification pending. Further development publication suspended.
+Status: open; Stages 1-4 preparation implemented with deferred registry immutability; Stage 5 first development images published and runtime-verified. Further development publication suspended pending registry immutability.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -448,14 +448,13 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
 - Manual `main` recovery requires explicit approval, original failed develop
   run metadata, tested archives and matching digest journal. Both workflows use
   shared publication serialization and verify published digests by pulling and
-  smoke-testing AMD64/ARM64. GitHub acceptance/first publication remains pending.
+  smoke-testing AMD64/ARM64. First-publication acceptance is recorded below.
 - [PR #22](https://github.com/itcorner/MPDRussoundPi/pull/22) and the merge-commit
   [bootstrap PR #23](https://github.com/itcorner/MPDRussoundPi/pull/23) passed
   required CI and installed the development-only publisher/recovery wiring on
   both branches. All 100 JavaScript tests passed locally with registry integration.
-- The first development publication will use the next CI-approved `develop`
-  commit after enabling the repository gate. Suspend further publication after
-  this first run until the deferred Docker Hub immutability retry is evaluated.
+- The gate was enabled for the first CI-approved `develop` publication, then
+  suspended for the deferred Docker Hub immutability retry.
 - First publication source: `902ab4b0ffbad4d6a656150943c73231bb73ec81`.
   [Run 41739176843](https://github.com/itcorner/MPDRussoundPi/actions/runs/41739176843)
   initially failed a pre-existing playback freshness test before uploads.
@@ -476,22 +475,29 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   Selective immutability was retried after uploads on both repositories, but
   Docker Hub still returned HTTP 500. Further publication remains suspended
   pending Docker support investigation or a separately reviewed alternative.
+- The no-write [verification run 41741967600](https://github.com/itcorner/MPDRussoundPi/actions/runs/41741967600)
+  passed all four digest-pinned registry pull/runtime smoke checks for web and
+  ser2net on AMD64/ARM64. The original complete journal was reused without any
+  registry writes. Fixes were merged through protected PRs #25/#27 and
+  merge-commit bootstraps #26/#28; required CI passed.
 
 - [x] Wire pushes only for successful `develop` builds, with an explicit enable
       gate (currently suspended after the first publication).
-- [ ] Publish and verify the first approved development image: both platform
+- [x] Publish and verify the first approved development images: both platform
       manifests, source revision, digest and pull/run behaviour.
-- [ ] Retry selective Docker Hub immutability immediately after the first
-      development publication and verify the saved rules on both repositories.
+- [ ] Configure selective Docker Hub immutability and verify the saved rules
+      on both repositories (blocked by HTTP 500).
 - [x] Retry selective immutability after the first development uploads; saves
       still fail with HTTP 500 on both repositories.
 - [ ] Resolve registry immutability before further publication or approve an
       alternative with its limitations explicitly documented.
-- [ ] Confirm PRs, `main` pushes and release tags cannot publish stable images
+- [x] Confirm PRs, `main` pushes and release tags cannot publish stable images
       while stable publication is still disabled.
 
 Acceptance: only the approved development channel is active; no stable or
 `latest` image exists as a side effect.
+First development images meet publication/runtime acceptance. Further automatic
+publication remains disabled; registry immutability is still blocking this stage.
 
 ### Stage 6: Enable the release path (separate approval required)
 
