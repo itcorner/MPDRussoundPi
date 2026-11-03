@@ -14,9 +14,11 @@ not a production publication target. The native Pi MPD agent needs the separate
 
 ## Build-only preparation
 
-[Images (build only)](../../.github/workflows/images-build-only.yml) is manual
-(`workflow_dispatch`), not triggered by pushes or tags. Its sole mode is
-`build-only`. It runs reusable CI and validates source ancestry: development
+[Images (development and build only)](../../.github/workflows/images-build-only.yml)
+supports manual `build-only` simulations and preparation on pushes to `develop`.
+Only develop push runs can publish, gated by the explicit repository variable
+`DEVELOPMENT_PUBLICATION_ENABLED=true`. Manual runs never publish. It runs
+reusable CI and validates source ancestry: development
 and candidates must be reachable from `develop`, stable simulations from
 `main`. Version input omits the `v` prefix. This creates no Git tag.
 The policy CLI rejects non-manual events, tag-ref dispatches and every mode
@@ -37,8 +39,10 @@ the serial connector with `stdio` and check generated configuration, non-root
 runtime, architecture and the TCP listener on an isolated internal network.
 They do not certify serial-device passthrough or communication with controllers.
 
-There is **no Docker Hub login or push step**, and `push: false` is explicit.
-No secret is passed to these jobs. All publication stages need separate approval.
+All build jobs use `push: false` and receive no Docker Hub secrets. The separate
+trusted development publisher consumes the tested archives after validation;
+only that publishing step receives the Docker Hub secret. Stable/candidate
+publication remains disabled and requires separate approval.
 To appear in the Actions UI, the manual workflow must also reach the default
 branch through a reviewed bootstrap PR.
 
@@ -66,10 +70,9 @@ The [policy helper](../../tool/ci/image-policy.mjs) and its tests define:
 | Future publication | Push of `vX.Y.Z-rc.N` | Candidate; version derived from tag | `develop` |
 | Future publication | Push of `vX.Y.Z` | Stable; version derived from tag | `main` |
 
-Publication rules are tested library logic only, not enabled workflow triggers
-or registry operations. Other publication events/refs are rejected, including
-PRs, manual dispatches and pushes to `main`. Publication callers cannot override
-the channel or version derived from the pushed ref.
+Development push publication is now wired behind its explicit enable variable.
+Candidate/stable rules remain tested library logic only, without enabled
+triggers. PRs, manual publication and pushes to `main` cannot publish.
 
 Source checks fail on missing remote refs, unknown commits or failed Git
 commands. A development commit may be reachable from `develop` without being
@@ -214,11 +217,19 @@ exact-tag collision checks and alias promotion. It reuses the
 [prepared archive loader](../../tool/ci/publication-plan.mjs), including archive
 checksums and runtime/attestation validation; it never rebuilds an image.
 
-For Stage 4, its concrete write transport accepts only HTTP loopback registries.
-The CLI accepts only `MODE=local-test`; Docker Hub publication is hard-disabled.
-No GitHub publisher/recovery trigger has been enabled. Stage 5 still needs the
-separately approved authenticated Docker Hub transport and trusted event/job
-wiring, using the shared `image-publication` concurrency group.
+Stage 4 validated the HTTP loopback write transport with `MODE=local-test`.
+Stage 5 development publication was explicitly approved on 2026-11-04.
+The authenticated Docker Hub transport is restricted to the intended namespace
+and two image repositories. It obtains repository-scoped bearer tokens, treats
+authentication/API failures as errors and never sends bearer credentials to blob
+download CDNs. Fresh authenticated registry inventory is mandatory before
+uploads and alias promotion, independent of the optional simulation input.
+
+`MODE=publish-development` requires a develop push, an empty version input,
+development channel and `DEVELOPMENT_PUBLICATION_ENABLED=true`. Disable that
+variable to suspend automatic development publication. Both normal publication
+and recovery share the `image-publication` concurrency group. Neither path
+publishes candidate/stable tags or `latest`, and neither deploys containers.
 
 Before uploads, the publisher records expected exact-index digests for both
 repositories in a new journal and preflights both inventories/direct tags.
@@ -235,6 +246,22 @@ overwritten. Normal retries against an existing journal fail. A crashed local
 process may leave a lock or journal temporary file: inspect the journal and
 verify no publisher is running before manually removing only that stale file.
 Do not silently discard evidence or start a competing publication.
+
+The [recovery workflow](../../.github/workflows/recover-development.yml) is manual
+on `main` with `approve_recovery=true`. It validates that `source_run_id` is an
+original failed/cancelled develop push run of the image workflow in this
+repository, downloads only its tested archives and publication journal, and uses
+the original source SHA rather than the recovery workflow's SHA. It executes
+trusted code from `main`, never code from the downloaded artifacts. Missing,
+expired or mismatching evidence fails; normal publication reruns do not silently
+recover an existing exact tag.
+
+Publishing jobs preserve journals for 90 days even on failure. OCI archives are
+retained for seven days; download and preserve them promptly if recovery is
+needed. Abrupt runner termination can prevent evidence upload; absent evidence
+requires manual investigation, not a blind publication retry. After publication
+or recovery, both architectures are pulled by recorded registry digest and
+runtime-smoke-tested. Check the Actions summary for immutable digest references.
 
 The JavaScript CI job runs these upload/recovery tests against a digest-pinned
 disposable registry service. Tests include actual OCI uploads/read-back,

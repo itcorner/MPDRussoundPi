@@ -1,0 +1,85 @@
+name: Recover development publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Failed development image workflow run containing original archives and journal
+        required: true
+        type: string
+      approve_recovery:
+        description: Explicitly approve matching-digest recovery without overwriting existing exact tags
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/main' && inputs.approve_recovery && vars.DEVELOPMENT_PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: image-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Validate original failed run
+        id: source
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RECOVERY_APPROVED: ${{ inputs.approve_recovery }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tool/ci/recovery-source.mjs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          pattern: prepared-*
+          path: ${{ runner.temp }}/prepared
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          name: publication-journal
+          path: ${{ runner.temp }}/evidence
+      - name: Recover only matching original development artifacts
+        env:
+          MODE: recover-development
+          CHANNEL: development
+          VERSION: ""
+          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          DEVELOPMENT_PUBLICATION_ENABLED: ${{ vars.DEVELOPMENT_PUBLICATION_ENABLED }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          ARTIFACT_ROOT: ${{ runner.temp }}/prepared
+          PUBLICATION_JOURNAL: ${{ runner.temp }}/evidence/publication-journal.json
+          RECOVERY_APPROVED: "true"
+        run: node tool/ci/image-publisher.mjs
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - name: Verify recovered registry images
+        env:
+          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          PUBLICATION_JOURNAL: ${{ runner.temp }}/evidence/publication-journal.json
+        run: node tool/ci/verify-published-images.mjs
+      - name: Preserve recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recovery-journal
+          path: ${{ runner.temp }}/evidence/publication-journal.json
+          retention-days: 90
+          if-no-files-found: warn

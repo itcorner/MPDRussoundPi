@@ -9,6 +9,18 @@ export async function checkRegistryAccess(namespace, username, password, fetchRe
   const reports = [];
   for (const image of ["web", "ser2net"]) {
     const repository = `${namespace}/mpdrussoundpi-${image}`;
+    const token = await registryToken(repository, username, password, fetchRequest);
+    const registry = await fetchRequest("https://registry-1.docker.io/v2/", {
+      method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000),
+      headers: {Authorization: `Bearer ${token}`},
+    });
+    if (!registry.ok) throw new Error(`Docker Hub registry rejected authentication: HTTP ${registry.status}`);
+    reports.push({repository, granted: ["pull", "push"], registryAuthentication: "accepted"});
+  }
+  return reports;
+}
+
+export async function registryToken(repository, username, password, fetchRequest = fetch) {
     const url = new URL("https://auth.docker.io/token");
     url.searchParams.set("service", "registry.docker.io");
     url.searchParams.set("scope", `repository:${repository}:pull,push`);
@@ -40,14 +52,7 @@ export async function checkRegistryAccess(namespace, username, password, fetchRe
       throw new Error(`Docker Hub did not grant pull and push for ${repository}`);
     }
     if (access.actions.includes("delete")) throw new Error("Docker Hub granted unnecessary delete access");
-    const registry = await fetchRequest("https://registry-1.docker.io/v2/", {
-      method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000),
-      headers: {Authorization: `Bearer ${token}`},
-    });
-    if (!registry.ok) throw new Error(`Docker Hub registry rejected authentication: HTTP ${registry.status}`);
-    reports.push({repository, granted: ["pull", "push"], registryAuthentication: "accepted"});
-  }
-  return reports;
+    return token;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

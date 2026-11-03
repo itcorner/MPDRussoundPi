@@ -257,7 +257,8 @@ Implementation record (2026-11-01):
       checks into build-only preparation.
 - [x] Verify live read-only inventory checks locally for both intended
       repositories.
-- [ ] Require a fresh inventory in the future trusted publisher.
+- [x] Require fresh authenticated registry inventory in the trusted development
+      publisher before uploads and immediately before alias promotion.
 - [x] Add serialized, no-write publication planning with verified artifacts,
       fresh source/inventory checks and tested digest/approval recovery gates.
 - [ ] Implement serialized, non-regressing alias publication and explicit
@@ -434,7 +435,20 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   enabled, including a checksummed-archive CLI publication against real Git
   ancestry and the disposable registry. All workflows passed actionlint.
 
-### Stage 5: Enable development publication (explicit approval required)
+### Stage 5: Enable development publication (approved 2026-11-04)
+
+- User explicitly approved authenticated development publishing and the first
+  publication for web/ser2net with `dev-<full-sha>` and `dev`. Stable/candidate
+  tags, `latest` and deployments remain disabled. The development-only
+  immutability deferral above still applies.
+- Implemented authenticated repository-scoped Docker Hub transport, mandatory
+  fresh inventory/direct tag checks and develop-push gating using
+  `DEVELOPMENT_PUBLICATION_ENABLED`. The enable variable remains off until
+  reviewed workflow changes are available on both long-lived branches.
+- Manual `main` recovery requires explicit approval, original failed develop
+  run metadata, tested archives and matching digest journal. Both workflows use
+  shared publication serialization and verify published digests by pulling and
+  smoke-testing AMD64/ARM64. GitHub acceptance/first publication remains pending.
 
 - [ ] Enable pushes only for successful `develop` builds.
 - [ ] Publish and verify the first approved development image: both platform
