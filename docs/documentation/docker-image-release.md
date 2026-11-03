@@ -209,6 +209,13 @@ tags exist, investigate with Docker support before further publication.
 Candidate/stable publication remains disabled pending resolution or a separately
 reviewed alternative.
 
+The first development images were uploaded at source
+`902ab4b0ffbad4d6a656150943c73231bb73ec81`; both `dev` and its exact SHA tag exist.
+The enable variable was then reset to `false` to suspend further publication.
+Retrying selective immutability after those uploads still produced HTTP 500 for
+both repositories. Investigation with Docker support or a separately reviewed
+alternative is required before more publication.
+
 ### Publisher implementation and local-registry validation
 
 The [publisher](../../tool/ci/image-publisher.mjs) implements OCI blob/manifest
@@ -262,6 +269,13 @@ needed. Abrupt runner termination can prevent evidence upload; absent evidence
 requires manual investigation, not a blind publication retry. After publication
 or recovery, both architectures are pulled by recorded registry digest and
 runtime-smoke-tested. Check the Actions summary for immutable digest references.
+
+Runtime verification pulls each platform's child digest separately, avoiding
+Docker's classic image-store conflict when two platforms share an index
+reference. If uploads completed but this post-publication check failed, use the
+[verification-only workflow](../../.github/workflows/verify-development-publication.yml)
+on `main` with the original failed run ID and completed digest journal. It uses
+no Docker Hub secret and performs no publication or recovery writes.
 
 The JavaScript CI job runs these upload/recovery tests against a digest-pinned
 disposable registry service. Tests include actual OCI uploads/read-back,
