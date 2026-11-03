@@ -57,7 +57,7 @@ jobs:
           MODE: recover-development
           CHANNEL: development
           VERSION: ""
-          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          PUBLICATION_SOURCE_SHA: ${{ steps.source.outputs.sha }}
           DEVELOPMENT_PUBLICATION_ENABLED: ${{ vars.DEVELOPMENT_PUBLICATION_ENABLED }}
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
           DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
@@ -71,7 +71,7 @@ jobs:
           platforms: arm64
       - name: Verify recovered registry images
         env:
-          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          PUBLICATION_SOURCE_SHA: ${{ steps.source.outputs.sha }}
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
           PUBLICATION_JOURNAL: ${{ runner.temp }}/evidence/publication-journal.json
         run: node tool/ci/verify-published-images.mjs
