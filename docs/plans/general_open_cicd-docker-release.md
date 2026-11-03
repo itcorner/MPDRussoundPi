@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-3 implemented; Stage 4 build-only validation accepted, registry/publication prerequisites remain. Publication disabled.
+Status: open; Stages 1-4 preparation implemented with deferred registry immutability; Stage 5 first development images uploaded, registry runtime verification pending. Further development publication suspended.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -456,12 +456,33 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
 - The first development publication will use the next CI-approved `develop`
   commit after enabling the repository gate. Suspend further publication after
   this first run until the deferred Docker Hub immutability retry is evaluated.
+- First publication source: `902ab4b0ffbad4d6a656150943c73231bb73ec81`.
+  [Run 41739176843](https://github.com/itcorner/MPDRussoundPi/actions/runs/41739176843)
+  initially failed a pre-existing playback freshness test before uploads.
+  A failed-jobs retry passed validation and all image builds, published both
+  exact development tags and `dev`, and completed registry digest verification.
+- Post-publication runtime verification failed when Docker's image store could
+  not associate both architectures with the same index digest. Verification
+  now pulls distinct platform child digests. A separate no-write workflow
+  verifies the completed original journal; it does not republish/recover tags.
+- Expected/observed exact index digests recorded in the completed journal:
+  web `sha256:25e1c9382029c7485eba22aba2b6fcfe73e72e93393ad5fcb178f05b7de97d54`;
+  ser2net `sha256:10f4c490f1c6a5e9a8d27c42c144a5a465ef75246ed32f395ea3d9844af1a314`.
+- `DEVELOPMENT_PUBLICATION_ENABLED` was reset to `false` after this run.
+  Selective immutability was retried after uploads on both repositories, but
+  Docker Hub still returned HTTP 500. Further publication remains suspended
+  pending Docker support investigation or a separately reviewed alternative.
 
-- [ ] Enable pushes only for successful `develop` builds.
+- [x] Wire pushes only for successful `develop` builds, with an explicit enable
+      gate (currently suspended after the first publication).
 - [ ] Publish and verify the first approved development image: both platform
       manifests, source revision, digest and pull/run behaviour.
 - [ ] Retry selective Docker Hub immutability immediately after the first
       development publication and verify the saved rules on both repositories.
+- [x] Retry selective immutability after the first development uploads; saves
+      still fail with HTTP 500 on both repositories.
+- [ ] Resolve registry immutability before further publication or approve an
+      alternative with its limitations explicitly documented.
 - [ ] Confirm PRs, `main` pushes and release tags cannot publish stable images
       while stable publication is still disabled.
 

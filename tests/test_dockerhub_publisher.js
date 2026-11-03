@@ -89,3 +89,27 @@ test("recovery metadata allows only original failed develop push workflows in th
     assert.throws(() => validateRecoveryRun({...run, ...patch}, "itcorner/MPDRussoundPi"), /failed development/);
   }
 });
+
+test("published runtime verification pulls distinct platform child digests rather than reusing the index", async () => {
+  const {verifyPublishedImages} = await import("../tool/ci/verify-published-images.mjs");
+  const sha = "a".repeat(40);
+  const root = `sha256:${"b".repeat(64)}`;
+  const child = arch => `sha256:${(arch === "amd64" ? "c" : "d").repeat(64)}`;
+  const journal = {phase: "complete", expected: {namespace: "itcornernet", sha, channel: "development",
+    exact: `dev-${sha}`, digests: {web: root, ser2net: root}}};
+  const pulls = [];
+  const reports = verifyPublishedImages(journal, "itcornernet", sha, (command, args) => {
+    if (args[0] === "buildx") return JSON.stringify({manifests: ["amd64", "arm64"].map(arch => ({
+      platform: {os: "linux", architecture: arch}, digest: child(arch),
+    }))});
+    if (command === "docker") {
+      assert.equal(args[0], "pull");
+      assert.ok(args.at(-1).endsWith(child(args[2].slice("linux/".length))));
+      assert.ok(!args.at(-1).endsWith(root));
+      pulls.push(args.at(-1));
+    } else assert.equal(command, "bash");
+  });
+  assert.equal(pulls.length, 4);
+  assert.equal(reports.length, 2);
+  assert.throws(() => verifyPublishedImages({...journal, phase: "prepared"}, "itcornernet", sha), /completed matching/);
+});
