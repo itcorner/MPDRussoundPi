@@ -187,5 +187,72 @@ Enforce immutable exact-version tags in Docker Hub where the account supports
 it; exclude moving aliases from immutability. Review retention before deleting
 old versions so deployment rollback remains possible.
 
+### Temporary development-only immutability exception
+
+On 2026-11-04, the user agreed to defer selective immutability configuration:
+Docker Hub returned HTTP 500 when saving the rule, and manual attempts failed
+too. Both repositories remain mutable. An empty tag inventory is only a
+hypothesis, not a confirmed cause.
+
+Retry immediately after the first separately approved development publication.
+Until then, require a serialized trusted publisher, fresh inventory and direct
+exact-tag existence checks, and recorded expected/observed manifest digests.
+Avoid concurrent manual or external publication. These checks cannot guarantee
+write-once tags against other writers; pin deployments by digest.
+
+This exception does not enable publication or waive the remaining write/recovery
+safeguards. If immutability still cannot be saved after the first development
+tags exist, investigate with Docker support before further publication.
+Candidate/stable publication remains disabled pending resolution or a separately
+reviewed alternative.
+
+### Publisher implementation and local-registry validation
+
+The [publisher](../../tool/ci/image-publisher.mjs) implements OCI blob/manifest
+uploads, deterministic two-platform indices, digest read-back verification,
+exact-tag collision checks and alias promotion. It reuses the
+[prepared archive loader](../../tool/ci/publication-plan.mjs), including archive
+checksums and runtime/attestation validation; it never rebuilds an image.
+
+For Stage 4, its concrete write transport accepts only HTTP loopback registries.
+The CLI accepts only `MODE=local-test`; Docker Hub publication is hard-disabled.
+No GitHub publisher/recovery trigger has been enabled. Stage 5 still needs the
+separately approved authenticated Docker Hub transport and trusted event/job
+wiring, using the shared `image-publication` concurrency group.
+
+Before uploads, the publisher records expected exact-index digests for both
+repositories in a new journal and preflights both inventories/direct tags.
+It verifies both exact images and all referenced blobs/manifests before aliases,
+refreshes alias eligibility and checks the development tip immediately before
+promotion. A process lock rejects simultaneous local publications to the same
+endpoint/namespace. Journal updates use flushed temporary files and atomic
+replacement; preserve the journal and original tested archives after failure.
+
+Recovery requires `RECOVERY_APPROVED=true` and the existing matching journal.
+Existing exact tags must match the recorded digest; absent exact tags can be
+completed from the original artifacts. Completed tags are verified, not
+overwritten. Normal retries against an existing journal fail. A crashed local
+process may leave a lock or journal temporary file: inspect the journal and
+verify no publisher is running before manually removing only that stale file.
+Do not silently discard evidence or start a competing publication.
+
+The JavaScript CI job runs these upload/recovery tests against a digest-pinned
+disposable registry service. Tests include actual OCI uploads/read-back,
+attestation preservation, collisions, partial failures, approved recovery,
+digest mismatches, simultaneous publications, stale development builds and
+non-regressing stable aliases. Synthetic platform images test registry mechanics,
+not hardware or production Docker Hub upload compatibility.
+
+To repeat locally, start a disposable registry bound to loopback, set
+`REGISTRY_TEST_URL=http://127.0.0.1:<published-port>`, and run:
+
+```sh
+node --test tests/test_image_publisher.js
+```
+
+Stop and remove that specific test container afterward. Without the environment
+variable, registry-write integration tests are skipped; policy/assembly tests
+still run. Docker Hub registry immutability is not simulated by these tests.
+
 Publishing does not redeploy containers. Stable deployments should select exact
 versions or digests and preserve configuration/state/log/secret mounts.
