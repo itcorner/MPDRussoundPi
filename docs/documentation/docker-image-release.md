@@ -19,6 +19,8 @@ not a production publication target. The native Pi MPD agent needs the separate
 `build-only`. It runs reusable CI and validates source ancestry: development
 and candidates must be reachable from `develop`, stable simulations from
 `main`. Version input omits the `v` prefix. This creates no Git tag.
+The policy CLI rejects non-manual events, tag-ref dispatches and every mode
+other than `build-only`. Development simulations require an empty version input.
 
 The workflow builds web and ser2net for AMD64 and ARM64, exporting OCI archives
 with source/revision/version labels, BuildKit provenance and SBOM attestations.
@@ -55,10 +57,49 @@ The [policy helper](../../tool/ci/image-policy.mjs) and its tests define:
 - Stable: write-once `X.Y.Z`; `X.Y` only when not regressing its series;
   `latest` only when not regressing the highest stable version.
 
-Build-only execution simulates tags against an empty inventory. **It does not
-check or update Docker Hub tags.** Before publication is enabled, fetch the
-complete registry inventory (including pagination) and fail explicitly on
-authentication/API errors. Feed existing tags into the policy helper, reject
+### Event and source matrix
+
+| Mode | Event/ref | Channel/version | Required source ancestry |
+|---|---|---|---|
+| Build-only | Manual dispatch on a branch | Selected channel and simulated version | `develop` for development/candidate; `main` for stable |
+| Future publication | Push to `develop` | Development; no version input | `develop` |
+| Future publication | Push of `vX.Y.Z-rc.N` | Candidate; version derived from tag | `develop` |
+| Future publication | Push of `vX.Y.Z` | Stable; version derived from tag | `main` |
+
+Publication rules are tested library logic only, not enabled workflow triggers
+or registry operations. Other publication events/refs are rejected, including
+PRs, manual dispatches and pushes to `main`. Publication callers cannot override
+the channel or version derived from the pushed ref.
+
+Source checks fail on missing remote refs, unknown commits or failed Git
+commands. A development commit may be reachable from `develop` without being
+its current tip: preparing its exact SHA image is valid, but promoting `dev`
+requires the tip check. The helper supports that check; a future publisher must
+refresh the remote ref and invoke it immediately before alias promotion.
+
+The focused tests use temporary Git repositories to exercise ancestry,
+unintegrated commits and a branch advancing before a delayed build promotes
+`dev`. Inventory fixtures also cover exact-tag collisions, numeric version
+ordering (including large components), prerelease exclusions and older releases.
+
+By default, build-only execution simulates tags against an empty inventory.
+Select `check_registry: true` on the manual workflow to query live public tags
+for both image repositories before building. The
+[inventory helper](../../tool/ci/registry-inventory.mjs) follows every Docker Hub
+API page and applies the same write-once and alias policy independently to each
+repository. The workflow uses the required `DOCKERHUB_NAMESPACE` repository
+variable for both inventory and prepared image names.
+
+This check uses anonymous GET requests only, not `DOCKERHUB_TOKEN`. It rejects
+HTTP errors (including 401/403/404/429), malformed responses, inconsistent counts,
+duplicate tags, incomplete pagination and unexpected pagination destinations.
+An inaccessible or private repository is an error, not an empty inventory.
+The resulting inventory/tag decisions appear in the job log and Actions summary.
+No tag or alias is updated. A live inventory check is a preparation snapshot,
+not a reservation or atomic write-once guarantee.
+
+Before publication is enabled, require inventory checks in the trusted publisher,
+support authenticated inventory if private repositories are intended, reject
 existing write-once versions, and recheck aliases under a serialized publisher.
 For `dev`, verify the publishing SHA still matches the current `develop` tip.
 The preparation concurrency group serializes manual runs but is not sufficient
@@ -72,16 +113,61 @@ recovery/promotion procedure. Do not silently retry as a new release.
 
 ## Docker Hub setup (pending)
 
+### No-write credential verification
+
+After the reviewed changes reach `main`, manually run
+[Docker Hub access (no writes)](../../.github/workflows/registry-access-check.yml)
+on `main`. Other refs cannot execute its credential job. The checkout does not
+persist Git credentials, and the Docker Hub secret is provided only to the
+credential-check step, never to PR validation or artifact builds.
+
+The helper sends credentials only to Docker Hub's HTTPS token endpoint, requests
+`pull,push` scopes for both intended repositories and checks the registry accepts
+each returned bearer token. Only repository names and granted actions are logged;
+credentials, bearer tokens and authentication response bodies are not logged.
+Failure to grant both actions fails the check. This verifies authentication and
+the authorization server's grants, not an actual image upload or exact-tag write.
+Those remain Stage 5 acceptance checks.
+
+### Serialized dry-run planning and recovery
+
+With `check_registry: true`, build-only preparation also runs a final
+`publication-plan` job after all four image jobs succeed. It downloads the current
+run's tested archives, re-verifies their labels, runtime digests and attestations,
+refreshes the required source branch and reads a fresh registry inventory.
+Development dry runs fail if their SHA is no longer the current `develop` tip.
+The job uses concurrency group `image-publication`, with cancellation disabled;
+future actual publishers must share this group. GitHub may still replace a
+pending run, so concurrency is not a durable FIFO queue or a registry lock.
+
+The resulting report specifies uploads preserving attestations, verification of
+both exact multi-platform tags, digest recording and alias promotion last.
+It performs none of those writes. Registry-side immutability and rechecks at
+actual write/promotion time are still required before enabling publication.
+
+If a future publication partially succeeds, stop: do not rerun a normal
+publication against an existing exact tag. Record the completed registry manifest
+digests, inspect both repositories and verify architecture/attestation coverage.
+The tested recovery gate accepts only matching recorded/registry manifest
+digests and separate explicit approval; mismatches or missing evidence fail.
+This is a planning safeguard, not an enabled recovery/promotion workflow.
+An approved recovery must also refresh inventory and branch-tip checks before
+moving aliases. Do not rebuild or overwrite exact tags as a recovery shortcut.
+
 The public `itcornernet/mpdrussoundpi-web` repository was confirmed on
-2026-11-01. The ser2net lookup still returned 404; that does not distinguish
-missing from private repositories. Confirm ser2net existence and intended
-visibility in Docker Hub before publication.
+2026-11-01. After the user created `itcornernet/mpdrussoundpi-ser2net` on
+2026-11-03, anonymous inventory checks succeeded for both repositories, each
+with no tags. Both repositories are publicly readable. This verifies read
+access only, not token authentication or write access. GitHub execution of the
+updated opt-in inventory step remains to be validated after merge.
 
 GitHub variables `DOCKERHUB_NAMESPACE=itcornernet` and
 `DOCKERHUB_USERNAME=itcornernet` are configured. The user added `DOCKERHUB_TOKEN`
 directly in GitHub; only its existence metadata was checked, not its value.
-Token scope and Docker Hub write access have not been validated. Never paste
-tokens into chat, source, inventory or logs. Build-only jobs do not use this secret.
+On 2026-11-03, the user confirmed the token is configured for Read & Write
+without Delete. Authentication and intended repository write access have not
+been tested. Never paste tokens into chat, source, inventory or logs. Build-only
+jobs do not use this secret.
 
 Before stable publication, configure a release environment allowing only
 protected version tags. Independent reviewer approval needs another reviewer;
