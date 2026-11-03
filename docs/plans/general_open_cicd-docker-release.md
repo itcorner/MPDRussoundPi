@@ -262,6 +262,8 @@ Implementation record (2026-11-01):
       fresh source/inventory checks and tested digest/approval recovery gates.
 - [ ] Implement serialized, non-regressing alias publication and explicit
       recovery gates; enabling registry writes requires separate approval.
+- [x] Implement and test the publisher/recovery engine against a disposable
+      local registry, with Docker Hub write transport and workflow wiring disabled.
 - [x] Validate the per-platform artifacts that will be published, rather than
       testing one image and rebuilding a different one for publication.
 - [x] Add Buildx caching, OCI source/revision/version labels, provenance and SBOM.
@@ -390,11 +392,55 @@ Stage 4 GitHub no-write verification (2026-11-03):
   write/recovery implementation and registry immutability review.
   Stage 5 is not authorized; no Docker Hub image or Git version tag was created.
 
+Stage 4 immutability deferral (2026-11-04):
+
+- Selective immutability is available in both Docker Hub repository settings,
+  but saving the reviewed regex failed with HTTP 500. Manual attempts also
+  failed; both repositories remain mutable. Empty inventories are a possible
+  cause, not a verified explanation.
+- With user agreement, retry selective immutability after the first separately
+  approved development publication. This is a temporary development-only
+  exception, not authorization to publish or enable automatic publication.
+- Before that first publication, complete serialized write/recovery safeguards,
+  reject existing exact tags using fresh inventory and direct tag checks, and
+  record expected/observed manifest digests. Use only the trusted publisher and
+  avoid concurrent manual or external writes. These controls do not provide
+  registry-enforced immutability; deploy by digest for reproducibility.
+- Retry immediately after the first exact development tags exist. If saving
+  still fails, investigate with Docker support before further publication.
+  Stable/candidate publication remains disabled pending resolution or a
+  separately reviewed alternative.
+
+Stage 4 local publisher/recovery implementation (2026-11-04):
+
+- Implemented verified OCI blob/manifest uploads and deterministic combined
+  AMD64/ARM64 indices preserving SBOM/provenance manifests. Existing tested
+  archives are checksummed and verified without rebuilding.
+- Both repositories are preflighted before uploads. Direct exact-tag checks,
+  full digest read-back, refreshed alias eligibility and source-tip checks
+  guard promotion; aliases follow verification of both exact images.
+- Expected digests are journaled before writes. Recovery requires matching
+  original artifacts/journal, explicit approval and matching existing registry
+  digests; completed exact tags are never overwritten. Local process locking
+  rejects simultaneous publications to the same endpoint/namespace.
+- The write transport is restricted to loopback; the CLI accepts only local-test
+  mode. No Docker Hub publisher/recovery workflow or authenticated write
+  transport is enabled. These remain separately approved Stage 5 wiring.
+- Integration tests use a digest-pinned disposable registry in JavaScript CI.
+  They cover actual uploads, attestations, collisions, partial failures,
+  approved recovery, digest mismatch, stale tips, concurrency and stable aliases.
+  Docker Hub upload compatibility and tag immutability remain untested.
+- Local validation passed all 95 JavaScript tests with registry integration
+  enabled, including a checksummed-archive CLI publication against real Git
+  ancestry and the disposable registry. All workflows passed actionlint.
+
 ### Stage 5: Enable development publication (explicit approval required)
 
 - [ ] Enable pushes only for successful `develop` builds.
 - [ ] Publish and verify the first approved development image: both platform
       manifests, source revision, digest and pull/run behaviour.
+- [ ] Retry selective Docker Hub immutability immediately after the first
+      development publication and verify the saved rules on both repositories.
 - [ ] Confirm PRs, `main` pushes and release tags cannot publish stable images
       while stable publication is still disabled.
 
