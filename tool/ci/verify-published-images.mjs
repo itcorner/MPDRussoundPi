@@ -33,9 +33,10 @@ export function verifyPublishedImages(journal, namespace, sha, run = execFileSyn
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const {PUBLICATION_JOURNAL, DOCKERHUB_NAMESPACE, GITHUB_SHA, GITHUB_STEP_SUMMARY} = process.env;
+  const {PUBLICATION_JOURNAL, DOCKERHUB_NAMESPACE, PUBLICATION_SOURCE_SHA, GITHUB_SHA,
+    GITHUB_STEP_SUMMARY} = process.env;
   const reports = verifyPublishedImages(JSON.parse(readFileSync(PUBLICATION_JOURNAL, "utf8")),
-    DOCKERHUB_NAMESPACE, GITHUB_SHA);
+    DOCKERHUB_NAMESPACE, PUBLICATION_SOURCE_SHA ?? GITHUB_SHA);
   if (GITHUB_STEP_SUMMARY) {
     for (const report of reports) appendFileSync(GITHUB_STEP_SUMMARY,
       `### Published ${report.image}\n\`${report.reference}\`\n\nExact tag: \`${report.exact}\`; alias: \`dev\`.\nAMD64 and ARM64 registry pull/runtime smoke checks passed.\n`);

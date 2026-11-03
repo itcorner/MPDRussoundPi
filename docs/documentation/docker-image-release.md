@@ -276,6 +276,9 @@ reference. If uploads completed but this post-publication check failed, use the
 [verification-only workflow](../../.github/workflows/verify-development-publication.yml)
 on `main` with the original failed run ID and completed digest journal. It uses
 no Docker Hub secret and performs no publication or recovery writes.
+Verification and recovery pass the validated original source through
+`PUBLICATION_SOURCE_SHA`; GitHub's reserved `GITHUB_SHA` remains the trusted
+workflow commit. Ordinary development publishing always uses `GITHUB_SHA`.
 
 The JavaScript CI job runs these upload/recovery tests against a digest-pinned
 disposable registry service. Tests include actual OCI uploads/read-back,

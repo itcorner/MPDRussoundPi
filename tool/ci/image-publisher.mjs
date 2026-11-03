@@ -291,7 +291,8 @@ export async function publishImages(options) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const {MODE, LOCAL_REGISTRY_URL, DOCKERHUB_NAMESPACE, CHANNEL, VERSION = "", GITHUB_SHA,
     ARTIFACT_ROOT, PUBLICATION_JOURNAL, RECOVERY_APPROVED, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN,
-    DEVELOPMENT_PUBLICATION_ENABLED, GITHUB_EVENT_NAME, GITHUB_REF} = process.env;
+    DEVELOPMENT_PUBLICATION_ENABLED, GITHUB_EVENT_NAME, GITHUB_REF, PUBLICATION_SOURCE_SHA} = process.env;
+  const sha = MODE === "recover-development" ? PUBLICATION_SOURCE_SHA : GITHUB_SHA;
   let registry;
   if (MODE === "local-test") registry = new LocalRegistry(LOCAL_REGISTRY_URL);
   else if (MODE === "publish-development" && DEVELOPMENT_PUBLICATION_ENABLED === "true" &&
@@ -304,17 +305,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       CHANNEL === "development" && VERSION === "" && RECOVERY_APPROVED === "true") {
     registry = new DockerHubRegistry(DOCKERHUB_NAMESPACE, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN);
   } else throw new Error("Docker Hub publication is disabled for this mode, event or channel");
-  const exact = imagePolicy(CHANNEL, VERSION, GITHUB_SHA).exact;
-  const {readers} = await loadPreparedArtifacts(ARTIFACT_ROOT, GITHUB_SHA, exact);
+  const exact = imagePolicy(CHANNEL, VERSION, sha).exact;
+  const {readers} = await loadPreparedArtifacts(ARTIFACT_ROOT, sha, exact);
   const images = Object.fromEntries(["web", "ser2net"].map(image =>
-    [image, assembleImage(readers[image], GITHUB_SHA, exact)]));
+    [image, assembleImage(readers[image], sha, exact)]));
   const branch = CHANNEL === "stable" ? "main" : "develop";
   const checkSource = async requireTip => {
     execFileSync("git", ["fetch", "--no-tags", "origin",
       `+refs/heads/${branch}:refs/remotes/origin/${branch}`], {stdio: "pipe"});
-    validateImageSource(CHANNEL, GITHUB_SHA, {requireTip});
+    validateImageSource(CHANNEL, sha, {requireTip});
   };
   console.log(JSON.stringify(await publishImages({registry, namespace: DOCKERHUB_NAMESPACE,
-    channel: CHANNEL, version: VERSION, sha: GITHUB_SHA, images, journalPath: PUBLICATION_JOURNAL,
+    channel: CHANNEL, version: VERSION, sha, images, journalPath: PUBLICATION_JOURNAL,
     checkSource, recoveryApproved: RECOVERY_APPROVED === "true"}), null, 2));
 }
