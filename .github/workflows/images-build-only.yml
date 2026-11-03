@@ -1,6 +1,8 @@
-name: Images (build only)
+name: Images (development and build only)
 
 on:
+  push:
+    branches: [develop]
   workflow_dispatch:
     inputs:
       mode:
@@ -49,9 +51,9 @@ jobs:
       - name: Validate manual event, tag policy and source ancestry
         id: policy
         env:
-          MODE: ${{ inputs.mode }}
-          CHANNEL: ${{ inputs.channel }}
-          VERSION: ${{ inputs.version }}
+          MODE: ${{ github.event_name == 'push' && 'prepare-development' || inputs.mode }}
+          CHANNEL: ${{ github.event_name == 'push' && 'development' || inputs.channel }}
+          VERSION: ${{ github.event_name == 'push' && '' || inputs.version }}
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
         run: |
           if [ -z "$DOCKERHUB_NAMESPACE" ]; then
@@ -177,3 +179,53 @@ jobs:
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
           ARTIFACT_ROOT: ${{ runner.temp }}/prepared
         run: node tool/ci/publication-plan.mjs
+
+  publish-development:
+    needs: [policy, images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.DEVELOPMENT_PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: image-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: prepared-*
+          path: ${{ runner.temp }}/prepared
+      - name: Publish verified development images with mandatory fresh inventory
+        env:
+          MODE: publish-development
+          CHANNEL: development
+          VERSION: ""
+          DEVELOPMENT_PUBLICATION_ENABLED: ${{ vars.DEVELOPMENT_PUBLICATION_ENABLED }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          ARTIFACT_ROOT: ${{ runner.temp }}/prepared
+          PUBLICATION_JOURNAL: ${{ runner.temp }}/publication-journal.json
+          RECOVERY_APPROVED: "false"
+        run: node tool/ci/image-publisher.mjs
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - name: Pull published digests and smoke-test both platforms
+        env:
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          PUBLICATION_JOURNAL: ${{ runner.temp }}/publication-journal.json
+        run: node tool/ci/verify-published-images.mjs
+      - name: Preserve publication evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: publication-journal
+          path: ${{ runner.temp }}/publication-journal.json
+          retention-days: 90
+          if-no-files-found: warn

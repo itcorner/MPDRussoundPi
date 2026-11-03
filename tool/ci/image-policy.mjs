@@ -97,9 +97,15 @@ export function validateImageSource(channel, sha, {cwd = process.cwd(), requireT
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const {MODE, CHANNEL, VERSION = "", GITHUB_SHA, GITHUB_OUTPUT, GITHUB_EVENT_NAME, GITHUB_REF} = process.env;
-  if (MODE !== "build-only") throw new Error("Publication is disabled; only build-only is supported");
-  const event = imageEventPolicy({eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF,
-    mode: MODE, channel: CHANNEL, version: VERSION});
+  let event;
+  if (MODE === "prepare-development") {
+    event = imageEventPolicy({mode: "publish", eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF});
+    if (event.channel !== "development") throw new Error("Only development push preparation is enabled");
+  } else {
+    if (MODE !== "build-only") throw new Error("Publication is disabled; only build-only is supported");
+    event = imageEventPolicy({eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF,
+      mode: MODE, channel: CHANNEL, version: VERSION});
+  }
   validateImageSource(event.channel, GITHUB_SHA);
   const policy = imagePolicy(event.channel, event.version, GITHUB_SHA);
   console.log(JSON.stringify({...event, sha: GITHUB_SHA, ...policy}));
