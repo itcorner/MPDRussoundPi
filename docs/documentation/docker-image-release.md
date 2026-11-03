@@ -280,6 +280,24 @@ Verification and recovery pass the validated original source through
 `PUBLICATION_SOURCE_SHA`; GitHub's reserved `GITHUB_SHA` remains the trusted
 workflow commit. Ordinary development publishing always uses `GITHUB_SHA`.
 
+The first images passed all four registry pull/runtime checks in
+[verification run 41741967600](https://github.com/itcorner/MPDRussoundPi/actions/runs/41741967600).
+Development aliases are `itcornernet/mpdrussoundpi-web:dev` and
+`itcornernet/mpdrussoundpi-ser2net:dev`. While exact tags lack registry-enforced
+immutability, prefer the verified index references in Compose:
+
+```yaml
+services:
+  web:
+    image: itcornernet/mpdrussoundpi-web@sha256:25e1c9382029c7485eba22aba2b6fcfe73e72e93393ad5fcb178f05b7de97d54
+  ser2net:
+    image: itcornernet/mpdrussoundpi-ser2net@sha256:10f4c490f1c6a5e9a8d27c42c144a5a465ef75246ed32f395ea3d9844af1a314
+```
+
+These are image-reference examples, not a complete deployment configuration;
+retain the existing ports, configuration/state mounts and serial-device access.
+No deployment was performed as part of publication acceptance.
+
 The JavaScript CI job runs these upload/recovery tests against a digest-pinned
 disposable registry service. Tests include actual OCI uploads/read-back,
 attestation preservation, collisions, partial failures, approved recovery,

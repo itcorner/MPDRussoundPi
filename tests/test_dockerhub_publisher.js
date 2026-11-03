@@ -139,41 +139,42 @@ test("published runtime verification pulls distinct platform child digests rathe
     } else assert.equal(command, "bash");
   });
 
-  test("verification CLI uses explicit original source rather than the trusted workflow commit", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "published-verification-"));
-    const sha = "a".repeat(40);
-    const root = `sha256:${"b".repeat(64)}`;
-    const index = {manifests: ["amd64", "arm64"].map(arch => ({
-      platform: {os: "linux", architecture: arch},
-      digest: `sha256:${(arch === "amd64" ? "c" : "d").repeat(64)}`,
-    }))};
-    const journal = path.join(directory, "journal.json");
-    try {
-      writeFileSync(journal, JSON.stringify({phase: "complete", expected: {
-        namespace: "itcornernet", sha, channel: "development", exact: `dev-${sha}`,
-        digests: {web: root, ser2net: root},
-      }}));
-      writeFileSync(path.join(directory, "docker"),
-        `#!${process.execPath}\nif (process.argv[2] === "buildx") console.log(${JSON.stringify(JSON.stringify(index))});\n`,
-        {mode: 0o755});
-      writeFileSync(path.join(directory, "bash"), `#!${process.execPath}\n`, {mode: 0o755});
-      const env = {...process.env, PATH: directory, GITHUB_SHA: "e".repeat(40),
-        PUBLICATION_SOURCE_SHA: sha, DOCKERHUB_NAMESPACE: "itcornernet",
-        PUBLICATION_JOURNAL: journal};
-      delete env.GITHUB_STEP_SUMMARY;
-      const result = spawnSync(process.execPath,
-        [path.resolve(__dirname, "../tool/ci/verify-published-images.mjs")], {encoding: "utf8", env});
-      assert.equal(result.status, 0, result.stderr);
-      delete env.PUBLICATION_SOURCE_SHA;
-      const mismatch = spawnSync(process.execPath,
-        [path.resolve(__dirname, "../tool/ci/verify-published-images.mjs")], {encoding: "utf8", env});
-      assert.notEqual(mismatch.status, 0);
-      assert.match(mismatch.stderr, /completed matching development journal/);
-    } finally {
-      rmSync(directory, {recursive: true, force: true});
-    }
-  });
   assert.equal(pulls.length, 4);
   assert.equal(reports.length, 2);
   assert.throws(() => verifyPublishedImages({...journal, phase: "prepared"}, "itcornernet", sha), /completed matching/);
+});
+
+test("verification CLI uses explicit original source rather than the trusted workflow commit", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "published-verification-"));
+  const sha = "a".repeat(40);
+  const root = `sha256:${"b".repeat(64)}`;
+  const index = {manifests: ["amd64", "arm64"].map(arch => ({
+    platform: {os: "linux", architecture: arch},
+    digest: `sha256:${(arch === "amd64" ? "c" : "d").repeat(64)}`,
+  }))};
+  const journal = path.join(directory, "journal.json");
+  try {
+    writeFileSync(journal, JSON.stringify({phase: "complete", expected: {
+      namespace: "itcornernet", sha, channel: "development", exact: `dev-${sha}`,
+      digests: {web: root, ser2net: root},
+    }}));
+    writeFileSync(path.join(directory, "docker"),
+      `#!${process.execPath}\nif (process.argv[2] === "buildx") console.log(${JSON.stringify(JSON.stringify(index))});\n`,
+      {mode: 0o755});
+    writeFileSync(path.join(directory, "bash"), `#!${process.execPath}\n`, {mode: 0o755});
+    const env = {...process.env, PATH: directory, GITHUB_SHA: "e".repeat(40),
+      PUBLICATION_SOURCE_SHA: sha, DOCKERHUB_NAMESPACE: "itcornernet",
+      PUBLICATION_JOURNAL: journal};
+    delete env.GITHUB_STEP_SUMMARY;
+    const result = spawnSync(process.execPath,
+      [path.resolve(__dirname, "../tool/ci/verify-published-images.mjs")], {encoding: "utf8", env});
+    assert.equal(result.status, 0, result.stderr);
+    delete env.PUBLICATION_SOURCE_SHA;
+    const mismatch = spawnSync(process.execPath,
+      [path.resolve(__dirname, "../tool/ci/verify-published-images.mjs")], {encoding: "utf8", env});
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /completed matching development journal/);
+  } finally {
+    rmSync(directory, {recursive: true, force: true});
+  }
 });
