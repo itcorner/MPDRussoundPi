@@ -42,7 +42,7 @@ jobs:
           platforms: arm64
       - name: Verify completed digests without publication or recovery writes
         env:
-          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          PUBLICATION_SOURCE_SHA: ${{ steps.source.outputs.sha }}
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
           PUBLICATION_JOURNAL: ${{ runner.temp }}/evidence/publication-journal.json
         run: node tool/ci/verify-published-images.mjs

@@ -465,6 +465,10 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   not associate both architectures with the same index digest. Verification
   now pulls distinct platform child digests. A separate no-write workflow
   verifies the completed original journal; it does not republish/recover tags.
+- The first no-write verification dispatch rejected the journal because GitHub
+  preserves its reserved `GITHUB_SHA` as the current trusted workflow commit.
+  Verification/recovery now pass the validated original source explicitly as
+  `PUBLICATION_SOURCE_SHA`; ordinary publishing still uses the push commit.
 - Expected/observed exact index digests recorded in the completed journal:
   web `sha256:25e1c9382029c7485eba22aba2b6fcfe73e72e93393ad5fcb178f05b7de97d54`;
   ser2net `sha256:10f4c490f1c6a5e9a8d27c42c144a5a465ef75246ed32f395ea3d9844af1a314`.
