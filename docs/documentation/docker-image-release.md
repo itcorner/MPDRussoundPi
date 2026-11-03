@@ -129,6 +129,10 @@ Failure to grant both actions fails the check. This verifies authentication and
 the authorization server's grants, not an actual image upload or exact-tag write.
 Those remain Stage 5 acceptance checks.
 
+The [first credential check](https://github.com/itcorner/MPDRussoundPi/actions/runs/41731056726)
+passed on `main` on 2026-11-03, confirming registry authentication and pull/push
+grants for both repositories without uploading an image.
+
 ### Serialized dry-run planning and recovery
 
 With `check_registry: true`, build-only preparation also runs a final
@@ -154,20 +158,26 @@ This is a planning safeguard, not an enabled recovery/promotion workflow.
 An approved recovery must also refresh inventory and branch-tip checks before
 moving aliases. Do not rebuild or overwrite exact tags as a recovery shortcut.
 
+The [development dry run](https://github.com/itcorner/MPDRussoundPi/actions/runs/41731060294)
+passed on 2026-11-03 with `check_registry=true`: reusable CI, all four image jobs,
+live inventory and the serialized artifact-verification/publication-plan job
+succeeded. No registry writes occurred.
+
 The public `itcornernet/mpdrussoundpi-web` repository was confirmed on
 2026-11-01. After the user created `itcornernet/mpdrussoundpi-ser2net` on
 2026-11-03, anonymous inventory checks succeeded for both repositories, each
 with no tags. Both repositories are publicly readable. This verifies read
-access only, not token authentication or write access. GitHub execution of the
-updated opt-in inventory step remains to be validated after merge.
+access only. Subsequent GitHub execution verified live inventory and the no-write
+credential check as recorded above; actual image publication remains untested.
 
 GitHub variables `DOCKERHUB_NAMESPACE=itcornernet` and
 `DOCKERHUB_USERNAME=itcornernet` are configured. The user added `DOCKERHUB_TOKEN`
 directly in GitHub; only its existence metadata was checked, not its value.
 On 2026-11-03, the user confirmed the token is configured for Read & Write
-without Delete. Authentication and intended repository write access have not
-been tested. Never paste tokens into chat, source, inventory or logs. Build-only
-jobs do not use this secret.
+without Delete. The no-write Actions check subsequently verified authentication
+and granted pull/push scopes for both repositories. Actual uploads have not been
+tested. Never paste tokens into chat, source, inventory or logs. Build-only jobs
+do not use this secret.
 
 Before stable publication, configure a release environment allowing only
 protected version tags. Independent reviewer approval needs another reviewer;
