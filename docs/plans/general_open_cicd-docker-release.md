@@ -449,6 +449,13 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   run metadata, tested archives and matching digest journal. Both workflows use
   shared publication serialization and verify published digests by pulling and
   smoke-testing AMD64/ARM64. GitHub acceptance/first publication remains pending.
+- [PR #22](https://github.com/itcorner/MPDRussoundPi/pull/22) and the merge-commit
+  [bootstrap PR #23](https://github.com/itcorner/MPDRussoundPi/pull/23) passed
+  required CI and installed the development-only publisher/recovery wiring on
+  both branches. All 100 JavaScript tests passed locally with registry integration.
+- The first development publication will use the next CI-approved `develop`
+  commit after enabling the repository gate. Suspend further publication after
+  this first run until the deferred Docker Hub immutability retry is evaluated.
 
 - [ ] Enable pushes only for successful `develop` builds.
 - [ ] Publish and verify the first approved development image: both platform
