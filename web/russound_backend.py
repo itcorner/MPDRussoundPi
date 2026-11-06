@@ -293,29 +293,8 @@ class RussoundBackend:
                     "loudness": bool(zone_info.get("loudness", False)),
                     "balance": int(zone_info.get("balance", 0)),
                 }
-            try:
-                power = client.get_power(controller, zone_number)
-                source_index = client.get_source(controller, zone_number)
-                volume = client.get_volume(controller, zone_number)
-                if power is None and source_index is None and volume is None:
-                    logging.debug("Russound controller %s - zone %s did not answer any read", controller, zone_number)
-                    return None
-                source_id = None
-                volume_value = int(volume) if isinstance(volume, int) else 0
-                if isinstance(source_index, int):
-                    source_id = next((input_item.get("id") for input_item in inputs if input_item.get("id") == source_index + 1), None)
-                return {
-                    "power": bool(power),
-                    "source": source_id or (inputs[0].get("id") if inputs else ""),
-                    "volume": volume_value,
-                    "bass": 0,
-                    "treble": 0,
-                    "loudness": False,
-                    "balance": 0,
-                }
-            except Exception as exc:  # pragma: no cover - hardware I/O failure
-                logging.debug("Unable to read Russound controller %s - zone %s: %s", controller, zone_number, exc)
-                return None
+            logging.debug("Russound controller %s - zone %s did not answer the zone read", controller, zone_number)
+            return None
         finally:
             if self.client is not client:
                 self._close_client(client)
