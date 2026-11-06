@@ -168,9 +168,11 @@ playback-status tests (35 tests). Item 6 was fixed and verified on 2026-11-06.
 
 ## 10. Receive buffers unbounded on line noise (L)
 
-> **Done:** incomplete receive and audit buffers are capped at 4 KiB. Overflow
-> discards leading noise while retaining a bounded newest frame start, or clears
-> an oversized incomplete frame, and logs the discard.
+> **Done:** incomplete receive and audit buffers are capped at 128 bytes.
+> The live `musicpi` audit contained 86 complete frames; its longest was 39
+> bytes, so the cap retains over 3x headroom. Overflow discards leading noise
+> while retaining a bounded newest frame start, or clears an oversized
+> incomplete frame, and logs the discard.
 
 - **Evidence:** `test_receive_and_audit_buffers_discard_unterminated_noise` and
   `test_receive_and_audit_buffers_keep_only_a_bounded_latest_frame` in

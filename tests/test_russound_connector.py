@@ -46,6 +46,10 @@ class _FakeSocket:
 
 
 class RussoundConnectorTests(unittest.TestCase):
+    def test_incomplete_rnet_buffer_limit_has_headroom_over_audited_frames(self) -> None:
+        self.assertEqual(MAX_INCOMPLETE_RNET_BUFFER_BYTES, 128)
+        self.assertGreaterEqual(MAX_INCOMPLETE_RNET_BUFFER_BYTES, 39 * 3)
+
     def test_connects_to_direct_serial_device(self) -> None:
         master_fd, slave_fd = pty.openpty()
         device = os.ttyname(slave_fd)
