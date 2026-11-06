@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-4 preparation implemented; Stage 5 first development images published and runtime-verified. User confirmed selective immutable-tag rules on both repositories; development publishing remains suspended pending explicit re-enable.
+Status: open; Stages 1-4 preparation implemented; Stage 5 first development images published and runtime-verified. User confirmed selective immutable-tag rules on both repositories and approved resuming gated development publication.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -491,11 +491,13 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   disabled. This is user-confirmed; the browser session was signed out when
   recorded, so settings were not independently re-read.
 - The registry immutability blocker for development exact tags is resolved per
-  user confirmation. `DEVELOPMENT_PUBLICATION_ENABLED` remains `false` until
-  explicitly re-enabled; no further image was published as part of this update.
+  user confirmation. On 2026-11-06 the user approved resuming development
+  publication and `DEVELOPMENT_PUBLICATION_ENABLED` was set to `true`. This
+  changes only the gate; it does not dispatch a workflow or publish an image.
+  The next eligible `develop` push can publish the two development images.
 
 - [x] Wire pushes only for successful `develop` builds, with an explicit enable
-      gate (currently suspended after the first publication).
+      gate (enabled after user approval on 2026-11-06).
 - [x] Publish and verify the first approved development images: both platform
       manifests, source revision, digest and pull/run behaviour.
 - [x] Configure selective Docker Hub immutability on both repositories; user
@@ -509,8 +511,8 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
 Acceptance: only the approved development channel is active; no stable or
 `latest` image exists as a side effect.
 First development images meet publication/runtime acceptance and exact
-development SHA tags are reported immutable. Re-enabling automatic development
-publication requires an explicit decision; stable/RC paths remain disabled.
+development SHA tags are reported immutable. Gated development publication is
+enabled; stable/RC publication and deployments remain disabled.
 
 ### Stage 6: Enable the release path (separate approval required)
 
