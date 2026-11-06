@@ -1,26 +1,35 @@
-# Long-uptime reliability backlog
+# Web and delivery reliability backlog
 
-Findings from a code review of the web interface (2026-10-10) for memory leaks
-and other issues that degrade the service over long uptimes. Work through the
-items in order; tick the checkbox and note the commit when an item is done.
+Findings from the web reliability review (2026-10-10), reassessed against
+`develop` on 2026-11-06. The list covers long-uptime runtime behavior and
+delivery-pipeline reliability. Tick items only after implementation and
+verification.
 
-Priority: **H** = will eventually break functionality, **M** = gradual
-degradation / resource growth, **L** = edge cases.
+Priority: **H** = will eventually break runtime functionality, **M** = gradual
+degradation / resource growth or a release pipeline that can be blocked, **L** =
+edge cases.
 
 | # | Prio | Topic | Status |
 |---|------|-------|--------|
 | 1 | H | Update listener not restarted after reconnect | [x] |
 | 2 | H | Update listener never started if gateway is down at boot | [x] |
 | 3 | H | Peer close / half-open TCP not detected | [x] |
-| 4 | H | Open UI pages die silently after server restart (API token) | [x] |
+| 4 | H | Open UI pages survive server restart | [x] |
 | 5 | H | SSE streams pin waitress worker threads | [x] |
 | 6 | M | Protocol audit log grows unbounded | [ ] |
 | 7 | M | SSE client registry never pruned | [x] |
 | 8 | M | Unbounded per-client SSE queues | [x] |
-| 9 | M | Silent zones hold `state_lock` for ~9 s per poll | [ ] |
+| 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [ ] |
 | 10 | L | Receive buffers unbounded on line noise | [ ] |
 | 11 | L | Frontend fetches have no timeout | [ ] |
 | 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
+| 13 | M | Playback freshness threshold test flakes in CI | [ ] |
+
+Reassessment: items 1–5 and 7–8 remain complete; items 6 and 9–12 remain open.
+Item 9 is partially mitigated but still blocks requests behind slow hardware
+reads in some zone orders. Item 13 is a new delivery-pipeline reliability
+finding. Focused backend/connector/server tests passed (177 tests), as did the
+playback-status tests (35 tests).
 
 ---
 
@@ -87,57 +96,32 @@ degradation / resource growth, **L** = edge cases.
 
 ## 4. Open UI pages die silently after server restart (H)
 
-> **Done (option D, layer 1):** the API token was removed. State-changing
-> requests are protected by a same-origin check (`Origin` /
-> `Sec-Fetch-Site`), JSON-only bodies and an optional `Host` allowlist
-> (`RUSSOUND_ALLOWED_HOSTS`). Nothing in the page can become stale anymore.
+> **Done:** state-changing requests no longer depend on a per-process API
+> token. They require same-origin/browser provenance (or a non-browser request),
+> JSON bodies, and optionally an allowed Host. Reopening an existing page after
+> a server restart does not leave it with an expired token.
 
-- **Where:** `web/russound_server.py` (`self.api_token =
-  secrets.token_urlsafe(32)` per process), `web/static/app.js`,
-  `web/static/status.js`, `web/static/config.js`.
-- **Problem:** The token is regenerated on every start. Already open pages
-  keep the old token → every API call returns 401; `EventSource` gets 401 and
-  stops reconnecting permanently. `fetchState()` silently ignores non-OK
-  responses.
-- **Impact:** Wall tablets / phones show stale state without any indication
-  until manually reloaded.
-- **Fix idea:** In the frontend, on a 401 (fetch) or on a closed
-  `EventSource`, reload the page (rate-limited) to obtain the new token.
-  Alternative: persist the token across restarts (e.g. env var or file in
-  `/data`).
-- **Verify:** Open UI, restart container, UI recovers automatically and
-  reflects new state.
+- **Evidence:** `web/russound_server.py` `_is_same_origin_request()` and the
+  same-origin request tests in `tests/test_russound_server.py`.
 
 ## 5. SSE streams pin waitress worker threads (H)
 
-> **Done:** one registry entry per stream (fixes tabs of the same browser
-> silently losing live updates), streams end after 5 min with `retry: 2000`
-> and the page resyncs on reconnect, pages close their stream and pause
-> polling while hidden, concurrent streams are capped at threads − 4
-> (`503` + client retry after 30 s), default threads raised to 24, and
-> `TCP_USER_TIMEOUT` (30 s, Linux) drops dead client connections.
+> **Done:** each stream has its own registry entry; streams have a 5-minute
+> lifetime and reconnect with a 2-second retry. Waitress defaults to 24 worker
+> threads and reserves four from SSE use; Linux client connections use a
+> 30-second TCP user timeout. Pages close streams and pause polling while
+> hidden.
 
-- **Where:** `web/russound_server.py` `_serve_events()` / `event_stream()`;
-  waitress `threads=16` default.
-- **Problem:** Each open SSE stream occupies a worker thread for its whole
-  lifetime. Half-open connections (sleeping phones) keep their thread until
-  TCP gives up. When the same session reconnects, the old generator keeps
-  running (only its registry entry is replaced).
-- **Impact:** A few devices repeatedly sleeping/waking can exhaust all
-  threads → all pages and API requests hang.
-- **Fix idea:**
-  - In `event_stream()`, exit when the client's current `connection_id` no
-    longer matches this stream's id (superseded by a reconnect).
-  - Cap stream lifetime (e.g. 5 min); `EventSource` reconnects automatically.
-  - Consider raising `waitress_threads` moderately.
-- **Verify:** Unit test: second registration for the same session ends the
-  first stream generator. Manual: many reconnects do not grow thread count.
+- **Evidence:** `web/russound_server.py` stream lifecycle/limits and tests in
+  `tests/test_russound_server.py`.
 
 ## 6. Protocol audit log grows unbounded (M)
 
 - **Where:** `web/russound_connector.py` `_audit_frame()`.
-- **Problem:** Appends forever and opens/closes the file per frame. With the
-  10 s poll interval this is roughly 10–15 MB/day plus constant SD-card writes.
+- **Problem:** When protocol audit logging is configured, appends forever and
+  opens/closes the file per frame. The example configuration enables it at
+  `/logs/protocol-audit.log`, so long-running deployments using that config can
+  eventually fill the writable volume.
 - **Fix idea:** Use a dedicated `logging` logger with `RotatingFileHandler`
   (e.g. 5 MB × 3) for the audit file; keep it optional via config.
 - **Verify:** Unit test that the audit logger uses a rotating handler; audit
@@ -145,51 +129,41 @@ degradation / resource growth, **L** = edge cases.
 
 ## 7. SSE client registry never pruned (M)
 
-> **Done** together with item 5: streams are removed from the registry when
-> they end; the status page groups streams per browser session.
+> **Done:** `unregister_event_client()` removes the stream entry. The status
+> endpoint groups simultaneously open streams by browser session without
+> retaining completed sessions.
 
-- **Where:** `web/russound_server.py` `_event_clients`,
-  `_event_client_index`, `unregister_event_client()`.
-- **Problem:** Entries are only marked inactive, never removed. Each new
-  browser, private window or cookie-less client adds an entry forever.
-- **Fix idea:** Remove inactive entries (and their index entry) on
-  unregister, or prune entries inactive for longer than e.g. 1 h.
-- **Verify:** Unit test: register/unregister many sessions → registry size
-  bounded.
+- **Evidence:** `test_unregister_removes_stream_from_registry` and
+  `test_status_client_payload_groups_streams_from_same_session` in
+  `tests/test_russound_server.py`.
 
 ## 8. Unbounded per-client SSE queues (M)
 
-> **Done** in `ab3f967`: queues are bounded at `EVENT_QUEUE_MAXSIZE` (8). When a
-> queue is full, its pending events are discarded before the newest one is
-> added, so the client still gets the latest state. Covered by
-> `tests/test_playback_status.py`.
+> **Done:** each queue is bounded at `EVENT_QUEUE_MAXSIZE` (8); overflow drains
+> queued invalidations before enqueueing the newest event. Playback updates are
+> coalesced separately to one outstanding event per stream.
 
-- **Where:** `web/russound_server.py` `register_event_client()` (`Queue()`),
-  `broadcast_state_change()`.
-- **Problem:** If a stream is blocked (waitress output buffer full on a dead
-  connection), every broadcast adds another full state payload.
-- **Fix idea:** Only the latest state matters: use `Queue(maxsize=1)` and
-  replace the pending item on `Full` (drop oldest).
-- **Verify:** Unit test: many broadcasts to a non-consuming client keep queue
-  size ≤ 1 and the newest payload is delivered.
+- **Evidence:** `test_playback_sse_is_coalesced_and_client_queue_is_bounded` in
+  `tests/test_playback_status.py`.
 
-## 9. Silent zones hold `state_lock` for ~9 s per poll (M)
+## 9. Nonresponsive zones can hold `state_lock` during fallback reads (M)
 
 - **Where:** `web/russound_backend.py` `read_zone()`.
 - **Problem:** After `get_zone_extended_info()` fails, the fallback issues
   `get_power()`, `get_source()`, `get_volume()` – the same All Zone Info
-  request three more times, each with its own ~2.2 s timeout. The watcher
-  holds `state_lock` throughout, blocking all API requests.
-- **Impact:** Every configured zone that doesn't answer blocks the UI for ~9 s
-  per poll. The original trigger, an absent controller 2, is no longer in the
-  deployed config. The same delay still applies when the hardware is switched
-  off or a zone stops responding. Since the review, the poll also reports
-  "hardware not responding", but it still waits for every timeout.
+  request three more times. The server still performs its full backend poll
+  while holding `state_lock`. A partial mitigation now stops iterating if the
+  first unanswered zone is encountered before any zone has answered, but
+  silent zones later in a poll still incur the fallback reads.
+- **Impact:** A nonresponsive zone can delay requests that need `state_lock`;
+  the worst case depends on the number/order of zones and device response
+  timeouts. Health reporting is not a latency mitigation.
 - **Fix idea:** Drop the redundant fallback reads (return `None` when the
   extended read fails), and/or skip zones that failed repeatedly for a backoff
-  period. Consider releasing `state_lock` during hardware I/O.
-- **Verify:** Unit test: failed extended read results in exactly one request.
-  Audit log shows one request per silent zone per poll.
+  period. Avoid holding `state_lock` across slow hardware I/O if state snapshots
+  can be made consistent.
+- **Verify:** Add a test that measures query count and lock availability for a
+  nonresponsive zone after another zone has answered.
 
 ## 10. Receive buffers unbounded on line noise (L)
 
@@ -201,17 +175,18 @@ degradation / resource growth, **L** = edge cases.
 
 ## 11. Frontend fetches have no timeout (L)
 
-- **Where:** `apiFetch()` in `web/static/app.js`, `status.js` and `config.js`;
-  `fetchState()` in `app.js`. (`authorizedFetch()` was renamed when the API
-  token was removed.) `playback.js` already aborts its operation requests and
-  station search after a timeout, but its other `apiFetch()` calls don't.
+- **Where:** `apiFetch()` in `web/static/app.js`, `status.js`, `config.js`, and
+  `playback.js`. Some playback operations and station search wrap the fetch
+  with `AbortController`, but ordinary reads, polling and other requests do
+  not.
 - **Problem:** A request hanging on a dead connection keeps
-  `stateFetchInFlight` true and suppresses the 5 s refresh until the browser
-  gives up.
-- **Fix idea:** Use `AbortController` with a timeout (e.g. 10 s) in
-  `authorizedFetch()`.
-- **Verify:** Manual: block the server temporarily, UI resumes polling after
-  it returns.
+  `stateFetchInFlight` / `statusFetchInFlight` true and suppresses later
+  polling until the browser gives up.
+- **Fix idea:** Add a shared timeout/abort policy to `apiFetch()` while
+  preserving caller cancellation and requests that intentionally outlive the
+  default timeout.
+- **Verify:** Test a stalled fetch, ensure the in-flight flag clears, then
+  verify the next poll recovers after the server returns.
 
 ## 12. `_response_transaction_depth` modified outside the lock (L)
 
@@ -223,7 +198,30 @@ degradation / resource growth, **L** = edge cases.
 
 ---
 
+## 13. Playback freshness threshold test flakes in CI (M)
+
+- **Where:** `tests/test_playbackstatus.py`,
+  `test_freshness_uses_monotonic_time_and_exact_thresholds`.
+- **Evidence:** The test failed in
+  [develop run 41739176843](https://github.com/itcorner/MPDRussoundPi/actions/runs/41739176843)
+  before the first image upload attempt, and again in
+  [develop run 42260788316](https://github.com/itcorner/MPDRussoundPi/actions/runs/42260788316)
+  after development publishing was re-enabled. In the latter run, the exact
+  threshold assertion observed route status `not_applicable` rather than
+  `pending`; image building and publication were skipped. Related validation
+  runs passed, so this is intermittent rather than a consistently failing test.
+- **Impact:** A transient test failure blocks image builds and publication for
+  an otherwise eligible `develop` push.
+- **Next step:** Make this boundary test deterministic across playback/audio
+  collector jobs and avoid relying on wall-clock scheduling at the exact
+  threshold. Re-run it repeatedly and verify the full validation workflow.
+
+---
+
 ## Not issues (checked)
+
+Rechecked on 2026-11-06; no new long-uptime runtime issue was confirmed in this
+bounded pass beyond the open items above.
 
 - `_event_history` is a `deque(maxlen=50)`.
 - State/config persistence writes are atomic (temp file + `replace`).
