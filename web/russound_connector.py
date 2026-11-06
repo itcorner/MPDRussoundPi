@@ -38,6 +38,8 @@ ZONE_USER_PARAMETER_PATHS = {
 ALL_KEYPADS_DISPLAY_TEMPLATE = "F0 7F 00 00 00 00 70 00 02 01 01 00 00 00 01 00 10 00"
 SPECIFIC_KEYPAD_DISPLAY_TEMPLATE = "F0 @cc @zz @tk 00 00 70 00 02 01 01 00 00 00 01 00 10 00"
 DISPLAY_TEXT_LENGTH = 13
+# The live audit's longest frame was 39 bytes; 128 leaves over 3x headroom.
+MAX_INCOMPLETE_RNET_BUFFER_BYTES = 128
 PROTOCOL_AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024
 PROTOCOL_AUDIT_LOG_BACKUP_COUNT = 3
 
@@ -82,6 +84,18 @@ def _release_protocol_audit_logger(path: Path, logger: logging.Logger) -> None:
         del _protocol_audit_log_handlers[path]
         logger.removeHandler(handler)
         handler.close()
+
+
+def _bound_incomplete_rnet_buffer(buffer: bytearray, name: str) -> None:
+    if len(buffer) <= MAX_INCOMPLETE_RNET_BUFFER_BYTES:
+        return
+    size = len(buffer)
+    last_frame_start = buffer.rfind(0xF0)
+    if last_frame_start < 0 or size - last_frame_start > MAX_INCOMPLETE_RNET_BUFFER_BYTES:
+        buffer.clear()
+    else:
+        del buffer[:last_frame_start]
+    LOGGER.warning("Discarded oversized incomplete RNET %s buffer (%d bytes)", name, size)
 
 
 def _unescape_rnet_payload(payload: bytes | bytearray) -> bytes:
@@ -349,8 +363,8 @@ class Russound:
     def get_zone_info(self, controller: int, zone: int, return_variable: int) -> int | list[int] | None:
         resp_msg_signature = self.__create_response_signature("04 02 00 @zz 07", zone)
         send_msg = self.__create_send_message("F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00", controller, zone)
-        self._response_transaction_depth += 1
         with self.lock:
+            self._response_transaction_depth += 1
             try:
                 self.__send_data(send_msg)
                 matching_message = self.__get_response_message(resp_msg_signature)
@@ -648,6 +662,7 @@ class Russound:
 
         frames, remainder = self._extract_complete_frames(bytes(self._rx_buffer))
         self._rx_buffer = bytearray(remainder)
+        _bound_incomplete_rnet_buffer(self._rx_buffer, "receive")
         for frame in frames:
             self._log_received_frame_semantics(frame)
             if len(frame) > 1 and frame[1] == 0x7E:
@@ -943,6 +958,7 @@ class Russound:
             if start == -1:
                 continue
             self._audit_frame("RX", candidate[start:])
+        _bound_incomplete_rnet_buffer(self._audit_rx_buffer, "audit")
 
     def _audit_frame(self, direction: str, frame: bytes | bytearray) -> None:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

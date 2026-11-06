@@ -4,11 +4,12 @@ import tempfile
 import os
 import pty
 import socket
+import threading
 from pathlib import Path
 from unittest.mock import patch
 import unittest
 
-from web.russound_connector import Russound
+from web.russound_connector import MAX_INCOMPLETE_RNET_BUFFER_BYTES, Russound
 
 
 class _FakeSocket:
@@ -46,6 +47,10 @@ class _FakeSocket:
 
 
 class RussoundConnectorTests(unittest.TestCase):
+    def test_incomplete_rnet_buffer_limit_has_headroom_over_audited_frames(self) -> None:
+        self.assertEqual(MAX_INCOMPLETE_RNET_BUFFER_BYTES, 128)
+        self.assertGreaterEqual(MAX_INCOMPLETE_RNET_BUFFER_BYTES, 39 * 3)
+
     def test_connects_to_direct_serial_device(self) -> None:
         master_fd, slave_fd = pty.openpty()
         device = os.ttyname(slave_fd)
@@ -87,6 +92,31 @@ class RussoundConnectorTests(unittest.TestCase):
 
         self.assertIsNone(connector.sock)
         self.assertTrue(sock.closed)
+
+    def test_receive_and_audit_buffers_discard_unterminated_noise(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        connector.sock.recv_queue.append(b"\x00" * (MAX_INCOMPLETE_RNET_BUFFER_BYTES + 1))
+
+        with patch("web.russound_connector.LOGGER.warning") as warning:
+            connector._read_available_locked()
+
+        self.assertEqual(connector._rx_buffer, bytearray())
+        self.assertEqual(connector._audit_rx_buffer, bytearray())
+        self.assertEqual(warning.call_count, 2)
+
+    def test_receive_and_audit_buffers_keep_only_a_bounded_latest_frame(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        partial_frame = b"\xF0" + b"\x01" * (MAX_INCOMPLETE_RNET_BUFFER_BYTES - 1)
+        connector.sock.recv_queue.append(b"\x00" * 8 + partial_frame)
+
+        connector._read_available_locked()
+
+        self.assertEqual(connector._rx_buffer, partial_frame)
+        self.assertEqual(connector._audit_rx_buffer, partial_frame)
+        self.assertLessEqual(len(connector._rx_buffer), MAX_INCOMPLETE_RNET_BUFFER_BYTES)
+        self.assertLessEqual(len(connector._audit_rx_buffer), MAX_INCOMPLETE_RNET_BUFFER_BYTES)
 
     def test_tcp_connect_enables_keepalive(self) -> None:
         fake_sock = _FakeSocket()
@@ -307,6 +337,46 @@ class RussoundConnectorTests(unittest.TestCase):
 
         self.assertEqual(list(connector._pending_frames), [frame])
         self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_response_transaction_depth_changes_only_after_lock_acquisition(self) -> None:
+        class GateLock:
+            def __init__(self) -> None:
+                self.entering = threading.Event()
+                self.proceed = threading.Event()
+
+            def __enter__(self):
+                self.entering.set()
+                if not self.proceed.wait(timeout=2):
+                    raise TimeoutError("Test did not release the connector lock.")
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback) -> bool:
+                return False
+
+        connector = Russound("127.0.0.1", 6666)
+        lock = GateLock()
+        connector.lock = lock
+        active_depths = []
+        results = []
+        connector._Russound__send_data = lambda _payload: None
+
+        def read_response(_signature):
+            active_depths.append(connector._response_transaction_depth)
+            return [0] * 14
+
+        connector._Russound__get_response_message = read_response
+        worker = threading.Thread(target=lambda: results.append(connector.get_zone_info(0, 0, 0)))
+
+        worker.start()
+        self.assertTrue(lock.entering.wait(timeout=2))
+        self.assertEqual(connector._response_transaction_depth, 0)
+        lock.proceed.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [0])
+        self.assertEqual(active_depths, [1])
+        self.assertEqual(connector._response_transaction_depth, 0)
 
     def test_discards_frames_addressed_to_controller_7e(self) -> None:
         connector = Russound("127.0.0.1", 6666)

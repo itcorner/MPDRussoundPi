@@ -80,10 +80,6 @@ function stationLogo(outputKey, stationId) {
   return entry.failed ? null : entry.element;
 }
 
-function apiFetch(path, options = {}) {
-  return fetch(path, { ...options, credentials: "same-origin" });
-}
-
 function outputControlState(agent, output) {
   const key = JSON.stringify([agent.agent_id, output.id]);
   if (!outputControls.has(key)) {
