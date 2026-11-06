@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+const apiSource = fs.readFileSync(path.join(__dirname, "../web/static/api.js"), "utf8");
 const source = fs.readFileSync(path.join(__dirname, "../web/static/app.js"), "utf8");
 
 // Minimal DOM for app.js. Every mutation is counted so tests can assert that live updates leave the DOM alone.
@@ -276,6 +277,9 @@ async function harness(initial = payload({ revision: 1 })) {
   appShell.append(elements.shortcuts, elements.zones);
   const requests = [];
   const responses = [];
+  const timers = new Map();
+  let timerId = 0;
+  let stallNextFetch = false;
   let stateResponse = initial;
   const document = {
     hidden: false,
@@ -309,6 +313,7 @@ async function harness(initial = payload({ revision: 1 })) {
     console,
     document,
     EventSource,
+    AbortController,
     Option,
     JSON,
     Number,
@@ -321,18 +326,32 @@ async function harness(initial = payload({ revision: 1 })) {
     window: {
       EventSource,
       location: { replace(url) { context.redirect = url; } },
-      setTimeout: (handler) => setImmediate(handler),
-      clearTimeout() {},
+      setTimeout(handler, delay) {
+        if (delay === 15000) {
+          const id = ++timerId;
+          timers.set(id, handler);
+          return id;
+        }
+        return setImmediate(handler);
+      },
+      clearTimeout(id) { timers.delete(id); },
       setInterval: () => 1,
       clearInterval() {},
     },
-    fetch: async (url, options = {}) => {
+    fetch: (url, options = {}) => {
       requests.push({ url, method: options.method || "GET", body: options.body && JSON.parse(options.body) });
+      if (stallNextFetch) {
+        stallNextFetch = false;
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+        });
+      }
       const body = responses.length ? responses.shift() : stateResponse;
-      return { ok: true, status: 200, json: async () => body };
+      return Promise.resolve({ ok: true, status: 200, json: async () => body });
     },
   };
   vm.createContext(context);
+  vm.runInContext(apiSource, context);
   vm.runInContext(source, context);
   await settle();
   const cards = () => elements.zones.children;
@@ -353,6 +372,14 @@ async function harness(initial = payload({ revision: 1 })) {
     appShell,
     requests,
     stream: () => streams[0],
+    poll: () => context.fetchState(),
+    stallNextFetch: () => { stallNextFetch = true; },
+    fireApiTimeout: () => {
+      const [id, handler] = timers.entries().next().value || [];
+      assert.notEqual(id, undefined, "Expected an active API timeout");
+      timers.delete(id);
+      handler();
+    },
     cards,
     card,
     apply: (body) => context.applyPayload(body),
@@ -361,6 +388,22 @@ async function harness(initial = payload({ revision: 1 })) {
     mutationCount: () => mutations,
   };
 }
+
+test("a timed-out room poll releases its in-flight guard and a queued poll recovers", async () => {
+  const ui = await harness();
+  const roomRequestsBefore = ui.requests.filter((request) => request.url === "/api/rooms").length;
+  ui.stallNextFetch();
+
+  const stalledPoll = ui.poll();
+  await settle();
+  ui.poll();
+  ui.fireApiTimeout();
+
+  await assert.rejects(stalledPoll, { name: "TimeoutError" });
+  await settle();
+  const roomRequestsAfter = ui.requests.filter((request) => request.url === "/api/rooms").length;
+  assert.equal(roomRequestsAfter, roomRequestsBefore + 2);
+});
 
 test("rendering the same state again keeps every element and does not touch the DOM", async () => {
   const ui = await harness();

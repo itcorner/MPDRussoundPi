@@ -345,6 +345,19 @@ class RussoundController:
         backend: RussoundBackend | None = None,
         zone_addresses: set[tuple[int, int]] | None = None,
     ) -> RussoundState:
+        refreshed_state, health = self.read_state_from_backend(state, config, backend, zone_addresses)
+        if health is not None:
+            self.set_backend_health_snapshot(health)
+        return refreshed_state
+
+    def read_state_from_backend(
+        self,
+        state: RussoundState,
+        config: dict[str, Any],
+        backend: RussoundBackend | None = None,
+        zone_addresses: set[tuple[int, int]] | None = None,
+    ) -> tuple[RussoundState, dict[str, Any] | None]:
+        """Read hardware into a private state snapshot without publishing health."""
         backend = backend or RussoundBackend(config=config)
         inputs = [
             {"id": input_item["id"], "name": input_item["name"]}
@@ -384,10 +397,11 @@ class RussoundController:
                 },
             )
             zone_items[zone_index] = zone
-        if zone_addresses is None:
-            self._record_backend_health(reachable=reachable, answered=answered, polled_zone_count=len(zone_items))
         state.zones = zone_items
-        return self._sync_system_power(state)
+        health = None
+        if zone_addresses is None:
+            health = self._backend_health_for_poll(reachable, answered, len(zone_items))
+        return self._sync_system_power(state), health
 
     def refresh_zones(self, zone_addresses: set[tuple[int, int]], backend: RussoundBackend | None = None) -> RussoundState:
         """Re-read only the given zones from hardware; other zones keep their persisted values."""
@@ -399,14 +413,21 @@ class RussoundController:
 
     def _record_backend_health(self, reachable: bool, answered: bool, polled_zone_count: int) -> None:
         """Derive hardware health from the zone reads that just ran."""
+        self._backend_health = self._backend_health_for_poll(reachable, answered, polled_zone_count)
+
+    @staticmethod
+    def _backend_health_for_poll(reachable: bool, answered: bool, polled_zone_count: int) -> dict[str, Any]:
         if answered:
-            self._backend_health = {"connected": True, "message": ""}
-        elif not reachable:
-            self._backend_health = {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
-        elif polled_zone_count == 0:
-            self._backend_health = {"connected": True, "message": ""}
-        else:
-            self._backend_health = {"connected": False, "message": _BACKEND_SILENT_MESSAGE}
+            return {"connected": True, "message": ""}
+        if not reachable:
+            return {"connected": False, "message": _BACKEND_UNAVAILABLE_MESSAGE}
+        if polled_zone_count == 0:
+            return {"connected": True, "message": ""}
+        return {"connected": False, "message": _BACKEND_SILENT_MESSAGE}
+
+    def set_backend_health_snapshot(self, health: dict[str, Any]) -> None:
+        """Publish the health result from a current backend poll."""
+        self._backend_health = dict(health)
 
     def backend_health_snapshot(self) -> dict[str, Any] | None:
         """Health recorded by the last backend refresh, or None when nothing has been polled yet."""

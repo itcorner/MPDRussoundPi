@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+const apiSource = fs.readFileSync(path.join(__dirname, "../web/static/api.js"), "utf8");
 const source = fs.readFileSync(path.join(__dirname, "../web/static/playback.js"), "utf8");
 
 // Only the DOM surface used by playback.js; reject HTML parsing to catch unsafe rendering.
@@ -209,6 +210,7 @@ function harness(snapshot = fixture()) {
       return typeof next === "function" ? next(options) : next;
     },
   });
+  vm.runInContext(apiSource, context);
   vm.runInContext(source, context);
   const all = (node) => [node, ...node.children.flatMap(all)];
   const nodes = () => [...all(ids.playbackConfigDialog), ...all(ids.playbackOutputs)];

@@ -4,6 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+const apiSource = fs.readFileSync(path.join(__dirname, "../web/static/api.js"), "utf8");
+
 function load(script) {
   const elements = new Map();
   const element = () => ({
@@ -24,12 +26,20 @@ function load(script) {
   };
   const context = vm.createContext({
     document, console,
-    window: { localStorage: { getItem() { return null; } }, addEventListener() {}, setInterval() {} },
+    AbortController,
+    window: {
+      localStorage: { getItem() { return null; } },
+      addEventListener() {},
+      setInterval() {},
+      setTimeout() { return 1; },
+      clearTimeout() {},
+    },
     fetch: () => new Promise(() => {}),
     Option: function(text, value, defaultSelected, selected) {
       Object.assign(this, { textContent: text, value, selected });
     },
   });
+  vm.runInContext(apiSource, context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, `../web/static/${script}.js`), "utf8"), context);
   return { context, elements, element };
 }
