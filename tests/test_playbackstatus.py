@@ -427,18 +427,18 @@ class PlaybackStatusTests(unittest.TestCase):
     def test_freshness_uses_monotonic_time_and_exact_thresholds(self):
         with patch.object(status.time, "monotonic", return_value=100.0):
             self.refresh()
-        probe = self.output().playback
-        now = probe.current.monotonic
-        self.assertFalse(probe.to_dict(now + 9.999, 10)["stale"])
-        self.assertTrue(probe.to_dict(now + 10, 10)["stale"])
-        self.assertEqual(probe.to_dict(now - 5, 10)["age_ms"], 0)
-        client = self.client()
-        client.status.return_value = self.state(state="stop")
-        with patch.object(fake_mpd, "MPDClient", return_value=client):
-            self.refresh()
-            self.refresh(audio=True)
-        output = self.output()
-        self.assertEqual(output.to_dict(output.playback.current.monotonic + 10)["audio"]["route"]["status"], "pending")
+            probe = self.output().playback
+            now = probe.current.monotonic
+            self.assertFalse(probe.to_dict(now + 9.999, 10)["stale"])
+            self.assertTrue(probe.to_dict(now + 10, 10)["stale"])
+            self.assertEqual(probe.to_dict(now - 5, 10)["age_ms"], 0)
+            client = self.client()
+            client.status.return_value = self.state(state="stop")
+            with patch.object(fake_mpd, "MPDClient", return_value=client):
+                self.refresh()
+                self.refresh(audio=True)
+            output = self.output()
+            self.assertEqual(output.to_dict(110.0)["audio"]["route"]["status"], "pending")
 
     def test_invalid_inventory_does_not_guess_ids_or_contact_mpd(self):
         for field, value in (("id", None), ("id", "Upper"), ("label", ""),
