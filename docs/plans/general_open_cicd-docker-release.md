@@ -1,6 +1,6 @@
 # CI/CD pipeline and Docker image release path
 
-Status: open; Stages 1-4 preparation implemented with deferred registry immutability; Stage 5 first development images published and runtime-verified. Further development publication suspended pending registry immutability.
+Status: open; Stages 1-4 preparation implemented; Stage 5 first development images published and runtime-verified. User confirmed selective immutable-tag rules on both repositories; development publishing remains suspended pending explicit re-enable.
 Created: 2026-10-26.
 
 ## Goal and scope
@@ -398,7 +398,9 @@ Stage 4 immutability deferral (2026-11-04):
 - Selective immutability is available in both Docker Hub repository settings,
   but saving the reviewed regex failed with HTTP 500. Manual attempts also
   failed; both repositories remain mutable. Empty inventories are a possible
-  cause, not a verified explanation.
+  cause, not a verified explanation. On 2026-11-06 the user subsequently
+  confirmed successful configuration of the development and stable-version
+  immutable rules on both repositories; see the Stage 5 update below.
 - With user agreement, retry selective immutability after the first separately
   approved development publication. This is a temporary development-only
   exception, not authorization to publish or enable automatic publication.
@@ -440,7 +442,7 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
 - User explicitly approved authenticated development publishing and the first
   publication for web/ser2net with `dev-<full-sha>` and `dev`. Stable/candidate
   tags, `latest` and deployments remain disabled. The development-only
-  immutability deferral above still applies.
+  immutability deferral was later resolved as recorded below.
 - Implemented authenticated repository-scoped Docker Hub transport, mandatory
   fresh inventory/direct tag checks and develop-push gating using
   `DEVELOPMENT_PUBLICATION_ENABLED`. The enable variable remains off until
@@ -454,7 +456,7 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   required CI and installed the development-only publisher/recovery wiring on
   both branches. All 100 JavaScript tests passed locally with registry integration.
 - The gate was enabled for the first CI-approved `develop` publication, then
-  suspended for the deferred Docker Hub immutability retry.
+  suspended after the post-publication immutability retry failed.
 - First publication source: `902ab4b0ffbad4d6a656150943c73231bb73ec81`.
   [Run 41739176843](https://github.com/itcorner/MPDRussoundPi/actions/runs/41739176843)
   initially failed a pre-existing playback freshness test before uploads.
@@ -473,31 +475,42 @@ Stage 4 local publisher/recovery implementation (2026-11-04):
   ser2net `sha256:10f4c490f1c6a5e9a8d27c42c144a5a465ef75246ed32f395ea3d9844af1a314`.
 - `DEVELOPMENT_PUBLICATION_ENABLED` was reset to `false` after this run.
   Selective immutability was retried after uploads on both repositories, but
-  Docker Hub still returned HTTP 500. Further publication remains suspended
-  pending Docker support investigation or a separately reviewed alternative.
+  Docker Hub returned HTTP 500 at that time. The user later confirmed successful
+  rule configuration on both repositories; the gate remains off until explicitly
+  re-enabled.
 - The no-write [verification run 41741967600](https://github.com/itcorner/MPDRussoundPi/actions/runs/41741967600)
   passed all four digest-pinned registry pull/runtime smoke checks for web and
   ser2net on AMD64/ARM64. The original complete journal was reused without any
   registry writes. Fixes were merged through protected PRs #25/#27 and
   merge-commit bootstraps #26/#28; required CI passed.
+- On 2026-11-06 the user confirmed both Docker Hub repositories now have these
+  immutable-tag rules:
+  `^dev-[0-9a-f]{40}$` and `^[0-9]+\.[0-9]+\.[0-9]+$`. The exact development
+  SHA tags and stable version tags are protected; `dev`, `latest`, minor aliases
+  and release-candidate tags are not. The latter publication paths remain
+  disabled. This is user-confirmed; the browser session was signed out when
+  recorded, so settings were not independently re-read.
+- The registry immutability blocker for development exact tags is resolved per
+  user confirmation. `DEVELOPMENT_PUBLICATION_ENABLED` remains `false` until
+  explicitly re-enabled; no further image was published as part of this update.
 
 - [x] Wire pushes only for successful `develop` builds, with an explicit enable
       gate (currently suspended after the first publication).
 - [x] Publish and verify the first approved development images: both platform
       manifests, source revision, digest and pull/run behaviour.
-- [ ] Configure selective Docker Hub immutability and verify the saved rules
-      on both repositories (blocked by HTTP 500).
+- [x] Configure selective Docker Hub immutability on both repositories; user
+      confirmed exact-SHA and stable-version rules were saved.
 - [x] Retry selective immutability after the first development uploads; saves
       still fail with HTTP 500 on both repositories.
-- [ ] Resolve registry immutability before further publication or approve an
-      alternative with its limitations explicitly documented.
+- [x] Resolve exact-development-tag immutability before further publication.
 - [x] Confirm PRs, `main` pushes and release tags cannot publish stable images
       while stable publication is still disabled.
 
 Acceptance: only the approved development channel is active; no stable or
 `latest` image exists as a side effect.
-First development images meet publication/runtime acceptance. Further automatic
-publication remains disabled; registry immutability is still blocking this stage.
+First development images meet publication/runtime acceptance and exact
+development SHA tags are reported immutable. Re-enabling automatic development
+publication requires an explicit decision; stable/RC paths remain disabled.
 
 ### Stage 6: Enable the release path (separate approval required)
 
