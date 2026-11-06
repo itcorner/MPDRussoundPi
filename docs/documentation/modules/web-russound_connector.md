@@ -4,6 +4,11 @@
 
 Implements the TCP RNET connector: frame construction, checksum handling, response matching, zone reads/writes, display messages, protocol auditing, and unsolicited update listening.
 
+When `backend.protocol_audit_log_file` is configured, audit records retain their
+timestamp/direction/frame format and rotate at 5 MiB with three backups per
+resolved path. Connectors in one process share the path's handler; rotation
+assumes a single process writes that log file.
+
 ## Requirements
 
 - Python 3.11+.

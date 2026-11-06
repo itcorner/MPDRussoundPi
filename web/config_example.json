@@ -76,7 +76,7 @@
   "notes": [
     "backend.host and backend.port configure the Russound TCP hardware endpoint; use backend.device and backend.baud for direct serial hardware access.",
     "backend.poll_interval_seconds configures how often backend state changes are polled while SSE clients are connected (minimum 1.0).",
-    "backend.protocol_audit_log_file optionally enables protocol-audit logging of all TX/RX RNET frames.",
+    "backend.protocol_audit_log_file optionally enables protocol-audit logging of all TX/RX RNET frames; logs rotate at 5 MiB with three backups.",
     "inputs.id values are numeric and start at 1.",
     "inputs[].playback_output optionally maps physical wiring to an agent_id/output_id; the selected station supplies the runtime display name, while name stays the fallback. Remove this binding when no playback agent is configured.",
     "zones[].controller, zones[].zone, and zones[].keypad_id describe the Russound hardware mapping; keypad_id defaults to 1.",

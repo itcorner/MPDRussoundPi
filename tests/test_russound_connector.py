@@ -206,16 +206,51 @@ class RussoundConnectorTests(unittest.TestCase):
             fake_sock = _FakeSocket()
             fake_sock.recv_queue.append(bytes.fromhex("F0 00 00 70 00 00 7F 00 00 04 02 00 00 07 00 00 01 00 0C 00 0A 0A 0A F7"))
 
-            with patch("web.russound_connector.socket.socket", return_value=fake_sock):
-                connector = Russound("127.0.0.1", 6666, protocol_audit_log_file=log_path)
-                self.assertTrue(connector.connect())
-                connector.get_zone_info(1, 1, 0)
+            connector = Russound("127.0.0.1", 6666, protocol_audit_log_file=log_path)
+            try:
+                with patch("web.russound_connector.socket.socket", return_value=fake_sock):
+                    self.assertTrue(connector.connect())
+                    connector.get_zone_info(1, 1, 0)
 
-            log_text = log_path.read_text(encoding="utf-8")
-            self.assertIn(" TX ", log_text)
-            self.assertIn(" RX ", log_text)
-            self.assertIn("F0", log_text)
-            self.assertIn("F7", log_text)
+                log_text = log_path.read_text(encoding="utf-8")
+                self.assertIn(" TX ", log_text)
+                self.assertIn(" RX ", log_text)
+                self.assertIn("F0", log_text)
+                self.assertIn("F7", log_text)
+            finally:
+                connector.close()
+
+    def test_protocol_audit_log_rotates_and_reuses_one_handler_per_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "web.russound_connector.PROTOCOL_AUDIT_LOG_MAX_BYTES", 512
+        ), patch("web.russound_connector.PROTOCOL_AUDIT_LOG_BACKUP_COUNT", 3):
+            log_path = Path(temp_dir) / "protocol-audit.log"
+            first = Russound("127.0.0.1", 6666, protocol_audit_log_file=log_path)
+            second = Russound("127.0.0.1", 6666, protocol_audit_log_file=log_path)
+            shared_logger = first._protocol_audit_logger
+            try:
+                self.assertIsNotNone(shared_logger)
+                self.assertIs(shared_logger, second._protocol_audit_logger)
+                for value in range(20):
+                    first._audit_frame("TX", bytes([value]) * 100)
+
+                first.disconnect()
+                second._audit_frame("RX", b"\xF0\xF7")
+
+                log_files = sorted(Path(temp_dir).glob("protocol-audit.log*"))
+                self.assertEqual(len(log_files), 4)
+                self.assertTrue(all(path.stat().st_size <= 512 for path in log_files))
+                self.assertLessEqual(sum(path.stat().st_size for path in log_files), 2048)
+                self.assertIn(" RX F0 F7\n", log_path.read_text(encoding="utf-8"))
+            finally:
+                first.close()
+                second.close()
+
+            replacement = Russound("127.0.0.1", 6666, protocol_audit_log_file=log_path)
+            try:
+                self.assertIsNot(replacement._protocol_audit_logger, shared_logger)
+            finally:
+                replacement.close()
 
     def test_zone_info_response_is_not_consumed_as_unsolicited_update(self) -> None:
         fake_sock = _FakeSocket()

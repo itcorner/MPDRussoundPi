@@ -16,7 +16,7 @@ edge cases.
 | 3 | H | Peer close / half-open TCP not detected | [x] |
 | 4 | H | Open UI pages survive server restart | [x] |
 | 5 | H | SSE streams pin waitress worker threads | [x] |
-| 6 | M | Protocol audit log grows unbounded | [ ] |
+| 6 | M | Protocol audit log grows unbounded | [x] |
 | 7 | M | SSE client registry never pruned | [x] |
 | 8 | M | Unbounded per-client SSE queues | [x] |
 | 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [ ] |
@@ -25,11 +25,11 @@ edge cases.
 | 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
 | 13 | M | Playback freshness threshold test flakes in CI | [ ] |
 
-Reassessment: items 1–5 and 7–8 remain complete; items 6 and 9–12 remain open.
-Item 9 is partially mitigated but still blocks requests behind slow hardware
-reads in some zone orders. Item 13 is a new delivery-pipeline reliability
-finding. Focused backend/connector/server tests passed (177 tests), as did the
-playback-status tests (35 tests).
+Reassessment: items 1–8 are complete; items 9–12 remain open. Item 9 is
+partially mitigated but still blocks requests behind slow hardware reads in
+some zone orders. Item 13 is a new delivery-pipeline reliability finding.
+Focused backend/connector/server tests passed (177 tests), as did the
+playback-status tests (35 tests). Item 6 was fixed and verified on 2026-11-06.
 
 ---
 
@@ -117,15 +117,16 @@ playback-status tests (35 tests).
 
 ## 6. Protocol audit log grows unbounded (M)
 
-- **Where:** `web/russound_connector.py` `_audit_frame()`.
-- **Problem:** When protocol audit logging is configured, appends forever and
-  opens/closes the file per frame. The example configuration enables it at
-  `/logs/protocol-audit.log`, so long-running deployments using that config can
-  eventually fill the writable volume.
-- **Fix idea:** Use a dedicated `logging` logger with `RotatingFileHandler`
-  (e.g. 5 MB × 3) for the audit file; keep it optional via config.
-- **Verify:** Unit test that the audit logger uses a rotating handler; audit
-  file size stays bounded.
+> **Done:** writes go through a dedicated rotating audit logger, bounded to
+> 5 MiB plus three backups per configured path. Same-process connector instances
+> share a handler, and the final close releases it. The timestamp/direction/frame
+> line format and optional configuration remain unchanged.
+
+- **Where:** `web/russound_connector.py` `_audit_frame()` and connector
+  lifecycle.
+- **Evidence:** `test_protocol_audit_log_rotates_and_reuses_one_handler_per_path`
+  and `test_protocol_audit_logs_tx_and_rx_frames` in
+  `tests/test_russound_connector.py`.
 
 ## 7. SSE client registry never pruned (M)
 
