@@ -23,7 +23,7 @@ edge cases.
 | 10 | L | Receive buffers unbounded on line noise | [ ] |
 | 11 | L | Frontend fetches have no timeout | [ ] |
 | 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
-| 13 | M | Playback freshness threshold test flakes in CI | [ ] |
+| 13 | M | Playback freshness threshold test flakes in CI | [x] |
 
 Reassessment: items 1–8 are complete; items 9–12 remain open. Item 9 is
 partially mitigated but still blocks requests behind slow hardware reads in
@@ -216,6 +216,10 @@ playback-status tests (35 tests). Item 6 was fixed and verified on 2026-11-06.
 - **Next step:** Make this boundary test deterministic across playback/audio
   collector jobs and avoid relying on wall-clock scheduling at the exact
   threshold. Re-run it repeatedly and verify the full validation workflow.
+
+> **Done:** the test holds `time.monotonic()` at 100.0 across both playback and
+> audio collection, then serializes at the exact 110.0 threshold. This removes
+> wall-clock drift and floating-point subtraction around a real-time boundary.
 
 ---
 
