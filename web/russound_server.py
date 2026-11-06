@@ -708,30 +708,69 @@ class RussoundHTTPServer:
             return False
         with self.state_lock:
             current_state = self.controller.load_state(refresh_backend=False)
+            state_payload = current_state.to_payload()
+            config = self.controller.load_config()
+            if config is None:
+                return False
             with self._event_backend_lock:
                 shared_backend = self._event_backend
-            refreshed_state = self.controller.refresh_zones(zone_addresses, backend=shared_backend)
-            if current_state.to_payload() == refreshed_state.to_payload():
-                self._publish_state_payload_locked()
-                return False
-            self.controller.persist_state(refreshed_state)
-            self._publish_state_payload_locked()
-            return True
+                backend_generation = self._backend_generation
+        refreshed_state, _ = self.controller.read_state_from_backend(
+            current_state, config, shared_backend, zone_addresses
+        )
+        return self._commit_backend_refresh(
+            state_payload, config, shared_backend, backend_generation, refreshed_state
+        )
 
     def _sync_backend_state_if_changed(self) -> bool:
         with self.state_lock:
             current_state = self.controller.load_state(refresh_backend=False)
+            state_payload = current_state.to_payload()
+            config = self.controller.load_config()
+            if config is None:
+                return False
             health_before = self.controller.backend_health_snapshot()
             with self._event_backend_lock:
                 shared_backend = self._event_backend
-            if shared_backend is None:
-                refreshed_state = self.controller.load_state(refresh_backend=True)
-            else:
-                logging.debug("Polling Russound state through the shared backend connector")
-                refreshed_state = self.controller.load_state(refresh_backend=True, backend=shared_backend)
-            # Silent hardware keeps its last known zone values, so health has to be compared as well.
-            health_changed = self.controller.backend_health_snapshot() != health_before
-            if current_state.to_payload() == refreshed_state.to_payload():
+                backend_generation = self._backend_generation
+        logging.debug("Polling Russound state outside the state lock")
+        refreshed_state, refreshed_health = self.controller.read_state_from_backend(
+            current_state, config, shared_backend
+        )
+        return self._commit_backend_refresh(
+            state_payload,
+            config,
+            shared_backend,
+            backend_generation,
+            refreshed_state,
+            health_before,
+            refreshed_health,
+        )
+
+    def _commit_backend_refresh(
+        self,
+        state_payload: dict[str, Any],
+        config: dict[str, Any],
+        backend: RussoundBackend | None,
+        backend_generation: int,
+        refreshed_state: RussoundState,
+        health_before: dict[str, Any] | None = None,
+        refreshed_health: dict[str, Any] | None = None,
+    ) -> bool:
+        with self.state_lock:
+            with self._event_backend_lock:
+                if self._backend_generation != backend_generation or self._event_backend is not backend:
+                    return False
+            if self.controller.load_config() != config:
+                return False
+            current_state = self.controller.load_state(refresh_backend=False)
+            if current_state.to_payload() != state_payload:
+                return False
+            health_changed = False
+            if refreshed_health is not None:
+                self.controller.set_backend_health_snapshot(refreshed_health)
+                health_changed = self.controller.backend_health_snapshot() != health_before
+            if state_payload == refreshed_state.to_payload():
                 self._publish_state_payload_locked()
                 return health_changed
             self.controller.persist_state(refreshed_state)

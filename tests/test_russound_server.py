@@ -79,14 +79,12 @@ class RussoundServerTests(unittest.TestCase):
         read_done = threading.Event()
         result = {}
 
-        def load_state(**kwargs):
-            if kwargs.get("refresh_backend"):
-                poll_entered.set()
-                if not release_poll.wait(5):
-                    raise RuntimeError("Test poll was not released")
-                controller.build_view_payload.return_value = refreshed
-                return new_state
-            return current_state
+        def read_state_from_backend(state, config, backend=None, zone_addresses=None):
+            poll_entered.set()
+            if not release_poll.wait(5):
+                raise RuntimeError("Test poll was not released")
+            controller.build_view_payload.return_value = refreshed
+            return new_state, {"connected": True, "message": ""}
 
         def read_state():
             with server.app.test_client() as client:
@@ -95,7 +93,9 @@ class RussoundServerTests(unittest.TestCase):
                 result["rooms"] = response.json
             read_done.set()
 
-        controller.load_state.side_effect = load_state
+        controller.load_state.return_value = current_state
+        controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+        controller.read_state_from_backend.side_effect = read_state_from_backend
         poller = threading.Thread(target=server._sync_backend_state_if_changed)
         reader = threading.Thread(target=read_state)
         poller.start()
@@ -114,6 +114,66 @@ class RussoundServerTests(unittest.TestCase):
         controller.persist_state.assert_called_once_with(new_state)
         with server.state_lock:
             self.assertEqual(server.app.test_client().get("/api/rooms").json["zones"][0]["volume"], 42)
+
+    def test_backend_poll_does_not_hold_state_lock_during_hardware_read(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            current_state = Mock()
+            current_state.to_payload.return_value = {"system_power": False, "zones": []}
+            refreshed_state = Mock()
+            refreshed_state.to_payload.return_value = {"system_power": True, "zones": []}
+            controller = Mock()
+            controller.load_state.return_value = current_state
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            poll_entered = threading.Event()
+            release_poll = threading.Event()
+
+            def read_state_from_backend(state, config, backend=None, zone_addresses=None):
+                poll_entered.set()
+                if not release_poll.wait(5):
+                    raise RuntimeError("Test poll was not released")
+                return refreshed_state, {"connected": True, "message": ""}
+
+            controller.read_state_from_backend.side_effect = read_state_from_backend
+            server.controller = controller
+            poller = threading.Thread(target=server._sync_backend_state_if_changed)
+            poller.start()
+            try:
+                self.assertTrue(poll_entered.wait(2))
+                self.assertTrue(server.state_lock.acquire(timeout=0.5), "Hardware polling held state_lock")
+                server.state_lock.release()
+            finally:
+                release_poll.set()
+                poller.join(2)
+            self.assertFalse(poller.is_alive())
+            controller.persist_state.assert_called_once_with(refreshed_state)
+        finally:
+            _close_server(server)
+
+    def test_backend_poll_does_not_commit_over_concurrent_state_change(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            captured_state = Mock()
+            captured_state.to_payload.return_value = {"system_power": False, "zones": []}
+            changed_state = Mock()
+            changed_state.to_payload.return_value = {"system_power": False, "zones": [{"volume": 30}]}
+            stale_poll = Mock()
+            stale_poll.to_payload.return_value = {"system_power": True, "zones": []}
+            controller = Mock()
+            controller.load_state.side_effect = [captured_state, changed_state]
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            controller.read_state_from_backend.return_value = (
+                stale_poll,
+                {"connected": True, "message": ""},
+            )
+            server.controller = controller
+
+            self.assertFalse(server._sync_backend_state_if_changed())
+
+            controller.persist_state.assert_not_called()
+            controller.set_backend_health_snapshot.assert_not_called()
+        finally:
+            _close_server(server)
 
     def test_state_api_returns_latest_command_snapshot_while_lock_is_busy(self):
         server = RussoundHTTPServer(None, None)
@@ -387,15 +447,40 @@ class RussoundServerTests(unittest.TestCase):
             refreshed_state.to_payload.return_value = {"zones": [{"power": True}]}
             controller = Mock()
             controller.load_state.return_value = current_state
-            controller.refresh_zones.return_value = refreshed_state
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            controller.read_state_from_backend.return_value = (refreshed_state, None)
             shared_backend = Mock()
             server.controller = controller
             server._event_backend = shared_backend
 
             self.assertTrue(server._refresh_zones_if_changed({(1, 1)}))
 
-            controller.refresh_zones.assert_called_once_with({(1, 1)}, backend=shared_backend)
+            controller.read_state_from_backend.assert_called_once_with(
+                current_state,
+                {"backend": {"host": "127.0.0.1", "port": 6666}},
+                shared_backend,
+                {(1, 1)},
+            )
             controller.persist_state.assert_called_once_with(refreshed_state)
+        finally:
+            _close_server(server)
+
+    def test_unchanged_targeted_refresh_does_not_report_existing_health_as_change(self):
+        server = RussoundHTTPServer(None, None)
+        try:
+            same_state = Mock()
+            same_state.to_payload.return_value = {"zones": [{"power": True}]}
+            controller = Mock()
+            controller.load_state.side_effect = [same_state, same_state]
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            controller.read_state_from_backend.return_value = (same_state, None)
+            controller.backend_health_snapshot.return_value = {"connected": True, "message": ""}
+            server.controller = controller
+
+            self.assertFalse(server._refresh_zones_if_changed({(1, 1)}))
+
+            controller.persist_state.assert_not_called()
+            controller.set_backend_health_snapshot.assert_not_called()
         finally:
             _close_server(server)
 
@@ -477,6 +562,11 @@ class RussoundServerTests(unittest.TestCase):
             same_state.to_payload.return_value = {"system_power": False, "zones": []}
             controller = Mock()
             controller.load_state.side_effect = [same_state, same_state]
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            controller.read_state_from_backend.return_value = (
+                same_state,
+                {"connected": True, "message": ""},
+            )
             server.controller = controller
 
             self.assertFalse(server._sync_backend_state_if_changed())
@@ -495,7 +585,12 @@ class RussoundServerTests(unittest.TestCase):
                 "zones": [{"controller": 1, "zone": 1, "power": True}],
             }
             controller = Mock()
-            controller.load_state.side_effect = [current_state, refreshed_state]
+            controller.load_state.side_effect = [current_state, current_state]
+            controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            controller.read_state_from_backend.return_value = (
+                refreshed_state,
+                {"connected": True, "message": ""},
+            )
             server.controller = controller
 
             self.assertTrue(server._sync_backend_state_if_changed())
@@ -511,16 +606,21 @@ class RussoundServerTests(unittest.TestCase):
             current_state.to_payload.return_value = {"system_power": False, "zones": []}
             refreshed_state.to_payload.return_value = {"system_power": False, "zones": []}
             controller = Mock()
-            controller.load_state.side_effect = [current_state, refreshed_state]
+            controller.load_state.side_effect = [current_state, current_state]
+            config = {"backend": {"host": "127.0.0.1", "port": 6666}}
+            controller.load_config.return_value = config
+            controller.read_state_from_backend.return_value = (
+                refreshed_state,
+                {"connected": True, "message": ""},
+            )
             shared_backend = Mock()
             server.controller = controller
             server._event_backend = shared_backend
 
             self.assertFalse(server._sync_backend_state_if_changed())
 
-            self.assertEqual(
-                controller.load_state.call_args_list[1].kwargs,
-                {"refresh_backend": True, "backend": shared_backend},
+            controller.read_state_from_backend.assert_called_once_with(
+                current_state, config, shared_backend
             )
         finally:
             _close_server(server)
