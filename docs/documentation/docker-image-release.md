@@ -209,8 +209,11 @@ than independently re-read.
 The first development images were uploaded at source
 `902ab4b0ffbad4d6a656150943c73231bb73ec81`; both `dev` and its exact SHA tag exist.
 After the immutability retry failed, the enable variable was reset to `false`.
-Although exact development SHA immutability is now user-confirmed on both
-repositories, the gate remains off until explicitly re-enabled.
+Exact development SHA immutability is now user-confirmed on both repositories.
+On 2026-11-06 the user explicitly approved resuming development publication
+and `DEVELOPMENT_PUBLICATION_ENABLED` was set to `true`. This does not trigger a
+workflow immediately; the next eligible `develop` push can publish. Stable/RC
+publication and deployments remain disabled.
 
 ### Publisher implementation and local-registry validation
 
