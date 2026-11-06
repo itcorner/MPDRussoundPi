@@ -190,31 +190,27 @@ Enforce immutable exact-version tags in Docker Hub where the account supports
 it; exclude moving aliases from immutability. Review retention before deleting
 old versions so deployment rollback remains possible.
 
-### Temporary development-only immutability exception
+### Immutable tag policy
 
-On 2026-11-04, the user agreed to defer selective immutability configuration:
-Docker Hub returned HTTP 500 when saving the rule, and manual attempts failed
-too. Both repositories remain mutable. An empty tag inventory is only a
-hypothesis, not a confirmed cause.
+The user confirmed on 2026-11-06 that both Docker Hub repositories now use these
+selective immutability rules:
 
-Retry immediately after the first separately approved development publication.
-Until then, require a serialized trusted publisher, fresh inventory and direct
-exact-tag existence checks, and recorded expected/observed manifest digests.
-Avoid concurrent manual or external publication. These checks cannot guarantee
-write-once tags against other writers; pin deployments by digest.
+```text
+^dev-[0-9a-f]{40}$
+^[0-9]+\.[0-9]+\.[0-9]+$
+```
 
-This exception does not enable publication or waive the remaining write/recovery
-safeguards. If immutability still cannot be saved after the first development
-tags exist, investigate with Docker support before further publication.
-Candidate/stable publication remains disabled pending resolution or a separately
-reviewed alternative.
+These protect exact development SHA tags and stable `X.Y.Z` tags. The moving
+`dev`, `latest`, minor aliases and release-candidate tags remain mutable. RC and
+stable publication workflows remain disabled. The browser session was signed
+out at confirmation time, so this setting is recorded as user-confirmed rather
+than independently re-read.
 
 The first development images were uploaded at source
 `902ab4b0ffbad4d6a656150943c73231bb73ec81`; both `dev` and its exact SHA tag exist.
-The enable variable was then reset to `false` to suspend further publication.
-Retrying selective immutability after those uploads still produced HTTP 500 for
-both repositories. Investigation with Docker support or a separately reviewed
-alternative is required before more publication.
+After the immutability retry failed, the enable variable was reset to `false`.
+Although exact development SHA immutability is now user-confirmed on both
+repositories, the gate remains off until explicitly re-enabled.
 
 ### Publisher implementation and local-registry validation
 
@@ -283,8 +279,8 @@ workflow commit. Ordinary development publishing always uses `GITHUB_SHA`.
 The first images passed all four registry pull/runtime checks in
 [verification run 41741967600](https://github.com/itcorner/MPDRussoundPi/actions/runs/41741967600).
 Development aliases are `itcornernet/mpdrussoundpi-web:dev` and
-`itcornernet/mpdrussoundpi-ser2net:dev`. While exact tags lack registry-enforced
-immutability, prefer the verified index references in Compose:
+`itcornernet/mpdrussoundpi-ser2net:dev`. For reproducibility, prefer the
+verified index references in Compose:
 
 ```yaml
 services:
