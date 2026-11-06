@@ -22,7 +22,7 @@ edge cases.
 | 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [x] |
 | 10 | L | Receive buffers unbounded on line noise | [x] |
 | 11 | L | Frontend fetches have no timeout | [x] |
-| 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
+| 12 | L | `_response_transaction_depth` modified outside the lock | [x] |
 | 13 | M | Playback freshness threshold test flakes in CI | [ ] |
 
 Reassessment on 2026-11-06: items 1–8 were complete; items 9–12 remained open.
@@ -198,6 +198,10 @@ for each finding is recorded in the table below.
   Harmless today, but fragile.
 - **Fix idea:** Move increment/decrement inside the `with self.lock:` block.
 - **Verify:** Existing tests pass.
+
+> **Done:** transaction depth is incremented only after `self.lock` is acquired.
+> A lock-gated regression test verifies the counter remains zero while waiting,
+> is active during the response read, and returns to zero afterward.
 
 ---
 

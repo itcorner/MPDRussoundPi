@@ -363,8 +363,8 @@ class Russound:
     def get_zone_info(self, controller: int, zone: int, return_variable: int) -> int | list[int] | None:
         resp_msg_signature = self.__create_response_signature("04 02 00 @zz 07", zone)
         send_msg = self.__create_send_message("F0 @cc 00 7F 00 00 @kk 01 04 02 00 @zz 07 00 00", controller, zone)
-        self._response_transaction_depth += 1
         with self.lock:
+            self._response_transaction_depth += 1
             try:
                 self.__send_data(send_msg)
                 matching_message = self.__get_response_message(resp_msg_signature)

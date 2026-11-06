@@ -4,6 +4,7 @@ import tempfile
 import os
 import pty
 import socket
+import threading
 from pathlib import Path
 from unittest.mock import patch
 import unittest
@@ -336,6 +337,46 @@ class RussoundConnectorTests(unittest.TestCase):
 
         self.assertEqual(list(connector._pending_frames), [frame])
         self.assertEqual(connector.drain_zone_updates(), [])
+
+    def test_response_transaction_depth_changes_only_after_lock_acquisition(self) -> None:
+        class GateLock:
+            def __init__(self) -> None:
+                self.entering = threading.Event()
+                self.proceed = threading.Event()
+
+            def __enter__(self):
+                self.entering.set()
+                if not self.proceed.wait(timeout=2):
+                    raise TimeoutError("Test did not release the connector lock.")
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback) -> bool:
+                return False
+
+        connector = Russound("127.0.0.1", 6666)
+        lock = GateLock()
+        connector.lock = lock
+        active_depths = []
+        results = []
+        connector._Russound__send_data = lambda _payload: None
+
+        def read_response(_signature):
+            active_depths.append(connector._response_transaction_depth)
+            return [0] * 14
+
+        connector._Russound__get_response_message = read_response
+        worker = threading.Thread(target=lambda: results.append(connector.get_zone_info(0, 0, 0)))
+
+        worker.start()
+        self.assertTrue(lock.entering.wait(timeout=2))
+        self.assertEqual(connector._response_transaction_depth, 0)
+        lock.proceed.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results, [0])
+        self.assertEqual(active_depths, [1])
+        self.assertEqual(connector._response_transaction_depth, 0)
 
     def test_discards_frames_addressed_to_controller_7e(self) -> None:
         connector = Russound("127.0.0.1", 6666)
