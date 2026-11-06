@@ -21,7 +21,7 @@ edge cases.
 | 8 | M | Unbounded per-client SSE queues | [x] |
 | 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [x] |
 | 10 | L | Receive buffers unbounded on line noise | [x] |
-| 11 | L | Frontend fetches have no timeout | [ ] |
+| 11 | L | Frontend fetches have no timeout | [x] |
 | 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
 | 13 | M | Playback freshness threshold test flakes in CI | [ ] |
 
@@ -184,6 +184,12 @@ for each finding is recorded in the table below.
   default timeout.
 - **Verify:** Test a stalled fetch, ensure the in-flight flag clears, then
   verify the next poll recovers after the server returns.
+
+> **Done:** all four pages load the shared `api.js` request helper. Requests
+> time out after 15 seconds by default; callers can preserve cancellation with
+> `signal`, set a longer `timeoutMs`, or use `null` to disable the timeout.
+> Focused JavaScript tests cover timeout and cancellation behavior, timeout
+> overrides, and recovery of a queued Rooms poll after a stalled request.
 
 ## 12. `_response_transaction_depth` modified outside the lock (L)
 

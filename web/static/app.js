@@ -37,10 +37,6 @@ function formatControlValue(value) {
   return `${value}%`;
 }
 
-function apiFetch(path, options = {}) {
-  return fetch(path, { ...options, credentials: "same-origin" });
-}
-
 function inputDisplayName(input) {
   const unavailable = ["unavailable", "unmapped"].includes(input.playback_status);
   return `${input.display_name || input.name}${unavailable ? " (unavailable)" : ""}`;
