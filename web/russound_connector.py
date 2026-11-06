@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from collections import deque
 from pathlib import Path
@@ -37,6 +38,50 @@ ZONE_USER_PARAMETER_PATHS = {
 ALL_KEYPADS_DISPLAY_TEMPLATE = "F0 7F 00 00 00 00 70 00 02 01 01 00 00 00 01 00 10 00"
 SPECIFIC_KEYPAD_DISPLAY_TEMPLATE = "F0 @cc @zz @tk 00 00 70 00 02 01 01 00 00 00 01 00 10 00"
 DISPLAY_TEXT_LENGTH = 13
+PROTOCOL_AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024
+PROTOCOL_AUDIT_LOG_BACKUP_COUNT = 3
+
+_protocol_audit_log_lock = threading.Lock()
+_protocol_audit_log_handlers: dict[Path, tuple[logging.Logger, RotatingFileHandler, int]] = {}
+
+
+def _acquire_protocol_audit_logger(path: Path) -> logging.Logger:
+    with _protocol_audit_log_lock:
+        entry = _protocol_audit_log_handlers.get(path)
+        if entry is not None:
+            logger, handler, references = entry
+            _protocol_audit_log_handlers[path] = (logger, handler, references + 1)
+            return logger
+
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=PROTOCOL_AUDIT_LOG_MAX_BYTES,
+            backupCount=PROTOCOL_AUDIT_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        handler.setLevel(logging.INFO)
+        logger = logging.Logger(f"{__name__}.protocol_audit.{path}")
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        logger.addHandler(handler)
+        _protocol_audit_log_handlers[path] = (logger, handler, 1)
+        return logger
+
+
+def _release_protocol_audit_logger(path: Path, logger: logging.Logger) -> None:
+    with _protocol_audit_log_lock:
+        entry = _protocol_audit_log_handlers.get(path)
+        if entry is None or entry[0] is not logger:
+            return
+        _, handler, references = entry
+        if references > 1:
+            _protocol_audit_log_handlers[path] = (logger, handler, references - 1)
+            return
+        del _protocol_audit_log_handlers[path]
+        logger.removeHandler(handler)
+        handler.close()
 
 
 def _unescape_rnet_payload(payload: bytes | bytearray) -> bytes:
@@ -143,14 +188,18 @@ class Russound:
         self._update_listener_thread: threading.Thread | None = None
 
         self._protocol_audit_log_file: Path | None = None
+        self._protocol_audit_logger_lock = threading.Lock()
+        self._protocol_audit_logger: logging.Logger | None = None
         if protocol_audit_log_file:
             self._protocol_audit_log_file = Path(protocol_audit_log_file).expanduser().resolve()
             self._protocol_audit_log_file.parent.mkdir(parents=True, exist_ok=True)
+            self._protocol_audit_logger = _acquire_protocol_audit_logger(self._protocol_audit_log_file)
         self._audit_rx_buffer = bytearray()
 
     def connect(self) -> bool:
         with self.lock:
             try:
+                self._ensure_protocol_audit_logger()
                 if self.sock is not None and self.is_connected():
                     LOGGER.debug("Russound connection already open; reusing existing connection")
                     return True
@@ -193,10 +242,15 @@ class Russound:
             LOGGER.debug("Unable to configure TCP keepalive: %s", exc)
 
     def disconnect(self) -> None:
-        self.stop_update_listener()
-        if self.sock is not None:
-            self.sock.close()
-            self.sock = None
+        try:
+            self.stop_update_listener()
+        finally:
+            try:
+                if self.sock is not None:
+                    self.sock.close()
+                    self.sock = None
+            finally:
+                self._release_protocol_audit_logger()
 
     def close(self) -> None:
         self.disconnect()
@@ -894,9 +948,25 @@ class Russound:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         frame_text = " ".join(f"{byte:02X}" for byte in frame)
         LOGGER.debug("RNET %s %s", direction, frame_text)
-        if self._protocol_audit_log_file is not None:
-            with self._protocol_audit_log_file.open("a", encoding="utf-8") as handle:
-                handle.write(f"{timestamp} {direction} {frame_text}\n")
+        with self._protocol_audit_logger_lock:
+            if self._protocol_audit_logger is not None:
+                self._protocol_audit_logger.info("%s %s %s", timestamp, direction, frame_text)
+
+    def _ensure_protocol_audit_logger(self) -> None:
+        if self._protocol_audit_log_file is None:
+            return
+        with self._protocol_audit_logger_lock:
+            if self._protocol_audit_logger is None:
+                self._protocol_audit_logger = _acquire_protocol_audit_logger(self._protocol_audit_log_file)
+
+    def _release_protocol_audit_logger(self) -> None:
+        if self._protocol_audit_log_file is None:
+            return
+        with self._protocol_audit_logger_lock:
+            logger = self._protocol_audit_logger
+            if logger is not None:
+                self._protocol_audit_logger = None
+                _release_protocol_audit_logger(self._protocol_audit_log_file, logger)
 
     def _parse_zone_user_parameter_value(self, parameter: str, message: bytearray | None) -> Any | None:
         if message is None or len(message) < 13:
