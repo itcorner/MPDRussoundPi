@@ -216,51 +216,65 @@ class RussoundBackendTests(unittest.TestCase):
 
         self.assertIsNone(zone_state)
 
-    def test_read_zone_falls_back_to_discrete_reads_when_extended_info_is_missing(self):
-        class PartialClient:
+    def test_read_zone_does_not_repeat_all_zone_info_when_extended_info_is_missing(self):
+        class SilentClient:
+            def __init__(self):
+                self.calls = []
+
             def get_zone_extended_info(self, controller, zone):
+                self.calls.append("extended")
                 return None
 
             def get_power(self, controller, zone):
+                self.calls.append("power")
                 return 1
 
             def get_source(self, controller, zone):
+                self.calls.append("source")
                 return 0
 
             def get_volume(self, controller, zone):
+                self.calls.append("volume")
                 return 40
 
         backend = RussoundBackend()
+        client = SilentClient()
 
-        with patch.object(backend, "_connect", return_value=PartialClient()):
+        with patch.object(backend, "_connect", return_value=client):
             zone_state = backend.read_zone(Zone(name="Zone 1", controller=1, zone_number=1), [{"id": 1, "name": "Radio"}])
 
-        self.assertIsNotNone(zone_state)
-        self.assertTrue(zone_state["power"])
-        self.assertEqual(zone_state["volume"], 40)
+        self.assertIsNone(zone_state)
+        self.assertEqual(client.calls, ["extended"])
 
-    def test_read_zone_falls_back_to_discrete_reads_when_extended_info_raises(self):
+    def test_read_zone_does_not_repeat_all_zone_info_when_extended_info_raises(self):
         class ResetClient:
+            def __init__(self):
+                self.calls = []
+
             def get_zone_extended_info(self, controller, zone):
+                self.calls.append("extended")
                 raise ConnectionResetError(54, "Connection reset by peer")
 
             def get_power(self, controller, zone):
+                self.calls.append("power")
                 return 1
 
             def get_source(self, controller, zone):
+                self.calls.append("source")
                 return 0
 
             def get_volume(self, controller, zone):
+                self.calls.append("volume")
                 return 40
 
         backend = RussoundBackend()
+        client = ResetClient()
 
-        with patch.object(backend, "_connect", return_value=ResetClient()):
+        with patch.object(backend, "_connect", return_value=client):
             zone_state = backend.read_zone(Zone(name="Zone 1", controller=1, zone_number=1), [{"id": 1, "name": "Radio"}])
 
-        self.assertIsNotNone(zone_state)
-        self.assertTrue(zone_state["power"])
-        self.assertEqual(zone_state["volume"], 40)
+        self.assertIsNone(zone_state)
+        self.assertEqual(client.calls, ["extended"])
 
     def test_read_zone_parameters_returns_none_when_extended_info_raises(self):
         class ResetClient:

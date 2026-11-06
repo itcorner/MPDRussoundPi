@@ -19,17 +19,17 @@ edge cases.
 | 6 | M | Protocol audit log grows unbounded | [x] |
 | 7 | M | SSE client registry never pruned | [x] |
 | 8 | M | Unbounded per-client SSE queues | [x] |
-| 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [ ] |
+| 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [x] |
 | 10 | L | Receive buffers unbounded on line noise | [ ] |
 | 11 | L | Frontend fetches have no timeout | [ ] |
 | 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
 | 13 | M | Playback freshness threshold test flakes in CI | [ ] |
 
-Reassessment: items 1–8 are complete; items 9–12 remain open. Item 9 is
-partially mitigated but still blocks requests behind slow hardware reads in
-some zone orders. Item 13 is a new delivery-pipeline reliability finding.
-Focused backend/connector/server tests passed (177 tests), as did the
-playback-status tests (35 tests). Item 6 was fixed and verified on 2026-11-06.
+Reassessment on 2026-11-06: items 1–8 were complete; items 9–12 remained open.
+Item 13 was a new delivery-pipeline reliability finding. Focused
+backend/connector/server tests passed (177 tests), as did the playback-status
+tests (35 tests). Item 6 was fixed and verified on 2026-11-06. Current status
+for each finding is recorded in the table below.
 
 ---
 
@@ -149,22 +149,14 @@ playback-status tests (35 tests). Item 6 was fixed and verified on 2026-11-06.
 
 ## 9. Nonresponsive zones can hold `state_lock` during fallback reads (M)
 
-- **Where:** `web/russound_backend.py` `read_zone()`.
-- **Problem:** After `get_zone_extended_info()` fails, the fallback issues
-  `get_power()`, `get_source()`, `get_volume()` – the same All Zone Info
-  request three more times. The server still performs its full backend poll
-  while holding `state_lock`. A partial mitigation now stops iterating if the
-  first unanswered zone is encountered before any zone has answered, but
-  silent zones later in a poll still incur the fallback reads.
-- **Impact:** A nonresponsive zone can delay requests that need `state_lock`;
-  the worst case depends on the number/order of zones and device response
-  timeouts. Health reporting is not a latency mitigation.
-- **Fix idea:** Drop the redundant fallback reads (return `None` when the
-  extended read fails), and/or skip zones that failed repeatedly for a backoff
-  period. Avoid holding `state_lock` across slow hardware I/O if state snapshots
-  can be made consistent.
-- **Verify:** Add a test that measures query count and lock availability for a
-  nonresponsive zone after another zone has answered.
+> **Done:** a failed extended zone read no longer triggers three repeats of
+> the same All Zone Info request. Full and targeted hardware refreshes run
+> outside `state_lock`; their results are committed only when the state,
+> configuration, and backend generation still match the captured snapshot.
+
+- **Evidence:** `test_read_zone_does_not_repeat_all_zone_info_when_extended_info_is_missing`,
+  `test_backend_poll_does_not_hold_state_lock_during_hardware_read`, and
+  `test_backend_poll_does_not_commit_over_concurrent_state_change`.
 
 ## 10. Receive buffers unbounded on line noise (L)
 
