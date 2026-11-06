@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 import unittest
 
-from web.russound_connector import Russound
+from web.russound_connector import MAX_INCOMPLETE_RNET_BUFFER_BYTES, Russound
 
 
 class _FakeSocket:
@@ -87,6 +87,31 @@ class RussoundConnectorTests(unittest.TestCase):
 
         self.assertIsNone(connector.sock)
         self.assertTrue(sock.closed)
+
+    def test_receive_and_audit_buffers_discard_unterminated_noise(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        connector.sock.recv_queue.append(b"\x00" * (MAX_INCOMPLETE_RNET_BUFFER_BYTES + 1))
+
+        with patch("web.russound_connector.LOGGER.warning") as warning:
+            connector._read_available_locked()
+
+        self.assertEqual(connector._rx_buffer, bytearray())
+        self.assertEqual(connector._audit_rx_buffer, bytearray())
+        self.assertEqual(warning.call_count, 2)
+
+    def test_receive_and_audit_buffers_keep_only_a_bounded_latest_frame(self) -> None:
+        connector = Russound("127.0.0.1", 6666)
+        connector.sock = _FakeSocket()
+        partial_frame = b"\xF0" + b"\x01" * (MAX_INCOMPLETE_RNET_BUFFER_BYTES - 1)
+        connector.sock.recv_queue.append(b"\x00" * 8 + partial_frame)
+
+        connector._read_available_locked()
+
+        self.assertEqual(connector._rx_buffer, partial_frame)
+        self.assertEqual(connector._audit_rx_buffer, partial_frame)
+        self.assertLessEqual(len(connector._rx_buffer), MAX_INCOMPLETE_RNET_BUFFER_BYTES)
+        self.assertLessEqual(len(connector._audit_rx_buffer), MAX_INCOMPLETE_RNET_BUFFER_BYTES)
 
     def test_tcp_connect_enables_keepalive(self) -> None:
         fake_sock = _FakeSocket()

@@ -20,7 +20,7 @@ edge cases.
 | 7 | M | SSE client registry never pruned | [x] |
 | 8 | M | Unbounded per-client SSE queues | [x] |
 | 9 | M | Nonresponsive zones hold `state_lock` during fallback reads | [ ] |
-| 10 | L | Receive buffers unbounded on line noise | [ ] |
+| 10 | L | Receive buffers unbounded on line noise | [x] |
 | 11 | L | Frontend fetches have no timeout | [ ] |
 | 12 | L | `_response_transaction_depth` modified outside the lock | [ ] |
 | 13 | M | Playback freshness threshold test flakes in CI | [ ] |
@@ -168,11 +168,13 @@ playback-status tests (35 tests). Item 6 was fixed and verified on 2026-11-06.
 
 ## 10. Receive buffers unbounded on line noise (L)
 
-- **Where:** `web/russound_connector.py` `_rx_buffer`, `_audit_rx_buffer`.
-- **Problem:** Data without an `F7` terminator accumulates forever.
-- **Fix idea:** Cap buffers (e.g. 4 KB); when exceeded, discard up to the
-  last `F0` and log.
-- **Verify:** Unit test feeding noise without `F7` keeps buffer bounded.
+> **Done:** incomplete receive and audit buffers are capped at 4 KiB. Overflow
+> discards leading noise while retaining a bounded newest frame start, or clears
+> an oversized incomplete frame, and logs the discard.
+
+- **Evidence:** `test_receive_and_audit_buffers_discard_unterminated_noise` and
+  `test_receive_and_audit_buffers_keep_only_a_bounded_latest_frame` in
+  `tests/test_russound_connector.py`.
 
 ## 11. Frontend fetches have no timeout (L)
 
