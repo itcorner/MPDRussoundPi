@@ -43,10 +43,6 @@ function eventKey(event) {
   return `${event.timestamp}|${event.ip}|${event.path}|${JSON.stringify(event.payload)}`;
 }
 
-function apiFetch(path, options = {}) {
-  return fetch(path, { ...options, credentials: "same-origin" });
-}
-
 function renderStatus(payload, historyPayload) {
   const clients = payload.connected_clients || [];
   const events = historyPayload.recent_events || [];

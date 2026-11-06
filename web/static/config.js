@@ -317,10 +317,6 @@ function setBackendConnectionStatus(state, label, message) {
   backendConnectionStatus.textContent = message;
 }
 
-function apiFetch(path, options = {}) {
-  return fetch(path, { ...options, credentials: "same-origin" });
-}
-
 function setMessage(text, isError = false) {
   if (!text) {
     configEditorMessage.hidden = true;
