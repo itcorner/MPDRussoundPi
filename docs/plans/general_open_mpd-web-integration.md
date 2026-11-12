@@ -5,8 +5,10 @@ station selection and S09 TuneIn catalog are implemented and active on the Pi
 under the approved trusted-LAN test deployment. The configuration split and
 favorites are deployed. S08/S09 live checks passed and the three approved
 public-only egress restrictions are deployed; full lifecycle acceptance remains
-outstanding. S10 automation is
-not implemented; S11 acceptance is incomplete. The healthy-LAN update-latency
+outstanding. Former S10 automation is not implemented and is now tracked in the
+separate [lower-priority automation plan](./general_new_hardware-playback-automation.md);
+S11 manual integration acceptance is incomplete but no longer depends on S10.
+The healthy-LAN update-latency
 target is met, and S07 has user production sign-off.
 
 ## 1. Confirmed scope and working rules
@@ -26,8 +28,9 @@ Confirmed requirements:
   existing backend; no separate user attenuation or combined-gain calculation.
 - Support admin-configured URL stations and TuneIn station search/selection;
   the browser does not accept arbitrary stream URLs.
-- Support optional hardware-state-driven playback using the web application's
-  existing Russound interfaces.
+- Optional hardware-state-driven playback is a separate lower-priority
+  [automation plan](./general_new_hardware-playback-automation.md), not a
+  closure requirement for this manual integration plan.
 
 Engineering constraints:
 
@@ -64,26 +67,12 @@ and the architecture document. Do not silently turn a recommendation into scope.
 | D12 | Does source selection change playback intention? | Selecting a source always starts playback. Accepted 2026-10-17. |
 | D14 | First external catalog provider | TuneIn OPML station search and Pi-side direct-stream resolution. Accepted 2026-10-17; S09 is implemented and active in the approved Pi test deployment. |
 
-### Open decisions, in discussion order
+### Automation decisions moved
 
-Each row describes one decision. Some can be deferred without blocking
-read-only status; the gate column states when the answer becomes necessary.
+Open decisions D02, D03, D05, D15 and D16 and the accepted D01/D04 constraints
+are recorded in the [automation plan](./general_new_hardware-playback-automation.md).
+They no longer block manual integration acceptance.
 
-| ID | Decision | Recommendation / alternatives | Required before |
-| --- | --- | --- | --- |
-| D02 | Which hardware demand rule should automatic mode use? | Any powered zone selecting the mapped input. Alternative: any powered zone starts all managed outputs. | S10 |
-| D03 | Physical input/output mapping and zone scope | Explicit mapping supplied/verified by user; never infer from MPD ports or sink names. | S10 |
-| D05 | Behavior when automatic-mode hardware observations become unknown/stale | Hold last effective intention and show degraded automation. Alternative: stop after an agreed grace interval. | S10 |
-| D15 | Automatic-mode stop delay | Suggested 30 seconds of continuously confirmed no-demand; alternative immediate stop or another interval. | S10 |
-| D16 | Freshness and lease timing | Suggested hardware stale/lease thresholds 30 seconds at 10-second poll/renew cadence; adjust to measured full-poll duration. | S10 |
-
-D01 is resolved: use the web-hosted policy path in S01/S10, with no independent
-Pi hardware-state feed or Pi policy evaluator. This availability choice does not
-resolve D05: stale hardware observations while the web is running still need
-their own policy decision. Web-host loss must preserve the last Pi intention.
-
-D03 is a configuration decision: collect the actual mapping in a separate
-focused question after D02, not during the availability question D01.
 D06's reverse-proxy and certificate trust model are deployed. The user
 explicitly approved the production identity migration and read-only rollout on
 2026-10-17, while declining a host firewall rule. The deployed Caddy source
@@ -126,11 +115,11 @@ Future module/test names below are illustrative, not existing files.
 | S07 | Durable operations and manual playback/calibration controls | S04, S06; D07, D13 | Explicit user-authorized mutations |
 | S08 | Per-output manual source selection and managed queue | S07; D09-D12 | Changes only selected output |
 | S09 | First catalog adapter | S08; D14 | Provider resolution; selected output only |
-| S10 | Hardware observations, policy and automatic targets | S07; D01-D05, D15-D16 | Opt-in automatic mutations |
-| S11 | Full lifecycle acceptance and rollout documentation | S08, S10; S09 if catalog included | Approved outage/reboot tests |
+| S10 | Hardware automation | Moved to [separate plan](./general_new_hardware-playback-automation.md) | Not implemented |
+| S11 | Manual integration lifecycle acceptance and rollout documentation | S08, S09 | Approved outage/reboot tests; independent of S10 |
 
-S04 and S05 can proceed independently after their prerequisites. S09 and S10
-are independent; catalog availability must not delay manual control/automation.
+S04 and S05 can proceed independently after their prerequisites. S09 and
+automation are independent; catalog availability must not delay manual control/automation.
 D14 is accepted and S09 is included. Its remaining hardening and lifecycle
 acceptance must not be confused with local implementation or deployment.
 
@@ -525,49 +514,20 @@ acceptance; their local coverage is not a substitute for target checks.
 unsupported entries rejected, labels escaped and arbitrary browser-supplied
 stream URLs rejected.
 
-### S10. Implement hardware-driven automation
+### S10. Hardware-driven automation
 
-**Not implemented.** D02, D03, D05, D15 and D16 remain open. Confirm physical
-mappings and fresh hardware observations before enabling any automatic policy.
-
-1. Follow accepted D01; resolve D02-D05 and D15-D16, and confirm physical mappings
-   before enabling rules.
-2. Extend hardware publication with successful per-zone power/source
-   observations, timestamps, origin and config generation. Persisted fallback
-   and optimistic command state are not fresh measured demand.
-3. Enable full hardware polling when automation is enabled even with zero
-   browser connections. Keep unsolicited updates plus periodic resnapshot.
-4. Add a pure policy evaluator with a fake clock and three-valued
-   true/false/unknown demand. Include every configured consumer, including
-   hidden zones; false requires complete fresh negative evidence.
-5. Apply delay/unknown policy and evaluate outside locks. Send bounded,
-   revision-checked targets through the chosen single policy owner.
-6. Migrate the coordinated control schema from S04; agent, CLI, supervisor and
-   recorder must agree on intention readers/writers. Defaults preserve manual
-   control and existing play/pause/stop choices.
-7. Add mode/reason display and explicit "Return to automatic". Gain/source
-   edits do not implicitly change mode.
-8. Implement owner epoch/sequence fencing and receiver-monotonic lease expiry
-   for web-originated targets. Never replay obsolete offline commands.
-9. During web-host outage, report expired/unknown automation and preserve the
-   last effective Pi intention for local recovery. On reconnection require fresh
-   hardware observations and fenced ownership before new demand transitions.
-   Do not add a Pi-local hardware feed or another policy evaluator.
-
-**Tests:** keypad/API/out-of-band changes, no browsers, shared-source consumers,
-partial/stale zones, rapid source handoff, debounce cancellation, manual
-override, restart/expired lease and stale owner/sequence.
-**Acceptance:** opted-in outputs follow confirmed hardware demand; manual
-stop cannot be undone by delayed policy; stale state follows the accepted
-outage policy and is visibly degraded.
+Moved to the [lower-priority automation plan](./general_new_hardware-playback-automation.md).
+It is not implemented and is not required to close this manual integration plan.
 
 ### S11. Lifecycle acceptance, rollback and operational handover
 
 **Incomplete.** Config-split rollout verified live TuneIn favorites operations,
 unchanged admin-config bytes and playback after MPD/supervisor/agent restarts.
 Still outstanding: live URL-type favorite and no-default-station checks,
-restart persistence of edited favorites/gains/selections, approved Pi reboot
-and outage/fault tests, and S10 automation acceptance. Earlier S06 latency
+restart persistence of edited favorites/gains/selections and approved Pi reboot
+and outage/fault tests. Automation-specific S11 acceptance moved with S10 to
+the [automation plan](./general_new_hardware-playback-automation.md#automation-specific-acceptance-split-from-s11).
+Earlier S06 latency
 measurements are not a new S08/S09 lifecycle or analog-audio guarantee.
 
 1. Run focused tests for touched components; then full regression/contract
@@ -577,17 +537,41 @@ measurements are not a new S08/S09 lifecycle or analog-audio guarantee.
 3. In an approved window test agent restart, web restart/outage, MPD failure,
    source outage, deployment and Pi reboot. Test USB/audio faults only with
    explicit approval and preserve evidence.
-4. Verify selected sources, calibration and manual/automatic intentions survive;
+4. Verify selected sources, calibration and manual intentions survive;
    confirm actual routes and both-channel signal. Digital state is not proof
    of analog output, and a 5-second UI target is not an audio dropout guarantee.
-5. Exercise rollback using compatible binaries and backed-up schemas. Disable
-   automatic policy first; stop new writers before restoring old files.
+5. Exercise manual integration rollback using compatible binaries and backed-up
+   schemas. Stop new writers before restoring old files.
    Stopping the agent alone does not cancel persisted playback intentions.
 6. Update API/deployment/runbook docs with exact startup, health, permissions,
    credentials, backup/restore, logs and limitations.
 
-**Acceptance:** every in-scope gate has evidence; deferred catalog/physical
-tests are named; no successful empty fallbacks or unverified guarantees.
+**Acceptance:** every manual-integration gate has evidence; explicitly record
+any separately agreed deferral and its limitation rather than treating it as a
+pass. Automation acceptance is not a gate for this plan; no successful empty
+fallbacks or unverified guarantees.
+
+#### Manual integration closure checklist
+
+- [ ] Record the exact deployed revisions, topology, test window, backups and
+  current health; obtain separate approval for disruptive tests.
+- [ ] Run focused and full regression/contract tests and provisioning syntax
+  checks applicable to the deployed version; record results.
+- [ ] Validate a URL-type favorite and no-default-station behavior on the Pi.
+- [ ] Verify edited favorites, gains, selections and manual intentions persist
+  through the relevant agent, MPD, supervisor, web and user-manager restarts.
+- [ ] Exercise approved web/network/source outage, agent/MPD failure and Pi
+  reboot recovery; verify stale/error reporting and healthy-output isolation.
+- [ ] Measure current-version status/title latency, queue bounds and
+  responsiveness during partial failure; compare with the applicable target.
+- [ ] Validate applicable IPv6 transport and physical/analog output, routes
+  and both-channel signal, or record an explicitly agreed deferral and limit.
+- [ ] Rehearse manual-integration rollback with backups and compatible schemas;
+  document operational handover and the outcome of every gate.
+
+The disconnected Russound controller limits hardware-dependent verification;
+record it as unverified, not passed. The independent, unscheduled Pi platform
+investigations below are not silently accepted as successful integration tests.
 
 ## 4. Step completion and safe pause protocol
 
@@ -625,8 +609,8 @@ credentials and operational files must have an explicit owner.
   out-of-range values without clamping by extending the slider minimum.
   Controls live in a per-stream Config dialog with slider-only gain editing.
   S07 is done, deployed and production-verified (user sign-off, 2026-10-17).
-- D02-D03, D05 and D15-D16 remain open; physical input mapping, automation
-  demand rule, stale-state policy and timing still need decisions.
+- D02-D03, D05 and D15-D16 remain open in the
+  [automation plan](./general_new_hardware-playback-automation.md).
 - D09 accepts TuneIn station selection only: the browser submits a validated
   TuneIn station identity, and the playback agent resolves a direct MP3, AAC or
   Ogg stream from TuneIn. Bounded provider M3U/PLS resolution is supported;
@@ -656,12 +640,11 @@ credentials and operational files must have an explicit owner.
 - Unscheduled idea: a [live per-output level meter](general_idea_live-level-meter.md)
   (validated external proposal and architecture-conformant sketch).
 
-Next: finish the outstanding manual-playback acceptance,
-then resolve D02 before implementing S10. Schedule reboot/fault tests explicitly;
+Next: finish the outstanding manual-playback acceptance and record evidence.
+Automation is lower priority and independent. Schedule reboot/fault tests explicitly;
 do not infer approval from this status update.
 
-After each answer, update its status/outcome above, amend affected architecture
-sections/steps and discuss only the next unresolved decision.
+Update the appropriate plan and architecture when automation decisions are made.
 
 ## 6. Deployment acceptance
 
@@ -717,7 +700,11 @@ the [deployment guide](../documentation/playback-agent-deployment.md).
 - Current-version whole-Pi reboot, user-manager restart and outage/fault tests,
   including recovery after a network outage.
 - Live IPv6 transport (policy and rule generation have unit coverage).
-- Physical/analog audio and S10 hardware-driven automation acceptance.
+- Physical/analog audio for the existing manual integration.
+
+Automation-specific demand, mode and lifecycle acceptance is tracked in the
+[automation plan](./general_new_hardware-playback-automation.md#automation-specific-acceptance-split-from-s11)
+and does not block this plan's closure.
 
 ### Pi platform follow-ups
 

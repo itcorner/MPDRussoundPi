@@ -23,7 +23,9 @@ S08/S09 and the [configuration split](../plans/mpd_done_config-split.md) are dep
 remaining live checks and hardening are recorded in the
 [implementation plan](../plans/general_open_mpd-web-integration.md#remaining-acceptance).
 See the [implementation plan](../plans/general_open_mpd-web-integration.md)
-for remaining decisions and [collector usage](./mpd-backend-api.md).
+for manual integration acceptance and [collector usage](./mpd-backend-api.md).
+The lower-priority [automation plan](../plans/general_new_hardware-playback-automation.md)
+owns automation decisions and acceptance independently.
 
 ## 1. Selected architecture
 
@@ -44,7 +46,9 @@ Do not deploy or mutate the production audio configuration while the current
 endurance test is running.
 
 See the [stepwise implementation plan and decision register](../plans/general_open_mpd-web-integration.md)
-for dependencies, acceptance gates and open decisions to resolve one at a time.
+for manual integration dependencies and acceptance gates; see the
+[automation plan](../plans/general_new_hardware-playback-automation.md) for
+automation decisions and gates.
 Architecture selection is not authorization to implement all phases. All new
 endpoints, schemas, modules and timing values below remain proposed until agreed.
 
@@ -815,8 +819,10 @@ instead of rewriting them into asynchronous implementations.
 
 ## 13. Decisions to confirm before implementation
 
-The [implementation plan's decision register](../plans/general_open_mpd-web-integration.md)
-tracks these topics as individual decisions, their status and implementation gates.
+The [automation plan's decision register](../plans/general_new_hardware-playback-automation.md#decisions-required-before-implementation)
+tracks automation topics, their status and implementation gates. Other
+integration decisions remain in the
+[implementation plan](../plans/general_open_mpd-web-integration.md).
 Solution D, direct calibration-gain stream volume and web-hosted policy with
 last-intention recovery during web-host loss (D01), plus persisted immutable
 output IDs with separate labels (D08), are already accepted.

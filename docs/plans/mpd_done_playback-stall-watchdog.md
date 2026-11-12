@@ -1,12 +1,13 @@
 # MPD playback stall watchdog and USB audio stability
 
-Status: in progress (recorded 2026-10-29). The stall watchdog (item 1) is
+Status: **done** (closed 2026-11-12). The stall watchdog (item 1) is
 implemented per the
 [implementation proposal](#implementation-proposal-stall-watchdog) and
 [live-validated on the Pi on 2026-11-02](#live-validation-2026-11-02).
-Item 2 is deferred; the premise of item 3 was corrected on 2026-11-02
-(the VIA hub is the Pi 4's onboard hub); item 4's Wi-Fi mitigation was
-applied on 2026-11-02; items 3–4 await their one-week observation windows.
+Open observation and deferred work, including items 2–4 and web observability,
+are tracked in the [playback stability follow-up](./mpd_open_playback-stability-follow-up.md).
+Closing this implementation plan does not assert those follow-ups are complete
+or that the incident's root cause was established.
 
 ## Incident (2026-10-29)
 
@@ -44,7 +45,7 @@ Root cause is not proven. Most likely: a USB audio or PipeWire stall
 blocks MPD's pulse output, and MPD 0.24 does not recover from it. MPD
 itself logged nothing.
 
-## Open items
+## Original items and historical investigation
 
 ### 1. Stall watchdog in the playback supervisor
 
@@ -65,8 +66,8 @@ intention is `playing`:
 - **Action:** restart only the affected `mpd_<output>.service` through
   `systemctl --user`, then let normal reconciliation restore station and gain.
   Apply a restart rate limit (for example at most 3 per 30 minutes per output)
-  and log/observe each restart so repeated restarts are visible in the
-  agent snapshot and the web health status.
+  and record each restart. Agent snapshot and web health visibility remain in
+  the [follow-up](./mpd_open_playback-stability-follow-up.md#watchdog-observability).
 - **Audio-path gate:** do not restart while shared audio readiness reports the
   USB card missing; restart once it is back, as hung instances do not resume
   on their own.
@@ -164,17 +165,16 @@ Applied on 2026-11-02 (both verified, connectivity uninterrupted):
   the next unreachability window leaves diagnosable kernel/NetworkManager
   logs.
 
-Open: wired Ethernet remains the structural fix (physical task). The Pi 4's
+Follow-up: wired Ethernet remains a possible structural fix (physical task). The Pi 4's
 Ethernet is native GbE (not USB-attached), so it cannot interact with the
 item 3 USB/audio path; NetworkManager prefers the wired link automatically
-once a cable is plugged in. Validation: observe reachability and
-`brcmf`/NetworkManager disconnect events for at least one week, then record
-the outcome here.
+once a cable is plugged in. The one-week reachability validation and its results
+are tracked in the [follow-up plan](./mpd_open_playback-stability-follow-up.md#management-reachability).
 
 ## Implementation proposal: stall watchdog
 
-Recorded 2026-11-02. Covers open item 1 (and the `TimeoutStopSec` note);
-items 2–4 are unchanged.
+Recorded 2026-11-02. Covers item 1 (and the `TimeoutStopSec` note);
+the remaining items are tracked in the follow-up plan.
 
 ### Design decisions
 

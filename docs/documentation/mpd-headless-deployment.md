@@ -153,7 +153,7 @@ Restart and escalation history is written to
 `TimeoutStopSec=120` so a hung instance stops deterministically. Thresholds
 are tunable through the optional `watchdog` section in `config.json`; design
 background is in the
-[stall watchdog plan](../plans/mpd_open_playback-stall-watchdog.md).
+[stall watchdog plan](../plans/mpd_done_playback-stall-watchdog.md).
 
 With `mpd_russoundpi_start_playback=true` (the audio play's default),
 deployment stops an existing supervisor, regenerates/restarts audio and MPD,

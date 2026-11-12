@@ -51,10 +51,19 @@ When the status changes, rename the file with `git mv` and update the links to i
 |---|---|
 | [MPD agent containerization](./plans/mpd_new_agent-containerization.md) | Planned; design required before adding an agent image |
 | [CI/CD pipeline and Docker image release path](./plans/general_open_cicd-docker-release.md) | Stages 1–3 implemented; Stage 4 build-only simulations passed for web/ser2net; registry prerequisites remain; no image publication authorized yet |
-| [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; S10 automation and S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
+| [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; manual S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
+| [Hardware-driven playback automation](./plans/general_new_hardware-playback-automation.md) | Lower priority; former S10 and automation-specific acceptance, not implemented |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
+| [Deployment and runtime configuration overview](./plans/general_idea_deployment-status-overview.md) | Idea, not scheduled; scope and disclosure decisions needed |
+| [Effective configuration and environment overrides](./plans/web_idea_effective-config-overrides.md) | Idea, not scheduled; precedence and save semantics need design |
+| [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
+| [Simplify deployment and configuration](./plans/general_idea_simplify-deployment-configuration.md) | Idea, not scheduled; deployment modes and precedence need design |
+| [Guided first-time setup](./plans/general_idea_guided-first-time-setup.md) | Idea, not scheduled; setup and example-data migration need design |
+| [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
+| [Safe configuration change handling](./plans/web_idea_safe-configuration-changes.md) | Idea, not scheduled; concurrency and save recovery need design |
 | [User-triggered Docker image updates](./plans/general_idea_user-triggered-image-updates.md) | Idea, depends on versioned deployment images; not scheduled |
-| [MPD playback stall watchdog and USB audio stability](./plans/mpd_open_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; USB topology and management reachability items remain |
+| [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
+| [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |
 | [Playback egress hardening](./plans/mpd_done_playback-egress-hardening.md) | Deployed 2026-10-17 |
 | [USB audio recovery](./plans/usb_done_audio-recovery.md) | Deployed 2026-10-16 |
