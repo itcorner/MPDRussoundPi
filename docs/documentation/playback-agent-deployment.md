@@ -9,7 +9,7 @@ For a web-only start, see the [README](../../README.md#quick-start-local-develop
 For MPD hardware/configuration details, see
 [headless playback](./mpd-headless-deployment.md).
 Historical checks and outstanding acceptance are in the
-[implementation plan](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance), not in the procedure.
+[implementation plan](../plans/general_done_mpd-web-integration.md#6-deployment-acceptance), not in the procedure.
 
 ## Components and prerequisites
 

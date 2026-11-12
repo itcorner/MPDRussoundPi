@@ -39,7 +39,8 @@ relay; the browser keeps same-origin access.
 
 ```text
 Browser (status/playback page, only while visible)
-  | same-origin  GET /api/playback/outputs/{id}/levels  (separate SSE, ~10 Hz)
+  | same-origin  GET /api/playback/agents/{agent_id}/outputs/{id}/levels
+  |             (candidate separate SSE, ~10 Hz)
   v
 Russound web app  -- one upstream subscription per output, ref-counted
   | Caddy TLS 8443 + bearer token
@@ -62,15 +63,20 @@ Design points:
   target node name is derived server-side (`sink.<id>`), never taken from the
   request.
 - **Frame format:** `{"output_id", "seq", "at", "channels": [{"peak_dbfs",
-  "rms_dbfs"}], "available": true|false, "error": null|code}`; silence as
-  `-inf`/`null`, not 0 %. Include `available: false` when the stream is
+  "rms_dbfs"}], "available": true|false, "error": null|code}`; represent
+  silence as JSON `null` with an explicit silence interpretation, not `-inf`
+  or 0 %. The read contract requires finite numbers. Include `available: false` when the stream is
   stopped/paused or capture failed, consistent with the "never look healthy
   when unknown" rule of the read API.
-- **Keep it out of the existing state SSE:** `/api/events` carries full view
-  payloads and is limited by waitress worker threads. Use a separate, bounded
+- **Keep it out of the existing state SSE:** `/api/events` carries state and
+  playback invalidations, not full view payloads, and is limited by waitress
+  worker threads. Use a separate, bounded
   meter stream (own connection limit, finite lifetime, drop-old-frames
   queue), or reuse the existing SSE limits explicitly. No meter work under the
   Russound `state_lock`.
+- **Multi-agent identity:** key subscriptions and pooling by `(agent_id,
+  output_id)`; route and payload shapes remain proposals pending a compatible,
+  capability-advertised contract and proxy allowlist.
 - **CPU on the Pi:** a low capture rate (8–16 kHz) is enough for a meter.
   Python 3.13 removed `audioop`; use `array('h')`/`memoryview` math or check
   whether a dependency is acceptable. Measure CPU with three outputs active.

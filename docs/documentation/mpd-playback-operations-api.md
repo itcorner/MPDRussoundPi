@@ -2,8 +2,10 @@
 
 S07 is implemented, tested locally, enabled on production and user-verified on
 2026-10-17. S08 managed station selection and S09 TuneIn search/resolve are
-implemented and tested locally; station selection has not been enabled or
-accepted on production. Automation remains unimplemented.
+implemented and active on the approved Pi test deployment. See the
+[integration acceptance record](../plans/general_done_mpd-web-integration.md#6-deployment-acceptance)
+for live checks and remaining lifecycle limitations. Automation remains
+unimplemented.
 
 ## Activation and trust
 

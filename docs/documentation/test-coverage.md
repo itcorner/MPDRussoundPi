@@ -175,7 +175,7 @@ control-state replacement or production rollback was performed for S04.
   isolated sources/venv, private credentials, no audio/MPD service operations
   and limited rollback. They execute no deployment or target commands.
   Six static tests and both Ansible syntax checks passed (2026-10-15).
-- [Isolated target acceptance](../plans/general_open_mpd-web-integration.md#acceptance-record)
+- [Isolated target acceptance](../plans/general_done_mpd-web-integration.md#acceptance-record)
   verifies real Pi cached reads, metadata, routes/gain and HTTP authentication
   with a separate private config copy. Production config/intentions hashes and
   existing audio/MPD/supervisor/recorder PIDs/restarts were unchanged; recorder

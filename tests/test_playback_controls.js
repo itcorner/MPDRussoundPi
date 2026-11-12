@@ -162,6 +162,7 @@ function harness(snapshot = fixture()) {
   const requests = [];
   const plan = [];
   const timers = new Map();
+  const documentListeners = {};
   let timerId = 0;
   let clock = 100000;
   let snapshotFailure = false;
@@ -181,7 +182,7 @@ function harness(snapshot = fixture()) {
       hidden: false,
       getElementById: (id) => ids[id],
       createElement: (tag) => new Element(tag),
-      addEventListener() {},
+      addEventListener(name, callback) { documentListeners[name] = callback; },
     },
     window: {
       setTimeout(fn, delay) {
@@ -222,6 +223,10 @@ function harness(snapshot = fixture()) {
     open(index = 0) { ids.playbackOutputs.children[index].querySelector(".playback-config-button").listeners.click(); },
     close() { ids.playbackConfigClose.listeners.click(); },
     failSnapshot(value) { snapshotFailure = value; },
+    setHidden(hidden) {
+      context.document.hidden = hidden;
+      documentListeners.visibilitychange();
+    },
     evaluate: (code) => vm.runInContext(code, context),
     render() { vm.runInContext(`renderPlayback(${JSON.stringify(snapshot)})`, context); },
     posts: () => requests.filter((request) => request.options.method === "POST"),
@@ -1072,6 +1077,59 @@ test("an unchanged scrolling title keeps its element and position across snapsho
   output.playback.value = { state: "play", now_playing: {} };
   h.render();
   assert.equal(card.querySelector(".playback-track"), undefined);
+});
+
+test("source playback errors are shown in the card and dialog and clear on recovery", async () => {
+  const snapshot = favoritesFixture();
+  const output = snapshot.agents[0].snapshot.outputs[0];
+  output.control.desired_state = "play";
+  output.playback.value = { state: "stop", mpd_error: "MPD reported a playback error.",
+    now_playing: { title: "Previous song" } };
+  const h = harness(snapshot);
+  await settle();
+  const card = h.ids.playbackOutputs.children[0];
+  assert.equal(card.querySelector(".playback-error").textContent,
+    "MPD reported a playback error. Playback is intended to play.");
+  h.open();
+  assert.equal(h.ids.playbackConfigControls.querySelector(".playback-error").textContent,
+    "MPD reported a playback error. Playback is intended to play.");
+
+  output.playback.value = { state: "play", mpd_error: null, now_playing: { title: "Next song" } };
+  h.render();
+  assert.equal(card.querySelector(".playback-error"), undefined);
+  assert.equal(h.ids.playbackConfigControls.querySelector(".playback-error").hidden, true);
+
+  output.playback.value = { state: "stop", mpd_error: null, now_playing: {} };
+  output.control.desired_state = "stop";
+  h.render();
+  assert.equal(card.querySelector(".playback-error"), undefined);
+  assert.equal(h.ids.playbackConfigControls.querySelector(".playback-error").hidden, true);
+});
+
+test("stale playback errors are identified as last reported and rendered as text", async () => {
+  const snapshot = favoritesFixture();
+  const output = snapshot.agents[0].snapshot.outputs[0];
+  output.playback.stale = true;
+  output.playback.value = null;
+  output.playback.last_known = { value: { state: "stop", mpd_error: "<untrusted error>" } };
+  const h = harness(snapshot);
+  await settle();
+  assert.equal(h.ids.playbackOutputs.children[0].querySelector(".playback-error").textContent,
+    "Last reported playback error: <untrusted error>");
+});
+
+test("returning to a hidden playback tab refreshes source outage status", async () => {
+  const snapshot = favoritesFixture();
+  const output = snapshot.agents[0].snapshot.outputs[0];
+  const h = harness(snapshot);
+  await settle();
+  h.setHidden(true);
+  output.control.desired_state = "play";
+  output.playback.value = { state: "stop", mpd_error: "MPD reported a playback error." };
+  h.setHidden(false);
+  await settle();
+  assert.equal(h.ids.playbackOutputs.children[0].querySelector(".playback-error").textContent,
+    "MPD reported a playback error. Playback is intended to play.");
 });
 
 test("dialog favorites and station results keep their buttons when only availability changes", async () => {

@@ -153,7 +153,7 @@ Restart and escalation history is written to
 `TimeoutStopSec=120` so a hung instance stops deterministically. Thresholds
 are tunable through the optional `watchdog` section in `config.json`; design
 background is in the
-[stall watchdog plan](../plans/mpd_open_playback-stall-watchdog.md).
+[stall watchdog plan](../plans/mpd_done_playback-stall-watchdog.md).
 
 With `mpd_russoundpi_start_playback=true` (the audio play's default),
 deployment stops an existing supervisor, regenerates/restarts audio and MPD,
@@ -263,4 +263,4 @@ queue idempotence, per-output failure isolation/backoff, CLI delegation and
 generated service policies. Ansible syntax is checked separately. These do
 not prove analog output, startup transients, USB unplug or network recovery.
 Outstanding hardware and lifecycle acceptance is tracked in the
-[implementation plan](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance).
+[implementation plan](../plans/general_done_mpd-web-integration.md#6-deployment-acceptance).

@@ -123,6 +123,18 @@ function hasStation(state) {
   return state.output.control?.has_station !== false;
 }
 
+function playbackSourceError(agent, output) {
+  const probe = output.playback || {};
+  const value = probe.value || probe.last_known?.value;
+  const error = value?.mpd_error;
+  if (typeof error !== "string" || !error.trim()) return "";
+  const stale = !probe.value || probe.stale || agent.status !== "ok" || agent.snapshot?.stale;
+  if (stale) return `Last reported playback error: ${error}`;
+  return output.control?.desired_state === "play"
+    ? `${error} Playback is intended to play.`
+    : error;
+}
+
 function favoriteStations(state) {
   const stations = state.agent.snapshot?.favorites?.stations;
   return Array.isArray(stations) ? stations : [];
@@ -244,7 +256,10 @@ function renderOutputControls(state) {
   const currentFavorite = document.createElement("span");
   currentFavorite.className = "playback-current-favorite";
   nowPlayingRow.append(nowPlaying, currentFavorite);
-  playbackSection.append(nowPlayingRow, transport);
+  const sourceError = document.createElement("p");
+  sourceError.className = "playback-error";
+  sourceError.setAttribute("role", "status");
+  playbackSection.append(nowPlayingRow, sourceError, transport);
 
   const favoritesSection = dialogSection(controls, "Favorites");
   const favoritesList = document.createElement("div");
@@ -322,7 +337,7 @@ function renderOutputControls(state) {
   });
   controls.appendChild(feedback);
   state.dialogElements = {
-    buttons, nowPlaying, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
+    buttons, nowPlaying, sourceError, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
     searchStations, stationStatus, stationResults, validation, availability, status, retry, feedback,
     signatures: {},
   };
@@ -342,7 +357,7 @@ function updateOutputDialog(state) {
   configTitle.textContent = state.output.label;
   configSubtitle.textContent = `${state.agent.agent_id} · ${state.output.id}`;
   const {
-    buttons, nowPlaying, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
+    buttons, nowPlaying, sourceError, currentFavorite, favoritesList, slider, gainValue, apply, stationInput,
     searchStations, stationStatus, stationResults, validation, availability, status, retry, feedback,
   } = state.dialogElements;
   const blocked = Boolean(state.command?.pending || state.command?.unknown);
@@ -360,6 +375,8 @@ function updateOutputDialog(state) {
   const playbackState = observed.state || state.output.playback?.status || "unknown";
   nowPlaying.textContent = station ? `${station} · ${playbackState}`
     : stationless ? `No station · ${playbackState}` : playbackState;
+  sourceError.textContent = playbackSourceError(state.agent, state.output);
+  sourceError.hidden = !sourceError.textContent;
   const selection = state.output.selection || {};
   const favorites = favoriteStations(state);
   // Favorite names and count decide the ☆/★ toggles, so every list depending on them includes this.
@@ -916,6 +933,8 @@ function renderPlayback(playback) {
       if (playbackProbe.error?.message) {
         appendPlaybackText(after, "playback-error", playbackProbe.error.message);
       }
+      const sourceError = playbackSourceError(agent, output);
+      if (sourceError) appendPlaybackText(after, "playback-error", sourceError);
       for (const child of Array.from(after.children)) card.insertBefore(child, config);
       config.setAttribute("aria-label", `Config ${agent.agent_id}, ${output.label}, ${output.id}`);
       updateOutputDialog(controlState);

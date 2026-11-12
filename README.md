@@ -114,7 +114,7 @@ Hardware-driven automatic playback is not implemented.
 
 Start with the [playback deployment guide](docs/documentation/playback-agent-deployment.md).
 The [architecture](docs/documentation/mpd-web-integration-architecture.md) and
-[implementation roadmap](docs/plans/general_open_mpd-web-integration.md) cover
+[implementation roadmap](docs/plans/general_done_mpd-web-integration.md) cover
 design and outstanding acceptance, not installation instructions.
 
 ## Requirements

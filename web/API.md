@@ -256,6 +256,11 @@ Returns one output from the web process's cached inventories with its playback
 integration status. Returns `404` when playback is disabled or no configured
 agent has that output id.
 
+When `playback.value.mpd_error` is present, the playback page displays the
+reported error on the output card and in its configuration dialog. If the
+desired state is play, it also notes that playback is intended to play. A
+stale or last-known error is labeled as last reported rather than current.
+
 The output's `selection.source` and `playback.value.current_source` fields are
 redacted display values containing only the HTTP(S) scheme and host. They omit
 path, user-info, query and fragment. These are the selected station's source

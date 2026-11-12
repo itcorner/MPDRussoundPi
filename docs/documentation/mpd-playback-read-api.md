@@ -11,7 +11,7 @@ valid. Production S07 writes were enabled with approval on 2026-10-17;
 S07 is done and production-verified by the user on that date.
 Changes to this baseline require updating this document and its
 [contract fixtures](../../tests/fixtures/playback-read-v1.json) together.
-See the [implementation plan](../plans/general_open_mpd-web-integration.md).
+See the [implementation plan](../plans/general_done_mpd-web-integration.md).
 
 ## 1. Scope and component boundaries
 
@@ -353,7 +353,7 @@ At the S02/S03 local acceptance checkpoint, the collector/helpers and agent
 were tested on Pi loopback with a separate config copy, while web modules and
 production transport/migration were still future work. The later production
 deployment is recorded in the
-[implementation plan](../plans/general_open_mpd-web-integration.md). Use
+[implementation plan](../plans/general_done_mpd-web-integration.md). Use
 the Pi script directory's existing `lib` import layout initially; do not perform
 an unrelated package migration. Agent dependency manifest belongs with Pi
 scripts. Web client dependencies stay in web requirements; the Docker image
