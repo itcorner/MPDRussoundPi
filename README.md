@@ -406,7 +406,7 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_SERIAL_GID` | Host GID owning the serial device | `20` |
 | `RUSSOUND_CONFIG` | Config file path | `/config/russound_config.json` |
 | `RUSSOUND_STATE` | State file path | `/data/russound_state.json` |
-| `RUSSOUND_DEBUG` | Enable debug logging | `false` |
+| `RUSSOUND_DEBUG` | Enable debug logging; Waitress remains the HTTP server and Flask's debugger is not enabled | `false` |
 | `RUSSOUND_WAITRESS_THREADS` | Waitress worker threads | `24` |
 | `RUSSOUND_MAX_EVENT_STREAMS` | Max concurrent live-update (SSE) streams; capped at threads − 4 so page loads and API calls always have free threads | threads − 4 |
 | `RUSSOUND_TCP_USER_TIMEOUT_SECONDS` | Drop client connections whose sent data stays unacknowledged this long (Linux only, `0` disables) | `30` |
@@ -416,7 +416,10 @@ Remove an explicit override to let browser edits take effect for that field.
 
 Core server settings also have command-line flags (`--host`, `--port`,
 `--config`, `--state`, `--debug`); an explicit flag wins over its environment
-default. `RUSSOUND_PLAYBACK_AGENTS` is an optional JSON list of agent URLs and
+default. `--debug` and `RUSSOUND_DEBUG` only control diagnostic logging; they
+do not enable Flask's development server or interactive debugger. Debug logs
+may include detailed protocol and connection data, so protect and rotate them.
+`RUSSOUND_PLAYBACK_AGENTS` is an optional JSON list of agent URLs and
 token/certificate file paths; see the [playback guide](docs/documentation/playback-agent-deployment.md).
 
 On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the container may write the bind-mounted directories.
@@ -425,23 +428,56 @@ On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the
 
 `ansible/playbooks/deploy-russound-docker.yml` prepares a Pi for the container deployment: it installs Docker Engine and the Compose plugin, clones the repository, seeds `docker/config/russound_config.json`, writes a `.env` file, and starts the `docker-compose.yml` stack (web application plus ser2net gateway).
 
+**Known issue:** Both web playbooks currently render their default empty
+playback-agent list as `[]`, which the web process rejects at startup. Until
+fixed, configure a valid nonempty `russound_playback_agents` list when using
+these plays; they do not currently provide a working no-agent default.
+
 ```bash
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml
 ```
 
 It disables the host `ser2net` and `russound-web` services when present, because the container now provides both.
 
-Override the defaults per host or on the command line:
+Override play-level defaults on the command line:
 
 ```bash
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml \
   -e russound_serial_device=/dev/ttyUSB1 -e russound_publish_port=8080
 ```
 
+The play's `vars` take precedence over same-named host inventory variables;
+setting those defaults only in inventory does not override them. Use explicit
+`-e` values for these play variables until the deployment rework resolves
+their precedence.
+
 The playbook detects the serial device's group and the deployment user's UID/GID
-and creates writable config/data/log directories. Target serial passthrough
-still needs verification. Existing runtime configuration is preserved and a
+and creates writable config/data/log directories. It refuses to change services
+if the managed serial device is absent. Existing runtime configuration is preserved and a
 dirty Git checkout is not forcibly reset.
+
+To pull explicit published images instead of building on the Pi, use matching
+tags appropriate for the checkout and target architecture:
+
+**Existing Pi warning:** This play uses its own Compose file list. If the
+running deployment uses additional overrides, the play may select a different
+image or configuration. Inventory and preserve the actual ordered inputs and
+local images before any redeployment; do not treat this command as a no-change
+rerun of the current Pi installation.
+
+```bash
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml \
+  -e russound_use_published_images=true \
+  -e russound_web_image=itcornernet/mpdrussoundpi-web:TAG \
+  -e russound_ser2net_image=itcornernet/mpdrussoundpi-ser2net:TAG
+```
+
+The override is stored outside the Git checkout. Published image deployment
+uses `--no-build`; it does not publish images or select a release automatically.
+If the exact images have already been securely loaded on the target, set
+`russound_published_pull_policy=never` to deploy without registry access.
+Set `russound_verify_backend=true` to require a response from the Russound
+controller, not just an HTTP response from the web application.
 
 For an existing host/LAN gateway, keep its host ser2net service and start only web:
 

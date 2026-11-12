@@ -4,6 +4,10 @@
 
 Hosts the Flask application, static pages, token-protected API routes, SSE events, session tracking, backend polling, status payloads, and request validation.
 
+The web application is served by Waitress in both normal and debug logging
+modes. `--debug` / `RUSSOUND_DEBUG` enable verbose logging only; they do not
+enable Flask's development server or interactive debugger.
+
 ## Requirements
 
 - Python 3.11+.

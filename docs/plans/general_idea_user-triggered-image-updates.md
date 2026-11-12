@@ -38,7 +38,7 @@ Share installed-image identity, release channels and cached availability with
 the [update status idea](./general_idea_update-status-and-restarts.md), rather
 than independently checking registries. A check, an install and a restart are
 separate actions; a check never installs. The
-[deployment simplification idea](./general_idea_simplify-deployment-configuration.md)
+[deployment simplification plan](./general_open_simplify-deployment-configuration.md)
 owns supported modes and image policy. Installation requires the same
 administrator authentication, explicit opt-in, least-privilege execution,
 durable operation and audit safeguards proposed for privileged restarts.

@@ -42,6 +42,12 @@ runtime state, user/system units, source revision and agent credentials. Stop
 writers before copying the operation SQLite database, or use SQLite's backup
 API. Full audio deployment and egress activation interrupt playback.
 
+The current plays define many defaults at play level, which overrides
+same-named host inventory variables. Use explicit `-e` values as in the
+commands below rather than relying on inventory for those settings. In
+particular, an inventory-only `mpd_russoundpi_start_playback=false` does not
+override the audio play's `true` default; use the staging command below.
+
 ## 1. Prepare the Pi audio stack
 
 Review the seed's USB hardware selector, profile, sinks, output IDs/ports,
@@ -128,13 +134,20 @@ selection defaults on with manual operations; use
 `playback_agent_enable_tunein_selection=false` to disable new TuneIn selections.
 The agent-only play does not regenerate or restart MPD/audio and requires an
 existing user manager. Without `playback_agent_start=true`, it installs files
-but does not activate/reload a running process.
+but does not activate/reload a running process. It can still replace the
+installed source, dependencies and token. If an agent is already running,
+that process can retain the old in-memory token until it restarts. Do not use
+this as a staging or credential-rotation procedure; coordinate any token
+change with web and plan the interruption explicitly.
 
 ## 4. Activate the TLS proxy
 
 Choose a DNS name or IPv4 address reachable from the web host and a source CIDR
 that matches traffic as the Pi actually sees it (Docker/NAT may change it).
 Prefer an exact host `/32`; broaden only intentionally.
+When the web container runs on the Pi, also allow its Docker network's actual
+source CIDR using `playback_proxy_additional_allowed_cidrs`. Keep the existing
+allowed CIDR during migration if the previous web host still needs access.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -179,13 +192,16 @@ Persist the resulting numeric `RUSSOUND_UID`/`RUSSOUND_GID` values in the local
 `.env` for later Compose runs. In an Ansible-managed Docker deployment, the play
 sets them to the deployment user's IDs.
 
-Add this single line to the web host's private `.env`:
+For a manually managed Docker deployment, add this single line to the web
+host's private `.env`:
 
 ```dotenv
 RUSSOUND_PLAYBACK_AGENTS=[{"agent_id":"musicpi","url":"https://192.168.1.105:8443","token_file":"/run/secrets/musicpi-playback-token","tls_ca_file":"/run/secrets/musicpi-proxy.crt"}]
 ```
 
 The URL host must match the certificate SAN. Never disable TLS verification.
+For an Ansible-managed Docker deployment, supply the agent list through
+`russound_playback_agents` instead: the play rewrites `.env` on rerun.
 For native web, set `RUSSOUND_PLAYBACK_AGENTS` with absolute local token/cert
 paths, or use the `russound_playback_agents` Ansible variable.
 `.env`, private tokens, runtime config/state and TLS private keys stay outside Git.

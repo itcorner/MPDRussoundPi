@@ -531,17 +531,12 @@ class RussoundHTTPServer:
         self._max_event_streams = stream_limit if self._max_event_streams is None else min(self._max_event_streams, stream_limit)
         self._start_backend_change_watcher()
         if debug:
-            try:
-                self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
-            finally:
-                for playback_client in self._playback_clients:
-                    playback_client.close()
-            return
+            logging.debug("Starting Waitress with %d worker threads", thread_count)
 
         try:
             waitress_module = importlib.import_module("waitress")
         except ModuleNotFoundError as exc:
-            raise RuntimeError("waitress is required when debug mode is disabled. Install it with 'pip install waitress'.") from exc
+            raise RuntimeError("waitress is required to run the web server. Install it with 'pip install waitress'.") from exc
 
         create_server = getattr(waitress_module, "create_server")
         server = create_server(self.app, host=host, port=port, threads=thread_count)
@@ -1220,7 +1215,7 @@ def main() -> None:
     parser.add_argument("--config", default=env_str("RUSSOUND_CONFIG"))
     parser.add_argument("--state", default=env_str("RUSSOUND_STATE") or str(WEB_ROOT / "russound_state.json"))
     parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
-    parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging to the terminal")
+    parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging (the server still uses Waitress)")
     parser.add_argument(
         "--waitress-threads",
         type=int,

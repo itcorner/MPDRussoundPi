@@ -53,7 +53,7 @@ resolver and the map returned by
 ## Proposed behavior
 
 Coordinate the target precedence with
-[deployment simplification](./general_idea_simplify-deployment-configuration.md)
+[deployment simplification](./general_open_simplify-deployment-configuration.md)
 before changing it. The editor and
 [deployment overview](./general_idea_deployment-status-overview.md) should
 consume the same allowlisted effective-value/source metadata, not duplicate

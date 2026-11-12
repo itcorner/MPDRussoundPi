@@ -15,6 +15,10 @@ ansible-playbook -i ansible/inventory.yaml ansible/playbooks/setup-musicpi.yml \
   --tags init,new -e mpd_russoundpi_start_playback=false
 ```
 
+The play-level default for `mpd_russoundpi_start_playback` overrides a
+same-named host inventory value. Pass `false` with `-e` as shown; an
+inventory-only value does not select staging.
+
 The staging option leaves MPD and supervision stopped, but still prepares and
 restarts audio services. `--tags update` explicitly requests an OS package
 upgrade; it is not part of the normal `init,new` procedure.

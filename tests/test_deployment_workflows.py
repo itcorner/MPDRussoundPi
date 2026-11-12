@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 import shlex
@@ -68,6 +69,53 @@ class DeploymentWorkflowTests(unittest.TestCase):
         config = secrets["ansible.builtin.file"]
         self.assertEqual(config["mode"], "0700")
         self.assertEqual(config["owner"], "{{ deploy_user }}")
+
+    def test_managed_gateway_requires_a_character_device_before_service_changes(self):
+        tasks = playbook("deploy-russound-docker.yml")["tasks"]
+        preflight = next(i for i, task in enumerate(tasks) if task["name"] == "Require the serial device before changing services")
+        stop = next(i for i, task in enumerate(tasks) if task["name"] == "Disable the host ser2net service")
+        self.assertLess(preflight, stop)
+        self.assertIn("serial_device.stat.ischr | default(false)", tasks[preflight]["ansible.builtin.assert"]["that"])
+        self.assertEqual(tasks[preflight]["when"], "russound_manage_serial_gateway | bool")
+
+    def test_published_images_use_an_explicit_override_and_never_build(self):
+        play = playbook("deploy-russound-docker.yml")
+        self.assertFalse(play["vars"]["russound_use_published_images"])
+        task = next(task for task in play["tasks"] if task["name"] == "Pull and start the published containers")
+        self.assertEqual(task["when"], "russound_use_published_images | bool")
+        argv = task["ansible.builtin.command"]["argv"]
+        for managed in (True, False):
+            with self.subTest(managed=managed):
+                args = ast.literal_eval(render(argv, app_dir="/home/musicpi/app",
+                                               russound_registry_override_dir="/home/musicpi/.config/deploy",
+                                               russound_manage_serial_gateway=managed,
+                                               russound_published_pull_policy="never"))
+                self.assertIn("--no-build", args)
+                self.assertEqual(args[args.index("--pull") + 1], "never")
+                self.assertEqual("--no-deps" in args, not managed)
+        template = (TEMPLATES / "russound-registry-compose.yml.j2").read_text()
+        for managed in (True, False):
+            result = yaml.safe_load(render(template, russound_web_image="example/web:tag",
+                                           russound_ser2net_image="example/serial:tag",
+                                           russound_manage_serial_gateway=managed))
+            self.assertEqual(result["services"]["russound-web"]["image"], "example/web:tag")
+            self.assertEqual("russound-ser2net" in result["services"], managed)
+
+    def test_controller_response_check_is_optional_and_checks_backend_status(self):
+        play = playbook("deploy-russound-docker.yml")
+        self.assertFalse(play["vars"]["russound_verify_backend"])
+        task = next(task for task in play["tasks"] if task["name"] == "Verify the Russound controller responds")
+        self.assertEqual(task["when"], "russound_verify_backend | bool")
+        self.assertIn("backend_status.connected", task["until"])
+
+    def test_proxy_allows_additional_docker_network_without_losing_existing_source(self):
+        template = (TEMPLATES / "playback-agent.Caddyfile.j2").read_text()
+        result = render(template, playback_proxy_hostname="192.168.1.105", playback_proxy_port=8443,
+                        playback_proxy_certificate="/cert", playback_proxy_private_key="/key",
+                        playback_proxy_allowed_cidr="192.168.1.0/24",
+                        playback_proxy_additional_allowed_cidrs=["172.18.0.0/16"],
+                        playback_proxy_enable_operations=True, playback_agent_port=8081)
+        self.assertIn("remote_ip 192.168.1.0/24 172.18.0.0/16", result)
 
     def test_managed_docker_env_keeps_playback_agent_list(self):
         agents = [{

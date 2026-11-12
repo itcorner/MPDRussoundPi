@@ -942,6 +942,56 @@ class RussoundServerTests(unittest.TestCase):
         finally:
             _close_server(server)
 
+    def test_run_debug_still_uses_waitress_without_flask_debugger(self):
+        server = RussoundHTTPServer(None, None, max_event_streams=100)
+        try:
+            with patch.object(server, "_start_backend_change_watcher"), patch.object(
+                server.app, "run"
+            ) as flask_run, patch("web.russound_server.importlib.import_module") as import_module:
+                server.run("127.0.0.1", 8000, debug=True, waitress_threads=10)
+
+            flask_run.assert_not_called()
+            import_module.assert_called_once_with("waitress")
+            create_server = import_module.return_value.create_server
+            create_server.assert_called_once_with(server.app, host="127.0.0.1", port=8000, threads=10)
+            create_server.return_value.run.assert_called_once_with()
+            self.assertEqual(server._max_event_streams, 6)
+            self.assertFalse(server.app.debug)
+        finally:
+            _close_server(server)
+
+    def test_run_requires_waitress_in_both_logging_modes(self):
+        for debug in (False, True):
+            with self.subTest(debug=debug):
+                server = RussoundHTTPServer(None, None)
+                try:
+                    with patch.object(server, "_start_backend_change_watcher"), patch(
+                        "web.russound_server.importlib.import_module",
+                        side_effect=ModuleNotFoundError("No module named 'waitress'"),
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "waitress is required to run the web server"):
+                            server.run("127.0.0.1", 8000, debug=debug)
+                finally:
+                    _close_server(server)
+
+    def test_main_enables_debug_logging_from_flag_or_environment(self):
+        from web.russound_server import main
+
+        for argv, environment in (
+            (["russound_server", "--debug"], {}),
+            (["russound_server"], {"RUSSOUND_DEBUG": "true"}),
+            (["russound_server"], {}),
+        ):
+            with self.subTest(argv=argv, environment=environment), patch.object(
+                sys, "argv", argv
+            ), patch.dict("os.environ", environment, clear=True), patch(
+                "web.russound_server._configure_logging"
+            ) as configure_logging, patch("web.russound_server.RussoundHTTPServer") as server:
+                main()
+                expected_debug = "--debug" in argv or bool(environment)
+                configure_logging.assert_called_once_with(expected_debug)
+                self.assertEqual(server.return_value.run.call_args.kwargs["debug"], expected_debug)
+
     def test_connection_socket_options_include_tcp_user_timeout_when_supported(self):
         options = _connection_socket_options(30)
         if hasattr(socket, "TCP_USER_TIMEOUT"):
