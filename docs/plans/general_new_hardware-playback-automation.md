@@ -1,7 +1,7 @@
 # Hardware-driven playback automation
 
 Status: **new, lower priority; not implemented or scheduled** (split from
-[MPD web integration](./general_open_mpd-web-integration.md) on 2026-11-12).
+[MPD web integration](./general_done_mpd-web-integration.md) on 2026-11-12).
 This plan owns the former S10 and its automation-specific lifecycle acceptance.
 The existing manual integration can be validated and closed independently.
 Nothing in this plan authorizes live mutations, deployment or fault tests.

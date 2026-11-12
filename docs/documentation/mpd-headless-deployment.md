@@ -263,4 +263,4 @@ queue idempotence, per-output failure isolation/backoff, CLI delegation and
 generated service policies. Ansible syntax is checked separately. These do
 not prove analog output, startup transients, USB unplug or network recovery.
 Outstanding hardware and lifecycle acceptance is tracked in the
-[implementation plan](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance).
+[implementation plan](../plans/general_done_mpd-web-integration.md#6-deployment-acceptance).

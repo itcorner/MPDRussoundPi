@@ -27,6 +27,12 @@ controller is silent. Distinguish missing hardware, unknown facts and failure;
 do not claim a precise root cause from a symptom alone. Link to the corresponding
 configuration field or deployment overview when appropriate.
 
+The 2026-11-12 [source-outage test](./general_done_mpd-web-integration.md#additional-acceptance-evidence-2026-11-12)
+found that the API reported an MPD playback error while the dashboard showed
+the affected output as stopped without displaying that error. This immediate
+dashboard issue was fixed and rechecked; guided diagnostics can build on it
+with more specific, safe troubleshooting guidance.
+
 Reuse cached observations, effective configuration and shared component
 identity from [deployment status](./general_idea_deployment-status-overview.md)
 and [inline overrides](./web_idea_effective-config-overrides.md). Provide a

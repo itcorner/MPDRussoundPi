@@ -51,7 +51,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 |---|---|
 | [MPD agent containerization](./plans/mpd_new_agent-containerization.md) | Planned; design required before adding an agent image |
 | [CI/CD pipeline and Docker image release path](./plans/general_open_cicd-docker-release.md) | Stages 1–3 implemented; Stage 4 build-only simulations passed for web/ser2net; registry prerequisites remain; no image publication authorized yet |
-| [MPD web integration](./plans/general_open_mpd-web-integration.md) | S01–S09 implemented; manual S11 acceptance open. Holds the [deployment acceptance](./plans/general_open_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
+| [MPD web integration](./plans/general_done_mpd-web-integration.md) | Manual integration complete with accepted limitations; holds the [deployment acceptance](./plans/general_done_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Hardware-driven playback automation](./plans/general_new_hardware-playback-automation.md) | Lower priority; former S10 and automation-specific acceptance, not implemented |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
 | [Deployment and runtime configuration overview](./plans/general_idea_deployment-status-overview.md) | Idea, not scheduled; scope and disclosure decisions needed |

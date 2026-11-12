@@ -1,13 +1,14 @@
 # MPD web integration: stepwise implementation plan
 
-Date: 2026-10-14; updated 2026-10-17. Status: S01-S07 complete; S08 managed
+Date: 2026-10-14; updated 2026-11-12. Status: **manual integration complete
+with explicitly accepted limitations**. S01-S07 complete; S08 managed
 station selection and S09 TuneIn catalog are implemented and active on the Pi
 under the approved trusted-LAN test deployment. The configuration split and
 favorites are deployed. S08/S09 live checks passed and the three approved
-public-only egress restrictions are deployed; full lifecycle acceptance remains
-outstanding. Former S10 automation is not implemented and is now tracked in the
+public-only egress restrictions are deployed. Former S10 automation is not implemented and is now tracked in the
 separate [lower-priority automation plan](./general_new_hardware-playback-automation.md);
-S11 manual integration acceptance is incomplete but no longer depends on S10.
+S11 manual integration acceptance is complete subject to the recorded
+limitations and does not depend on S10.
 The healthy-LAN update-latency
 target is met, and S07 has user production sign-off.
 
@@ -491,8 +492,9 @@ Search, exact station-ID lookup, Pi-side resolution and favorites are wired
 through the dashboard. Live checks covered TuneIn selection, playlist-backed
 station `s260655`, and favorites add/move/remove. The config-split regression
 baseline is 532 Python tests (one skipped) and 27 JavaScript tests passing.
-URL-type favorite selection and no-default-station behavior still need live
-acceptance; their local coverage is not a substitute for target checks.
+URL-type favorite selection passed a live check on 2026-11-12. An isolated
+Pi-agent no-default check and a browser-simulated dashboard check passed;
+the real production stationless path remains unverified end to end.
 
 1. Use TuneIn OPML search server-side; return only normalized station identity,
    title and bounded display metadata to the browser. Do not expose the provider
@@ -521,11 +523,12 @@ It is not implemented and is not required to close this manual integration plan.
 
 ### S11. Lifecycle acceptance, rollback and operational handover
 
-**Incomplete.** Config-split rollout verified live TuneIn favorites operations,
-unchanged admin-config bytes and playback after MPD/supervisor/agent restarts.
-Still outstanding: live URL-type favorite and no-default-station checks,
-restart persistence of edited favorites/gains/selections and approved Pi reboot
-and outage/fault tests. Automation-specific S11 acceptance moved with S10 to
+**Complete with accepted limitations.** The 2026-11-12 maintenance window added live URL-favorite,
+edited-state persistence, user-manager and Pi reboot, partial-failure,
+network recovery, listening and same-version rollback checks. The
+[acceptance record](#additional-acceptance-evidence-2026-11-12) distinguishes
+these results from remaining end-to-end, outage and transport gaps.
+Automation-specific S11 acceptance moved with S10 to
 the [automation plan](./general_new_hardware-playback-automation.md#automation-specific-acceptance-split-from-s11).
 Earlier S06 latency
 measurements are not a new S08/S09 lifecycle or analog-audio guarantee.
@@ -553,25 +556,27 @@ fallbacks or unverified guarantees.
 
 #### Manual integration closure checklist
 
-- [ ] Record the exact deployed revisions, topology, test window, backups and
+- [x] Record the deployed revisions, topology, test window, backups and
   current health; obtain separate approval for disruptive tests.
-- [ ] Run focused and full regression/contract tests and provisioning syntax
+- [x] Run focused and full regression/contract tests and provisioning syntax
   checks applicable to the deployed version; record results.
-- [ ] Validate a URL-type favorite and no-default-station behavior on the Pi.
-- [ ] Verify edited favorites, gains, selections and manual intentions persist
+- [x] Validate a URL-type favorite and no-default-station behavior on the Pi;
+  the production stationless end-to-end test is explicitly deferred below.
+- [x] Verify edited favorites, gains, selections and manual intentions persist
   through the relevant agent, MPD, supervisor, web and user-manager restarts.
-- [ ] Exercise approved web/network/source outage, agent/MPD failure and Pi
+- [x] Exercise approved web/network/source outage, agent/MPD failure and Pi
   reboot recovery; verify stale/error reporting and healthy-output isolation.
-- [ ] Measure current-version status/title latency, queue bounds and
+- [x] Measure current-version status/title latency, queue bounds and
   responsiveness during partial failure; compare with the applicable target.
-- [ ] Validate applicable IPv6 transport and physical/analog output, routes
+- [x] Validate applicable IPv6 transport and physical/analog output, routes
   and both-channel signal, or record an explicitly agreed deferral and limit.
-- [ ] Rehearse manual-integration rollback with backups and compatible schemas;
+- [x] Rehearse manual-integration rollback with backups and compatible schemas;
   document operational handover and the outcome of every gate.
 
-The disconnected Russound controller limits hardware-dependent verification;
-record it as unverified, not passed. The independent, unscheduled Pi platform
-investigations below are not silently accepted as successful integration tests.
+The Russound controller was disconnected during earlier testing and responded
+after reconnection on 2026-11-12. This is not automation acceptance. The
+independent, unscheduled Pi platform investigations below are not silently
+accepted as successful integration tests.
 
 ## 4. Step completion and safe pause protocol
 
@@ -693,14 +698,175 @@ the [deployment guide](../documentation/playback-agent-deployment.md).
   succeeded; literal-private, DNS-to-private and public-to-private redirects
   were blocked.
 
-### Remaining acceptance
+### Additional acceptance evidence (2026-11-12)
 
-- Live URL-type favorite and no-default-station behavior.
-- Persistence of edited favorites, gains and selections across restarts.
-- Current-version whole-Pi reboot, user-manager restart and outage/fault tests,
-  including recovery after a network outage.
-- Live IPv6 transport (policy and rule generation have unit coverage).
-- Physical/analog audio for the existing manual integration.
+- **Non-disruptive baseline (2026-11-12).** The Pi's web and ser2net
+  containers were healthy with zero restarts, using development image tag
+  `dev-8f6bf092609bf910eb529684d364d191af5a3ab6`. The playback agent,
+  supervisor, three MPD instances and TLS proxy were active. The web playback
+  health endpoint reported the `musicpi` agent healthy; all three outputs
+  reported playing with one queue entry each. One snapshot marked audio
+  observations stale at about 30 seconds; a subsequent snapshot showed them
+  fresh. This is a point-in-time check, not an analog or latency acceptance.
+- **Local regressions (2026-11-12).** At commit
+  `4334515935b0ac6c61b6e71c0bb050413260f5d7` with uncommitted deployment
+  changes, Python discovery ran 599 tests successfully (one skipped), and
+  Node ran 107 tests (97 passed, 10 skipped). All seven Ansible playbooks
+  passed syntax checks with a localhost-only inventory; the `musicpi` host
+  pattern was unmatched. The Pi checkout is at
+  `8f6bf092609bf910eb529684d364d191af5a3ab6`, matching the container tags.
+  Of the deployed agent's Python files, 22 match the Pi checkout, but
+  `lib/outputconfig.py` is an older variant without watchdog parsing. The
+  deployed variant's SHA-256 is
+  `5d37dd58ae3a9983572557a869fbc3259cf74ee215bcd075784b49b869dca2f8`;
+  the checkout's is
+  `d846ff93063715752a10b10bdc0afb9533fff1fa6ecca4374f9f4db56f798f63`.
+  The local full suite is therefore not an exact test of the deployed agent.
+  In a separate temporary checkout at the Pi revision with the deployed
+  parser overlaid, 104 focused agent, operations and status tests passed.
+- **Approved live checks (2026-11-12).** Private backup, including a SQLite
+  online backup with successful integrity check, is at
+  `~/.local/state/mpdrussoundpi/integration-acceptance-20261112-191211/`.
+  An edited front gain survived an agent restart and was restored. An edited
+  favorite order and source selection survived individual front MPD,
+  supervisor and web restarts; the other two outputs remained playing and
+  their control, gain, selection and one-entry queues were unchanged. The
+  original source and favorite order were restored. One immediate favorite
+  restoration request received a revision conflict; it was rejected, then a
+  fresh revision was used successfully.
+- **Edited-state persistence (2026-11-12).** A temporarily edited front
+  source and gain, favorite order and play intention survived a web restart,
+  user-manager restart and subsequent whole-Pi reboot. The original source,
+  gain and favorite order were restored through the agent operations API.
+- **URL favorite (2026-11-12).** A temporary URL-type favorite was seeded
+  into runtime state under the backend mutation lock using the already-playing
+  source URL. Selection through the web and agent succeeded on the front
+  output with one queue entry and unchanged other-output controls. The original
+  source and favorite order were restored. This exercised live URL selection,
+  not initial favorite seeding from an admin configuration.
+- **Failure and restart checks (2026-11-12).** Stopping the front MPD
+  produced a stale/error observation while both other outputs played, and
+  front recovered after restart. A user-manager restart and Pi reboot
+  recovered the agent, supervisor, MPDs, proxy and egress service. All
+  outputs resumed their original selections, gains and play intentions with
+  one queue entry each. After reboot, the egress startup guard succeeded and
+  the cgroup-scoped nftables rule was present. A timed Wi-Fi disconnect used
+  a pre-armed systemd reconnection timer; SSH and playback recovered and the
+  timer service reported success. No independent outage-time monitoring was
+  recorded, so intermediate UX is not established. NetworkManager recorded
+  the requested Wi-Fi disconnection at 19:21:50 and timer-driven activation
+  at 19:23:14; this is not an end-to-end availability measurement. Separately,
+  stopping the agent was reported as unavailable while Russound remained
+  connected; agent health recovered on restart.
+- **Hardware and isolated check (2026-11-12).** After reconnecting the serial
+  adapter and restarting the gateway and web container with approval, the
+  Russound backend reported connected. The user reported both channels audible
+  on each of the three outputs by switching between them; no frequency-response
+  or calibrated level measurement was made. An isolated agent on the Pi,
+  using separate temporary configuration and state, started a no-default
+  output stopped and returned `no_station` for play; production config and
+  state hashes stayed unchanged. The deployed dashboard, with a simulated
+  stationless playback response in the browser only, showed “No station”
+  and a visible disabled Play button with the “Select a station first” hint.
+  The browser interception was removed afterward. A real production
+  stationless output was not exercised end to end. The Pi has link-local
+  IPv6 only and no IPv6 default route, so public IPv6 playback was not
+  exercised.
+- **LAN sampling (2026-11-12).** One 156-second sample had 126 successful
+  requests and six URL errors; their cause was not captured. Successful
+  source-timestamp observations had p95 age 3.648 seconds. A follow-up
+  45-second probe returned 45 HTTP 200 responses. A second 156-second sample
+  returned 156 successes and 468 observations, with p95 timestamp age
+  3.560 seconds, maximum 4.201 seconds, no stale observations and at most
+  one queue entry per output. Pi and measurement-host clocks differed by
+  roughly 0.2 seconds with SSH round-trip uncertainty; this is an API
+  observation-age estimate, not browser or actual audio-dropout latency.
+- **LAN repeat (2026-11-12, after 20:03).** Another 156-second sample
+  returned 156 successes and 468 observations, with no unhealthy, stale or
+  error observations. Source-timestamp age was p95 3.688 seconds and maximum
+  4.259 seconds; HTTP response time was p95 38.3 ms. All three outputs
+  supplied metadata throughout and had at most one queue entry. The Pi clock
+  was approximately 0.17 seconds ahead of the laptop at the midpoint of three
+  SSH measurements, with round trips of 254–265 ms. This is an API age
+  estimate, not a browser or audio-dropout measurement. The user reported
+  moving the laptop and possible Wi-Fi roaming during the earlier failed
+  sample; that is a plausible explanation, not a confirmed cause. Both
+  subsequent 156-second samples had no request failures.
+- **Title-change sampling (2026-11-12).** In a separate 240-second
+  Pi-local MPD-to-web-API sample, all seven observed title changes converged
+  in 1.005–3.006 seconds (nearest-rank p95 3.006 seconds), with no sampler
+  errors or superseded changes. One-second sampling and the small event
+  count limit the result; it is not a browser or separate-host measurement.
+- **Same-version rollback rehearsal (2026-11-12).** Stopped web, agent,
+  supervisor and all MPDs; made and checksum-verified private backups of
+  config and playback state, plus an integrity-checked SQLite backup; then
+  atomically restored the matching config/state and restarted services. The
+  existing ledger and binaries were retained. All outputs resumed their
+  original selections, gains and intentions, the controller reconnected,
+  and the egress startup guard passed. This does not demonstrate a
+  cross-version or old-schema downgrade.
+- **Source-outage test (2026-11-12).** With explicit maintenance approval,
+  a temporary nftables rule rejected HTTP(S) connections only from the front
+  MPD service; an independently armed timer provided automatic rule removal.
+  The rule counter confirmed it matched stream traffic. In 35 API samples
+  over approximately 70 seconds, the front output changed from play to stop,
+  its desired intention remained play, and the API reported an MPD playback
+  error; the other two outputs remained playing with no sample errors. After
+  removal, the front output recovered automatically within approximately
+  30 seconds with its original source, gain and one queue entry. The temporary
+  rule was removed and the permanent egress guard verified.
+  After reloading the dashboard during the outage, it showed front as stopped
+  and the other outputs playing, but did not show the MPD error or distinguish
+  this failure from an intentional stop. A previously open background tab
+  initially continued to display its old play state until reloaded. These are
+  UX limitations, not successful outage-error reporting.
+- **Outage UI fix and recheck (2026-11-12).** The web card and configuration
+  dialog now show the agent's sanitized MPD playback error, including when
+  play remains the desired state; stale errors are labeled last reported.
+  The local JavaScript suite passed 100 tests (10 publication tests skipped),
+  including recovery and hidden-tab visibility resync. With separate approval,
+  the Pi web container was recreated from local image
+  `mpdrussoundpi-web:source-outage-ui-20261112`, derived from the previously
+  deployed web image with only the tested dashboard script replaced. The
+  image ID is
+  `sha256:06067cd031893d152298b874e15b6aacf790d32e5d037b07ae9c420f3b6c4d5d`.
+  The original published image remains available; this local image is not a
+  Hub release. The override is
+  `~/.config/mpdrussoundpi-deploy/source-outage-ui.compose.yml`; removing it
+  from the Compose invocation and recreating web with the original published
+  override rolls back this web change. A later deployment using only the
+  original published image will also remove the fix until it is released.
+  Repeating the isolated front outage
+  showed the error and desired-play message on the live dashboard after reload,
+  while the other outputs continued playing. After removing the temporary
+  rule, front recovered and the message cleared after reload. The integrated
+  browser tab was hidden and intentionally paused updates; visible-tab refresh
+  was covered by the visibility-change regression test, not timed live.
+
+### User decisions (2026-11-12)
+
+- The user considers the extended Pi run sufficient for the stationless
+  acceptance decision. The isolated agent and simulated dashboard checks
+  remain the evidence; a real production stationless end-to-end check was
+  not performed and is not recorded as passed.
+- The user accepts possible laptop roaming as sufficient context for the
+  earlier LAN failures and does not require more investigation. The actual
+  cause remains unconfirmed; two subsequent long samples were clean.
+- Public IPv6 testing is not required for this closure. IPv6 playback on an
+  IPv6-capable network remains unverified.
+- Cross-version rollback is deferred to update-path evaluation and tracked in
+  the [image updates idea](./general_idea_user-triggered-image-updates.md).
+  The completed same-version restore does not validate downgrade compatibility.
+
+### Acceptance limitations and handover
+
+The user accepted the explicit stationless, LAN-cause, IPv6 and cross-version
+rollback limitations above. The outage fix is installed as a local web image,
+not a published release. Startup, health, credentials, backup/restore and
+troubleshooting procedures are in the
+[playback deployment guide](../documentation/playback-agent-deployment.md).
+The image-update plan owns cross-version rollback; broader diagnostic guidance
+remains in the [guided diagnostics idea](./general_idea_guided-diagnostics.md).
 
 Automation-specific demand, mode and lifecycle acceptance is tracked in the
 [automation plan](./general_new_hardware-playback-automation.md#automation-specific-acceptance-split-from-s11)

@@ -23,8 +23,8 @@ locally and deployed; S07 is done and production-verified by the user on
 2026-10-17. S08 managed station selection, S09 TuneIn integration and the
 config/state split with favorites are active in the approved trusted-LAN Pi
 test deployment. Public-only DNS/redirect egress enforcement is deployed;
-full lifecycle acceptance remains outstanding. See the
-[deployment acceptance](../plans/general_open_mpd-web-integration.md#6-deployment-acceptance).
+manual lifecycle acceptance is complete with recorded limitations. See the
+[deployment acceptance](../plans/general_done_mpd-web-integration.md#6-deployment-acceptance).
 
 ## Opt-in USB hardware recovery
 

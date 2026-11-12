@@ -14,15 +14,15 @@ TuneIn station selection is enabled by default on agents with manual
 operations; `--disable-tunein-selection` turns it off. Pi-side public-only
 egress enforcement now covers resolved destinations and redirects through
 connection-pinned Python fetching and an MPD-only cgroup packet filter; see the
-[egress plan and evidence](../plans/mpd_done_playback-egress-hardening.md). Live deployment
-is not full production/lifecycle sign-off.
+[egress plan and evidence](../plans/mpd_done_playback-egress-hardening.md).
+Manual lifecycle acceptance is complete with explicitly recorded limitations.
 
 Implementation progress: S01-S07 are complete, including the
-[production Pi-to-Docker rollout](../plans/general_open_mpd-web-integration.md#acceptance-record).
+[production Pi-to-Docker rollout](../plans/general_done_mpd-web-integration.md#acceptance-record).
 S08/S09 and the [configuration split](../plans/mpd_done_config-split.md) are deployed;
-remaining live checks and hardening are recorded in the
-[implementation plan](../plans/general_open_mpd-web-integration.md#remaining-acceptance).
-See the [implementation plan](../plans/general_open_mpd-web-integration.md)
+the acceptance evidence and limitations are recorded in the
+[implementation plan](../plans/general_done_mpd-web-integration.md#acceptance-limitations-and-handover).
+See the [implementation plan](../plans/general_done_mpd-web-integration.md)
 for manual integration acceptance and [collector usage](./mpd-backend-api.md).
 The lower-priority [automation plan](../plans/general_new_hardware-playback-automation.md)
 owns automation decisions and acceptance independently.
@@ -45,7 +45,7 @@ hardware-driven automation last, as an explicit opt-in.
 Do not deploy or mutate the production audio configuration while the current
 endurance test is running.
 
-See the [stepwise implementation plan and decision register](../plans/general_open_mpd-web-integration.md)
+See the [stepwise implementation plan and decision register](../plans/general_done_mpd-web-integration.md)
 for manual integration dependencies and acceptance gates; see the
 [automation plan](../plans/general_new_hardware-playback-automation.md) for
 automation decisions and gates.
@@ -822,7 +822,7 @@ instead of rewriting them into asynchronous implementations.
 The [automation plan's decision register](../plans/general_new_hardware-playback-automation.md#decisions-required-before-implementation)
 tracks automation topics, their status and implementation gates. Other
 integration decisions remain in the
-[implementation plan](../plans/general_open_mpd-web-integration.md).
+[implementation plan](../plans/general_done_mpd-web-integration.md).
 Solution D, direct calibration-gain stream volume and web-hosted policy with
 last-intention recovery during web-host loss (D01), plus persisted immutable
 output IDs with separate labels (D08), are already accepted.
