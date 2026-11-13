@@ -1,8 +1,8 @@
-"""Private persistent state primitives for the future deployment runner.
+"""Private persistent state primitives for the deployment runner.
 
 These primitives do not run deployment commands or establish that remote work
-has finished. Only the status command is exposed to operators until the
-completion, snapshot and recovery runners are implemented.
+has finished. This module exposes only status; reviewed deployment/recovery
+actions are owned by deployment_operator, never a generic unlock command.
 """
 
 import argparse
@@ -13,11 +13,12 @@ from pathlib import Path
 import re
 import stat
 import sys
-from typing import Any, Generator, TypeGuard
+from typing import Any, Generator
 from uuid import UUID
 
 from tool.deployment_images import DIGEST, MAX_METADATA, SelectionError, validate_selection
-from tool.deployment_files import FileSafetyError, checked_directory, directory_info
+from tool.deployment_files import FileSafetyError, checked_directory, directory_info, is_list, is_mapping
+from tool.deployment_local import LOCAL_CANDIDATE, validate_candidate, validate_loaded
 
 
 STATE_ROOT = Path("/var/lib/mpdrussoundpi-deploy")
@@ -27,14 +28,6 @@ PHASES = ("prepared", "inputs-verified", "backup-complete", "apply-complete", "c
 
 class StateError(ValueError):
     """State is blocked, invalid or uncertain; manual investigation is required."""
-
-
-def is_mapping(value: object) -> TypeGuard[dict[Any, Any]]:
-    return isinstance(value, dict)
-
-
-def is_list(value: object) -> TypeGuard[list[Any]]:
-    return isinstance(value, list)
 
 
 def identity(value: Any) -> None:
@@ -53,6 +46,12 @@ def operation_id(value: Any) -> None:
 def candidate(value: Any) -> None:
     if not is_mapping(value):
         raise StateError("Invalid development image candidate")
+    if value.get("kind") == LOCAL_CANDIDATE:
+        try:
+            validate_candidate(value)
+        except SelectionError:
+            raise StateError("Invalid local development image candidate") from None
+        return
     gateway: Any = value.get("gateway")
     platform: Any = value.get("platform")
     if not isinstance(gateway, str) or not isinstance(platform, str):
@@ -76,12 +75,26 @@ def set_identities(value: list[Any]) -> set[str]:
 
 def pending_record(value: Any) -> None:
     fields = {"operation", "phase", "candidate", "intent_digest", "required", "backup"}
+    local = (is_mapping(value) and is_mapping(value.get("candidate"))
+             and value["candidate"].get("kind") == LOCAL_CANDIDATE)
+    if local:
+        fields.add("loaded_images")
     if not is_mapping(value) or set(value) != fields:
         raise StateError("Invalid pending deployment record")
     operation_id(value["operation"])
     if value["phase"] not in PHASES:
         raise StateError("Invalid pending deployment phase")
     candidate(value["candidate"])
+    if local:
+        if value["loaded_images"] is not None:
+            try:
+                validate_loaded(value["loaded_images"], value["candidate"])
+            except SelectionError:
+                raise StateError("Invalid loaded local image identities") from None
+            if value["phase"] in ("prepared", "inputs-verified"):
+                raise StateError("Local images cannot be loaded before the backup boundary")
+        elif value["phase"] in ("apply-complete", "checks-complete"):
+            raise StateError("Local deployment requires verified loaded images")
     if not isinstance(value["intent_digest"], str) or not DIGEST.fullmatch(value["intent_digest"]):
         raise StateError("Invalid approved non-secret intent digest")
     requirements(value["required"])
@@ -220,8 +233,18 @@ class StateStore:
             if (type(owner.get("schema_version")) is not int
                     or owner != {"schema_version": 1, "deployment": deployment, "operation": operation}):
                 raise StateError("Reservation identity mismatch")
-            if os.listdir(reservation) != ["owner.json"]:
+            entries = set(os.listdir(reservation))
+            if not entries <= {"owner.json", "image-load.json", "image-transfer.json"}:
                 raise StateError("Interrupted or repeated finalization requires investigation")
+            for name in ("image-load.json", "image-transfer.json"):
+                if name in entries:
+                    marker = self._image_marker(reservation, operation, name)
+                    pending = self._record(directory, deployment)["pending"]
+                    if (pending is None or pending["operation"] != operation
+                            or (name == "image-transfer.json"
+                                and pending["candidate"].get("kind") != LOCAL_CANDIDATE)
+                            or marker["intent_digest"] != pending["intent_digest"]):
+                        raise StateError("Image mutation marker does not match the pending operation")
             yield reservation
         finally:
             os.close(reservation)
@@ -234,6 +257,8 @@ class StateStore:
             "operation": operation, "phase": "prepared", "candidate": selection,
             "intent_digest": intent_digest, "required": required, "backup": None,
         }
+        if is_mapping(selection) and selection.get("kind") == LOCAL_CANDIDATE:
+            pending["loaded_images"] = None
         pending_record(pending)
         try:
             with self._open_directory(self.root) as directory:
@@ -285,9 +310,118 @@ class StateStore:
                         if record["committed"] is not None and backup is None:
                             raise StateError("An existing deployment requires a backup reference")
                         pending["backup"] = backup
+                    pending_record(pending)
                     self._write(directory, deployment + ".json", record, replace=True)
         except OSError:
             raise StateError("Deployment phase persistence is uncertain; stop and inspect state") from None
+
+    def _image_marker(self, reservation: int, operation: str, name: str = "image-load.json") -> dict[str, Any]:
+        marker = self._read(reservation, name)
+        fields = {"operation", "intent_digest"}
+        if name == "image-transfer.json":
+            fields.add("verified")
+        if (set(marker) != fields or marker["operation"] != operation
+                or not isinstance(marker["intent_digest"], str)
+                or not DIGEST.fullmatch(marker["intent_digest"])
+                or (name == "image-transfer.json" and type(marker["verified"]) is not bool)):
+            raise StateError("Invalid one-shot image mutation intent")
+        return marker
+
+    def start_image_transfer(self, deployment: str, operation: str, selection: dict[str, Any],
+                             intent_digest: str) -> None:
+        """Reserve one incoming artifact stream before receiving any bundle files."""
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    pending = self._record(directory, deployment)["pending"]
+                    if (pending is None or pending["operation"] != operation
+                            or pending["phase"] not in ("prepared", "inputs-verified")
+                            or pending["candidate"] != selection or pending["intent_digest"] != intent_digest
+                            or selection.get("kind") != LOCAL_CANDIDATE):
+                        raise StateError("Transfer requires the matching reserved local operation before backup")
+                    self._write(reservation, "image-transfer.json",
+                                {"operation": operation, "intent_digest": intent_digest, "verified": False})
+        except OSError:
+            raise StateError("Image-transfer intent exists or persistence is uncertain; do not retry") from None
+
+    def complete_image_transfer(self, deployment: str, operation: str, selection: dict[str, Any],
+                                intent_digest: str) -> None:
+        """Record receiver verification without advancing service phases."""
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    pending = self._record(directory, deployment)["pending"]
+                    marker = self._image_marker(reservation, operation, "image-transfer.json")
+                    if (pending is None or pending["operation"] != operation
+                            or pending["phase"] not in ("prepared", "inputs-verified")
+                            or pending["candidate"] != selection or pending["intent_digest"] != intent_digest
+                            or marker["intent_digest"] != intent_digest or marker["verified"]):
+                        raise StateError("Transfer completion requires the original unverified reserved operation")
+                    marker["verified"] = True
+                    self._write(reservation, "image-transfer.json", marker, replace=True)
+        except OSError:
+            raise StateError("Image-transfer verification persistence is uncertain; do not retry") from None
+
+    def _load_record(self, directory: int, deployment: str, operation: str,
+                     selection: dict[str, Any], intent_digest: str) -> dict[str, Any]:
+        record = self._record(directory, deployment)
+        pending = record["pending"]
+        if (pending is None or pending["operation"] != operation or pending["phase"] != "backup-complete"
+                or pending["intent_digest"] != intent_digest or pending["candidate"] != selection
+                or selection.get("kind") != LOCAL_CANDIDATE or pending.get("loaded_images") is not None):
+            raise StateError("Image load requires the matching approved local candidate at the backup boundary")
+        return record
+
+    def start_image_load(self, deployment: str, operation: str, selection: dict[str, Any],
+                         intent_digest: str) -> None:
+        """One-shot internal mutation boundary; process loss never permits a retry."""
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    self._load_record(directory, deployment, operation, selection, intent_digest)
+                    if ("image-transfer.json" in os.listdir(reservation)
+                            and not self._image_marker(reservation, operation, "image-transfer.json")["verified"]):
+                        raise StateError("An interrupted artifact transfer blocks image loading")
+                    self._write(reservation, "image-load.json",
+                                {"operation": operation, "intent_digest": intent_digest})
+        except OSError:
+            raise StateError("Image-load intent exists or persistence is uncertain; do not retry") from None
+
+    def complete_image_load(self, deployment: str, operation: str, selection: dict[str, Any],
+                            intent_digest: str, images: dict[str, str]) -> None:
+        """Record independently inspected target identities, not service completion."""
+        try:
+            validate_loaded(images, selection)
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    record = self._load_record(directory, deployment, operation, selection, intent_digest)
+                    if self._image_marker(reservation, operation)["intent_digest"] != intent_digest:
+                        raise StateError("Image-load approval identity mismatch")
+                    record["pending"]["loaded_images"] = images
+                    self._write(directory, deployment + ".json", record, replace=True)
+        except SelectionError:
+            raise StateError("Invalid loaded image identities") from None
+        except OSError:
+            raise StateError("Loaded-image persistence is uncertain; retain reservation and inspect") from None
+
+    def start_registry_pull(self, deployment: str, operation: str, selection: dict[str, Any],
+                            intent_digest: str) -> None:
+        """One approved pinned pull attempt; uncertain pulls are never retried."""
+        candidate(selection)
+        if selection["kind"] == LOCAL_CANDIDATE:
+            raise StateError("Registry pull does not accept a local candidate")
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    pending = self._record(directory, deployment)["pending"]
+                    if (pending is None or pending["operation"] != operation
+                            or pending["phase"] != "backup-complete"
+                            or pending["candidate"] != selection or pending["intent_digest"] != intent_digest):
+                        raise StateError("Pull requires the matching approved candidate after backup")
+                    self._write(reservation, "image-load.json",
+                                {"operation": operation, "intent_digest": intent_digest})
+        except OSError:
+            raise StateError("Registry pull intent exists or is uncertain; do not retry") from None
 
     def finalize(self, deployment: str, operation: str, completion: dict[str, Any]) -> None:
         """Internal runner boundary; call once after independently verified completion.
@@ -303,18 +437,61 @@ class StateStore:
                     if (pending is None or pending["operation"] != operation
                             or pending["phase"] != "checks-complete"):
                         raise StateError("Finalization requires a matching checked pending operation")
+                    if (pending["candidate"].get("kind") == LOCAL_CANDIDATE
+                            and self._image_marker(reservation, operation)["intent_digest"] != pending["intent_digest"]):
+                        raise StateError("Finalization requires the original image-load intent")
                     completion_record(completion, pending)
                     self._write(reservation, "finalizing.json", completion)
                     record["committed"] = {"selection": pending, "completion": completion}
                     record["pending"] = None
                     self._write(directory, deployment + ".json", record, replace=True)
                     os.unlink("finalizing.json", dir_fd=reservation)
+                    if "image-load.json" in os.listdir(reservation):
+                        os.unlink("image-load.json", dir_fd=reservation)
+                    if "image-transfer.json" in os.listdir(reservation):
+                        os.unlink("image-transfer.json", dir_fd=reservation)
                     os.unlink("owner.json", dir_fd=reservation)
                     os.fsync(reservation)
                 os.rmdir("reservation", dir_fd=directory)
                 os.fsync(directory)
         except OSError:
             raise StateError("Finalization outcome is uncertain; reservation may be absent; do not retry") from None
+
+    def resolve_recovery(self, deployment: str, operation: str, receipt: dict[str, Any]) -> None:
+        """Internal boundary after approved restoration and independently checked runtime.
+
+        The caller must durably retain the original record and recovery evidence.
+        This is not an unlock API and is deliberately absent from the state CLI.
+        """
+        expected = {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"}
+        absent = {"containers-absent": "passed", "prepared-data-restored": "passed"}
+        if (set(receipt) != {"operation", "review_digest", "required"}
+                or receipt["operation"] != operation or receipt["required"] not in (expected, absent)
+                or not isinstance(receipt["review_digest"], str)
+                or not DIGEST.fullmatch(receipt["review_digest"])):
+            raise StateError("Recovery requires matching approval and all independent runtime checks")
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    record = self._record(directory, deployment)
+                    if record["pending"] is None or record["pending"]["operation"] != operation:
+                        raise StateError("Recovery does not own the original pending operation")
+                    self._write(reservation, "finalizing.json", receipt)
+                    record["pending"] = None
+                    if record["committed"] is None:
+                        os.unlink(deployment + ".json", dir_fd=directory)
+                        os.fsync(directory)
+                    else:
+                        self._write(directory, deployment + ".json", record, replace=True)
+                    os.unlink("finalizing.json", dir_fd=reservation)
+                    for name in ("image-load.json", "image-transfer.json", "owner.json"):
+                        if name in os.listdir(reservation):
+                            os.unlink(name, dir_fd=reservation)
+                    os.fsync(reservation)
+                os.rmdir("reservation", dir_fd=directory)
+                os.fsync(directory)
+        except OSError:
+            raise StateError("Recovery finalization is uncertain; do not retry or remove state") from None
 
     def status(self) -> dict[str, Any]:
         """Return non-secret state, never assert that services or daemons are idle."""
@@ -323,6 +500,9 @@ class StateStore:
                 records = self._scan(directory)
                 reserved = "reservation" in os.listdir(directory)
                 owner = None
+                image_load_started = False
+                image_transfer_started = False
+                image_transfer_verified = False
                 if reserved:
                     fd = os.open("reservation", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                  dir_fd=directory)
@@ -334,11 +514,21 @@ class StateStore:
                             raise StateError("Invalid reservation owner record")
                         identity(owner["deployment"])
                         operation_id(owner["operation"])
+                        if "image-load.json" in os.listdir(fd):
+                            self._image_marker(fd, owner["operation"])
+                            image_load_started = True
+                        if "image-transfer.json" in os.listdir(fd):
+                            marker = self._image_marker(fd, owner["operation"], "image-transfer.json")
+                            image_transfer_started = True
+                            image_transfer_verified = marker["verified"]
                     finally:
                         os.close(fd)
                 unresolved = any(record["pending"] is not None for record in records.values())
                 return {"schema_version": 1, "blocked": reserved or unresolved, "reservation": owner,
-                        "deployments": records, "runtime_verified": False}
+                        "deployments": records, "runtime_verified": False,
+                        "image_load_started": image_load_started,
+                        "image_transfer_started": image_transfer_started,
+                        "image_transfer_verified": image_transfer_verified}
         except OSError:
             raise StateError("Cannot inspect deployment state; treat the outcome as unknown") from None
 

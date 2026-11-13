@@ -13,6 +13,15 @@
       ansible.builtin.assert:
         that:
           - russound_gateway in ['managed', 'external', 'dummy']
+          - russound_image_source in ['hub', 'local-build']
+          - russound_local_bundle is string
+          - russound_local_manifest_sha256 is string
+          - >-
+            (russound_image_source == 'hub' and russound_local_bundle == '' and russound_local_manifest_sha256 == '') or
+            (russound_image_source == 'local-build' and
+             russound_local_bundle is match('^/\S+$') and
+             russound_local_manifest_sha256 is match('^sha256:[a-f0-9]{64}$') and
+             russound_web_image == '' and russound_ser2net_image == '' and russound_image_selection_file == '')
           - russound_project is string and russound_project is match('^[a-z0-9][a-z0-9_-]{0,62}$')
           - russound_platform in ['linux/arm64', 'linux/amd64']
           - russound_data_dir is string and russound_data_dir is match('^/\S+$')
@@ -45,7 +54,7 @@
           - (russound_gid | string) is match('^[0-9]+$')
           - russound_gateway != 'managed' or (russound_serial_gid | string) is match('^[0-9]+$')
           - russound_playback_agents == []
-        fail_msg: "Select a supported gateway, absolute data directory and valid numeric ports/IDs. Use automatic image resolution, a controller selection file, or complete explicit digests, not a mixture. This preview supports no playback agents; provisioning trust and credentials is not implemented."
+        fail_msg: "Select a supported gateway, absolute data directory and valid numeric ports/IDs. Choose either Hub selection/digests or a verified local bundle with its separately retained manifest SHA-256, never a mixture. This preview supports no playback agents; provisioning trust and credentials is not implemented."
         quiet: true
 
     - name: Reject unsupported legacy source and mode switches
@@ -70,15 +79,38 @@
       register: russound_image_selection
       changed_when: false
       check_mode: false
-      when: russound_web_image == ''
+      when: russound_image_source == 'hub' and russound_web_image == ''
+
+    - name: Verify controller-built image archives without loading or contacting the target
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "-m"
+          - tool.deployment_build
+          - verify
+          - --bundle
+          - "{{ russound_local_bundle }}"
+          - --manifest-sha256
+          - "{{ russound_local_manifest_sha256 }}"
+          - --gateway
+          - "{{ russound_gateway }}"
+          - --platform
+          - "{{ russound_platform }}"
+        chdir: "{{ playbook_dir }}/../.."
+      register: russound_local_selection
+      changed_when: false
+      check_mode: false
+      when: russound_image_source == 'local-build'
 
     - name: Select resolved image references without overriding operator inputs
       ansible.builtin.set_fact:
         russound_selected_web_image: >-
-          {{ russound_web_image if russound_web_image != '' else
+          {{ (russound_local_selection.stdout | from_json).images.web if russound_image_source == 'local-build' else
+             russound_web_image if russound_web_image != '' else
              (russound_image_selection.stdout | from_json).images.web.reference }}
         russound_selected_gateway_image: >-
-          {{ (russound_ser2net_image if russound_ser2net_image != '' else
+          {{ ((russound_local_selection.stdout | from_json).images.ser2net if russound_image_source == 'local-build' else
+              russound_ser2net_image if russound_ser2net_image != '' else
               (russound_image_selection.stdout | from_json).images.ser2net.reference)
              if russound_gateway == 'managed' else '' }}
 
@@ -136,11 +168,13 @@
           project: "{{ russound_project }}"
           services: "{{ (russound_preview_render.stdout | from_json).services.keys() | list }}"
           web_image: "{{ russound_selected_web_image }}"
+          image_source: "{{ russound_image_source }}"
           gateway_image: "{{ russound_selected_gateway_image if russound_gateway == 'managed' else 'not-managed' }}"
           playback: untouched
           target_checks: not-run
           image_identity_verification: >-
-            {{ 'not-run-explicit-digest-render-only' if russound_web_image != '' else
+            {{ 'local-archive-source-platform-checksum' if russound_image_source == 'local-build' else
+               'not-run-explicit-digest-render-only' if russound_web_image != '' else
                'candidate-schema-only-offline' if russound_image_selection_file != '' else
                'registry-index-platform-config-metadata' }}
           candidate_loaded_from_file: "{{ russound_image_selection_file != '' }}"

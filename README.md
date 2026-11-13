@@ -167,6 +167,7 @@ An offline hardware warning is separate from web service health.
 | Select matching published dev images without pulling or deploying | [Image selection](docs/documentation/container-deployment.md#select-published-development-images) |
 | Preview the new development layout without changing a host | [Ansible preview](docs/documentation/container-deployment.md#ansible-preview) |
 | Inspect prerequisites for a new Linux target without deploying | [Explicit target preflight](docs/documentation/container-deployment.md#explicit-target-preflight) |
+| Deploy or recover a prepared development target with reviewed approval | [Reviewed remote deployment](docs/documentation/container-deployment.md#reviewed-development-deployment-and-recovery) |
 | Native Linux web service | [Native web deployment](#native-web-deployment) |
 | Pi playback, agent, TLS and outbound enforcement | [Playback deployment](docs/documentation/playback-agent-deployment.md) |
 
@@ -277,9 +278,11 @@ Each part runs in its own container:
 Use the [container deployment guide](docs/documentation/container-deployment.md)
 for the new web-only development profile and its optional managed-gateway or
 dummy overlay. It provides one procedure for images, data paths, startup and
-verification. The new Ansible entry point supports controller preview and an
-explicit read-only first-install target preflight. Apply stays blocked until
-its safety runner is integrated; production is not available yet.
+verification. The Ansible preview entry point remains read-only. For prepared
+same-layout Linux development deployments, the reviewed remote operator adds
+explicit approval, verified local or pinned registry images, independently held
+backups, controlled apply and separately approved recovery. Production and
+automatic dummy-artifact deployment are not available yet.
 
 The old `docker-compose.yml` and `docker-compose.dummy.yml` remain legacy
 build-oriented stacks for existing users. They have not been silently changed

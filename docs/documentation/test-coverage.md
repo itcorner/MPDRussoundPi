@@ -309,6 +309,208 @@ RUSSOUND_TEST_WEB_IMAGE=itcornernet/mpdrussoundpi-web@sha256:VERIFIED_CACHED_DIG
   .venv/bin/python -m unittest discover -s tests -p test_container_recovery.py
 ```
 
+### Local development image preparation
+
+[Local-build tests](../../tests/test_deployment_build.py) cover explicit clean
+commit selection, source snapshot isolation, rejected source links, local
+Docker/Buildx binding, network opt-in, mid-build source drift, partial-pair
+failure evidence, private modes, copied offline bundles, archive/config/platform/
+tag/checksum validation, missing OCI descriptor graphs, unsafe files and CLI
+failure output. Actual Ansible previews cover all three gateway modes, an
+unreachable target, check mode, conflicting inputs and blocked apply.
+The opt-in test builds a real ARM64 scratch pair, copies/reverifies it in a
+separate process with an unusable Docker endpoint, removes only its own image
+tags, then actually reloads its archives and inspects exact image identities:
+
+```sh
+RUSSOUND_RUN_LOCAL_BUILD_TESTS=1 \
+  .venv/bin/python -m unittest discover -s tests -p test_deployment_build.py
+```
+
+The real repository ARM64 web/ser2net pair was also built and archive-verified
+from clean revision `161853e0599e289c9e12008186573a625e5272b9`. The first
+exact-image recovery run found HTTP 404 health failures: the builder's private
+umask made staged static directories inaccessible to the configured numeric
+service UID. Explicit public directory modes within the private build context
+fixed this; a regression asserts nested directories/files under umask `077`.
+Both rebuilt application archives also loaded successfully into the local
+controller daemon and retained the verified image IDs/source/platform; the
+gateway binary reported ser2net 4.3.11.
+The rebuilt web image passed the real routing, unchanged-rerun, SSE/PID-1 clean
+stop, failed-update and isolated data-recovery loop **without a web source
+mount or entrypoint override**. Dummy/helper source remains fixture-mounted:
+
+```sh
+RUSSOUND_RUN_CONTAINER_TESTS=1 \
+RUSSOUND_TEST_LOCAL_BUNDLE=/absolute/controller/path/to/managed-bundle \
+RUSSOUND_TEST_LOCAL_MANIFEST_SHA256=sha256:SEPARATELY_RETAINED_DIGEST \
+  .venv/bin/python -m unittest discover -s tests -p test_container_recovery.py
+```
+
+This mode verifies the bundle before selecting its web image and requires the
+actual image to be already loaded on the controller. It currently uses
+`managed`/`linux/arm64` bundles. It does not test physical ser2net/USB routing,
+cross-engine target image-ID conversion, SSH transfer or automated target apply.
+Full regression: **755 tests, 749 passing and six skipped**, including the
+opt-in real scratch build/export/reload test. No Pi change was made.
+
+### Reserved local-image loading and records
+
+[Reserved-load tests](../../tests/test_deployment_load.py) add local-candidate
+pending/committed records, preserved prior commits, exact intent/operation/
+phase checks and the mandatory loaded-ID boundary. Registry state tests still
+use their existing schema. Tests reject malformed candidates, incompatible
+daemons, colliding tags, wrong target identities/labels and transferred-file
+drift. They cover a partial pair load, timeout, durable-marker process death,
+marker/receipt persistence failures and blocked retries without clearing the
+reservation. A synthetic valid OCI archive demonstrates classic config-ID
+conversion; it is not an actual second-engine compatibility test.
+
+With `RUSSOUND_RUN_LOCAL_BUILD_TESTS=1`, a real scratch pair is built/exported,
+copied privately, independently selected, removed by its unique tags, then
+stream-loaded through the reserved loader into the controller daemon. Actual
+target IDs/source/platform are inspected and recorded, while the operation
+correctly remains pending at `backup-complete` with no service completion
+or finalization inferred. Cleanup removes only that fixture's unique tags.
+The focused file has **15 tests**; the complete suite now runs **770 tests,
+764 passing and six skipped** with both real local-build integrations enabled.
+Pylance reports no diagnostics in the changed production modules.
+
+This validates the internal target-local load boundary, not SSH transport,
+human approval custody, a full Ansible apply/update, hardware or rollback.
+The Pi was not contacted or changed for this implementation slice.
+
+### Reviewed artifact handoff and SSH transfer
+
+[Transfer tests](../../tests/test_deployment_transfer.py) cover review
+acknowledgement/source/host-trust drift, fixed SSH options and remote-path
+quoting, private bytes/modes, wrong reservation/intent/phase, bounded framing,
+truncation/corruption/trailing bytes, missing receipts, timeout, replay and
+existing destinations. Child-process death after marker persistence blocks
+resume; marker and verification-write failures retain pending state.
+The reserved loader refuses an interrupted transfer even if its phase is
+advanced independently. Successful process exit does not release the marker.
+Controller receipts are withheld when source custody changes after transfer.
+
+The focused file has **16 tests**. Opt into the real, isolated loopback SSH
+fixture (requires `ssh`, `sshd` and `ssh-keygen`):
+
+```sh
+RUSSOUND_RUN_SSH_TRANSFER_TESTS=1 RUSSOUND_RUN_LOCAL_BUILD_TESTS=1 \
+  .venv/bin/python -m unittest discover -s tests -p test_deployment_transfer.py
+```
+
+The test starts its own unprivileged loopback sshd with disposable host/client
+keys and a forced fixture receiver, checks readiness, actually sends the
+reviewed pair over SSH, rejects a different valid host key and stops its exact
+server process. With both opt-ins it builds a real clean-source scratch pair,
+removes only its own tags, transfers/verifies archives, then calls the reserved
+loader against those received bytes and inspects actual Docker identities.
+Fixture state is private and user-owned instead of touching the fixed
+production root-owned state. The operation remains pending at `backup-complete`;
+no runtime acceptance or finalization is inferred.
+
+The complete suite passed **786 tests: 780 passing, six skipped**, with
+both opt-ins enabled. Changed production modules have no Pylance diagnostics.
+This proves the local real SSH/build/load chain, not target tooling bootstrap,
+Ansible become, interactive human-approval custody, production adoption,
+runtime update/rollback or physical hardware. The Pi was not contacted.
+
+### Integrated target-local development transaction
+
+[Runner tests](../../tests/test_deployment_runner.py) add 15 cases covering
+explicit review rejection, approval-time source drift, altered review scope,
+non-overlapping storage, private input installation, exact phase ordering,
+off-host verification before load, and successful finalization. Failure
+injection at stop, backup, load, apply, independent checks and finalization
+retains pending state/evidence and prevents automatic retry. A failed recorded
+update preserves its previous committed selection. Changed installed inputs,
+false-success hook results and missing/extra/failed checks block progress.
+Controlled Ansible rejects unsafe extra-variable files; its ten-minute timeout
+retains uncertainty rather than implying target work stopped.
+
+```sh
+RUSSOUND_RUN_LOCAL_BUILD_TESTS=1 PYTHONPATH=tests \
+  .venv/bin/python -m unittest test_deployment_runner test_deployment_completion
+```
+
+The real Ansible fixture consumes installed playbook/inventory/secret paths and
+loaded IDs through private extra variables; its independent check rereads the
+resulting file before commit. With the Docker opt-in, the same transaction
+builds/exports a unique clean-source scratch image, removes its tag, performs
+the actual reserved archive load and controlled Ansible run, verifies the
+actual Docker identity, and finalizes. Only its own tag is removed afterward.
+This tests the integration chain, not a running Russound container or routing.
+Unit fixtures independently copy and verify backup bytes in another private
+directory, not an actual off-host storage system. On platforms without
+`os.listxattr`, these fixtures replace only that unavailable metadata query;
+they do not certify Linux ACL/xattr preservation. The separate Linux-volume
+container recovery fixture remains the real stopped-writer recovery test.
+
+The complete suite passed **801 tests: 795 passing, six skipped**, with both
+local-build and SSH opt-ins. The runner and completion production modules have
+no Pylance diagnostics; existing completion callers remain signature-compatible.
+Remote approval/input custody, concrete platform hooks, adoption, root/service
+access, off-host old-image recovery, physical routing and a Pi deployment are
+not certified by these tests. Public apply remains blocked; the Pi was unchanged.
+
+### Reviewed remote deployment and explicit recovery
+
+[Operator tests](../../tests/test_deployment_operator.py) and
+[registry-load tests](../../tests/test_deployment_registry_load.py) cover bounded
+private framing, exact file lengths/checksums, truncation/corruption/replay,
+off-host portable manifest/blob verification, unsafe Compose services/mounts,
+explicit adoption/acceptance policy, protected token/CA access, native writable
+descriptors and outstanding Ansible work. Registry tests require the exact
+pinned pair, checked source/platform/config IDs and durable one-shot pull state;
+wrong identities/timeouts do not advance or retry. Recovery-state tests reject
+incomplete check sets and correctly remove a resolved first-install record
+instead of leaving an invalid empty record.
+
+The opt-in workflow runs a real isolated sshd and the exact controller SSH client,
+with a forced command confined to a disposable Linux/root target fixture.
+Docker socket access is required **only for this explicitly opted-in fixture**.
+It uses a unique Linux data volume, Compose projects, network and external dummy
+gateway; no target/Pi address is contacted. It proves:
+
+- Wrong-host-key refusal before target work; real same-layout adoption,
+  verified local-image delivery and actual controlled Ansible/Compose apply.
+- Actual app-to-external-dummy communication, container/published-host HTTP,
+  health and exact runtime identities, with unchanged container IDs on rerun.
+- Exported old Docker image identities and independent controller-side backup
+  verification before apply, not merely a successful local file copy.
+- A genuinely failing application image, retained pending/old committed state,
+  separate approved restore, preserved secrets and post-backup operator edits.
+- Lost backup acknowledgement blocks apply; only an approved pre-apply
+  original-runtime restart can resolve that path.
+- Failed first-install recovery restores prepared data and absence of containers,
+  reports absence-specific checks, and leaves unrelated deployments/gateway intact.
+
+Build the missing integration dependencies only for this fixture:
+
+```sh
+docker build -f tests/integration/Dockerfile.deployment \
+  -t mpdrussoundpi-deployment-test:local tests/integration
+RUSSOUND_RUN_DEPLOYMENT_TESTS=1 \
+RUSSOUND_TEST_DEPLOYMENT_IMAGE=mpdrussoundpi-deployment-test:local \
+RUSSOUND_TEST_WEB_IMAGE=EXPLICIT_CACHED_WEB_IMAGE \
+PYTHONPATH=tests .venv/bin/python -m unittest \
+  test_deployment_operator test_deployment_registry_load test_deployment_runner
+```
+
+The cached image must contain the actual compatible web app for the daemon
+platform. The fixture derives uniquely labelled clean Git-revision images from
+it; it does not certify a newly published release's source content. Only exact
+fixture processes, containers, network, volume and operation-owned image tags
+are removed. The dependency image remains cached for reuse.
+
+Full suite with local-build, SSH-transfer and workflow opt-ins:
+**815 tests, 809 passing, six skipped**. Production Python modules have no
+Pylance diagnostics. The bootstrap play passes Ansible syntax checking without
+a target connection. The real Pi sudo/bootstrap path, full host `/proc`
+visibility, physical controller/audio, other layout migrations and filesystem/
+reboot/power-loss durability remain S5 acceptance, not inferred passes.
+
 ## Public-only playback egress
 
 [Public network tests](../../tests/test_publicnetwork.py) cover IPv4/IPv6 public

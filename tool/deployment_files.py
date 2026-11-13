@@ -4,11 +4,19 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 import stat
-from typing import Generator
+from typing import Any, Generator, TypeGuard
 
 
 class FileSafetyError(ValueError):
     """A deployment path has unsafe ownership, permissions or type."""
+
+
+def is_mapping(value: object) -> TypeGuard[dict[Any, Any]]:
+    return isinstance(value, dict)
+
+
+def is_list(value: object) -> TypeGuard[list[Any]]:
+    return isinstance(value, list)
 
 
 def directory_info(info: os.stat_result, owner_uid: int, *, private: bool) -> None:

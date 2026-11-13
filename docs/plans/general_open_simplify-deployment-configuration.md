@@ -18,10 +18,20 @@ Preserve existing configuration and state through any migration.
 This is the **target**, not a claim that the full workflow exists. The new
 Compose profiles, verified development-image candidate resolution,
 controller-only development preview and explicit read-only first-install
-target preflight are implemented;
+target preflight are implemented. Explicit controller local-build artifacts and
+offline local-build Ansible preview are also implemented;
 see the [container guide](../documentation/container-deployment.md) for actual
-commands and boundaries. Automated apply, committed target image pins and recovery,
-production, local-build and native intents remain outstanding.
+commands and boundaries. Reviewed automated apply, committed image pins and
+explicit recovery now exist for prepared same-layout Linux development deployments.
+Production/native intents, other layout migrations and live acceptance remain
+outstanding. Local candidate state and
+reserved target-local image loading and reviewed SSH artifact handoff are
+implemented internally; human approval/input custody and full apply
+integration across controller and target are implemented by the new operator
+driver and concrete Compose integration. The target-local transaction connects
+approval, snapshots, backup, image load/pull, controlled Ansible apply,
+independent checks and finalization. Use the reviewed operator command, never
+the internal APIs or the still-blocked preview-play apply switch.
 
 ### Choose how to run it
 
@@ -2941,6 +2951,283 @@ warnings are not treated as shutdown acceptance. After the readiness-fixture
 correction, all three lifecycle cases passed five consecutive runs (15
 checks), then the complete 738-test suite and container recovery loop passed
 again. Disposable recovery containers and volumes are removed after the test.
+
+### Prioritized local-build preparation (2026-11-13)
+
+The user requested committing the existing implementation before starting this
+slice. Commit `161853e0599e289c9e12008186573a625e5272b9` records the prior
+deployment foundations, runtime lifecycle and setup-logging work.
+
+26. **Explicit clean-source controller build.** Added a standard-library
+    builder using one full commit and Git tree, refusing dirty/untracked source
+    without resets. A committed-source archive excludes ignored files and Git
+    internals; links/submodules are refused. Builds pin a verified local Docker
+    context and matching Docker-driver Buildx worker, not a possibly remote
+    selected builder. Managed mode builds a web/gateway pair; external/dummy
+    build web only. Target platform and source labels are checked on actual
+    outputs. Network for Dockerfile package downloads requires explicit opt-in;
+    base-image resolution can still access a registry. Mutable dependencies
+    mean source identification is not a reproducible-build claim.
+27. **Private portable artifacts and offline preview.** Each UUID operation
+    retains private logs, read-only Docker-save archives and a strict manifest,
+    whose digest is retained separately. Verification checks archive bytes,
+    metadata, source/platform/config and classic/OCI identity, including OCI
+    blob hashes and the root-to-config descriptor graph, without extraction,
+    Docker or network. A copied bundle is checked again. The new
+    `deploy-dev-build.yml` reuses shared dev rendering/preflight tasks and exact
+    IDs; it never implicitly builds, contacts a target in preview, transfers,
+    loads or applies. Mixed Hub/local inputs fail. Apply remains blocked;
+    local candidates are not disguised as registry candidates in state records.
+28. **Actual image build/test/fix loop.** Built the repository ARM64 pair from
+    a separate clean worktree at the committed baseline. Testing the exact
+    packaged web, rather than a source-mounted substitute, exposed HTTP 404
+    health failures: private controller umask `077` had turned staged static
+    directories into `0700`, inaccessible to a different Compose numeric UID.
+    Explicit directory modes inside the private staging tree fixed the cause;
+    added a direct umask regression and retained private outer directories.
+    Rebuilt, verified and actually reloaded both application archives into the
+    controller daemon with exact identities preserved; executed the ARM64
+    gateway binary successfully. Then passed actual web/dummy routing,
+    unchanged runs, clean PID-1 shutdown with SSE, deliberate Ansible update
+    failure, isolated data restore and routing with retained pending state.
+    A real scratch pair additionally passes save/copy/offline reverify/tag
+    removal/reload/inspect. Full suite: 755 tests, 749 passing, six skipped.
+
+This completes controller build/artifact preparation and local-build preview,
+not target deployment support. Approval-bound artifact transfer, target
+verification/load, classic/containerd loaded-ID reconciliation, local-candidate
+pending/committed records and full apply/recovery orchestration remain.
+The Pi was not contacted or changed; no six-hour observation was started.
+
+### Approved local-image Pi trial (2026-11-13)
+
+After controller build validation, the user explicitly approved deploying the
+verified local images to the Pi. This was a controlled manual trial, not an
+invocation or bypass of the still-blocked automated Ansible apply path.
+Current application/Dockerfile source matched clean revision
+`161853e0599e289c9e12008186573a625e5272b9`; uncommitted changes concerned
+deployment tooling, tests and documentation.
+
+- Transferred managed ARM64 bundle operation
+  `c5e0807e-06af-4941-8c84-93999ab18d7d`; independently verified on the target
+  against separately retained manifest identity
+  `sha256:e9894868b57c8af089c033f1b30c3d0ce2a7c2876996d353a897b89efac3689f`.
+  Actually loaded and inspected both images before stopping any service.
+- Exported both previous exact image IDs, copied those archives off-Pi and
+  independently verified checksums. Stopped only the existing project web/
+  gateway writers, captured config/data/secrets and original Compose/env
+  with numeric ownership, ACLs and xattrs, compared against stopped sources,
+  copied off-Pi and verified checksum
+  `8f65068b6d4901daa84c42e4a4fecbe48cf86d1c945fd99db4f0e2b42c594faf`.
+- Replaced only the two image selections plus the current Compose files
+  (the sole layout difference was web's 30-second stop grace). Used exact
+  target-confirmed IDs with `--no-build --pull never`. No target build,
+  registry fallback, project-network recreation or proxy trust edit occurred.
+- Web now runs
+  `sha256:f64f0fa487751a503b1f8a74216c1af1b742e9acde1241d8512e20aa5090454d`;
+  gateway runs
+  `sha256:4f48b8044c2044632bfffed7ae1850e4a80d01379ad032e03e678fd066be1f5e`.
+  Both are healthy at revision `161853e`, with zero restarts and no error/
+  traceback/unfinished-worker lines in the final available container logs.
+- Five routing samples passed: HTTP 200, physical controller connected, four
+  zones, no setup prompt and playback agent status `ok`. LAN HTTP 200 also
+  passed. Unchanged Compose rerun preserved container IDs. Opened real SSE,
+  stopped web, verified exit 0 in 2.23 seconds with no OOM, restarted the same
+  approved image and rechecked routing.
+- Config and secret hashes, native playback/audio service PIDs/restart counts/
+  active states, and existing Docker network identity were unchanged. Native
+  services were not redeployed or restarted. Configuration was not rewritten.
+
+The approved local images remain running at `http://192.168.1.105:8000`.
+Private target evidence/backup is under the existing trial directory's
+`local-image-trial-c5e0807e` subdirectory, with independently verified backups
+and result retained off-Pi. Old images were preserved, not pruned. This short
+trial did not test audio output, exercise rollback or start a six-hour
+observation. Automated local-build transfer/load/state/apply integration
+remains unfinished despite this successful manual deployment.
+
+### Reserved local-image state and loading (2026-11-13)
+
+29. **Keep local candidates distinct from registry records.** Extracted shared
+    portable manifest validation so the builder and persistent state use one
+    schema without circular dependencies. Local candidates retain the approved
+    manifest identity and portable config digests, not controller paths.
+    Local pending/committed records additionally retain exact target
+    `loaded_images`; registry record structure remains unchanged. Local
+    operations cannot reach `apply-complete`/`checks-complete` without those IDs.
+30. **Implement the one-shot target-local load boundary.** The internal loader
+    verifies already-transferred private bytes against the exact candidate and
+    requires the matching reservation/intent at `backup-complete`. A durable
+    exclusive load marker precedes Docker mutation. It streams held verified
+    descriptors, rejects unrelated operation-tag collisions and incompatible
+    platform/namespace/remote-daemon configurations, rechecks bytes and actual
+    loaded source/platform/IDs, then persists target IDs. Classic config IDs
+    are accepted only when they match the archive's verified config; OCI-root
+    IDs remain supported. Partial pair failures, timeout, process death,
+    changed archives and uncertain receipt persistence keep reservation and
+    pending state, never automatically retrying or rolling back. Loading alone
+    does not advance service phases or finalize.
+31. **Exercise real and failing paths.** Fifteen focused tests include a real
+    local scratch build/export/private copy/tag removal/reserved stream-load/
+    inspect loop, and simulated classic-store identity conversion. Fault tests
+    cover missing/mismatched authorization metadata, partial pair load,
+    malformed inspection, collisions, archive replacement, timeout, child
+    process loss after marker sync and uncertain marker/receipt writes. The
+    existing full suite passes: 770 tests, 764 passing, six skipped with real
+    build/load tests opted in. Changed production modules have no Pylance
+    diagnostics. No Pi connection or service mutation occurred.
+
+These are internal APIs only. State metadata is not human approval or backup
+proof by itself: the future runner must custody those facts before setting
+the phase. SSH transport, approval/input handoff, recorded-installation
+adoption, runtime config/access checks, complete image/file recovery and
+service apply/check/finalize orchestration still need integration.
+The public Ansible apply gate remains closed; the successful manual Pi trial
+above is not retroactively an automated-workflow acceptance test.
+
+### Reviewed controller-to-target artifact handoff (2026-11-13)
+
+32. **Bind reviewed artifacts to explicit SSH target/trust.** Added an internal
+    in-memory transfer review sealing candidate, deployment/operation/intent,
+    host/user/port, remote tooling/destination and existing host-trust bytes.
+    A mismatched acknowledgement or changed source/trust fails before SSH.
+    The client ignores ambient config, uses strict known-host verification,
+    disables forwarding and snapshots reviewed public host-trust bytes into
+    exclusive private evidence. Existing optional private authentication keys
+    are not copied to the target or fingerprinted in deployment records.
+    Remote command paths are shell-quoted; no shell is used on the controller.
+33. **Persist receive uncertainty before writing artifacts.** A matching
+    reserved local candidate/intent in prepared/inputs-verified state is
+    mandatory before receiving into a new private operation directory. Bounded
+    length framing names only the expected files; no tar extraction or target
+    build/pull/load occurs. The exclusive durable transfer marker survives
+    process exit, truncation, corruption, interruption and uncertain writes.
+    Complete archive/config/platform/source/checksum verification precedes
+    a durable verification flag and receipt. Unverified transfer markers block
+    reserved loading. No automatic retry, overwrite, cleanup, phase advancement
+    or reservation release is performed.
+34. **Validate actual build/SSH/load and failure paths.** Sixteen focused cases
+    cover framing, conflicts, drift, timeout, missing receipts, child-process
+    loss and marker/verification persistence failure. A real isolated loopback
+    sshd, with disposable keys and a forced non-root fixture receiver, proves
+    strict correct-key delivery and wrong-key refusal. With build opt-in the
+    same test builds a clean scratch pair, removes its unique tags, transfers
+    over SSH, verifies target bytes, performs reserved Docker stream loading
+    and inspects exact identities. Its specific server and tags are cleaned up.
+    Full suite: 786 tests, 780 passing, six skipped. Production module Pylance
+    diagnostics are clear. The Pi was not contacted or changed.
+
+This closes the internal artifact transport boundary, not the whole deployment
+workflow. A review digest is an acknowledgement mechanism, not independent
+human-approval evidence. The future runner must custody that approval, protected
+inputs and verified backup results. Trusted target tooling/Python and fixed
+root-owned state must already exist; bootstrap and privilege/become integration
+are not provided. The controller temporarily spools a complete wire copy and
+requires corresponding free disk space. Human approval/input handoff,
+recorded-installation adoption, runtime access/config checks, off-host recovery
+integration and the final service apply/check/finalize entry point remain open.
+Ansible apply stays blocked.
+
+### Target-local transaction integration (2026-11-13)
+
+35. **Connect safety boundaries in one owned attempt.** Added the internal
+    development transaction runner: verified local selection, protected
+    playbook/inventory/input snapshots, exact non-secret review acknowledgement,
+    repeated preflight/custody checks, reservation, stable private installation,
+    scoped writer-stop/quiescence hooks, actual file backup, required off-host
+    verification hook, reserved image loading, actual controlled Ansible
+    execution, exact independent-check reports and finalization. Private extra
+    variables carry target-loaded IDs and installed input paths. Backup identity
+    stays private. No automatic retry, rollback, release or cleanup is added.
+36. **Retain uncertain runtime and persistence outcomes.** Failures after
+    reservation retain pending state, installed inputs and recovery evidence.
+    Updates retain the previous committed selection until all stages pass.
+    Controlled Ansible now has a ten-minute deadline; target descendants may
+    continue after timeout, so that result explicitly blocks recovery/retry
+    instead of claiming the target is idle.
+37. **Exercise the actual local transaction.** Fifteen new tests cover ordering,
+    review/input drift, uncertain stage boundaries, failed recorded updates,
+    incomplete checks and finalization failure. Actual Ansible consumes private
+    snapshots/variables and requires the complete callback. Docker opt-in adds
+    a real clean scratch build/export/remove/reserved-load, actual image
+    inspection and finalization in that same transaction. Full suite:
+    801 tests, 795 passing, six skipped. Production diagnostics are clear and
+    completion callers remain compatible. The Pi was not contacted.
+
+This closes the target-local sequencing boundary, not remote operator
+orchestration. Concrete platform hooks still need scoped writer control,
+recorded-installation/config/access validation, previous-image export,
+independent off-host custody and actual health/routing checks. Unit off-host
+copies are separate local directories, not proof of off-host storage; scratch
+images do not prove application startup or physical routing. Runner-owned
+private runtime inputs do not establish another service UID's access.
+The runner requires an already-present target bundle and does not attach to an
+existing transfer reservation. Controller-to-target approval/input handoff,
+trusted tooling/bootstrap, privilege integration and manual recovery remain
+open. Public Ansible apply remains blocked.
+
+### Completing the reviewed development deployment path (2026-11-13)
+
+38. **Connect the actual controller and target.** Added the interactive
+    `tool.deployment_operator` command and bounded duplex framing. One strict
+    SSH connection owns explicit terminal approval, a single operation/reservation,
+    protected target snapshots, optional reserved local-image receipt, independently
+    verified controller-held backup, controlled Ansible apply and finalization.
+    Pinned Hub candidates use a one-shot digest/platform/config-verified pull,
+    never a floating-tag or build fallback. Ordinary reruns reuse the target
+    committed pin and check health without interruption/recreation; changed
+    candidates require explicit `--update`. A separate bootstrap play installs
+    only a reviewed committed tooling checkout, isolated dependencies and control
+    directories; it refuses existing/partial destinations and never restarts apps.
+39. **Replace platform hooks with actual actions.** The concrete Linux/root
+    adapter validates prepared self-contained web/external or web/managed
+    Compose layouts, numeric identities, current generation hashes and container
+    identities before same-layout adoption. It rejects hidden layout changes,
+    foreign data/device consumers, unsafe permissions/metadata, missing credential
+    inputs, invalid configuration, unsupported daemon modes and insufficient
+    backup/restore space. It scopes stop/apply to that exact project, checks
+    container/native writers and serial ownership, and independently checks
+    runtime IDs, health/restarts, published and in-container HTTP, reported
+    backend connectivity and configured agent health. It never rewires proxy
+    trust, migrates mounts/networks or touches native playback.
+40. **Complete independently held recovery assets and explicit restoration.**
+    Actual previous runtime IDs are exported under operation-unique tags and
+    verified as Docker archives. The controller checks all backup blobs,
+    manifest identity and old archive root/config/platform identities before
+    acknowledging custody; apply cannot precede this acknowledgement. Approved
+    recovery uploads into a new destination, rejects outstanding Ansible work,
+    restores an isolated matching image/data set and retains the complete
+    post-backup tree before activation. Healthy restored runtime is required
+    before pending resolution; previous committed pins remain unchanged.
+    First-install recovery restores prepared data and container absence, with
+    absence-specific checks rather than fabricated HTTP/hardware passes.
+    A distinct approved `resume-original` path accepts only the matching original
+    runtime before any apply attempt. All recovery attempts and finalization
+    are one-shot and retain original records/evidence; no generic unlock,
+    automatic rollback, expiry or pruning was introduced.
+41. **Rehearse the real path and failure boundaries.** A real isolated sshd
+    confines target execution to a disposable root Linux fixture using actual
+    Docker/Compose and Ansible. Tests exercise wrong-key refusal, adoption,
+    application image build/export/transfer/load/apply, unchanged IDs on rerun,
+    an actual failing image, off-host archive verification, approved restoration,
+    retained post-backup edits/secrets, old committed pins, lost backup
+    acknowledgement, original-runtime resolution and first-install rollback.
+    The peer dummy gateway remains an untouched external service throughout.
+    Full regression: **815 tests, 809 passing, six skipped**, with local-build,
+    SSH-transfer and deployment-workflow opt-ins. The bootstrap play passes
+    controller-only syntax checking; production Python diagnostics are clear.
+    No Pi connection, service change or observation was performed.
+
+Items 1–3 of the current implementation priority list are complete for the
+documented prepared development scope. This does not close S3–S5: production,
+native/dummy artifact integration, other legacy layout migrations, broader
+configuration/logging/dependency cleanup and physical/TLS/audio acceptance
+remain. The integration uses a test-only forced SSH command into Linux, so it
+does not certify actual Pi sudo/bootstrap, host-wide process visibility, hardware
+or reboot/power-loss durability. Its application images derive from a cached
+verified web image with fixture revisions; it is not release-source certification.
+The next live test requires separately approved tooling installation/adoption
+and deployment. A six-hour observation has not started.
 
 ## Acceptance and verification
 

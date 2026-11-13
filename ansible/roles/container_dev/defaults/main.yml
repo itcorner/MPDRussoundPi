@@ -7,6 +7,9 @@ russound_data_dir: ""
 russound_web_image: ""
 russound_ser2net_image: ""
 russound_image_selection_file: ""
+russound_image_source: hub
+russound_local_bundle: ""
+russound_local_manifest_sha256: ""
 russound_dummy_image: ""
 russound_backend_host: ""
 russound_backend_port: 6666

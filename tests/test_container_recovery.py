@@ -12,6 +12,7 @@ from uuid import uuid4
 import yaml
 
 from tool.deployment_completion import run_checked
+from tool.deployment_build import image_identity, verify_bundle
 from tool.deployment_images import resolve
 from tool.deployment_state import StateError, StateStore
 from test_deployment_images import FixtureRegistry
@@ -27,13 +28,25 @@ ENABLED = os.environ.get("RUSSOUND_RUN_CONTAINER_TESTS") == "1"
                      "opt in on local Docker with RUSSOUND_RUN_CONTAINER_TESTS=1")
 class ContainerRecoveryTests(unittest.TestCase):
     def test_failed_ansible_update_and_isolated_restored_stack_preserve_pending(self):
+        assert DOCKER is not None
+        docker = DOCKER
         self.assertNotIn("DOCKER_HOST", os.environ)
         self.assertNotIn("DOCKER_CONTEXT", os.environ)
-        context = json.loads(subprocess.check_output([DOCKER, "context", "inspect"], text=True))[0]
+        context = json.loads(subprocess.check_output([docker, "context", "inspect"], text=True))[0]
         self.assertTrue(context["Endpoints"]["docker"]["Host"].startswith(("unix://", "npipe://")))
-        image = os.environ["RUSSOUND_TEST_WEB_IMAGE"]
-        self.assertIn("@sha256:", image)
-        cached = json.loads(subprocess.check_output([DOCKER, "image", "inspect", image], text=True))[0]
+        local_bundle = os.environ.get("RUSSOUND_TEST_LOCAL_BUNDLE")
+        local = None
+        if local_bundle:
+            local = verify_bundle(
+                Path(local_bundle), os.environ["RUSSOUND_TEST_LOCAL_MANIFEST_SHA256"],
+                "managed", "linux/arm64")
+            image = local["images"]["web"]["reference"]
+        else:
+            image = os.environ["RUSSOUND_TEST_WEB_IMAGE"]
+            self.assertIn("@sha256:", image)
+        cached = json.loads(subprocess.check_output([docker, "image", "inspect", image], text=True))[0]
+        if local is not None:
+            image_identity(cached, image, local["platform"], local["revision"])
         project = "russound-recovery-" + uuid4().hex[:12]
         with tempfile.TemporaryDirectory(prefix="russound-recovery-") as directory:
             root = Path(directory).resolve()
@@ -54,10 +67,12 @@ class ContainerRecoveryTests(unittest.TestCase):
                 "services": {
                     "russound-web": {
                         "networks": ["default", "frontend"],
-                        "entrypoint": ["python", "-m", "web.russound_server"],
-                        "working_dir": "/workspace",
-                        "volumes": [{"type": "bind", "source": str(ROOT), "target": "/workspace",
-                                     "read_only": True}],
+                        **({} if local_bundle else {
+                            "entrypoint": ["python", "-m", "web.russound_server"],
+                            "working_dir": "/workspace",
+                            "volumes": [{"type": "bind", "source": str(ROOT), "target": "/workspace",
+                                         "read_only": True}],
+                        }),
                         "environment": {"PYTHONDONTWRITEBYTECODE": "1"},
                         "healthcheck": {"interval": "1s", "start_period": "1s"},
                     },
@@ -77,7 +92,7 @@ class ContainerRecoveryTests(unittest.TestCase):
                     },
                 },
             }))
-            settings = {
+            settings: dict[str, str] = {
                 "COMPOSE_DISABLE_ENV_FILE": "1",
                 "RUSSOUND_WEB_IMAGE": image, "RUSSOUND_DUMMY_IMAGE": cached["Id"],
                 "RUSSOUND_PLATFORM": f'{cached["Os"]}/{cached["Architecture"]}',
@@ -88,20 +103,33 @@ class ContainerRecoveryTests(unittest.TestCase):
             }
             env = {**{key: value for key, value in os.environ.items()
                       if not key.startswith(("COMPOSE_", "RUSSOUND_"))}, **settings}
-            stack = [DOCKER, "compose", "--env-file", "/dev/null", "-p", project,
+            stack = [docker, "compose", "--env-file", "/dev/null", "-p", project,
                      "-f", str(ROOT / "compose.dev.yml"), "-f", str(ROOT / "compose.dummy.yml"),
                      "-f", str(override)]
 
-            def run(args):
+            def run(args: list[str]) -> str:
                 result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=100)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                diagnostics = ""
+                if result.returncode and args[:len(stack)] == stack and "up" in args[len(stack):]:
+                    evidence = subprocess.run(
+                        stack + ["logs", "--no-color", "--tail", "60"], env=env,
+                        capture_output=True, text=True, timeout=20)
+                    diagnostics = evidence.stdout + evidence.stderr
+                    ids = subprocess.run(stack + ["ps", "-a", "-q"], env=env,
+                                         capture_output=True, text=True, timeout=20)
+                    if ids.returncode == 0 and ids.stdout.strip():
+                        health = subprocess.run(
+                            [docker, "inspect", "--format", "{{json .State.Health}}", *ids.stdout.split()],
+                            env=env, capture_output=True, text=True, timeout=20)
+                        diagnostics += health.stdout + health.stderr
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr + diagnostics)
                 return result.stdout.strip()
 
             def routing():
                 web = run(stack + ["ps", "-q", "russound-web"])
                 deadline = time.monotonic() + 40
                 while time.monotonic() < deadline:
-                    value = json.loads(run([DOCKER, "exec", web, "python", "-c",
+                    value = json.loads(run([docker, "exec", web, "python", "-c",
                                            "import urllib.request; print(urllib.request.urlopen("
                                            "'http://127.0.0.1:8000/api/rooms',timeout=3).read().decode())"]))
                     if value.get("backend_status", {}).get("connected"):
@@ -112,7 +140,7 @@ class ContainerRecoveryTests(unittest.TestCase):
             def stopped():
                 ids = run(stack + ["ps", "-a", "-q"]).splitlines()
                 self.assertEqual(len(ids), 2)
-                for container in json.loads(run([DOCKER, "inspect", *ids])):
+                for container in json.loads(run([docker, "inspect", *ids])):
                     self.assertFalse(container["State"]["Running"])
                     self.assertFalse(container["State"]["Restarting"])
                     self.assertFalse(container["State"]["Paused"])
@@ -120,7 +148,7 @@ class ContainerRecoveryTests(unittest.TestCase):
             operation = str(uuid4())
             volume = project + "-data"
             helper = [
-                DOCKER, "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                docker, "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
@@ -130,8 +158,8 @@ class ContainerRecoveryTests(unittest.TestCase):
             state = StateStore(root / "state", owner_uid=os.getuid())
             state.initialize()
             try:
-                run([DOCKER, "volume", "create", "--label", "mpdrussoundpi.test=" + project, volume])
-                volume_info = json.loads(run([DOCKER, "volume", "inspect", volume]))[0]
+                run([docker, "volume", "create", "--label", "mpdrussoundpi.test=" + project, volume])
+                volume_info = json.loads(run([docker, "volume", "inspect", volume]))[0]
                 self.assertEqual(volume_info["Driver"], "local")
                 mountpoint = volume_info["Mountpoint"]
                 self.assertTrue(mountpoint.startswith("/"))
@@ -140,7 +168,7 @@ class ContainerRecoveryTests(unittest.TestCase):
                 # Initialize only this test's named volume. Subsequent helper
                 # runs use the service identity without any added capability.
                 setup_helper = [
-                    DOCKER, "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                    docker, "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                     "--cap-drop", "ALL", "--cap-add", "CHOWN", "--security-opt", "no-new-privileges",
                     "--user", "0:0", "-e", "PYTHONDONTWRITEBYTECODE=1",
                     "-v", str(ROOT) + ":/workspace:ro", "-v", volume + ":/operation",
@@ -183,10 +211,10 @@ for path in sorted([root, *root.rglob('*')], key=lambda path: len(path.parts), r
                     started = time.monotonic()
                     run(stack + ["stop", "--timeout", "8", "russound-web"])
                     self.assertLess(time.monotonic() - started, 6)
-                    web_state = json.loads(run([DOCKER, "inspect", baseline]))[0]["State"]
+                    web_state = json.loads(run([docker, "inspect", baseline]))[0]["State"]
                     self.assertEqual(web_state["ExitCode"], 0)
                     self.assertFalse(web_state["OOMKilled"])
-                    self.assertNotIn("thread(s) still running", run([DOCKER, "logs", baseline]))
+                    self.assertNotIn("thread(s) still running", run([docker, "logs", baseline]))
                 run(stack + ["stop", "--timeout", "5", "russound-dummy"])
                 stopped()
                 # All writers in these disposable trees are the two stopped
@@ -261,7 +289,7 @@ for tree in ('live', 'recovered/web'):
                 try:
                     run(stack + ["down", "--timeout", "5"])
                 finally:
-                    run([DOCKER, "volume", "rm", volume])
+                    run([docker, "volume", "rm", volume])
 
 
 if __name__ == "__main__":

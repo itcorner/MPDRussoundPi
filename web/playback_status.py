@@ -117,7 +117,10 @@ class PlaybackAgentConfig:
 
     @classmethod
     def from_environment(cls) -> tuple[PlaybackAgentConfig, ...] | None:
-        raw_value = env_str("RUSSOUND_PLAYBACK_AGENTS")
+        return cls.from_json(env_str("RUSSOUND_PLAYBACK_AGENTS"))
+
+    @classmethod
+    def from_json(cls, raw_value: str | None) -> tuple[PlaybackAgentConfig, ...] | None:
         if raw_value is None:
             return None
         try:

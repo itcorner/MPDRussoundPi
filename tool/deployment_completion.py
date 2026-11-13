@@ -2,7 +2,7 @@
 
 The receipt is an internal prerequisite for finalization, not proof of target
 health or permission to apply. Independent checks and protected inputs remain
-the responsibility of the future deployment orchestrator.
+the responsibility of the invoking deployment orchestrator.
 """
 
 import json
@@ -12,10 +12,13 @@ import stat
 import subprocess
 from typing import Any
 
+from tool.deployment_files import checked_directory
+from tool.deployment_inputs import read_file
 from tool.deployment_state import StateError, identity, operation_id, requirements
 
 
 MAX_EVENTS = 4 * 1024 * 1024
+RUN_TIMEOUT_SECONDS = 600
 PLUGIN_DIRECTORY = Path(__file__).resolve().parents[1] / "ansible/callback_plugins"
 
 
@@ -91,12 +94,15 @@ def read_events(path: Path) -> list[dict[str, Any]]:
 
 
 def run_checked(*, ansible: Path, playbook: Path, inventory: Path, evidence: Path,
-                operation: str, host: str, required: list[str]) -> dict[str, str]:
+                operation: str, host: str, required: list[str],
+                variables: Path | None = None) -> dict[str, str]:
     """Run a bounded play with controlled callbacks; never dispatch finalization.
 
     Only unconditional, non-looping, synchronous required tasks are supported.
     Required handlers must actually run. No retry of this invocation is made.
     The private evidence directory must already exist and is retained on error.
+    Timeout kills the local Ansible process, not necessarily target-side work;
+    its outcome is uncertain and must never trigger automatic recovery.
     """
     operation_id(operation)
     identity(host)
@@ -122,9 +128,14 @@ def run_checked(*, ansible: Path, playbook: Path, inventory: Path, evidence: Pat
     try:
         env["RUSSOUND_COMPLETION_FD"] = str(writer)
         try:
-            result = subprocess.run([str(ansible), "-i", str(inventory), str(playbook)],
+            argv = [str(ansible), "-i", str(inventory), str(playbook)]
+            if variables is not None:
+                with checked_directory(variables.parent, os.getuid()) as source:
+                    read_file(source, variables.name, os.getuid(), (0o400,))
+                argv.extend(["--extra-vars", "@" + str(variables)])
+            result = subprocess.run(argv,
                                     env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                    pass_fds=(writer,))
+                                    pass_fds=(writer,), timeout=RUN_TIMEOUT_SECONDS)
         finally:
             os.close(writer)
         # A daemon retaining a descriptor must not make validation wait for EOF.
@@ -135,6 +146,8 @@ def run_checked(*, ansible: Path, playbook: Path, inventory: Path, evidence: Pat
             acknowledgement = b""
         if acknowledgement != b"1":
             raise StateError("Callback did not acknowledge durable completion evidence; finalization is blocked")
+    except subprocess.TimeoutExpired:
+        raise StateError("Controlled Ansible timed out; target work may continue; retain reservation and evidence") from None
     except OSError:
         raise StateError("Controlled Ansible execution or completion channel failed; inspect before retrying") from None
     finally:

@@ -176,7 +176,8 @@ class FileBackup:
 
     @classmethod
     def capture(cls, parent: Path, operation: str, sources: dict[str, Path], *,
-                verify_quiescent: Callable[[], None], owner_uid: int | None = None) -> "FileBackup":
+                verify_quiescent: Callable[[], None], owner_uid: int | None = None,
+                source_owner_uid: int | None = None) -> "FileBackup":
         """Snapshot only after the caller has stopped all relevant writers.
 
         The guard must raise when quiescence is uncertain. It is called before,
@@ -184,6 +185,10 @@ class FileBackup:
         No automatic retry or cleanup is performed on interruption.
         """
         owner = os.getuid() if owner_uid is None else owner_uid
+        source_owner = owner if source_owner_uid is None else source_owner_uid
+        if (type(source_owner) is not int or source_owner < 0
+                or (source_owner != owner and os.geteuid() != 0)):
+            raise BackupError("Capturing a different service owner requires explicit root privilege")
         try:
             operation_id(operation)
             if not sources or len(sources) > 64:
@@ -208,10 +213,10 @@ class FileBackup:
             total = [0]
             with checked_directory(parent / operation, owner) as backup:
                 for name, path in sources.items():
-                    with checked_directory(path.parent, owner, private=False) as source:
-                        cls._capture_entry(source, path.name, name, backup, owner,
+                    with checked_directory(path.parent, source_owner, private=False) as source:
+                        cls._capture_entry(source, path.name, name, backup, source_owner,
                                            entries, observed, total, verify_quiescent)
-                cls._verify_sources(sources, entries, observed, owner, verify_quiescent)
+                cls._verify_sources(sources, entries, observed, source_owner, verify_quiescent)
                 quiescent(verify_quiescent)
                 manifest: dict[str, Any] = {
                     "schema_version": 1, "kind": "deployment-file-backup", "operation": operation,
