@@ -1,7 +1,7 @@
 # Plan: simplify deployment and configuration
 
-Status: **open; inventory and contract review underway; preliminary design
-recorded** (2026-11-12). The Waitress/debug change below is authorized
+Status: **open for implementation; S0–S2 closed as a baseline with documented
+limitations** (2026-11-13). The Waitress/debug change below is authorized
 separately; this plan does not authorize deployment, service restarts, hardware
 tests, or changes to a live installation.
 
@@ -71,10 +71,12 @@ their source.
    component placement, images, settings and expected interruptions.
 2. Preflight architecture, space, image availability, configuration,
    permissions, hardware and trust **before** stopping a working service.
-3. Back up configuration, state, credentials and deployed image/source
-   identities privately; stop writers or use an online SQLite backup.
-4. With explicit approval, apply only the selected components, retain existing
-   state and verify web, gateway/controller, agent and audio separately.
+3. Obtain explicit approval for the maintenance scope, including any writer
+   interruption. Reserve the host and record pending before disruption; back
+   up configuration, state, credentials and deployed image/source identities
+   privately, using an online SQLite backup or stopping writers as approved.
+4. Apply only the approved components, retain existing state and verify web,
+   gateway/controller, agent and audio separately.
 5. On failure, stop and report what changed; ask the operator before rollback.
    Verify binary/data compatibility and restore a matching backup when needed;
    cross-version downgrade is not assumed safe.
@@ -166,8 +168,9 @@ hardware-free dummy layouts without mistaking the dummy for a physical gateway.
 <summary>Detailed current-state inventory, evidence and remaining checks</summary>
 
 This inventory covers the working tree and a read-only Pi snapshot on
-2026-11-12. The detailed matrix below is in progress, not yet a complete
-per-setting audit; unresolved items remain at the end of S0. Reconcile
+2026-11-12. The source-level matrix and representative probes below are
+an inventory, not exhaustive execution of every setting; unresolved risks
+and their later-stage disposition remain recorded. Reconcile
 earlier deployment work with the design before reuse. Never record
 token contents, private keys or full stream URLs.
 
@@ -200,7 +203,7 @@ The [containerization plan](./mpd_new_agent-containerization.md) is separate.
 | Proxy and egress | Ansible variables render Caddy listener, certificate, CIDRs and operations policy; egress requires explicit resolver addresses and activation. | Map generated files, private assets, trust, migration and restart effects, including Docker/NAT source addresses. |
 | Deployment and logging | Ansible inventory/play vars and extra vars generate files; Compose interpolates shell/`.env` into service definitions. Runtime logs, protocol audit, container stdout and systemd journals are distinct. | Inventory all variables and exact Ansible/Compose precedence, paths, logging destinations/rotation/redaction and whether settings reach the process. |
 
-Complete S0 with a machine-readable or reviewable per-setting matrix: owner,
+S0 records a reviewable per-setting matrix: owner,
 current inputs and priority, default, type/validation (including absent,
 empty and malformed), secret classification, writable source, restart effect,
 consumers, proposed mapping and compatibility/migration test. Include
@@ -301,6 +304,24 @@ templates, verify prerequisites, or establish idempotence.
 | Proxy trust and configuration | Proxy play renders a root-managed Caddy config and system unit, and fetches the public certificate to the **controller** checkout's `docker/secrets` directory. When startup is requested, changes to config, unit or certificate/key ownership cause restart. | Fetching to the controller does not itself populate a separate Docker target's secrets mount. Verify certificate placement, SAN, actual peer/CIDR and trust per layout; do not copy private keys into the web mount. |
 | Egress and audio | Egress installs root helpers and service plus user MPD slice/drop-ins, reloads user units, restarts enforcement and configured MPD instances. Audio `init,new` can install/start native ser2net, stop supervision, regenerate units and affect MPD/audio even when staged without playback. | Neither operation is a web-only deployment. Preserve unrelated firewall rules, state and services; require explicit scope and interruption approval. |
 
+#### Generated-file lifecycle review
+
+The following is source-level behavior, not a claim that the current Pi
+files have these exact owners or permissions. Where a mode or group is not
+specified, existing metadata, umask and Ansible module behavior are
+environment-dependent; inspect the actual file before migration.
+
+| Producer and generated asset | Current write/ownership | Active effect and disposition |
+|---|---|---|
+| Docker play: checkout, `docker/config`, `data`, `logs`, `secrets` | Target checkout is recursively assigned to `deploy_user` and same-named group; bind directories `0755`, secrets directory `0700`. Seed `russound_config.json` is copied only if absent, mode `0644`; existing state is not deliberately replaced. | Git and ownership changes follow stopping native web/gateway. An active container can continue using bind mounts during writes. Preserve exact existing files, account/group and local image; do not recursively change an unrelated tree. |
+| Docker play: `.env`, registry override | Target `.env` mode `0640`, deploy user/group, replaced by template; optional private override directory `0700` and file `0600`. | Next Compose `up` may recreate services; current third Pi override is not part of this play (F9). Treat rendered and active configuration separately and verify ordered files before update. |
+| Native web: checkout, venv, persistent config/state, unit | Checkout recursively owned by deploy user/group; persistent directories `0700`, venv runs as deploy user; system unit mode `0644`. Config and state are separate durable paths and are not seeded by this play. | Unit is daemon-reloaded; native web is unconditionally restarted. Native ser2net config `/etc/ser2net.yaml` mode `0644` and service are also replaced/restarted if managed. Test custom paths, group and migration across layouts. |
+| Agent install: source, venv, secret, state, unit | Source and manifest copied as audio user with `0600`, agent/secret/state/unit directories `0700`; token copied `0600`; `lib/*.py` copies do not delete older extras. Venv and ledger contents have their own runtime metadata. | Copies and token replacement occur even with start false; user manager is reloaded and linger may be enabled. Start true starts or restarts based on registered changes. Active process can retain old token/code; stage separately and validate both versions. |
+| Proxy install: directories, certificate/key, Caddyfile, system unit | `/etc/caddy/certs` root:caddy `0750`, Caddy data caddy:caddy `0750`; pair root:caddy `0640`, generated only if neither exists; config root:caddy `0640`, unit root:root `0644`. Public cert fetched to controller secrets directory, then set `0644`. | File writes and certificate generation can happen with start false; system manager reloads. Start true starts or restarts on configuration/unit/pair metadata changes. No separate web-host trust file is created automatically. Preserve key and active trust. |
+| Egress install: helpers, slice, drop-ins and service | Root helper directory/files `0755`/`0644`; user slice and drop-ins owned by selected playback user, mode `0644`, directories `0755`; system unit root:root `0644`. | Early approval assertion gates this play, but after that it writes before validating the final unit, reloads the user manager, restarts/enables enforcement, then restarts discovered MPD instances. Explicitly protect unrelated firewall and units and handle failure after partial writes. |
+| Audio/MPD setup: PipeWire, WirePlumber, Pulse and MPD files | Audio-owned generated fragments and USB policy scripts have managed headers; Pulse include preserves unrelated text and mode. MPD configs and user units are written as the audio user without a managed-header check; creation mode depends on umask. | Audio install restarts audio services; cleanup uses `try-restart` for affected running services. MPD install reloads manager but does not remove stale units; start/stop/cleanup use broad filename matching (F25). Inspect ownership and identity before applying or deleting. |
+| Agent removal | Stops/disables fixed user unit if selected unit file exists; deletes that unit file and reloads manager. | Keeps source, venv, token, ledger, configuration and lingering. A custom unit path can disagree with the actual loaded service (F15); removal is not credential deletion or full rollback. |
+
 ### S0 follow-up: logging differences
 
 - The current web implementation defaults to INFO, or DEBUG when debug is
@@ -326,6 +347,12 @@ templates, verify prerequisites, or establish idempotence.
   hardware stack's host log directory. Anonymous-volume reuse and removal
   depend on the command and deployment lifecycle; verify permissions and
   retention instead of assuming hardware Compose behavior.
+- Dummy TUI mode writes an unrotated `.log` alongside its state and also
+  sends logs to the TUI; without TUI it uses a stream handler. The separate
+  playback observation recorder rotates `observations.jsonl` at 10 MiB with
+  ten backups; this is not the protocol-frame audit's 5 MiB/three policy.
+  The manual capture TUI uses its own unrotated `russound_capture.log` by
+  default. These are source observations, not verified deployed retention.
 - Redaction and retention still need per-component verification; do not infer
   privacy from the log level or claim that journal, Docker and rotating-file
   limits control one another.
@@ -368,17 +395,42 @@ These are source-inspection results, not commands executed against the Pi:
 | [Web server](../../web/russound_server.py) | Listener/config/state and debug flags govern a long-running process; `--daemon` double-forks and redirects standard streams. Invalid environment integers currently warn and fall back. No deployment or migration is initiated. |
 | [Playback agent](../../mpdrussoundpi/russound/playbackagent.py) | Requires config, identity and token path; starts a server and observer. `--operations-db` explicitly enables write operations and opens a persistent ledger; remote binding requires `--allow-remote`. |
 | [Audio setup](../../mpdrussoundpi/russound/audiosetup.py) | `--install` and `--cleanup` are mutually exclusive. Install requires config and writes managed audio configuration; cleanup removes owned configuration. Both acquire a setup lock. |
-| [MPD setup](../../mpdrussoundpi/russound/mpdsetup.py) | Install generates config and units; start/stop/restart and enable/disable act on services; cleanup and kill are disruptive. Flags are not globally mutually exclusive: install may be followed by start and enable, while kill/cleanup take precedence and exit. It requires a positional config path even for cleanup/kill. |
+| [Audio readiness](../../mpdrussoundpi/russound/audioready.py) | Takes a required JSON path and waits for configured hardware profile and sinks. It is a readiness check, not an installer; failure exits nonzero. |
+| [MPD setup](../../mpdrussoundpi/russound/mpdsetup.py) | Install generates config and units; start/stop/restart and enable/disable act on services; cleanup and kill are disruptive. Flags are not globally mutually exclusive: install may precede a service action, but start/stop/restart exit before enable/disable and therefore suppress them (F20); kill/cleanup take precedence and exit. It requires a positional config path even for cleanup/kill. |
 | [MPD control](../../mpdrussoundpi/russound/mpdctrl.py) | Exactly one action is required. Status, route check and config revision are observations; start/pause/stop, set/apply gain and route recovery alter runtime or saved intent. Gain setting requires an explicit output. |
 | [Supervisor](../../mpdrussoundpi/russound/mpdsupervisor.py) | `--initialize` writes missing intentions and exits; `--once` initializes then starts/reconciles MPD services once; normal mode continues reconciliation and may run the watchdog. Both flags together select initialization, not reconciliation. |
 | [Egress](../../mpdrussoundpi/russound/playbackegress.py) | `--wait` checks existing enforcement. Normal mode requires user and UID, starts the protected slice, validates/applies nftables rules and writes enforcement state; it is not a read-only check. |
 | [Audit](../../mpdrussoundpi/russound/playbackaudit.py) and [stream levels](../../mpdrussoundpi/russound/streamlevels.py) | Audit records observations to an output directory, or `--install-service` generates a user unit without starting it. Stream-level measurement reads sources and may write a new explicitly named config; it refuses an existing output or the input path. Neither is a deployment dry run. |
 
+Additional source review on 2026-11-13:
+
+- The agent takes a required positional config, `--agent-id` and
+  `--token-file`; defaults to `127.0.0.1:8081` and rejects a port outside
+  1–65535 or a remote bind without `--allow-remote`. `--operations-db`
+  enables the operations manager; the hidden legacy TuneIn enable flag and
+  disable flag conflict if both are set. Treat a token path as sensitive and
+  never include token contents in the inventory.
+- Audio setup requires exactly one of `--install` and `--cleanup`;
+  `--audio-processor` accepts `pulseaudio` or `pipewire`. Installation needs
+  a JSON path; cleanup does not. MPD setup's positional JSON argument is
+  required even for cleanup/kill, and its actions have the precedence stated
+  above; both setup paths can affect real services.
+- MPD control requires exactly one action; `--set-gain` also requires an
+  output ID. `--status`, `--check-route` and `--config-revision` are
+  observational actions; other actions can change playback, gain, routing
+  or saved intention. `--output` is optional for other actions.
+- Stream measurement defaults to 900 seconds and a -1 dBTP ceiling, rejects
+  durations below 10 seconds or nonfinite values, and rejects a positive or
+  nonfinite ceiling. Audit defaults to 72 hours, requires a finite positive
+  duration and explicit output path, and treats `--once` and
+  `--install-service` as mutually exclusive.
+
 ### S0 follow-up: earlier local deployment work
 
-The changes reviewed here were uncommitted at the time of this inventory.
-They may be included in the documented baseline, but are useful prior work,
-not the approved final design or evidence of a safe live redeployment:
+The changes reviewed here were uncommitted at the time of the original
+inventory and are now included in baseline commit `f03e06a`. They are useful
+prior work, not the approved final design or evidence of a safe live
+redeployment:
 
 - The registry mode adds explicit image references, a private Compose
   override, `--no-build`, selectable pull policy and optional controller
@@ -569,18 +621,107 @@ recreation or a service restart. Sources:
 | Inputs / owner | Defaults and downstream effect | S2 migration and verification |
 |---|---|---|
 | Inventory `musicpi`, `ansible_host`, `ansible_user`, `ansible_python_interpreter` | Inventory selects target and SSH account; plays target the `musicpi` host pattern and commonly set `/usr/bin/python3`. Deploy user defaults to Ansible user. | Support non-default inventory, separate controller/target paths and missing host errors; never equate a localhost syntax check with a matched target deployment. |
-| Web `repo_url`, `repo_version`, `app_dir`, `deploy_user` | Both web plays default to repository URL, `main`, and a target checkout under the user's home; native adds `venv_dir`, `russound_config_dir`, `russound_state_dir`. Git updates are not forced. | Pin and report exact revision; test dirty checkout refusal, missing revision, permissions and native/Docker state preservation. |
+| Web `repo_url`, `repo_version`, `app_dir`, `deploy_user` | Both web plays default to repository URL and `main`. Docker paths derive from `ansible_user`, while native paths derive from `deploy_user` and assume `/home/<user>`; native also uses the user name as its group (F14). Git updates are not forced. | Resolve the account, home and primary group consistently; test distinct SSH/deploy users, explicit paths, dirty checkout refusal, missing revision and state preservation. |
 | Docker `russound_publish_port`, `russound_serial_device`, `russound_serial_options`, `russound_ser2net_bind`, `russound_manage_serial_gateway` | Defaults 8000, `/dev/ttyUSB0`, `19200n81`, `0.0.0.0`, true; device and group feed generated `.env`. Gateway management false requires an external backend hostname. | Test device/group validation before service changes, external gateway and native service ownership; earlier baseline and subsequent missing-device behavior differ. |
 | Docker `russound_backend_host`, `russound_backend_port`, `russound_debug`, `russound_playback_agents` | Defaults `russound-ser2net`, 6666, false, `[]`; generated `.env` supplies Compose. `russound_uid`, `russound_gid`, `russound_serial_gid` are resolved facts. | Test actual generated/parsed environment including F1, override precedence and external gateway. Do not persist credentials in generated env. |
 | Docker `russound_use_published_images`, `russound_web_image`, `russound_ser2net_image`, `russound_published_pull_policy`, `russound_registry_override_dir`, `russound_verify_backend` | Defaults false, empty image references, pull `always`, private override directory, false. When enabled, explicit image refs and `--no-build` are used; optional rooms API check tests controller response. | Added after the earlier baseline. Review before reuse; test missing ref, `always`/`missing`/`never`, failed pull, compatible image pair, target architecture, zero unintended builds and staged verification. |
 | Native web `russound_host`, `russound_port`, `russound_playback_agents`, `russound_manage_serial_gateway` | Defaults `0.0.0.0`, 8000, `[]`, true; systemd unit passes listener via CLI and agent JSON via environment. Native ser2net is optionally installed and restarted. | Test exact unit-to-runtime behavior including F1 and nondefault host; avoid unexpectedly modifying another gateway. |
-| Agent `playback_agent_id`, `playback_agent_port`, `playback_agent_start`, `playback_agent_enable_operations`, `playback_agent_enable_tunein_selection`, `playback_agent_token_source` | Defaults `musicpi`, 8081, false, false, true; token source is required controller-side private file. Installation can occur without activation; unit listens on loopback. | Test absent/invalid token, read-only vs operations, recreation and preservation of token/ledger. Coordinate proxy permissions separately. |
-| Agent `playback_agent_home`, `playback_agent_dir`, `playback_agent_venv`, `playback_agent_secret_dir`, `playback_agent_config`, `playback_agent_state_dir`, `playback_agent_unit_dir`, `playback_agent_source`, `playback_agent_environment` | Derive from audio user's home and controller checkout; runtime includes XDG, user D-Bus and Pulse socket. Paths are asserted absolute/systemd-safe. | Test non-default account/path, controller source identity, existing user bus and preservation; do not capture token contents in logs. |
-| Proxy `playback_proxy_hostname`, `playback_proxy_allowed_cidr`, `playback_proxy_additional_allowed_cidrs`, `playback_proxy_port`, `playback_agent_port`, `playback_proxy_start`, `playback_proxy_enable_operations` | Hostname and primary CIDR required; port 8443, agent 8081, additional CIDRs `[]`, start false and writes false. Additional CIDRs were added in subsequent local work. | Test SAN/CIDR validation, Docker NAT source and both agent/proxy write gates; keep old access until explicit cutover. |
-| Proxy `playback_proxy_caddy_binary`, `playback_proxy_caddyfile`, `playback_proxy_unit`, `playback_proxy_certificate`, `playback_proxy_private_key` | Point to system Caddy binary, unit/config and certificate pair; play requires Caddy and checks the pair. | Preserve and privately back up key/trust; test existing and absent pair, renewal boundary, permissions and isolated rollback. |
-| Egress `playback_egress_activate`, `playback_egress_resolvers`, `playback_egress_user`, `playback_egress_install`, `playback_egress_source` | Activation defaults false; resolver IPs are required; default user `musicpi`; source copied from controller. | Test empty/invalid resolvers, missing nftables, existing unrelated firewall rules and MPD interruption; explicit approval for activation. |
-| Audio `mpd_russoundpi_repo`, `mpd_russoundpi_dest`, `mpd_russoundpi_scripts`, `mpd_russoundpi_config`, `venv_dir`, `mpd_russoundpi_update_repo`, `mpd_russoundpi_start_playback` | Target checkout/config and venv derive from audio user's home; update and start default true. `init,new` staging guide explicitly sets start false; `update` tag requests OS upgrades. | Test source matching, persistent calibrated config, tagged scope and stop/start effects; staging still affects audio services and must not be presented as no-impact. |
+| Agent `playback_agent_id`, `playback_agent_port`, `playback_agent_start`, `playback_agent_enable_operations`, `playback_agent_enable_tunein_selection`, `playback_agent_token_source` | Defaults `musicpi`, 8081, false, false, true; token source is required controller-side private file. Installation can occur without activation; unit listens on loopback. The operations flag's nonempty string `false` is truthy in the service template; see F11. | Test absent/invalid token, actual Ansible boolean inputs, read-only vs operations, recreation and preservation of token/ledger. Cross-host credential rotation is deferred. |
+| Agent `playback_agent_home`, `playback_agent_dir`, `playback_agent_venv`, `playback_agent_secret_dir`, `playback_agent_config`, `playback_agent_state_dir`, `playback_agent_unit_dir`, `playback_agent_source`, `playback_agent_environment` | Derive from audio user's home and controller checkout. Paths are asserted absolute/systemd-safe, but the service and task environments and unit directory can diverge (F15). | Test non-default account/path, controller source identity, existing user bus and actual loaded unit; do not capture token contents in logs. |
+| Proxy `playback_proxy_hostname`, `playback_proxy_allowed_cidr`, `playback_proxy_additional_allowed_cidrs`, `playback_proxy_port`, `playback_agent_port`, `playback_proxy_start`, `playback_proxy_enable_operations` | Hostname and primary CIDR required; port 8443, agent 8081, additional CIDRs `[]`, start false and writes false. The operations flag's nonempty string `false` is truthy in the Caddy template; see F11. Additional CIDRs are in the baseline. | Test SAN/CIDR validation, Docker NAT source and both agent/proxy write gates, including typed and string inputs; keep old access until explicit cutover. |
+| Proxy `playback_proxy_caddy_binary`, `playback_proxy_caddyfile`, `playback_proxy_unit`, `playback_proxy_certificate`, `playback_proxy_private_key` | Point to system Caddy binary, unit/config and certificate pair; play requires Caddy and checks the pair. An overridden unit path can disagree with the fixed activation name (F16). | Preserve and privately back up key/trust; test unit identity, existing and absent pair, renewal boundary, permissions and isolated rollback. |
+| Egress `playback_egress_activate`, `playback_egress_resolvers`, `playback_egress_user`, `playback_egress_install`, `playback_egress_source` | Activation defaults false; the play checks resolver input is defined and nonempty but does not check it is a list of IPs; see F12. Default user `musicpi`; source copied from controller. | Validate typed lists and IP literals before target changes; test empty/invalid resolvers, missing nftables, existing unrelated firewall rules and MPD interruption; require explicit approval for activation. |
+| Audio `mpd_russoundpi_repo`, `mpd_russoundpi_dest`, `mpd_russoundpi_scripts`, `mpd_russoundpi_config`, `venv_dir`, `mpd_russoundpi_update_repo`, `mpd_russoundpi_start_playback` | Target checkout/config and venv derive from audio user's home; update and start default true. `init,new` staging guide sets start false but also manages native ser2net (F13); `update` requests OS upgrades. | Test source matching, persistent calibrated config, tagged scope and stop/start effects; staging still affects audio and gateway services and must not be presented as no-impact. |
 | Agent removal `playback_agent_unit_dir`, `playback_agent_environment` | Removes the agent unit after stopping/disabling it; retains files and credentials. | Test absence/idempotence, private assets and unrelated services. Removing a unit is not complete data deletion or rollback. |
+
+#### Per-parameter validation and implementation disposition
+
+The following inventory covers every play-level declaration in the seven
+current plays, plus their externally supplied required inputs and generated
+facts. Rows describe source inspection unless a finding records a probe.
+They are not assertions that arbitrary malformed values were executed. An
+empty string, null and a wrong type can produce different Ansible/module
+errors: where no explicit early check exists, the precise downstream error is
+**unverified**, not a promised fallback.
+
+Common current precedence: these play `vars` beat same-named host inventory
+variables; extra vars beat play vars and facts. `default(...)` without its
+second boolean argument substitutes only an undefined value, not an empty
+string. Required values with no play default can come from inventory or extra
+vars. Generated `set_fact` values and standard Ansible connection variables
+have their own precedence; an extra var can even override a generated name.
+The tested sample and its limits are in F8. Native CLI/runtime, Compose shell
+interpolation, `.env`, image environment and JSON config are distinct later
+layers, not repetitions of Ansible precedence.
+
+**Target conventions:** absence uses the relevant documented default;
+optional blank is unset; required blank, null where unsupported, wrong type
+and invalid syntax produce a field-specific error before mutation. Boolean
+inputs must be normalized once from typed booleans and explicitly documented
+CLI spellings, not generic truthiness. Ports are integral, not booleans,
+1–65535 (proxy's existing unprivileged policy 1024–65535 unless explicitly
+redesigned). Existing state and secrets are never rewritten to make a value
+valid. Every row below inherits those rules; select focused tests for
+representative missing, malformed, conflict and boundary cases, particularly
+where known findings affect safety or compatibility. Treat
+path and host text as potentially sensitive; report the field and source
+without printing credentials, raw URLs or secret contents.
+
+| Parameter(s) | Current handling of absence, blank and invalid input | Smallest understandable rework / test |
+|---|---|---|
+| `ansible_host`, `ansible_user`, inventory host pattern `musicpi` | Inventory supplies address/user; `musicpi` selects hosts in all plays. No play asserts that selection matched a host. Empty connection values and unreachable hosts are left to Ansible. | Display matched target and SSH identity; fail on zero or ambiguous matches before apply. Test inventory aliases, blank identity and unreachable host without mutating a target. |
+| `ansible_python_interpreter` | Web/agent/remove plays define `/usr/bin/python3`; audio/proxy/egress rely on Ansible selection. Agent and audio venv creation separately hardcode `/usr/bin/python3`. No common preflight checks agreement. | Make interpreter choice an advanced per-host input, validate target and venv interpreter separately and report both. Test absent, bad path, wrong runtime and override precedence. |
+| `deploy_user` | Docker/native default to `ansible_user` if undefined, otherwise `musicpi`; blank is not defaulted. Account/group lookup or file/systemd operations fail later; Docker assumes same-named group for files. | Resolve non-root account, actual home, UID and primary group once (F14); reject missing account and unsafe identity before ownership changes. Test distinct login/account/group and unusual home. |
+| `app_dir` | Docker derives from SSH user, native from deploy user, both assuming `/home`; explicit blank/wrong path has no early check. Both recursively change ownership. | Derive from selected account or accept an explicit validated target path; no recursive ownership on an unreviewed tree. Test differing users, nonstandard homes, unsafe paths and existing data. |
+| `repo_url`, `repo_version` | Both web plays default to public Git URL and `main`. No blank, credential-bearing URL, revision or availability preflight; Git runs after package/service operations. | Keep these advanced native/source inputs, not image selectors; reject malformed/blank and embedded credentials, resolve an identified revision before disruption, refuse dirty source. Test offline/missing revision and explicit overrides. |
+| Native `venv_dir`, `russound_config_dir`, `russound_state_dir` | Derive from assumed deploy-user home; no early blank/path/systemd-quoting checks. Native unit passes paths as unquoted command fields; venv creation is command-string based. | Derive from resolved account, validate path safety and consumer permissions, quote arguments correctly and preserve existing config/state. Test spaces, percent signs, traversal, missing and unwritable paths with disposable units. |
+| `russound_host` | Native default `0.0.0.0`, inserted unquoted in `ExecStart`; no play assertion for blank, address or type. Probe remains loopback even for another bind (F18). | Expose a bind only for native web, validate it and derive a usable probe; fail on incompatible/unreachable binding before restart. Test wildcard, loopback and nondefault bind. |
+| `russound_port`, `russound_publish_port` | Native port and Docker host-published port default 8000, but neither play explicitly checks type/range before changes. Native passes raw CLI; Docker writes raw `.env` then probes that value. Runtime CLI parses an integer; Compose validates its own published mapping. | Show these as one web access choice appropriate to the selected mode; reject non-integral, blank and out-of-range values before apply. Test boundaries, collisions, overridden shell environment and probe agreement. |
+| `russound_manage_serial_gateway` | Default true in both web plays; conditions use Ansible `bool`. String `false` works there, but invalid spellings depend on Ansible version and are not explicitly rejected. Native installs/restarts ser2net; Docker stops native gateway only when true. | Replace operator-facing boolean combinations with one gateway placement choice; map compatible legacy values explicitly and reject ambiguous spellings. Test managed/external scope and preservation of unrelated services. |
+| `russound_serial_device` | Docker defaults `/dev/ttyUSB0`; managed mode checks it exists and is a character device, not ownership/access or safe serialization; external mode skips the stat. Blank/invalid paths fail stat/assert, but exact module errors are unverified. | Require safe absolute character-device path only for managed gateway; verify intended process access and exclusivity before disruption. Test absent, wrong type, permissions, unplugged device and ignored/contradictory external settings. |
+| `russound_serial_options`, `russound_ser2net_bind` | Defaults `19200n81`, `0.0.0.0`; written unquoted into `.env`, consumed in generated ser2net YAML. No play syntax, escaping or reachability validation; empty Compose values revert to defaults. | Offer serial settings only for managed gateway; validate supported connector/bind values, serialize safely, check web reachability and no unintended exposure. Test whitespace, quoting, malformed options and listener scope. |
+| `russound_backend_host`, `russound_backend_port` | Docker defaults internal hostname/6666; external assertion only excludes the internal hostname. Blank host passes (F21); blank port is passed to Compose and runtime treats it unset. Nonblank invalid port is warned and ignored by runtime, potentially masking saved settings. Native play has no corresponding variables. | Derive endpoint from placement; require a nonblank external host and validate its port, with 6666 as the proposed default. Display effective value/source and preserve saved JSON. Test F5/F17/F21 and actual parser with blank, partial, serial, malformed and saved TCP configurations. |
+| `russound_debug` | Docker default boolean false, rendered with `lower` into `.env`; runtime recognizes only `1/true/yes/on` as true and treats other nonblank strings as false. Native play offers no equivalent. | Map documented legacy input to the chosen profile without silently accepting misspellings; preserve existing debug behavior until migration. Test actual Compose and native process settings and explicit CLI false precedence. |
+| `russound_playback_agents` | Both web plays default actual `[]`; templates encode it as JSON `[]`, which runtime rejects (F1). Non-list or malformed entries have no play preflight; token/CA paths are consumed by web. | Empty actual list means unset, valid entries preserve IDs/URLs and private file references; reject wrong types and malformed entries. Test Ansible → generated unit/Compose → runtime, secret-file access and paths on each host. |
+| `russound_use_published_images` | Docker default false; `bool` selects published versus target build. No explicit invalid-boolean assertion. Current default target build conflicts with agreed future controller-build intent. | Make source channel an explicit dev/release/local choice; legacy flag maps only when unambiguous. Test false/true spellings, invalid values and no hidden build/fallback. |
+| `russound_web_image`, `russound_ser2net_image` | Empty defaults; length check applies in published mode, gateway reference only if managed. Whitespace passes (F22); YAML uses JSON quoting. No preflight verifies registry, architecture, digest or compatible pair. | Keep image pins as derived advanced selection, not duplicate editable aliases; require matching verified artifacts for chosen layout before disruption. Test unset/blank/whitespace, invalid references, digest, arch and no gateway in external mode. |
+| `russound_published_pull_policy` | `always` by default; membership in `always`, `missing`, `never` is asserted even if published mode is false. `always` can pull a changed tag. | Decouple artifact acquisition from selection and ordinary rerun; translate legacy policies explicitly or fail with guidance. Test invalid/unused policy, offline pins and explicit update. |
+| `russound_registry_override_dir` | Defaults under SSH user's assumed home; only used for published mode, rendered override mode `0600`. No path, symlink or conflict check before changes. | Derive private deployment-owned paths, record actual ordered Compose inputs and refuse unsafe/ambiguous migration (F9/F14). Test custom path, preexisting overrides and preservation of local-only image. |
+| `russound_verify_backend` | Default false; `bool` gates later `/api/rooms` connected check. Invalid spellings are not explicitly validated; false still performs web HTTP check. | Report web and controller checks as separate outcomes, with explicit policy and no false success when controller verification is skipped. Test disconnected, unavailable and requested/omitted checks. |
+| `russound_uid`, `russound_gid`, `russound_serial_gid` | Docker play sets facts from passwd/device, or serial GID 20 when external; extra vars have higher precedence. Template writes values directly; no explicit type/range or ownership consistency check. | Treat these as internal derived values, not competing inputs; reject user-provided conflicts or validate an explicit advanced mapping before file changes. Test mismatches, missing group and serial access. |
+| `playback_agent_id` | Defaults `musicpi`; early regex requires lowercase safe ID, rejects empty/malformed. The health checks compare returned ID. Wrong-type behavior depends on Ansible templating. | Keep one identity shared with web registry; preserve existing bindings and test blank, malformed, duplicate and changed identity. |
+| `playback_agent_port` | Agent and proxy independently default 8081; each checks `int` range but renders original value (F19). No cross-play equality check. | One agent endpoint feeds agent unit and proxy upstream; strict port normalization before rendering. Test divergent inventories and noninteger strings. |
+| `playback_agent_start` | Default false; `bool` gates activation/health, not installation, source/token replacement, venv changes or manager reload. Invalid spellings are not explicitly validated. | Use clearly named staging versus activation intent with a genuinely non-mutating preview. Preserve active source/token until approved activation; test existing service and changed token without starting. |
+| `playback_agent_enable_operations`, `playback_agent_enable_tunein_selection` | Defaults false/true. Operations uses raw truthiness (F11); TuneIn disabling uses lowercase string membership only when operations are truthy, and unrecognized values do not disable it. | Explicit read-only/operations choice and optional TuneIn setting; normalize and validate both, coordinate proxy gate, reject inconsistent selections. Test typed/string true/false, invalid and active-vs-rendered. |
+| `playback_agent_token_source` | Required defined controller-side path, but no separate blank/path/permission check. File lookup strips its value and checks at least 32 printable ASCII characters; copy installs the original file mode `0600`. The web client imposes a separate maximum (F24). Errors are hidden by `no_log`. | Validate a private readable regular file and the exact installed bytes with consumer-compatible rules without exposing them; preserve existing credentials and defer rotation. Test missing, blank, oversized, newline, permissions and differing controller/target paths. |
+| `playback_agent_home` | Defaults to gathered `user_dir`; derived paths use it, but it is not itself in the play's path-validation loop. Blank/nonstandard override propagates to derived paths, unless those are separately overridden. | Resolve home from the selected audio account; do not make a second editable home compete with account identity. Validate paths and conflict before change. Test custom home and overrides. |
+| `playback_agent_dir`, `playback_agent_venv`, `playback_agent_secret_dir`, `playback_agent_config`, `playback_agent_state_dir`, `playback_agent_unit_dir` | Absolute/systemd-safe regex and traversal checks reject blank, relative, spaces and `%` for these six paths; existence and ownership are not fully established before copies. Unit path can diverge from manager lookup (F15). | Derive safe defaults, permit only supported advanced paths and verify owner, file type and loaded unit; quote safely if broader paths are supported. Test invalid and existing paths, symlinks, permissions and rollback. |
+| `playback_agent_source` | Defaults to controller checkout; not covered by the six path checks. Entry point/manifest are copied and helper glob is used; absence or empty glob fails or is incomplete downstream, exact behavior is unverified. | Verify identified complete controller source and compatibility before any copy; use a staged versioned tree. Test missing source/helper, local changes and version mismatch without touching active agent. |
+| `playback_agent_environment` | Default mapping is UID-derived runtime, bus and Pulse settings for Ansible tasks; XDG runtime directory and bus are checked, but unit hardcodes its own values (F15). Wrong/missing keys fail during evaluation; no full mapping validation. | Derive one runtime mapping, use it consistently or reject unsupported overrides. Test missing keys, wrong type, correct bus, service unit and manager environment. |
+| `playback_proxy_hostname` | Required, <=253 chars; a restrictive regex rejects one-character names (F23) and IPv6, but can accept some invalid DNS/IP forms. Certificate name check happens after directory/certificate work. | Validate supported hostname/IP and certificate SAN before activation, state clearly whether IPv6 is supported. Test valid/invalid names and SAN mismatch without changing trust. |
+| `playback_proxy_allowed_cidr`, `playback_proxy_additional_allowed_cidrs` | Primary required character regex; additional defaults `[]`, checked as a non-string sequence whose entries match the regex. Syntax admits invalid networks (F19), and a matching-key dictionary passes preflight but fails template rendering (F27); absence/empty primary fails assertion. | Require explicit valid IP/network list and verify the actual web-side peer separately. Test list types, empty primary, malformed CIDRs, IPv4/IPv6, NAT and denied clients. |
+| `playback_proxy_port` | Default 8443; `int` range check 1024–65535 but original rendered (F19); no early listener collision check. | Strictly validate port and collision, share proxy URL with web connection and preserve explicit TLS trust. Test bounds and mismatched web URL. |
+| `playback_proxy_start`, `playback_proxy_enable_operations` | Defaults false; start gates activation, not certificate/config/unit writes. Operations is raw truthiness (F11). | Explicit preview/stage/activation and coordinated operation policy; validate boolean spelling and test both gate combinations. |
+| `playback_proxy_caddy_binary`, `playback_proxy_caddyfile`, `playback_proxy_unit` | Default binary/config/unit paths; binary is stat-checked executable, other paths lack explicit path validation. Unit activation uses a fixed service name regardless of destination (F16). | Derive fixed service identity and config paths or validate supported overrides consistently. Test missing binary, paths and actual installed/loaded unit before activation. |
+| `playback_proxy_certificate`, `playback_proxy_private_key` | Default certificate/key paths; both must exist together or neither. Pair generation, permissions, SAN/expiry, self-signed trust and modulus are checked after directory creation; path safety and exact error on malformed overrides are not preflighted. Public certificate is fetched to controller, not automatically to a separate web host. | Treat trust/key paths as advanced protected inputs; inspect pair and SAN before changing live files, stage any new pair, explicitly provision web trust. Test partial pair, mismatch, expiry, unsafe paths and separate host without disclosing keys. |
+| `playback_egress_activate` | Default false; first assertion requires `bool` true. False fails rather than staging; unrecognized spellings are not explicitly rejected. | Make egress activation a separate approved action with a read-only preview; test omitted, true/false and invalid inputs. |
+| `playback_egress_resolvers` | Required defined/nonempty but no list/IP check; string becomes characters in unit (F12). Runtime validates IPs later. | Require a nonempty typed list of IP literals before writes; test IPv4/IPv6, invalid and duplicate entries and actual unit argv. |
+| `playback_egress_user` | Defaults `musicpi`, checked by lowercase account regex and passwd lookup; UID must be non-root. Blank and invalid names fail; selected account can differ from actual audio account. | Derive from the selected audio identity or fail on mismatch; test missing, root and different account before filter installation. |
+| `playback_egress_install`, `playback_egress_source` | Default root target directory and controller checkout source. No early path, quoting, source completeness or ownership checks; target path is inserted unquoted into systemd commands/drop-ins. | Use a validated root-owned fixed install location and identified source; reject unsafe paths and test source completeness, quoting, existing drop-ins and unrelated firewall preservation. |
+| `playback_egress_uid`, `playback_egress_home` | Derived `set_fact` from passwd; extra vars can override facts. UID receives only a later positive integer check; home determines user-unit locations. | Derive privately from verified account, reject conflicting externally supplied facts, validate owner/path. Test mismatched UID/home before writing units or restarting MPD. |
+| `mpd_russoundpi_repo`, `mpd_russoundpi_update_repo` | Repo defaults public URL, update defaults true under `new`; Git has no explicit revision and does not force changes. Boolean uses `bool`, no explicit invalid-input check. | Identify source revision before use; expose update as a deliberate action, keep saved config and do not silently update on rerun. Test offline, dirty and controller/target revision mismatch. |
+| `mpd_russoundpi_dest`, `mpd_russoundpi_scripts` | Defaults derive from gathered audio-user home and checkout; scripts can be independently overridden. No early validation that scripts match repository revision. | Use one verified source location or report explicit external source; reject mismatch. Test missing scripts and conflicting overrides before service stops. |
+| `mpd_russoundpi_config` | Defaults to audio user's persistent config; first run copies seed if absent, never overwrites it. No upfront complete audio/MPD validation before service stops and generation. | Preserve existing config; validate with all affected consumers before disruption. For a new host require reviewed hardware settings, not a silently assumed seed. Test missing, malformed, incompatible and existing calibrated config. |
+| Audio `venv_dir` | Defaults `~/russound-venv`; creates only if executable absent, installs unbounded `python-mpd2`; an existing system-site-enabled venv remains so. No explicit path/isolation preflight. | Prepare separate validated isolated environment; retain active one until separately approved switch. Test wrong path, inherited packages, dependencies and rollback. |
+| `mpd_russoundpi_start_playback` | Defaults true; `bool` controls staged stop versus start/reconcile; inventory default can lose to play var (F8). False still modifies audio, state, services and native ser2net (F13). | Separate preview, staging and activation with accurately reported side effects; no unrelated gateway management. Test each action and invalid boolean without live playback. |
+| Remove play `playback_agent_unit_dir`, `playback_agent_environment` | Same names have separate defaults from deploy play. The unit path receives syntax checks; environment is passed to the manager. Removal stops/disables the fixed unit and deletes only the selected file; it retains code, state and token (F15). | Resolve the actual loaded unit and shared environment once; describe retained files and require explicit stop approval. Test mismatched install/removal settings, no unit and already stopped. |
+
+This table establishes **source-level coverage**, not proof that all
+combinations have been executed. Tests named in the final column are
+implementation acceptance criteria, not completed tests. In particular,
+Ansible `--check` is not a substitute for a verified no-mutation preview:
+several current tasks explicitly skip validation in check mode, and normal
+execution writes files independently of activation flags.
 
 ### S0 findings and remaining work
 
@@ -671,12 +812,347 @@ recreation or a service restart. Sources:
     intended relative file handler, because the imported helper configured
     the root logger first. MPD setup's import created the relative file.
     Explicitly configure and validate each command's logging during S3.
+11. **F11 — string `false` enables operation gates.** In the current
+    [agent unit template](../../ansible/templates/playback-agent.service.j2)
+    and [proxy template](../../ansible/templates/playback-agent.Caddyfile.j2),
+    the operations variables are tested for truthiness without boolean
+    conversion. A controller-only Ansible core 2.21.5 play rendered both
+    actual templates with `-e playback_agent_enable_operations=false` and
+    `-e playback_proxy_enable_operations=false`: the unit contained
+    `--operations-db` and Caddy included its write route. Supplying typed JSON
+    boolean `false` rendered neither. The first fixture attempt failed due to
+    a missing synthetic `ansible_facts.user_uid`; after adding that fixture
+    fact, both comparisons passed. No Pi service was changed. The read-only
+    default is an actual boolean false; the issue is the string override.
+    Both gates must be enabled for proxied writes, and active services may
+    differ from newly rendered files until restarted. The
+    [playback guide](../documentation/playback-agent-deployment.md) now warns
+    about this input. S4 must normalize and validate accepted boolean inputs
+    for both templates, reject invalid values, and test the actual Ansible
+    paths and running-gate behavior; do not treat syntactic success as proof
+    that write operations are disabled.
+12. **F12 — a resolver string passes egress preflight.** The current
+    [egress play](../../ansible/playbooks/deploy-playback-egress.yml) checks
+    only that `playback_egress_resolvers` is defined and nonempty. A real
+    controller-only Ansible template probe confirmed that the nonempty string
+    `192.0.2.1` satisfies those checks and causes the
+    [unit template](../../ansible/templates/playback-egress.service.j2) to
+    render nine `--resolver` arguments, one per character; a typed single-item
+    list renders one. The filter's `ipaddress.ip_address` validates values
+    during service execution, after the play has already copied files and
+    written units/drop-ins. The probe did not start or modify any services.
+    The [playback guide](../documentation/playback-agent-deployment.md) now
+    warns to use a typed list. S4 must reject wrong types and invalid IP
+    literals before any target change and exercise actual rendered units.
+13. **F13 — audio staging also manages an unrelated gateway.** The
+    [audio play](../../ansible/playbooks/setup-musicpi.yml) tags its native
+    ser2net config and start tasks `init`; the documented `init,new` staging
+    command selects them even with `mpd_russoundpi_start_playback=false`.
+    Its native [ser2net config](../../mpdrussoundpi/ser2net/ser2net.yaml)
+    names `/dev/ttyUSB0` and localhost port 6666. This can conflict with a
+    container gateway's device or another selected gateway. Task selection
+    and source were inspected; no conflicting service was started in this
+    check. Separate audio from gateway ownership in the rework; a playback-only
+    intent must not install, write, start or restart ser2net. Test both a
+    container-gateway host and an external-gateway layout. The playback and
+    headless guides now warn about the current staging command.
+14. **F14 — default paths disagree with a changed deploy user.** In the
+    [Docker play](../../ansible/playbooks/deploy-russound-docker.yml),
+    `deploy_user` controls ownership, but `app_dir` and
+    `russound_registry_override_dir` default from `ansible_user`, not
+    `deploy_user`. In the [native play](../../ansible/playbooks/deploy-russound-web.yml)
+    those paths derive from `deploy_user`, but assume `/home/<user>` and
+    the unit uses the username as both user and group. Merely changing the
+    deployment user can therefore select an unexpected home or fail for a
+    different primary group. Source inspection only; no alternate account
+    was provisioned. Derive defaults from the selected account's actual
+    passwd entry and primary group, or require explicit paths; show resolved
+    ownership in preview. Test different SSH and deploy users, nonstandard
+    homes, groups and explicit paths without recursively chowning unrelated
+    files.
+15. **F15 — agent task environment is not its service environment.**
+    `playback_agent_environment` supplies Ansible's user-systemd operations,
+    while the [agent unit](../../ansible/templates/playback-agent.service.j2)
+    separately hardcodes runtime, bus and Pulse paths from the discovered UID.
+    An override can thus affect the play but not the running agent. Likewise
+    `playback_agent_unit_dir` selects where a unit is written or removed,
+    while service operations use a fixed unit name and the user's systemd
+    search path. Do not promise arbitrary overrides work. In the rework use
+    one validated runtime mapping and a systemd-recognized unit location, or
+    reject unsupported overrides with migration guidance. Test rendered
+    unit, manager environment, nondefault paths and removal together.
+16. **F16 — proxy unit path and service name can diverge.** The proxy play
+    writes `playback_proxy_unit`, but starts the fixed
+    `mpdrussoundpi-playback-agent-proxy.service` name. A custom unit filename
+    or location does not change the service being operated on. Source
+    inspection only; no service was activated. Make the unit identity a
+    single validated value, or reject unsupported path overrides. Test
+    install, reload, activation and removal with the same resolved identity.
+17. **F17 — endpoint defaults can hide saved configuration.** Direct
+    [hardware Compose](../../docker-compose.yml) leaves backend environment
+    overrides blank by default, whereas the Docker play writes
+    `russound-ser2net:6666` into `.env`; a valid override selects TCP over
+    the saved serial endpoint and can make editor changes appear ineffective.
+    Shell interpolation can in turn override the generated `.env`. This is
+    not evidence of an actual current Pi mismatch. Preview the effective
+    endpoint and its source; use the selected gateway placement as the one
+    deployment-level owner, preserve saved configuration, and clearly report
+    when it is overridden. Test direct Compose, managed/external modes,
+    shell conflicts, partial inputs and removal of the override.
+18. **F18 — native health probe assumes loopback binding.** Native web
+    accepts `russound_host` but its play always probes `127.0.0.1`, which
+    need not reach a service bound only to another address. An HTTP response
+    alone also cannot establish that it came from the newly deployed process
+    or that the controller is reachable. Source inspection only. Validate
+    the chosen bind and probe address before disruption, identify the
+    intended service and test loopback, wildcard and specific-address binds;
+    report HTTP and controller readiness separately.
+19. **F19 — proxy/agent preflight can accept malformed values.** Agent and
+    proxy port assertions compare values after Ansible's `int` filter but
+    render the original values into their units/configuration. A local
+    Ansible probe showed that the string `8081.5` becomes `8081` under that
+    filter, so it passes these range checks even though it is not an integer
+    port. The proxy's CIDR assertion uses a character regex; the same probe
+    showed `999.999.999.999/99` matches it despite not being an IP network.
+    Templates and task order were inspected; no Caddy, agent or Pi execution
+    was performed. Caddy validation occurs only after certificate and
+    directory operations, so later validation is not a no-mutation preflight.
+    Validate exact integer ports and IP/CIDR syntax before any target change,
+    render the validated values and test malformed, boundary, IPv4/IPv6 and
+    wrong-type inputs through the actual plays. Do not equate syntactic CIDR
+    validity with proof that the web client's actual source is authorized.
+20. **F20 — MPD setup silently ignores combined actions.** The
+    [MPD setup CLI](../../mpdrussoundpi/russound/mpdsetup.py) accepts
+    multiple flags, but its start, stop and restart branches exit before
+    reaching enable/disable. Thus `--start --enable` starts services without
+    enabling them; `--start --stop` selects start, and `--enable --disable`
+    selects enable. `--install` can precede one of those actions, while
+    kill/cleanup exit earlier. The earlier S0 wording incorrectly said
+    start and enable could both follow install; it is corrected above. A
+    disposable local invocation of the actual CLI with an empty temporary
+    home and mocked `subprocess.run` recorded a supervisor start but no
+    enable for `--start --enable`; no service command ran. The other
+    combinations are source inspection only. Specify valid
+    combinations, reject contradictory or silently ignored flags and retain
+    intentional install-plus-action use with explicit compatibility tests.
+21. **F21 — blank external gateway passes preflight and can select TCP.**
+    The Docker play only compares `russound_backend_host` to the literal
+    internal service name when gateway management is false; it does not
+    require a nonblank host. A controller-only Ansible probe evaluated the
+    actual assertions and rendered the real environment template with blank
+    host and the default port: the assertion passed and the output contained
+    a blank host and `RUSSOUND_BACKEND_PORT=6666`. A separate local runtime
+    call with those environment values and a saved serial device resolved
+    to `127.0.0.1:6666` with no device; with both overrides blank it retained
+    the serial device. No container or target was run. Require a valid
+    explicit host and valid port for external deployment before mutation
+    (6666 is the proposed port default); preserve
+    and report saved configuration, and test blank/whitespace, partial and
+    malformed endpoints through real play, Compose and runtime paths.
+22. **F22 — published image assertion accepts whitespace.** With published
+    mode selected, the Docker play checks reference `length > 0`, not a
+    stripped, syntactically valid reference. A controller-only Ansible
+    assertion probe confirmed that a whitespace-only web reference passes.
+    No registry or deployment was attempted. Reject blank/invalid references
+    before service changes; verify existence, target architecture, digest
+    and compatibility as required by D3. Validate pull policy only when it
+    is applicable, and never turn a normal rerun into an implicit update.
+23. **F23 — proxy hostname check excludes a valid single-character name.**
+    The proxy hostname regex requires separate first and last characters.
+    A controller-only Ansible check showed `x` fails it. Whether such a name
+    resolves and matches a certificate is a separate deployment-specific
+    question. Replace the ad hoc pattern with an explicitly documented
+    DNS-name/IP policy and SAN verification; test one-character names,
+    IPv4/IPv6 support as applicable, malformed and nonexistent names without
+    broadening the existing trust boundary.
+24. **F24 — token length checks disagree between agent and web.** The
+    agent play checks at least 32 printable ASCII characters, and the agent
+    app has no upper token-length check, while the web playback client reads
+    up to 4097 characters and rejects a stripped token longer than 4096.
+    A controller-only
+    Ansible assertion with a synthetic 4097-character token passed the
+    agent play's two token expressions. A local Python check with synthetic
+    files showed both components accepted 4096 characters; the agent app
+    accepted 4097 while the web client rejected it. Neither deployed
+    component was started and no actual token was read. Define and test one
+    shared supported credential format and size, check both host-side files
+    before activation without revealing their content, and preserve existing
+    credentials under the deferred-rotation decision.
+25. **F25 — MPD service operations discover by filename, not config.**
+    [MPD setup](../../mpdrussoundpi/russound/mpdsetup.py) discovers every
+    user unit named `mpd_*.service`, excluding its two meta/supervisor names,
+    for start/stop. The supplied JSON is not consulted to select those units.
+    Cleanup also removes matching unit and config filenames without a managed
+    header check. Install writes configured units but does not remove older
+    ones. The separate `--killmpd` path also uses a name-pattern process kill
+    and logs a failure rather than re-raising it. Thus stale or independently
+    managed matching units can be stopped, started or deleted, and the kill
+    path has a broader process scope. A local invocation with two disposable
+    unit files, mocked `subprocess.run`, and a temporary user-unit directory
+    confirmed both a configured-looking and unrelated matching unit were
+    selected for start and removed by cleanup. The process kill was only
+    source-inspected; no actual service was touched. Restrict future
+    operations to verified owned units and
+    explicitly reviewed configured/stale identities; preserve unrelated
+    files and report any unowned collision. Test missing, stale and unowned
+    matching files in a disposable user-unit tree and preserve egress
+    drop-ins through approved migrations.
+26. **F26 — private DNS resolver exception is UDP-only.**
+    [Egress rule generation](../../mpdrussoundpi/russound/playbackegress.py)
+    exempts configured resolver addresses on UDP port 53 before rejecting
+    blocked destination networks; it does not exempt TCP DNS. A local
+    `ruleset()` probe using synthetic private IPv4 and IPv6 resolvers
+    confirmed both are in the blocked sets and only have UDP exceptions.
+    TCP fallback to such resolvers can therefore be rejected by the generated
+    rules; no nftables rules or live DNS requests were executed. An initial
+    probe used a brittle expected CIDR representation and failed; the
+    corrected check tested membership in the actual blocked networks.
+    Review and test an explicit narrowly scoped TCP/UDP DNS policy, including
+    private resolvers, without broadening unrelated egress; physical/network
+    validation remains S5.
+27. **F27 — proxy CIDR dictionary passes sequence checks.** Ansible treats a
+    dictionary as a sequence. A local fixture using the proxy play's actual
+    assertions confirmed that a dictionary whose key resembles a CIDR passes
+    them; rendering the real Caddy template then fails when it concatenates
+    the dictionary with a list. The failure was deliberately rescued and
+    asserted in the fixture; no target was contacted. The real play writes
+    directories and may generate a certificate before rendering the Caddyfile.
+    Require a typed list of individually validated IP networks before target
+    mutation and test dictionaries, strings, empty lists and invalid members.
+28. **F28 — other CLI mode combinations silently discard options.**
+    [Supervisor](../../mpdrussoundpi/russound/mpdsupervisor.py) accepts
+    `--initialize --once` but exits after initialization; the
+    [egress CLI](../../mpdrussoundpi/russound/playbackegress.py) accepts
+    `--wait` alongside installation parameters and ignores them. These are
+    source-inspected branches, not live invocations. As with F20, make
+    exclusive actions explicit, reject conflicting combinations with clear
+    errors, and retain documented single-action commands. Test with mocked
+    service/firewall calls to prove rejected options do not change state.
+
+### S0 simplification: one owner and an honest effective value
+
+The rework must make common choices easier, not add another independently
+editable copy of each setting. The following are requirements for the
+existing D1–D9 contract, not claims about the current plays or a proposal to
+silently remove supported interfaces:
+
+| Operator decision | Authoritative input and conflict handling | Required regression |
+|---|---|---|
+| Placement and gateway | One explicit deployment choice determines managed, external or dummy gateway and the corresponding web endpoint. Audio-only and web-only operations do not acquire another component. Keep gateway transport/device settings relevant only when managed. | Test each layout and rejected contradictory inputs, including F13 and an existing container gateway. No unrelated service or device is touched. |
+| Effective endpoint | Deployment-selected endpoint is visibly distinguished from the saved editor configuration; retain the saved value so removing an override reveals it. An explicit override is not silently replaced by a default or an uncontrolled Compose shell value. | Test F5/F17, serial-to-TCP, host-only/port-only, blank/invalid values and source reporting through real runtime and editor/API paths. |
+| Listener and verification | Distinguish the host-published web port, process bind and internal gateway port. Derive checks from the selected listener and show HTTP, controller and playback checks separately. | Test F18, port conflicts and health check against the intended process; HTTP alone never reports controller success. |
+| Agent and proxy | Treat agent listener and proxy upstream as one coordinated connection; make read-only versus write permission explicit at both gates. A staged change is not presented as active. | Test differing ports, F11/F19, one gate enabled, both enabled and stale running configuration; test TLS, authorization and denied sources. |
+| User, paths and units | Resolve account identity and supported paths once; show generated destinations and required restarts. Eliminate or reject misleading unit and environment overrides, with a compatibility notice rather than silent reinterpretation. | Test F14–F16 and the actual installed/running unit, including distinct SSH and deploy accounts. |
+| Images and reruns | Use the selected compatible pinned pair and ordered Compose inputs as the deployment identity; a normal rerun does not mean an update or a fallback to a different image. | Test F3/F4/F9 and shell/override conflicts, explicit update and unavailable prior artifacts. |
+| Boolean and list inputs | Accept documented typed values and explicitly supported CLI spellings; reject invalid or ambiguous inputs before mutation. Keep secrets in protected files, not additional configuration copies. | Test F1/F8/F11/F12 with omitted, typed, string, malformed and empty values through real templates and consumers. |
+| Logging and audit | A clear profile controls normal diagnostics; protocol audit is a separate explicit opt-in. Show effective state and protect logs; existing audit is changed only under the agreed migration boundary. | Test F2/F6/F10, false/true debug precedence, retained security events, rotation, redaction and migration backup. |
+| Staging, activation and recovery | Name operations by their actual effects. A start/activate false value must not imply a no-write preview; preview must be genuinely non-mutating and interruption requires approval. | Test F20, changed files, active process versus staged config and recovery after partial failure for agent, proxy, egress and audio. |
+
+Where existing flags cannot express the agreed precedence (for example
+`--debug` has no explicit false), retain compatibility for existing
+invocations and specify an unambiguous false override before claiming the
+new precedence applies. Do not silently reinterpret legacy flags, introduce
+automatic credential rotation, or replace state with seed values. Document
+unsupported or deprecated settings and migration steps alongside their
+replacement. The actual choice of a new operator interface and the technical
+implementation remain subject to the existing design and test gates.
+
+#### Implementation sequence and operator experience
+
+The table below converts the inventory into work for S2–S4. It does not
+authorize a cutover or commit to a new command syntax.
+
+| Step | Implementation outcome | Completion evidence |
+|---|---|---|
+| 1. Reduce the questions | For an ordinary deployment, ask for target, dev/release/local mode and managed/external gateway. Ask for an external host only for external mode, proposing port 6666; ask for serial device only for managed hardware. Playback integration, trust and DNS resolvers appear only when that separately managed component is selected. Defaults and impact are visible. | Table-driven tests across all agreed placements: irrelevant options are not required, conflicting supplied values fail with a useful field name, and no secret values enter output. |
+| 2. Resolve once | Normalize typed values and document supported legacy spellings; resolve account, paths, gateway endpoint, agent/proxy ports and image identity once per operation. Derive generated environment and units from that result; reject inconsistent duplicate inputs instead of maintaining multiple independent copies. | Use focused tests for representative defaults, overrides, conflicts, invalid values and high-risk boundaries. Exercise real Ansible inventory/extra vars and downstream consumers for affected paths; expand coverage when new failures are found. |
+| 3. Preview and preflight | Show target, component scope, selected source/digests, effective endpoint and provenance, relevant paths, active versus staged changes and expected restarts. Validate types, serial access, identity, source, paths, image/channel, credentials and network syntax before target mutation; do not treat preview as Ansible check mode. | Verify no mutation for representative invalid cases and preview. Exercise known findings through actual consumer paths where applicable; test systemd/Compose escaping and no secret disclosure. |
+| 4. Apply only the chosen scope | Separate web, gateway and playback ownership; use pinned images for normal reruns, preserve state/credentials, stage changes and only activate approved services. A normal rerun is neither an update nor credential rotation. | Disposable integration tests verify exact generated files, service operations and active configuration; inject failures and confirm unrelated services/data stay unchanged. Cover F9/F11–F20 and F24; verify cross-host routing separately at S5. |
+| 5. Replace the confusing surface | Publish one concise operator guide with supported choices, defaults and examples; list advanced/legacy mappings separately with actionable diagnostics for unsupported or conflicting old options. Correct misleading current guides now, and retire legacy options only with a documented compatibility/deprecation decision. | Run examples through the actual supported entry points and review rendered results; verify old valid invocations, explicit migration errors and removal of stale instructions. |
+
+The implementation must carry F2's existing Waitress/debug fix forward and
+apply F3/F4 release/source constraints rather than treating those findings as
+configuration-validation bugs. The matrix is a regression backlog, not a
+requirement to expose every legacy Ansible variable as an operator option.
+Do not silently remove advanced capabilities that are needed for supported
+layouts; document whether each remains supported, is derived, or needs a
+separately approved replacement.
+
+### S0 recheck: task selection and guide comparison
+
+On 2026-11-13 all seven current playbooks passed controller-side Ansible
+syntax checks. A separate `--list-tasks` comparison showed that the audio
+play invoked without tags selects the same listed tasks as `--tags init,new`;
+`--tags update` selects the dynamic update include, whose source performs an
+apt cache update and `dist` upgrade. These are selection/syntax checks only:
+conditions, dynamic included tasks, handlers, permissions and target effects
+were not executed. The documented staging command explicitly passes
+`mpd_russoundpi_start_playback=false`; it still stops/reconfigures audio and
+MPD as recorded above.
+
+Another `--list-tasks` check explicitly selected `init,new` and listed the
+native ser2net copy/start tasks (F13). A static enumeration of the seven
+plays' `vars` sections found 71 declarations across the plays (including
+repeated names), all represented by the entry-point matrix above. Required
+inputs with no default, generated facts and other Ansible precedence layers
+are separate; enumeration does not validate their types, downstream rendering
+or behavior and does not by itself close the per-setting audit.
+
+On 2026-11-13 the per-parameter section was cross-checked mechanically
+against all 71 play-level declarations; none was missing. A controller-only
+fixture reproduced the Docker play's first four preflight expressions and
+rendered the actual environment template (F21/F22). `docker compose config`
+separately confirmed that a blank host and nonblank port reach the rendered
+web environment; a local runtime resolver check established the serial-to-TCP
+effect. The Ansible token check and local agent/web test used synthetic
+credentials only (F24). Existing deployment workflow and agent deployment
+suites passed **11 and 9 tests**, respectively; those tests are largely
+static and do not prove the fixes or a live deployment. No service was
+started. Other per-parameter behaviors above are source-inspected unless
+explicitly identified as a probe, and the future tests are still required.
+
+The subsequent S0 lifecycle review inspected all seven plays' writes,
+ownership and service transitions, the audio and MPD generators, CLI branch
+order, runtime log initializers, and the main README/playback/headless guide
+commands. The generated-file table above records known modes and expressly
+marks environment-dependent metadata rather than guessing it. README
+endpoint wording and the headless MPD stop warning were corrected; F25–F28
+record additional findings.
+
+Controller-only Ansible 2.21.5 probes rendered the actual agent, proxy,
+egress and native web templates using synthetic values, tested a two-resolver
+list, representative bad paths, empty/invalid resolver shapes, and numeric
+casting. A second fixture modeled real play defaults and a synthetic
+`set_fact`: inventory lost to play-level derived home, environment mapping
+and additional-CIDR list, while extra vars won for those fields, a required
+resolver list and the derived UID. These are representative precedence cases,
+not actual target facts or proof of every permutation. A deliberately rescued
+template failure established F27; Ansible's zero exit in a rescued play is
+not evidence that the rendering succeeded.
+
+The existing local suites for MPD setup, audio setup, supervisor and egress
+passed **11, 31, 9 and 7 tests** respectively. Their simulated failure
+messages are expected test output. All seven playbooks passed syntax checks
+again. These results do not prove idempotence, target ownership, complete
+configuration validation, firewall behavior or physical playback.
+
+The README's two web play commands still encounter F1 unless a nonempty agent
+list is provided, and its published-image example cannot reproduce the Pi's
+third outage override (F9). The playback guide correctly distinguishes the
+controller-fetched certificate from a separate web host's secrets and warns
+that an agent-only install can replace source or token without restarting the
+active process. The proxy also writes and validates configuration and can
+create a certificate even when `playback_proxy_start` is false; that flag
+gates service activation, not all changes. The agent play creates its user
+unit directory with mode `0700` even if it already exists, which can change
+the directory's prior permissions. These observations are not proof of
+safe idempotence or successful deployment.
 
 ### Remaining work and disposition
 
 | Item | Next gate | Required evidence or result |
 |---|---|---|
-| Current configuration matrix and precedence | S0/S1 | Review remaining fields and malformed/empty cases against the agreed runtime precedence; decide necessary exceptions and validate intended Ansible variables, not just the four sampled. |
+| Current configuration matrix and precedence | S1/S2, then S3/S4 | Use the source-level table and known exceptions for design and focused compatibility tests. Existing probes cover selected cases, not every variable/type or downstream consumer. |
 | Audio logging and Python environments | S2/S3 | Remove import-order-dependent logging, specify reproducible dependencies and rehearse a separately created isolated audio environment; preserve the active venv until a verified, separately approved transition. |
 | Earlier registry and proxy work | S2/S4 | Reconcile each feature with pinned images, the outage override, CIDR validation and safe cutover. Add executable regression coverage before reuse. |
 | Running Pi image, state, secrets and generated files | S2, before any cutover | Capture an approved private, consistent backup and exact deployed identities; inspect ownership and compatibility, including venv/system dependencies, MPD drop-ins and audio fragments. Do not equate this inventory with a backup. |
@@ -684,25 +1160,30 @@ recreation or a service restart. Sources:
 | Separate-host authenticated routing, hardware and audio | S5 | Test representative deployments with separately provisioned credentials, TLS and actual peer/CIDR, then controller and playback readiness. Current unauthenticated LAN probe is not a pass for this gate. |
 | Migration and rollback | S2/S5 | Rehearse on isolated data, verify version/schema compatibility, and obtain separate Pi maintenance approval. On failure stop and ask, rather than automatically restoring. |
 
-Still open before S0 exit: finish verifying individual Ansible/inventory
-override cases, CLI actions, logging and generated-file ownership/restart
-effects beyond the examples above; the field tables do not establish that all
-deployment paths have equivalent behavior. Verify an authenticated
-separate-host web deployment and other supported network paths during S5;
-compare installed dependencies and generated audio assets before migration,
-and finalize how earlier local work is incorporated. Record
-malformed/empty behavior and exceptions for unresolved entries. Compare
-remaining guide claims with supported commands and record discrepancies. S0
-remains open until those items and the matrix receive review.
+**S0 disposition, 2026-11-13:** The operator accepted the existing inventory
+and representative probes as sufficient and chose to stop further exhaustive
+analysis. S0 is closed on that basis, not because every setting, combination,
+ownership or actual target effect has been verified. Carry the known findings
+into the design and focused implementation regressions; investigate and fix
+newly discovered issues as they arise. Unknowns that affect a proposed change
+must still be checked before that change, especially before a live cutover.
+This decision does not waive backup, approval, safety checks, or later S5
+acceptance.
+
+Authenticated separate-host routing, physical hardware/audio and a
+six-hour observation are S5 acceptance, not prerequisites for an honest
+source-level S0 inventory. Compare installed dependencies and generated audio
+assets before migration, and finalize how earlier local work is incorporated
+at S2/S4. None of those later gates is satisfied by this inventory.
 
 </details>
 
 ## S1: decisions and approval gate
 
 The operator has agreed the following direction. It is a design contract,
-not authorization to deploy or restart services. S1 remains open until the
-remaining details, compatibility impacts and outstanding S0 evidence are
-reviewed; S2 specifies and rehearses the mechanics.
+not authorization to deploy or restart services. S1 is closed as an
+implementation baseline at the operator's direction; remaining details and
+compatibility impacts are handled during implementation as they arise.
 
 | ID | Topic | Agreed direction and remaining details |
 |---|---|---|
@@ -714,13 +1195,36 @@ reviewed; S2 specifies and rehearses the mechanics.
 | D6 | Migration and rollback | **Agreed:** a failed migration stops and reports changes; the operator decides whether to restore, rather than automatic rollback. Require a verified private backup with an off-Pi copy before Pi cutover. Encryption is not required for now; retain backups until explicitly removed. Verify compatibility before restoration. Pi cutover requires separate approval. **Remaining:** define backup verification, data-schema rules and runbook; coordinate cross-version rehearsal with [image updates](./general_idea_user-triggered-image-updates.md). |
 | D7 | Python dependencies | **Agreed:** use separate component dependencies and bounded version ranges, not fully resolved locks. Do not unconditionally upgrade packages on ordinary reruns. Prepare a separate isolated audio environment and retain the working one until a verified, separately approved switch. **Remaining:** define and test supported ranges, platform coverage and security-update procedure; fresh installations can resolve different versions over time. |
 | D8 | Deployment record | **Agreed:** use a private versioned target-side record under `/var/lib/mpdrussoundpi/deployments/<deployment-id>/`; record committed and pending selections, block normal reruns after interruption or unreadable state and require explicit recovery. No secrets belong in the record. **Revised by operator 2026-11-13:** replace the previously agreed long-held OS lock with a persistent host-wide reservation and operator-led recovery. The design is not implemented or validated. |
-| D9 | Agent updates and credentials | **Agreed:** stage agent changes separately; do not modify active agent files or credentials until explicit activation. Credential rotation is a separate coordinated agent/web operation with visible interruption and recovery. **Remaining:** design atomic activation, token transition, failure handling and tests; current play does not provide this guarantee. |
+| D9 | Agent updates and credentials | **Agreed:** stage agent changes separately; do not modify active agent files or credentials until explicit activation. **Revised by operator 2026-11-13:** cross-host agent/web credential rotation is deferred from this rework; do not claim the host-local reservation coordinates hosts. The current agent play does not provide staged activation or safe rotation. |
 
-## Preliminary S2 design: cleanup and deployment
+### Design decision and impact summary
 
-This draft translates agreed directions into implementation work; it does not
-close S0/S1 or approve a live cutover. Resolve outstanding compatibility and
-configuration cases before finalizing it.
+D1–D9 above remain the authoritative operator decisions. The following
+records their consequences and the later design choices made for this plan;
+none asserts that the proposed tooling already exists.
+
+| Decision | Impact |
+|---|---|
+| Hybrid, separate host, external gateway and dummy remain supported (D1) | Web-only work leaves playback services alone; managed gateway is a separate overlay and dummy never counts as physical acceptance. |
+| Controller builds and explicit image pins (D2–D3) | Local builds require clean identified source and verified transfer; normal reruns keep exact pins; explicit updates do not mix revisions. Production remains blocked without a stable release. |
+| Runtime precedence and validation (D4) | Explicit CLI, environment, saved config, then default where applicable; optional blank is unset, invalid input fails; actual empty agent list renders unset without accepting malformed data. |
+| Logging and audit (D5) | Bounded dev/production logging and redaction; audit is off by default and migration disables an existing audit only after the operator is informed and backup is taken. |
+| Migration and backup (D6) | Preview and maintenance approval precede any writer interruption; verify a private off-Pi backup including the Pi's local-only image and actual overrides. Recovery is operator-approved, not automatic. |
+| Component dependencies and agent staging (D7, D9) | Isolated bounded dependency environments; retain the working audio environment; agent source and credentials remain active until approved activation. Cross-host credential rotation is deferred. |
+| Host-wide persistent reservation (D8) | Participating operations serialize across deployment IDs; a crash normally leaves a marker for manual investigation. No fence against manual tools, daemon work or the exceptional absent-marker outcome. |
+| Approved private input snapshots | Compare source bytes and permissions before disruption and again before apply. Services consume verified stable installed copies, not temporary staging; uncooperative live writers block unsafe overwrites. |
+| Apply, checks and finalization | Required tasks, handlers and awaited jobs must succeed with a complete structured result; checks follow apply, and finalization is separate and at most once. Lost responses and durability failures are unknown, not success. |
+| Retry and loop result identity (self-review, 2026-11-13) | Distinguish intermediate attempts and individual loop items from terminal outcomes; unknown or incomplete evidence blocks finalization. S4 must prove actual callback behavior or prohibit unsupported required patterns. |
+| MPD and egress ownership (self-review, 2026-11-13) | Both operations target validated, owned configured units and drop-ins; unowned or ambiguous legacy assets require explicit adoption or migration. Egress remains separately approved and must not weaken existing protection silently. |
+| Acceptance and observation | Report unavailable physical checks as incomplete; software deployment may be recorded separately, but hardware acceptance remains open. A six-hour observation is a later separately approved activity, not a startup test. |
+| Proportionate inventory (operator decision, 2026-11-13) | Close S0 with documented unknowns rather than pursue exhaustive permutations. Address known defects with focused regression tests; investigate new issues as they arise without relaxing migration safeguards. |
+| Preserved legacy and staged gates | Current playbooks and live Pi are not made safe by this design. S1 and S2 are closed as a baseline; S4 integration and S5 live acceptance remain separate. |
+
+## S2 design baseline: cleanup and deployment
+
+This design translates agreed directions into implementation work and does not
+approve a live cutover. Resolve material compatibility and configuration cases
+as they arise before the affected changes are made.
 
 | Area | Proposed design | Evidence required before accepting |
 |---|---|---|
@@ -752,7 +1256,54 @@ nondefault settings:
 | Runtime backend endpoint | Ansible-generated environment can override saved endpoint fields independently, and invalid ports currently fall back. | Apply agreed CLI > env > saved config > default where applicable, with blank optional values unset and malformed explicit inputs failing with actionable migration guidance. Test complete and partial overrides and removal without rewriting saved values. |
 | Container-published vs internal web port | Compose interpolates the published port but sets the process port to 8000. Native web passes CLI port. | Keep host and container listener concepts separate; test absent, blank, malformed and boundary values, host collision preflight and health checks against the actual listener. |
 | Deployment variables | Several play-level defaults override host inventory values (F8); extra vars override both. | Put user-facing defaults in a lower-priority source appropriate to the chosen entry point. Test each supported host override, extra-var precedence and invalid/blank values through rendered downstream files. |
+| Agent/proxy operation flags | Ansible key-value `-e ...=false` is a nonempty string and both current templates treat it as true (F11). Typed JSON false and omitted defaults render read-only. | Normalize explicitly supported true/false inputs before templating; reject unrecognized values. Test omitted, typed and key-value true/false end to end; do not activate or rotate credentials without approval. |
+| Egress DNS resolvers | The egress play checks only defined/nonempty input; a string is iterated character by character in the unit template (F12). | Require a nonempty list of valid IP literals before target mutation; reject strings, empty lists and invalid members. Test rendered argv and errors without restarting the actual filter. |
 | Protocol-audit setting | Saved config and example seed can enable audit without an explicit new-install choice. | New installs default off. On an approved migration, announce and disable existing audit only after backup; later explicit opt-in survives reruns. Test file preservation and migration recovery. |
+
+#### Implementation design for S0 findings
+
+These are proposed corrections within the existing staged design, not an
+instruction to run legacy plays on the Pi. Keep the operator surface small:
+the normal inputs remain deployment intent, target, gateway choice, and
+layout-specific prerequisites. Advanced paths and policies should be derived
+where possible; legacy inputs must either map unambiguously or fail with
+guidance. Do not silently drop supported layouts or settings.
+
+| Findings | Proposed implementation and compatibility boundary | Focused evidence |
+|---|---|---|
+| F1, F5, F7, F17, F21: agent and backend configuration | Normalize the actual empty agent list to unset in both web templates; reject malformed lists. Resolve the selected gateway and explicit overrides once, show effective value/source, preserve saved JSON, and reject blank external host or invalid port before changes. Keep partial runtime overrides compatible with D4 and do not rewrite unknown saved fields. | Exercise no-agent, valid-agent and malformed-agent cases through real templates and parser. Check external blank host, default/nondefault port, saved serial and TCP, override removal, and editor/API reporting. |
+| F2, F6, F10: logging and audit | Retain Waitress in debug mode; initialize logging at entry points, not helper imports. Apply D5 profiles and preserve audit during ordinary reruns; inform and back up before disabling existing audit during approved migration. | Test debug server choice, import order, rotation/redaction and audit default/approved migration. |
+| F3, F4, F8, F9, F22: inputs and image identity | Place operator defaults below inventory priority, validate references and resolve compatible digests before disruption. Preserve ordered live Compose inputs and local-only image in backup; ordinary reruns reuse pins, explicit update changes them, stable mode fails without a release. Do not reuse the current two-file play as a no-change Pi redeploy. | Test actual inventory and extra vars, empty/whitespace refs, offline pins, failed resolution, external gateway without gateway image, and the Pi's extra override in a disposable fixture. |
+| F11, F12, F19, F23, F24, F27: agent, proxy and egress validation | Normalize supported booleans and exact integer ports, require typed IP-literal resolver lists and typed IP/network CIDR lists, and validate a documented DNS/IP hostname policy. Coordinate agent listener, proxy upstream and both write gates. Validate credentials against both consumers using protected files; preserve existing token and defer cross-host rotation. Stage validation before writes or service changes. | Reproduce string `false`, decimal/bool port, bad IP/CIDR, CIDR dictionary, single-character hostname and token-size boundary using actual consumers/templates. Test read-only/write gates and reject failures without mutation or secret disclosure. |
+| F13–F16, F18: component and service identity | Separate playback setup from gateway ownership. Resolve deploy account, home and primary group once; generate a consistent manager/service environment and one unit identity. Reject unsupported legacy path overrides with migration instructions. Derive a web readiness probe from its bind and separately report controller readiness. | Test container/external gateway isolation, distinct SSH/deploy users, custom paths and mismatched units, and loopback/wildcard/specific binds. Confirm a web-only operation does not touch playback. |
+| F20, F28: ignored CLI options | Reject mutually conflicting action combinations with an actionable diagnostic before service or firewall operations; keep intentional install-plus-one-action and documented single-action commands. Inventory currently used invocations and describe compatibility changes instead of silently changing them. | Test combined and single actions with mocked service/firewall operations; failures must not mutate state. |
+| F25: MPD and egress ownership and scope | Use the same validated output IDs and ownership checks for MPD setup **and** egress; neither may discover its mutation targets by a filename pattern. Stop, start, regenerate, remove or attach egress drop-ins only to established owned units. Legacy files without a marker require explicit inspection and approved adoption or migration; never auto-delete stale or unowned units/drop-ins. Replace or constrain the broad kill action and report failures. Existing playbooks retain their current behavior until replaced. | In a disposable user-unit tree test configured, stale, unowned and colliding units plus egress drop-ins. Prove unrelated units are untouched by both setup and egress, including on rejected adoption or service failure. |
+| F26: DNS TCP fallback | Proposed egress correction: for each explicitly configured resolver IP, allow both UDP and TCP destination port 53 before the blocked-network rules, scoped to the existing protected MPD cgroup. Do not allow other ports or destinations, weaken the remaining public-only rules, or alter unrelated firewall tables. Apply only as a separately approved egress change; do not silently modify the running filter during web deployment. | Inspect generated IPv4/IPv6 rules with private resolvers, unrelated blocked addresses and non-DNS ports; test failures and preservation of other rules on a disposable Linux host. Verify actual DNS fallback and playback separately at S5. |
+
+Use the finding-specific tests above as the minimum for the changed
+behaviors, not a requirement to test every permutation before implementation.
+For unknown conditions discovered during implementation, stop before unsafe
+mutation, investigate and add a focused regression. Resolve any material
+compatibility or policy choice when needed; this inventory does not imply
+that these corrections or their tests already exist.
+
+For egress, resolve the selected playback account and configured outputs, then
+validate their exact unit identities, effective systemd paths and ownership
+before creating files, changing rules or restarting anything. Check existing
+drop-ins as well as units; an unowned, colliding, overridden or ambiguous
+target blocks the affected operation with an actionable diagnostic. A
+configured legacy unit or drop-in may be used only after explicit inspection
+and approved adoption or migration. Report stale or unrelated matches without
+changing them. Preview the exact affected units and filter change; egress
+activation remains a separate approved operation, never a side effect of web
+deployment. Do not remove protection from an already protected instance merely
+because it is no longer selected; report and resolve such drift explicitly.
+In disposable tests, cover matching unrelated units, missing configured units,
+unit or drop-in collisions, effective-path overrides, legacy adoption refusal,
+and failures before and during activation. Assert that preflight failures
+change no files or rules, and that partial activation is reported for
+investigation rather than presented as success or automatically removing
+existing protection.
 
 Common host settings such as port 8000 and the managed gateway's port 6666
 remain defaults, not mandatory fields. Require explicit serial device access,
@@ -904,6 +1455,10 @@ The reservation must remain after controller, SSH or target process loss,
 including across reboot. Manual Docker, systemd and file changes bypass it.
 Restrict permissions, reject symlinks and unsafe ownership, document the
 supported local filesystem, and surface all creation and persistence errors.
+This protects one target host only. Separate-web-host layouts remain supported
+for deployment and routing, but coordinated credential rotation across hosts
+is outside this rework. Do not start a cross-host rotation through these
+entry points or treat a reservation on one host as protection for another.
 
 1. Preview the actual state and obtain the required approval, including any
    backup interruption. Atomically create the host-wide reservation, then
@@ -923,15 +1478,19 @@ supported local filesystem, and surface all creation and persistence errors.
    pending, old artifacts and backup. A controller or client disappearing
    does not cancel already dispatched remote or daemon work. Do not rely on
    process death, timeouts or a single snapshot to establish completion.
-4. **Separate finalization:** the controller starts a final target-side
+4. **Separate finalization:** the controller starts a single final target-side
    finalization operation only after the apply invocation has returned
-   successfully and all required checks have completed successfully. It
-   checks the reservation and pending operation identity, atomically commits
-   the verified selection and clears pending, then removes only its own
+   successfully and all required checks have completed successfully, as
+   specified below. It checks the reservation and pending operation identity,
+   atomically commits the verified selection and clears pending, then removes
+   only its own
    reservation as its last target action. No deployment task, handler or
    background work may be queued to run after finalization. Each record and
    reservation update must use appropriate file/directory `fsync` and surface
-   errors; test on the supported filesystem.
+   errors; test on the supported filesystem. If reservation removal succeeds
+   but its directory `fsync` fails, the reservation may already be absent:
+   report an uncertain outcome and follow the exceptional recovery procedure
+   below; do not claim other entry points remain blocked.
 5. A lost finalization response is **unknown**, not failure or success. If
    finalization was already dispatched, it may finish after the controller
    disconnects and legitimately clear the reservation. Inspect the record,
@@ -946,6 +1505,166 @@ operations, not a daemon fence or proof of a stopped process. It is not
 automatically released when SSH disconnects. Recovery must not begin while
 prior work may still be active; an unresolved reservation intentionally
 blocks ordinary operations even when the owner is gone.
+
+##### Protected inputs and preview drift
+
+Before approval, identify all configuration and protected inputs actually
+needed for the selected operation, including credential, certificate, trust
+and generated environment sources. Create an operation-specific private
+snapshot on the controller and/or target as appropriate; protect it like the
+originals, check ownership, permissions and safe file types, and reject
+unsafe paths or symlinks. This private staging is preparation, not a change
+to active services or configuration. Report its purpose and retain it only
+as needed for the operation or investigation; remove the private staging
+files according to the documented retention policy, without promising
+forensic erasure. Restrict writes to the staging files for the lifetime of
+the operation, verify any copy transferred between controller and target
+against the approved snapshot, and stop if snapshot integrity is uncertain.
+
+The redacted preview identifies the selected inputs and intended use without
+printing sensitive paths, contents, raw URLs, secret hashes or low-entropy
+credential fingerprints. Approval covers these staged bytes, not a mutable
+path alone. After reservation and before the first disruption, compare each
+source to its private snapshot and revalidate ownership and permissions,
+then repeat the check immediately before apply after backup. If any input is
+missing, unreadable, replaced or changed, stop and request a new preview and
+approval. Do not silently substitute the new content. The apply step consumes
+the approved snapshot, rather than rereading a mutable source;
+verify any resulting installed copy against it without disclosing contents.
+The comparison is private and must not expose digests in logs, the deployment
+record or error messages.
+
+The snapshot is temporary **deployment input**, not a runtime mount, unit
+argument, secret-file reference or service dependency. For each file actually
+needed at runtime, install an approved copy to a stable, private target path
+with the intended owner and permissions before service start; verify the
+installed bytes and access from the service's execution identity. Render
+Compose mounts and native units against that stable path, not the staging
+directory. Preserve an existing operator-owned file when no replacement is
+necessary; never rewrite it merely to satisfy staging. Do not remove the
+staged copy while apply or recovery may need it; after verified completion or
+explicitly resolved recovery, delete only the operation's private staging
+files. Test in disposable fixtures that a restart works with persistent
+copies after staging cleanup; do not introduce an additional live service
+restart solely for that test.
+Backups of earlier files remain subject to the separate retention policy.
+If staged content changed intentionally during migration, explicitly preview
+and approve the transformation, validate the resulting bytes and use those
+bytes consistently; do not quietly substitute an old snapshot.
+
+Mutable live state is not frozen by the reservation. Do not overwrite
+operator-managed or application-written configuration based on a snapshot
+unless its writers are coordinated as part of the approved interruption.
+Recheck immediately before a required write, preserve the original in the
+backup, and stop on detected drift. A comparison alone is not an atomic
+compare-and-swap against an uncooperative writer: if writers cannot be
+controlled or a safe write cannot be guaranteed, leave that change blocked.
+This staging and drift policy must be tested for source changes between
+preview, approval, backup and apply, including changed permissions and
+unreadable files; no secret contents may enter test output or logs.
+
+##### Apply completion and finalization boundary
+
+The implementation must treat apply and finalization as separate invocations.
+Apply completes all required Ansible tasks and handlers and waits for every
+deployment-related asynchronous job it launched; it must not use detached
+fire-and-forget work. Long-running application services are intended
+postconditions, not background deployment jobs. Final required task failures,
+unreachable hosts, timed-out jobs, failed handlers or failed checks prevent
+finalization even if a playbook is otherwise configured to ignore or rescue
+an error. A failed intermediate attempt of an explicitly bounded retry is not
+itself a final task failure; the retry and loop rules below still apply. A
+deliberately skipped optional check is recorded as incomplete; it must not be
+reported as a pass. Independently run the applicable software
+and routing checks after apply, and record their outcome before finalization.
+For the new deployment entry points, required tasks and handlers must not
+use `ignore_errors` or recover into success after a required failure. Flush
+handlers before a final required completion task; do not schedule subsequent
+deployment tasks, handlers or detached work. The controller collects a
+structured per-operation result identifying the target, operation, required
+task/handler outcomes, async-job completion and independent checks. Missing,
+duplicate terminal, failed, rescued or unreachable required outcomes are
+failure or unknown, not success. A zero exit code alone is insufficient. The result is
+created only after the play exits, never by a task before handlers finish;
+the controller verifies the expected required outcome set and check results
+before invoking finalization. Use an enabled Ansible notification callback
+with a controller-side runner: capture allowlisted events to a fresh,
+operation-specific private stream, and validate it after the process exits.
+The callback must catch event-recording errors, retain a sticky failure flag,
+and include that flag in a final end-of-play record; an absent or invalid
+terminal record, missing events or sticky failure blocks finalization. Do not
+rely on Ansible to fail the play for a callback exception: the local rehearsal
+below showed it can warn and still exit zero. The runner must treat callback
+load/configuration failure, truncated output or an operation/host mismatch
+as unknown. Test this mechanism end-to-end in S4 before use; if the result
+cannot be obtained reliably, fail closed rather than dispatch finalization.
+
+The expected result set is derived from the approved intent and target host,
+including each conditionally required check. Required task and handler
+identifiers must be stable and unique within that invocation. A handler that
+was not notified is marked `not-needed`, not `passed`; a notified handler
+must finish successfully. Each required item records `passed`, `failed`,
+`not-needed` or `unknown`, with `not-needed` allowed only when its approved
+condition does not apply or an empty loop is explicitly allowed. Include the
+operation ID, host, invocation end,
+task/handler events and the independent checks; incomplete, duplicate terminal,
+unexpected or mismatched identities are rejected. The callback or runner must
+capture and signal event-stream or reporting failures. The result remains
+non-secret and private; it is not an authorization token and cannot by
+itself prove a daemon is idle after a lost connection. Report optional
+physical acceptance separately as `passed`, `failed` or `incomplete`.
+It is not a required software-completion item when the approved preview
+explicitly permits deployment without a controller; it cannot then satisfy
+the S5 physical-acceptance gate.
+
+For a required task with bounded `until` retries, record attempts separately
+from its single terminal outcome. Intermediate unsuccessful attempts may be
+followed by success; a final failed, exhausted, unreachable, timed-out or
+missing outcome blocks finalization. A retry is permitted only where repeating
+the operation is safe; this does not authorize retries of uncertain apply or
+finalization. For a required loop, identify each expected item by a stable,
+non-secret operation-local identifier or ordinal, not by logging its value.
+Establish the expected item set from the approved intent and validated inputs
+before the task runs; if a dynamically derived set cannot be bound to that
+intent and independently checked, do not use it as required work.
+Record one terminal outcome per expected item, as well as the enclosing task's
+terminal outcome; all applicable items and the enclosing task must succeed.
+An approved conditional skip is `not-needed`, not success. Empty loops are
+`not-needed` only when explicitly allowed by the approved intent. Repeated
+events for distinct attempts or items are not duplicates; duplicate terminal
+outcomes for the same task or item, missing items, unaccounted retries or
+contradictory results are unknown and block finalization.
+
+The implementation must establish from actual Ansible callback behavior how
+retry, loop, handler and terminal events map to these identities and outcomes,
+including the expected item set, without leaking item values. If an event
+stream cannot establish that mapping reliably, prohibit that pattern for
+required work or fail closed; do not infer success from event counts. Capture
+only allowlisted non-secret fields and keep the result private.
+
+Dispatch finalization at most once per operation, only after those results
+are known. Disable implicit controller or transport retries for this
+non-idempotent invocation. Never infer successful completion from a dropped
+connection or automatically retry uncertain apply or finalization. If an
+apply or check outcome is uncertain, keep the reservation and pending record
+and follow manual recovery. A successful process return is necessary but does
+not prove every Docker daemon operation is complete: the implementation must restrict
+itself to operations whose client completion and postconditions it can
+verify, and leave unsupported or ambiguous outcomes unresolved. The
+finalization invocation verifies matching reservation and operation identity,
+records the checks, commits and then removes the reservation as above.
+
+S4 integration tests must use the actual Ansible/Compose entry points to
+exercise handlers, awaited asynchronous work, an injected failed or rescued
+required task, unreachable targets, failed checks, controller disconnection
+during apply and during finalization, and a delayed daemon operation. Assert
+that finalization is not dispatched before successful completion and that
+uncertain work never becomes a success-shaped result. These are acceptance
+requirements, not evidence that the present playbooks meet them.
+Include a retry that fails before succeeding, exhausted retries, a loop with
+distinct successful items, a failed item, conditional and empty loops, and
+missing, duplicated or contradictory terminal events. Confirm each yields the
+specified result and that no secret loop values enter the event stream.
 
 ##### Manual recovery checklist
 
@@ -981,27 +1700,59 @@ This is a design checklist, not a validated executable procedure:
    recovery is not supported. Restore compatible artifacts or reconcile the
    installation as approved; verify affected services, routing, data and
    remaining limitations. Atomically record the verified outcome, then remove
-   the matching reservation. If a step fails or remains uncertain, stop,
-   report it and keep normal deployment blocked.
+   the matching reservation. If a step fails or remains uncertain before
+   removal, stop, report it and keep the reservation. If removal may already
+   have succeeded, use the exceptional procedure below instead of claiming
+   an on-target block exists.
+
+**Exceptional absent-reservation outcome:** if removal succeeds but the
+following directory `fsync` fails, or the finalization reply is lost, the
+reservation may be absent and another entry point cannot reliably infer the
+uncertainty. The single operator must stop all participating controllers and
+other deployment commands, notify any other operators and prevent a new
+operation while investigating; no automatic host-side block is promised.
+Do not blindly recreate or delete a reservation while an earlier operation or
+finalization may still run. Once the operator establishes a safe point, acquire
+a new recovery reservation exclusively, recheck the record and actual state,
+then continue only with explicit recovery approval. If another operation has
+already started, stop and investigate both; the reservation does not fence
+either one. Restore storage reliability and repeat verification before
+resuming. If that cannot be established, leave the situation unresolved and
+escalate. This is a deliberate single-operator limitation, not a distributed
+exclusion guarantee.
 
 The checklist does not promise that every Docker interruption is recoverable
 from available evidence; some cases may require further investigation or a
 separately approved maintenance procedure. Never equate operator approval
 alone with proof that earlier work has stopped.
 
-##### S2 review and rehearsal exit criteria
+##### Implementation validation and rehearsal requirements
 
-Review the entry points, input mapping, image selection, reservation, record,
-backup and manual recovery sequence. The persistent reservation and separate
-finalization are proposed, not proven mechanisms. Before S2 closes, review
-their feasibility and unsupported interruption cases; earlier lock probes do
-not validate them. S4 must test the actual implementation on disposable Linux:
+The persistent reservation and separate finalization are proposed, not proven
+mechanisms. Assess their feasibility and unsupported interruption cases during
+implementation; earlier lock probes do not validate them. S4 must test the
+actual implementation on disposable Linux:
 simultaneous exclusive acquisition across deployment IDs; crashes before and
 after reservation creation, pending write, commit and removal; controller loss
 during apply and finalization; late finalization response; durability errors;
 partial changes; manual recovery; backup/restore; and redaction. Include a
 second controller and verify no deployment starts while a reservation remains.
+Also test the protected-input and finalization boundaries above, including
+runtime restart after staging cleanup and the absent-reservation error case.
 S5 retains separately approved Pi and hardware acceptance.
+
+**Readiness assessment, 2026-11-13:** S0 is closed with the limitations stated
+above; further exhaustive inventory is not a prerequisite for implementation. The
+snapshot-lifetime, absent-reservation and callback-failure gaps have specified
+behavior and small local probes. At the operator's direction, S1 and S2 are
+closed as a starting point for S3/S4, not as proof that the design works.
+The callback's sticky-error and retry/loop protocols, safe staging with actual
+consumers, supported filesystem durability and end-to-end backup/restore remain
+unverified. Investigate and fix material issues as implementation proceeds;
+do not bypass required tests, fail-closed behavior or cutover safeguards.
+Actual new entry points, Ansible/Compose fault injection and physical
+acceptance remain S4/S5 work and must not be claimed as passed by synthetic
+probes.
 
 #### Image and update flow
 
@@ -1048,7 +1799,7 @@ checks=web-http,gateway-tcp,controller,agent-if-configured
 | Config/state migration and restore | Unknown fields, secrets, SQLite consistency, permissions, local-only image and all relevant units/drop-ins survive; no unapproved overwrite or automatic rollback. |
 | Logs and dependencies | Exact profile/rotation behavior, redaction and write failures; fresh bounded dependency resolution and no unconditional upgrade on rerun. |
 | Routing/health | Separate web HTTP, gateway TCP, actual controller response, agent TLS/auth and audio; missing hardware is explicitly incomplete, not a pass. |
-| Agent staged update and token rotation | Active paths unchanged until activation; interrupted activation preserves evidence and prompts recovery, including old/new web and agent token state. |
+| Agent staged update | Active paths unchanged until activation; interrupted activation preserves evidence and prompts recovery. Cross-host credential rotation is deferred. |
 
 Run render and record/recovery tests on disposable data first, then an isolated
 Linux/Ansible integration environment. Pi/network/hardware acceptance and a
@@ -1056,6 +1807,37 @@ six-hour observation are later, separately approved operations; none is
 established by these proposed tests or by a documentation commit.
 
 #### Local rehearsal, 2026-11-13
+
+**Reservation and finalization design probes:** a disposable Linux container
+using cached `python:3.12-slim`, no network and a temporary filesystem ran
+six small model tests: 12 competing processes produced one reservation owner;
+owner exit and an incomplete reservation blocked another acquisition; a crash
+after commit retained the reservation; a wrong owner was rejected; and a lost
+reply after finalization could coexist with a committed record and no
+reservation. A later seven-test model exercised protected-content and mode
+drift, snapshot-to-installed-copy survival after staging removal, required
+result rejection, exclusive acquisition, owner exit, and a simulated directory
+`fsync` error after reservation removal. All passed. These models do not
+implement or validate production staging, callback/runner integration, real
+`fsync` errors or power-loss durability.
+
+A separate disposable local Ansible core 2.21.5 play awaited an asynchronous
+task, triggered a handler and deliberately rescued a failed task. The handler
+ran, but Ansible returned exit code 0 with `failed=0` and `rescued=1`. This
+confirms why exit status alone is insufficient; it does not test the proposed
+structured result or real deployment playbooks. A subsequent disposable
+notification callback captured the rescued task's failure, handler start and
+completion, and end-of-play event despite the zero exit. When its event path
+was deliberately inaccessible, Ansible printed callback warnings but still
+returned zero. An initial callback run also warned that unrelated files in
+the fixture directory were not plugins; the repeat isolated the callback.
+A second disposable callback caught an injected write error on the failure
+event and emitted a terminal `error` flag; without injection it emitted the
+failure event and a terminal `complete` flag. Both plays still exited zero.
+This tests the basic sticky-flag idea only, not the complete protocol,
+runner validation, dropped terminal records, multi-host identity, actual
+deployment or remote disconnections.
+All fixture files and containers were removed. None touched the Pi.
 
 A later disposable macOS controller-side probe used a separate Python
 `fcntl` lock holder and a real local Ansible play with two simulated tasks.
@@ -1140,7 +1922,8 @@ The temporary fixture and container were removed. The Linux kernel and
 filesystem belong to Docker Desktop, not the Raspberry Pi. Linux filesystem
 durability under power loss, actual reservation integration and daemon-side
 actions, multiple real controllers, image resolution, migration and restore,
-network routing and hardware acceptance remain unverified. Keep S2 open.
+network routing and hardware acceptance remain unverified. S2 closure does not
+turn these limitations into passes; address them in the applicable later gate.
 
 #### Docker client-loss rehearsal, 2026-11-13
 
@@ -1365,7 +2148,8 @@ This is the sequence to implement and rehearse, **not an executable Pi
 procedure**. Until all checks and approval exist, do not use it to switch
 the current installation.
 
-1. **Discover and preview:** read actual container image IDs, ordered Compose
+1. **Discover and preview:** snapshot protected inputs before presenting the
+   preview as described above; read actual container image IDs, ordered Compose
    files, mounts, runtime environment sources, installed native files, unit
    status, listener ownership and target architecture. Show a redacted
    before/after preview, including the Pi's local outage-fix web image and
@@ -1378,12 +2162,13 @@ the current installation.
    feasibility. Controller-side image preparation may run here; target-side
    image and deployment changes wait until approval, reservation and pending.
 3. **Approve the maintenance window:** before stopping any writer or making
-   deployment changes, obtain separate Pi approval for the preview, backup
+   deployment changes, obtain separate Pi approval for the snapshot-bound
+   preview, backup
    method, interruption scope and proposed candidate. If the backup result or
    other material facts differ from what was approved, pause and seek renewed
    approval before continuing. Acquire the host-wide reservation, recheck
-   drift and prerequisites, and persist pending before the first disruptive
-   action.
+   drift, protected inputs and prerequisites, and persist pending before the
+   first disruptive action.
 4. **Capture and verify the backup:** privately save web config/state,
    agent/admin config and installed sources, playback state, credential and
    TLS files, units and drop-ins, audio/MPD fragments, applicable egress
@@ -1411,7 +2196,9 @@ the current installation.
    passed. If all applicable software checks pass, the deployment selection
    may be committed with that limitation clearly recorded; S5 physical
    acceptance remains open until the controller is tested. Record follow-up
-   observation separately, never as an implied six-hour pass.
+   observation separately, never as an implied six-hour pass. Apply and
+   finalization are separate invocations subject to the completion boundary
+   above.
 6. **If interrupted or failed:** stop dispatching new work once the failure
    is detected; preserve pending, old artifacts and backup. Report observed
    services, image identities, known changes and uncertainty without secrets.
@@ -1429,25 +2216,25 @@ the controller connection. Test independently that no unrelated service,
 checkout or firewall rule changes. Real Pi adoption, restore and a six-hour
 observation require their own authorization and evidence.
 
-#### Agent activation and rotation boundary
+#### Agent activation and deferred rotation boundary
 
 Stage a candidate agent source tree and bounded-dependency environment in a
 separate private path; validate source identity and safe checks without
 writing the active installation or token. Explicit activation must report
-the agent restart and use the same pending/recovery discipline. A credential
-rotation is a distinct coordinated agent/web action: stage protected new
-credentials and trust, preview the expected interruption, activate with a
-defined order, verify authenticated requests from the actual web host, and
-retain the prior protected credentials until an operator-approved recovery or
-retirement. Do not promise zero downtime or simultaneous token validity; the
-current agent reads one token at startup. Test failures at every transition
-and report which side has which **credential generation identifier**, never
-the token. Do not alter the currently running agent during design or rehearsal.
+the agent restart and use the same pending/recovery discipline. Cross-host
+credential rotation is deferred from this rework, not implicitly covered by
+the host-local reservation. Preserve current credentials; do not rotate them
+or claim cross-host coordination as part of deployment. A future design must
+cover both hosts, interruption, recovery and authenticated verification before
+rotation is offered. The current agent reads one token at startup; do not
+promise zero downtime or simultaneous token validity. Do not alter the
+currently running agent during design or rehearsal.
 
 ### Cleanup sequence
 
-1. Complete the remaining S0/S1 input and compatibility review; keep the Pi's
-   currently running image, venvs, data and existing controller work intact.
+1. Use the S1/S2 baseline and resolve relevant input and compatibility
+   questions as they arise; keep the Pi's currently running image, venvs,
+   data and existing controller work intact.
 2. In S3, fix logging initialization and add focused tests before changing
    logging profiles. Specify and validate clean dependency installation in
    isolation, including the audio venv's currently inherited system packages.
@@ -1479,10 +2266,12 @@ the token. Do not alter the currently running agent during design or rehearsal.
 
 ## Configuration and precedence
 
-Inventory each actual setting across web, gateway, agent, audio/MPD, proxy and
-Ansible/Compose. For each, record owner, type, default, inputs, current and
-target precedence, validation, secret handling, restart requirements and
-whether it is user-editable. Distinguish:
+Use the S0 inventory across web, gateway, agent, audio/MPD, proxy and
+Ansible/Compose. For settings affected by a change, establish the relevant
+owner, type, default, inputs, current and target precedence, validation,
+secret handling, restart requirements and whether they are user-editable.
+Investigate material unknowns when encountered rather than reopening S0 for
+exhaustive coverage. Distinguish:
 
 1. Application configuration and durable runtime state.
 2. Deployment selection and host-specific wiring, including Compose
@@ -1534,27 +2323,33 @@ let those interfaces independently define precedence.
 
 ## Stages and exit gates
 
-- [ ] **S0 — Complete inventory.** Finish the per-setting matrix and inspect
-  the deployed versions and wiring read-only when authorized. Identify
-  consumers, documentation discrepancies and the disposition of earlier
-  deployment changes. Exit: evidence and unknowns reviewed; no secrets recorded.
-- [ ] **S1 — Agree the contract.** Resolve D1–D9 and document approved choices,
-  exceptions, compatibility/deprecation timeline and stable-release dependency.
-  Exit: the operator agrees to the supported layouts, input precedence, logging,
-  image/source selection and migration/rollback scope.
-- [ ] **S2 — Design and dry-run.** Specify the two Compose files, four Ansible
-  intents and shared tasks; define old-to-new input and path mapping, safety
-  preflights, version compatibility and recoverable cutover steps. Produce
-  redacted rendered examples and a test matrix. Exit: reviewed design and
-  migration/rollback runbook; stable mode explicitly blocked if unavailable.
+- [x] **S0 — Inventory.** Closed 2026-11-13 at the operator's direction:
+  recorded source-level settings, deployment wiring, representative probes,
+  known discrepancies and explicit unknowns. Coverage is not exhaustive;
+  remaining verification moves to the relevant implementation and acceptance
+  gates. No secret contents were recorded.
+- [x] **S1 — Agree the contract.** Closed as an implementation baseline
+  2026-11-13 at the operator's direction. D1–D9 record agreed choices and
+  known remaining details; resolve material compatibility and deprecation
+  decisions during implementation. Stable release availability remains a
+  separate dependency.
+- [x] **S2 — Design and dry-run.** Closed as an implementation baseline
+  2026-11-13 at the operator's direction, with synthetic examples and limited
+  rehearsals, not end-to-end validation. The proposed entry points, mapping,
+  safety controls and migration runbook guide S3/S4; unresolved implementation
+  and rehearsal requirements remain in S4/S5. Stable mode remains blocked when
+  an approved release is unavailable.
 - [ ] **S3 — Runtime configuration and logging.** Implement the approved
   setting resolution/validation and logging contract with compatibility
-  handling and focused tests. Waitress/debug decoupling was implemented early
-  at the user's request; per-component logging details still need design.
+  handling and focused tests, including effective endpoint reporting and
+  consistent agent/web credential validation. Waitress/debug decoupling was
+  implemented early at the user's request; per-component logging details
+  still need design.
   Exit: precedence, invalid values, redaction and regression tests
   pass; API changes coordinated with the effective-config idea.
 - [ ] **S4 — Compose and Ansible.** Implement supported profiles/entry points
-  and shared tasks, preflight and non-destructive migration controls. Test
+  and shared tasks, the per-parameter dispositions and simplified operator
+  experience above, preflight and non-destructive migration controls. Test
   rendering, source/pull behavior, idempotence and failure paths without a live
   cutover. Exit: local/CI tests and Ansible checks pass for available modes.
 - [ ] **S5 — Migration, documentation and acceptance.** Update authoritative
@@ -1582,10 +2377,12 @@ this plan defines the deployment contract, not those features.
   missing prerequisites and failure rollback; preserve unrelated services and
   dirty checkouts. Exercise native, Docker, external gateway and dummy modes
   according to the final support decision.
-- For every comparable setting, test CLI/environment/config/default conflicts,
-  blank and invalid values, source reporting, save/reload and existing
-  configuration migration. Verify Ansible-generated values actually reach the
-  intended container or service.
+- For changed settings, use focused representative tests for applicable
+  CLI/environment/config/default conflicts, blank and invalid values, source
+  reporting, save/reload and existing configuration migration. Verify affected
+  Ansible-generated values actually reach the intended container or service;
+  investigate newly discovered material gaps without requiring every
+  permutation of every setting.
 - Check development diagnostics and production minimum logging, rotation,
   redaction, server choice, exposed ports and resource limits. Ensure the dev
   debugger is not accidentally network-exposed.

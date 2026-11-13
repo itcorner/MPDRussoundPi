@@ -68,6 +68,9 @@ runtime defaults. It leaves MPD/supervision stopped and their meta/supervisor
 autostart disabled so egress can be installed
 before streams start. If audio-group membership was newly added to an already
 running user manager, reboot in a maintenance window before continuing.
+The `init` tag starts native ser2net and can replace its configuration and
+restart it. On a host using a containerized or external gateway, review that
+conflict before running the command; staging playback does not suppress it.
 
 Runtime defaults: an output with `default_station` initially intends to play;
 without it, it stays silent/stopped. Missing `default_gain_db` means 0 dB.
@@ -77,7 +80,10 @@ Existing runtime station/gain/intention/favorites are preserved. Do not delete
 ## 2. Install public-only stream enforcement
 
 Inspect the Pi's DNS resolver addresses (`cat /etc/resolv.conf`). Supply exact
-resolver IP literals, not names:
+resolver IP literals, not names, as a typed JSON list as shown below. Do not
+pass a single resolver using `-e playback_egress_resolvers=192.168.1.1`: the
+current play accepts that nonempty string and its unit template iterates over
+individual characters instead of one address.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -119,7 +125,10 @@ install -d -m 700 "$HOME/.config/mpdrussoundpi-deploy"
 ```
 
 Do not rerun generation over an existing token. Keep its contents out of shell
-arguments, inventory, logs and browser code. Activate:
+arguments, inventory, logs and browser code. The example creates a 64-character
+token; avoid oversized tokens, because the web client rejects stripped tokens
+longer than 4096 characters even though the current agent play accepts them.
+Activate:
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -132,6 +141,14 @@ ansible-playbook -i ansible/inventory.yaml \
 Omit `playback_agent_enable_operations=true` for a read-only agent. TuneIn
 selection defaults on with manual operations; use
 `playback_agent_enable_tunein_selection=false` to disable new TuneIn selections.
+**Important:** Do not use `-e playback_agent_enable_operations=false` or
+`-e playback_proxy_enable_operations=false` to disable operations: the
+current templates treat the nonempty string `false` as true. Omit those
+variables for their read-only defaults, or use typed JSON values:
+`-e '{"playback_agent_enable_operations":false,"playback_proxy_enable_operations":false}'`.
+If services are already running, verify their active configuration and plan
+any necessary restart; rendering a new file does not itself update a running
+process.
 The agent-only play does not regenerate or restart MPD/audio and requires an
 existing user manager. Without `playback_agent_start=true`, it installs files
 but does not activate/reload a running process. It can still replace the
@@ -202,8 +219,11 @@ RUSSOUND_PLAYBACK_AGENTS=[{"agent_id":"musicpi","url":"https://192.168.1.105:844
 The URL host must match the certificate SAN. Never disable TLS verification.
 For an Ansible-managed Docker deployment, supply the agent list through
 `russound_playback_agents` instead: the play rewrites `.env` on rerun.
-For native web, set `RUSSOUND_PLAYBACK_AGENTS` with absolute local token/cert
-paths, or use the `russound_playback_agents` Ansible variable.
+For a manually launched native web process, set `RUSSOUND_PLAYBACK_AGENTS`
+with absolute local token/cert paths. For the Ansible-managed native systemd
+service, use the `russound_playback_agents` Ansible variable: its generated
+unit sets this environment value explicitly, so changing a shell environment
+does not update the service.
 `.env`, private tokens, runtime config/state and TLS private keys stay outside Git.
 
 Rebuild/recreate only the web service when using an existing external gateway:

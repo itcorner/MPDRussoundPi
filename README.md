@@ -389,7 +389,10 @@ Config, data, and log mounts must be **directories**. Config and state are writt
 ### Endpoint configuration
 
 Host and port are configurable through environment variables, which take precedence over the `backend` block of the config file.
-Unset or empty overrides use the saved configuration. The image does not force a
+Unset or empty overrides leave that field to the saved configuration or
+application default. A nonempty valid override for either field selects TCP,
+even when the saved configuration uses a serial device; removing just one
+override does not restore serial mode while the other remains set. The image does not force a
 backend port; the application defaults to `6666` when a port is not configured.
 Remove an explicit override to let browser edits take effect for that field.
 
@@ -415,10 +418,13 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |
 
 Core server settings also have command-line flags (`--host`, `--port`,
-`--config`, `--state`, `--debug`); an explicit flag wins over its environment
-default. `--debug` and `RUSSOUND_DEBUG` only control diagnostic logging; they
-do not enable Flask's development server or interactive debugger. Debug logs
-may include detailed protocol and connection data, so protect and rotate them.
+`--config`, `--state`, `--debug`). Explicit host, port, config and state flags
+override their environment defaults. Debug is enabled if either `--debug` or
+`RUSSOUND_DEBUG` enables it; there is no CLI flag to override a true
+environment value with false. `--debug` and `RUSSOUND_DEBUG` only control
+diagnostic logging; they do not enable Flask's development server or
+interactive debugger. Debug logs may include detailed protocol and connection
+data, so protect and rotate them.
 `RUSSOUND_PLAYBACK_AGENTS` is an optional JSON list of agent URLs and
 token/certificate file paths; see the [playback guide](docs/documentation/playback-agent-deployment.md).
 
@@ -437,7 +443,9 @@ these plays; they do not currently provide a working no-agent default.
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml
 ```
 
-It disables the host `ser2net` and `russound-web` services when present, because the container now provides both.
+By default it disables the host `ser2net` and `russound-web` services when
+present, because the containers provide both. When serial gateway management
+is disabled, it leaves host `ser2net` alone.
 
 Override play-level defaults on the command line:
 
@@ -492,6 +500,10 @@ container explicitly if it is no longer wanted. The play rewrites `.env`;
 manage playback integration through its `russound_playback_agents` variable
 rather than hand-editing that file after each run. Provision the referenced
 token and certificate files under `docker/secrets` on the target web host first.
+The current play does not reject a blank external host: always provide a
+nonblank, reachable host explicitly. Its default backend port remains an
+override even when the host is blank and can switch a saved serial connection
+to TCP.
 
 ### Native web deployment
 
