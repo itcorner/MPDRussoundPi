@@ -272,9 +272,10 @@ class ComposeDeployment:
             if any(mount.get("Type") == "bind" and overlap(Path(mount["Source"]), Path(spec["data_dir"]))
                    for mount in item.get("Mounts", [])):
                 raise ComposeError("Another container shares deployment data; no writers were stopped")
+            devices: list[dict[str, Any]] = item["HostConfig"].get("Devices") or []
             if spec["gateway"] == "managed" and any(
                     device["PathOnHost"] == spec["serial_device"]
-                    for device in item["HostConfig"].get("Devices", [])):
+                    for device in devices):
                 raise ComposeError("Another container owns the serial adapter")
         if own:
             names: list[Any] = [item["Config"]["Labels"].get("com.docker.compose.service") for item in own]

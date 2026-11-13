@@ -456,6 +456,12 @@ not certified by these tests. Public apply remains blocked; the Pi was unchanged
 
 ### Reviewed remote deployment and explicit recovery
 
+Real Pi preflight follow-up covers Docker's `Devices: null` for unrelated
+containers and Compose's null command/entrypoint defaults. Terminal approval
+uses separate read/write streams because controlling terminals are nonseekable;
+tests preserve exact-phrase approval and rejection of other input. Full local
+regression after these fixes: **818 tests, 812 passing, six skipped**.
+
 [Operator tests](../../tests/test_deployment_operator.py) and
 [registry-load tests](../../tests/test_deployment_registry_load.py) cover bounded
 private framing, exact file lengths/checksums, truncation/corruption/replay,

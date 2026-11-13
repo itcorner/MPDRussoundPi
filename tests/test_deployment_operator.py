@@ -23,7 +23,7 @@ from tool.deployment_compose import (
     ComposeDeployment, ComposeError, check_host_writers, encoded, paths, specification, validate_runtime_files,
 )
 from tool.deployment_load import select_bundle
-from tool.deployment_operator import controller, remote
+from tool.deployment_operator import controller, interactive, remote
 from tool.deployment_recovery import recovery_assets
 from test_deployment_build import fixture_bundle
 
@@ -119,12 +119,50 @@ class OperatorContractTests(unittest.TestCase):
                 with self.subTest(key=key, value=value), self.assertRaises(ComposeError):
                     self.target()
 
+    def test_managed_preflight_accepts_foreign_containers_without_devices(self):
+        target = self.target()
+        target.spec.update(gateway="managed", serial_gid=20)
+        config = Path(self.spec["data_dir"]) / "config/russound_config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}")
+        info = {"Architecture": "aarch64", "OSType": "linux", "SecurityOptions": [], "ID": "fixture"}
+        foreign = {"Mounts": [], "HostConfig": {"Devices": None}, "Config": {"Labels": {}}}
+        with patch("tool.deployment_compose.sys.platform", "linux"), \
+                patch("tool.deployment_compose.os.geteuid", return_value=0), \
+                patch("tool.deployment_compose.check_data"), \
+                patch("tool.deployment_compose.validate_runtime_files"), \
+                patch("tool.deployment_compose.safe_path"), \
+                patch("tool.deployment_compose.check_port"), \
+                patch("tool.deployment_compose.check_serial"), \
+                patch("web.config_types.validate_russound_config"), \
+                patch.object(target, "command", return_value=encoded(info)), \
+                patch.object(target, "inspect_all", return_value=[foreign]):
+            target.preflight()
+        self.assertEqual(target.baseline, [])
+
     def test_channel_rejects_truncation_oversize_and_nonobjects(self):
         import struct
         for value in (b"", b"\x00", struct.pack("!Q", 9 * 1024**2),
                       struct.pack("!Q", 2) + b"[]", struct.pack("!Q", 5) + b"{}"):
             with self.subTest(value=value), self.assertRaises((ValueError, EOFError)):
                 Channel(io.BytesIO(value), io.BytesIO()).receive()
+
+    def test_terminal_approval_uses_separate_nonseekable_read_and_write_streams(self):
+        operation = str(uuid4())
+        review = {"plan": {"operation": operation}, "digest": "sha256:" + "a" * 64}
+        for answer, expected in (("approve " + operation, review["digest"]), ("yes", None)):
+            streams = []
+            def terminal(path, mode, **kwargs):
+                self.assertEqual(path, "/dev/tty")
+                if "+" in mode:
+                    raise io.UnsupportedOperation("File or stream is not seekable")
+                self.assertIn(mode, ("r", "w"))
+                streams.append(mode)
+                return io.StringIO(answer + "\n" if mode == "r" else "")
+            with self.subTest(answer=answer), patch("builtins.open", side_effect=terminal), \
+                    patch("builtins.print"):
+                self.assertEqual(interactive(review), expected)
+            self.assertEqual(sorted(streams), ["r", "w"])
 
     def test_channel_exact_private_transfer_and_corrupt_or_duplicate_payload_retention(self):
         source = self.storage["assets"] / "payload"

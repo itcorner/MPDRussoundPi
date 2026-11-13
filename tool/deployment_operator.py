@@ -202,10 +202,11 @@ def interactive(review: dict[str, Any]) -> str | None:
     print(json.dumps(review["plan"], indent=2))
     print("Approve this exact scope, including interruption and recovery retention.")
     expected = "approve " + review["plan"]["operation"]
-    with open("/dev/tty", "r+", encoding="utf-8") as terminal:
+    with open("/dev/tty", "r", encoding="utf-8") as source, \
+            open("/dev/tty", "w", encoding="utf-8") as terminal:
         terminal.write("Type '" + expected + "' to proceed: ")
         terminal.flush()
-        answer = terminal.readline().strip()
+        answer = source.readline().strip()
     return review["digest"] if answer == expected else None
 
 
