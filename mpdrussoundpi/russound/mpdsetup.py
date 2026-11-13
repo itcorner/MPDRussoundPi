@@ -42,9 +42,6 @@ def create_supervisor_service(config_path: str):
         )
 
 
-logging.basicConfig(filename='russound_debugging.log', level=logging.DEBUG,
-                    format='%(asctime)s:%(name)s:%(levelname)s:%(funcName)s():%(message)s')
-
 def mpd_config_filename(instance_name: str) -> str:
     """Generate a safe filename for the MPD config based on the instance name."""
     instance_name_safe = instance_name.replace(" ", "_").lower()
@@ -261,9 +258,8 @@ if __name__ == "__main__":
     parser.add_argument('json', help='Path to JSON configuration file')    
     args = parser.parse_args()
 
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logging.debug("Debug logging enabled.")
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s", force=True)
 
     if args.killmpd:
         # Stop all running MPD instances (in case any are still running)

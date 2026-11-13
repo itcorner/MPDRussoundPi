@@ -15,10 +15,13 @@ Preserve existing configuration and state through any migration.
 
 ## Proposed end state: operator overview
 
-This is the **target**, not the current implementation. The choices recorded
-in S1 are agreed; other defaults remain proposals. Paths and entry-point names
-are a proposed contract; the S2 blueprint specifies candidate paths and
-compatibility mappings, but none is an implemented command.
+This is the **target**, not a claim that the full workflow exists. The new
+Compose profiles, verified development-image candidate resolution,
+controller-only development preview and explicit read-only first-install
+target preflight are implemented;
+see the [container guide](../documentation/container-deployment.md) for actual
+commands and boundaries. Automated apply, committed target image pins and recovery,
+production, local-build and native intents remain outstanding.
 
 ### Choose how to run it
 
@@ -682,7 +685,7 @@ without printing credentials, raw URLs or secret contents.
 | `russound_serial_options`, `russound_ser2net_bind` | Defaults `19200n81`, `0.0.0.0`; written unquoted into `.env`, consumed in generated ser2net YAML. No play syntax, escaping or reachability validation; empty Compose values revert to defaults. | Offer serial settings only for managed gateway; validate supported connector/bind values, serialize safely, check web reachability and no unintended exposure. Test whitespace, quoting, malformed options and listener scope. |
 | `russound_backend_host`, `russound_backend_port` | Docker defaults internal hostname/6666; external assertion only excludes the internal hostname. Blank host passes (F21); blank port is passed to Compose and runtime treats it unset. Nonblank invalid port is warned and ignored by runtime, potentially masking saved settings. Native play has no corresponding variables. | Derive endpoint from placement; require a nonblank external host and validate its port, with 6666 as the proposed default. Display effective value/source and preserve saved JSON. Test F5/F17/F21 and actual parser with blank, partial, serial, malformed and saved TCP configurations. |
 | `russound_debug` | Docker default boolean false, rendered with `lower` into `.env`; runtime recognizes only `1/true/yes/on` as true and treats other nonblank strings as false. Native play offers no equivalent. | Map documented legacy input to the chosen profile without silently accepting misspellings; preserve existing debug behavior until migration. Test actual Compose and native process settings and explicit CLI false precedence. |
-| `russound_playback_agents` | Both web plays default actual `[]`; templates encode it as JSON `[]`, which runtime rejects (F1). Non-list or malformed entries have no play preflight; token/CA paths are consumed by web. | Empty actual list means unset, valid entries preserve IDs/URLs and private file references; reject wrong types and malformed entries. Test Ansible → generated unit/Compose → runtime, secret-file access and paths on each host. |
+| `russound_playback_agents` | Both web plays default to an actual `[]`. S0 found that templates encoded it as JSON `[]`, rejected by runtime (F1); the first implementation iteration renders it blank. Non-list or malformed entries still have no play preflight; token/CA paths are consumed by web. | Empty actual list means unset, valid entries preserve IDs/URLs and private file references; reject wrong types and malformed entries before mutation. Test Ansible → generated unit/Compose → runtime, secret-file access and paths on each host. |
 | `russound_use_published_images` | Docker default false; `bool` selects published versus target build. No explicit invalid-boolean assertion. Current default target build conflicts with agreed future controller-build intent. | Make source channel an explicit dev/release/local choice; legacy flag maps only when unambiguous. Test false/true spellings, invalid values and no hidden build/fallback. |
 | `russound_web_image`, `russound_ser2net_image` | Empty defaults; length check applies in published mode, gateway reference only if managed. Whitespace passes (F22); YAML uses JSON quoting. No preflight verifies registry, architecture, digest or compatible pair. | Keep image pins as derived advanced selection, not duplicate editable aliases; require matching verified artifacts for chosen layout before disruption. Test unset/blank/whitespace, invalid references, digest, arch and no gateway in external mode. |
 | `russound_published_pull_policy` | `always` by default; membership in `always`, `missing`, `never` is asserted even if published mode is false. `always` can pull a changed tag. | Decouple artifact acquisition from selection and ordinary rerun; translate legacy policies explicitly or fail with guidance. Test invalid/unused policy, offline pins and explicit update. |
@@ -724,6 +727,10 @@ several current tasks explicitly skip validation in check mode, and normal
 execution writes files independently of activation flags.
 
 ### S0 findings and remaining work
+
+The observations below describe the S0 baseline. See the implementation
+iteration log for subsequent fixes and validation; unresolved portions of a
+finding remain open even if a related symptom has been fixed.
 
 1. **F1 — empty-agent default is rejected.** Both web deployment plays default
    `russound_playback_agents` to `[]`; the
@@ -1335,12 +1342,14 @@ images or started containers. Synthetic digests do not prove images exist,
 verify actual runtime parsing, or establish that Compose alone enforces source
 policy; those require implementation tests.
 
-### Implementation blueprint for review
+### Implementation blueprint and current boundary
 
-The names and examples below are a proposed implementation contract, **not
-commands currently available**. They are intended to give S3/S4 a concrete
-starting point, not to close the rehearsal gate or authorize a Pi change.
-Existing commands continue to behave as inventoried above until replaced.
+The names and examples below define the implementation contract. Compose
+profiles/overlays now exist and `deploy-dev.yml` renders a controller-only
+preview; its apply action is explicitly blocked. Other new playbooks and
+the safety runner are not implemented. This does not close the rehearsal
+gate or authorize a Pi change. Legacy entry points retain their separate
+behavior until replaced.
 
 #### Entry points and composition
 
@@ -1348,12 +1357,12 @@ Use the following future repository paths. Keep current playbooks available
 until the replacement and migration documentation are tested; a legacy
 entry point must not silently forward an incompatible invocation.
 
-| Intent | Future playbook | Ordered Compose inputs | Application source |
+| Intent | Entry point and status | Ordered Compose inputs | Application source |
 |---|---|---|---|
-| Development | `ansible/playbooks/deploy-dev.yml` | `compose.dev.yml`, then optional gateway **or** dummy overlay | Hub dev web and managed gateway pins; dummy explicitly built on controller |
-| Production | `ansible/playbooks/deploy-release.yml` | `compose.prod.yml`, then optional gateway overlay | Approved stable web and managed gateway pins; currently blocked |
-| Development local build | `ansible/playbooks/deploy-dev-build.yml` | `compose.dev.yml`, then optional gateway overlay | Explicit controller-built web and managed gateway artifacts |
-| Native web | `ansible/playbooks/deploy-native-web.yml` | None | Identified native web source and isolated web environment; optional native ser2net |
+| Development | `ansible/playbooks/deploy-dev.yml` exists, preview only | `compose.dev.yml`, then optional gateway **or** dummy overlay | Explicit web and managed gateway digests; identity resolution/verification still outstanding; dummy explicitly built on controller |
+| Production | `ansible/playbooks/deploy-release.yml` not implemented | `compose.prod.yml` layout exists, then optional gateway overlay | Approved stable web and managed gateway pins; currently blocked |
+| Development local build | `ansible/playbooks/deploy-dev-build.yml` not implemented | `compose.dev.yml`, then optional gateway overlay | Explicit controller-built web and managed gateway artifacts |
+| Native web | `ansible/playbooks/deploy-native-web.yml` not implemented | None | Identified native web source and isolated web environment; optional native ser2net |
 
 Use `compose.gateway.yml` only for a managed container gateway and
 `compose.dummy.yml` only for dummy. Both define their own backend service;
@@ -2367,6 +2376,571 @@ prerequisites. Coordinate UX separately with
 [diagnostics](./general_idea_guided-diagnostics.md) and
 [safe configuration changes](./web_idea_safe-configuration-changes.md);
 this plan defines the deployment contract, not those features.
+
+## Local implementation iteration log
+
+1. **Empty agent list and template quoting (2026-11-13).** A regression
+   feeding both rendered templates into the runtime parser reproduced the
+   default `[]` startup failure. Both templates now render an actual empty
+   list as blank; nonempty and malformed values still reach the parser.
+   Local Ansible rendering and the repository's Compose configuration
+   exposed a separate quote-handling failure for a synthetic path containing
+   an apostrophe. Docker env quoting and native systemd quoting were adjusted
+   to preserve special characters. The local native check approximates
+   systemd parsing; a real Linux systemd check, secret permissions, and
+   preflight validation of malformed agents remain outstanding.
+2. **External host and image preflight (2026-11-13).** A local play containing
+   only the real Docker play's two assertions reproduced acceptance of blank
+   external hosts and whitespace-only image references. The assertions now
+   reject blank, non-string and surrounding-whitespace values when applicable,
+   while external mode does not require a managed gateway image. This is not
+   full endpoint or image-reference validation, registry verification, pinning,
+   or a safe redeployment workflow.
+3. **DNS TCP fallback (2026-11-13).** A ruleset regression reproduced missing
+   TCP port 53 exceptions for configured IPv4 and IPv6 resolvers. Generated
+   rules now allow UDP and TCP DNS only to those addresses before the existing
+   blocked-network rules. Seven egress unit tests passed, including exact
+   resolver/protocol rules and the MPD cgroup scope. No nftables rules were
+   applied; real DNS fallback and filter activation remain unverified and
+   require separate approval.
+
+At the end of iterations 1–3, the focused local deployment suite passed 14 tests, including actual Ansible
+template rendering, `docker compose config` and the isolated assertions.
+Compose only rendered configuration; no services were started, and no Pi was
+contacted.
+
+4. **Composable container layouts (2026-11-13).** Added web-only dev and prod
+   layout files and separate managed-gateway/dummy overlays. There are no
+   implicit builds, fixed container names or published backend ports; all web
+   layouts share explicit persistent mounts and bounded Docker logging.
+   Five profile tests pass, including actual Compose rendering and real
+   Ansible preview execution. The preview uses role defaults below inventory
+   precedence and ignores ambient application settings. It rejects legacy
+   mode switches, moving image tags, conflicting unused mode inputs, invalid
+   ports and apply requests. It is not a registry or target preflight.
+5. **Disposable runtime loop (2026-11-13).** Built a local dummy image and
+   used the already cached published ARM64 web digest for revision
+   `8f6bf092609bf910eb529684d364d191af5a3ab6`. The first test could not reach
+   a host-published port on the internal-only Docker network. The fixture
+   first checked web's real HTTP API from inside its container, then added
+   a separate web frontend network and verified an ephemeral loopback HTTP
+   port as well; the dummy remains on its internal backend network.
+   The corrected test passed web-to-dummy controller routing, no-change rerun identity, recreation and
+   preservation of config/unknown fields and unrelated state, an unavailable
+   pinned image without replacement of running web, and the same dummy acting
+   as an external gateway. Its containers and network were removed using the
+   unique test project only. This does not prove gateway hardware,
+   backup/restore or a complete safe apply workflow.
+6. **Documentation consolidation (2026-11-13).** Added one authoritative
+   container guide and replaced duplicated Docker launch/build how-tos in
+   README with links to it. Architecture, playback and test guides distinguish
+   new layouts from legacy stacks. Legacy entry points remain available
+   because their replacement and migration are not complete; they are not
+   silently redirected. Production is documented as a layout, not an available
+   release/deployment workflow.
+
+Validation after these iterations: 611 Python tests ran, 609 passed and two skipped
+(including the opt-in container runtime test when not explicitly enabled);
+the container runtime test was also run explicitly and passed. All eight
+Ansible playbooks passed syntax checks. No disposable test project remains.
+
+S3/S4 and final documentation migration remain open. The controller-only
+preview deliberately refuses apply until the reservation, snapshot,
+backup/recovery and completion runner are implemented and tested. No Pi was
+contacted or changed during local iterations 1–6.
+
+### Early Raspberry Pi target check, 2026-11-13
+
+The operator separately approved replacing the existing web/gateway containers
+for a short manual test, leaving the new deployment running only if checks
+passed and stopping/reporting on failure. This was not an automated Ansible
+apply or acceptance of the unfinished safety tooling.
+
+- Privately archived the prior ordered Compose inputs, container definitions,
+  actual local-only web image and web config/state/log/secret assets. Stopped
+  the old web/gateway before copying mutable web assets. Verified an off-Pi
+  backup copy against its private checksum manifest. No native playback
+  configuration or credentials were changed.
+- Selected the current published dev pair by immutable digest and verified
+  Linux ARM64, source repository and matching revision
+  `83f3e405b9260a80273ba5929da8da17072a85d8`. Used stable installed copies of
+  the new dev/gateway Compose files and separate private data. Preserved agent
+  references and trust files, controllers, zones, sources and unknown config;
+  disabled protocol audit only in the backed-up deployment copy.
+- **Passed:** both new containers healthy, zero restarts at the first check,
+  LAN HTTP 200 for home/config/playback pages, real controller connected and
+  four zones loaded. Docker log rotation matched the profile. Native agent,
+  supervisor, three MPDs and audio service identities/restart counts matched
+  the pre-cutover baseline.
+- **Failed:** authenticated agent routing returned HTTP 403. The new project
+  received `172.19.0.0/16`, but the existing Caddy source allowlist includes
+  the LAN and old `172.18.0.0/16` network only. Health of web and serial TCP
+  therefore did not imply playback integration was working. Required fix:
+  make network/CIDR selection and proxy authorization an explicit preflight
+  and migration step; do not silently broaden proxy trust.
+- **Stopped as agreed:** the new containers were stopped after the failed
+  required check; old containers also remain stopped. Restart policies on
+  both old and test containers are disabled to prevent an unintended restart
+  competing for the port/device. Prior policies remain in the private
+  backup. Native playback and the proxy remain running, unchanged.
+- Shutdown observation: web required forced termination at the 20-second
+  stop timeout (exit 137); gateway exited 1. No OOM cause was established.
+  Graceful-shutdown behavior remains an additional integration follow-up,
+  not a successful shutdown assertion.
+
+**Follow-up explicitly approved by the operator:** add only the new deployment
+network to the existing proxy allowlist, validate/reload it, restart the new
+stack and repeat the short checks.
+
+- Privately backed up the proxy configuration on and off the Pi. Added only
+  `172.19.0.0/16` to the existing source matcher; LAN and old-network rules,
+  TLS files and credentials were retained. Caddy validation passed.
+- **Second finding:** the installed proxy systemd unit has no `ExecReload`,
+  so `systemctl reload` failed without applying the staged configuration.
+  Caddy's direct `reload` command against `127.0.0.1:2020` then applied the
+  validated configuration successfully with the original PID 909 and zero
+  restarts. Added an `ExecReload` command to the repository template and a
+  regression that failed before the change. The installed unit was not
+  replaced during this test.
+- **Repeated acceptance passed:** seven samples across approximately one
+  minute reported real controller connectivity, four zones, agent `ok`,
+  preserved configuration (apart from the approved audit change), and
+  unchanged native process/restart baselines. Both containers remained healthy
+  with zero restarts and no OOM flag. LAN home/playback pages returned HTTP
+  200. From web, the actual `/v1/health` endpoint returned 401 without a token
+  and 200 with the preserved token and verified TLS CA.
+- **Final state:** the new `russound-dev` web/gateway project is running with
+  `unless-stopped` restart policies on port 8000. Old containers remain
+  stopped with restart disabled and private recovery assets retained. Stable
+  installed files and private data are under the target-check operation
+  directory, not temporary staging. The target's old source checkout was
+  not updated.
+
+This short smoke test did not change zones, volume, station selection or play
+intentions, and does not establish physical audio quality, fault recovery,
+reboot acceptance or a six-hour observation. The network/proxy preflight and
+graceful-shutdown findings still require integration into the automated design.
+
+### Returning to local implementation: image selection
+
+7. **Verified development-image candidates (2026-11-13).** Added a
+   standard-library, anonymous pull-scope-only Docker Hub metadata resolver.
+   Web selects one full source revision; managed ser2net must match it.
+   Both moving aliases and exact revision tags must agree, with a final alias
+   recheck to detect publication movement. Index, platform manifest and config
+   checksums/sizes and source/version/platform labels are validated.
+   External and dummy modes resolve web only. No target access, image pull,
+   layer download, build, credential lookup or deployment occurs.
+   Deterministic fixtures exercise mismatched and missing pairs, moving aliases,
+   malformed metadata, ambiguous platforms, corrupt content and invalid scopes.
+8. **Public-registry integration correction (2026-11-13).** The first real
+   metadata-only resolution failed with HTTP 307 on a config blob; the unit
+   fixture had not modeled Docker Hub's CDN. Observed the redirect host without
+   logging its signed URL. Config-blob downloads now permit HTTPS redirects to
+   the two explicitly allowed Docker CDN hosts, drop authorization headers,
+   and reject all further redirects. Token and manifest redirects remain
+   forbidden. The second real managed ARM64 resolution succeeded at revision
+   `83f3e405b9260a80273ba5929da8da17072a85d8`, matching the manual target trial.
+   Regression tests cover credential stripping and rejection of other hosts,
+   HTTP, embedded credentials and malformed ports. Unknown future CDN hosts
+   fail explicitly, not via a broadened fallback.
+9. **Reusable candidates and preview integration (2026-11-13).** Candidate
+   JSON is exclusively created with mode `0600`; an existing file is never
+   overwritten. Offline reuse preserves references/timestamps and validates
+   gateway/platform/schema. Online verify uses exact digests only; check compares
+   index digests with a fresh candidate without changing the saved file.
+   Inventory can select that file, leave images unset for fresh metadata-only
+   resolution, or explicitly request the existing syntax-only digest-rendering
+   path. Mixed inputs and incomplete managed pairs fail before network access.
+   Real Ansible check-mode previews with an unreachable target pass all three
+   gateway modes using saved candidates; conflicting inputs, wrong platform
+   and missing files fail without changing the selection. Documentation now
+   distinguishes these paths and consolidates image selection in the container
+   guide. These files are **not committed deployment records** or approval
+   evidence. Transactional apply, persisted target pins, layer transfer,
+   protected snapshots and recovery remain open.
+
+Validation of iterations 7–9: the full local Python suite ran 626 tests,
+624 passed and two skipped (including the opt-in container runtime test;
+container runtime behavior was not changed by this slice). The subsequent
+AMD64-specific resolver regression also passed. The new playbook passed an
+Ansible syntax check; the new/changed Python modules passed Pylance syntax
+checks and whitespace validation passed. A live read-only public-registry
+resolution also passed through the actual Ansible-to-Compose managed preview
+with an intentionally unreachable target and `changed=0`. No Pi connection,
+target mutation or additional running service was involved.
+
+### Safe-apply foundation: persistent state and completion evidence
+
+10. **Persistent target-state primitives (2026-11-13).** Added a standard-library
+    state layer for the fixed root-owned `/var/lib/mpdrussoundpi-deploy` directory.
+    A host-wide exclusive reservation precedes pending persistence; existing,
+    empty, unreadable or old reservations are never automatically released.
+    Pending records preserve the previous committed image selection, operation
+    UUID, approved non-secret intent identity, expected completion items,
+    sequential phase and an operation-local backup reference. Existing committed
+    deployments cannot advance past the backup boundary without that reference.
+    This records the runner's verified work; it does not create or validate a
+    backup itself. Safe path traversal uses directory descriptors/no-follow;
+    records reject symlinks, hardlinks, nonregular files, unsafe ownership/modes,
+    corrupt schemas and leftover writes. New files are `0600`, directories
+    `0700`. Writes and replacements synchronize files and containing directories.
+11. **Interrupted operations and separate finalization (2026-11-13).** Local
+    subprocess tests prove one winner between competing deployment IDs and
+    persistent blocking after process exit, including exit between reservation
+    creation and owner persistence. Finalization checks the reservation,
+    operation, phase, intent and exact expected passing completion set. It
+    persists an exclusive finalization marker before replacing committed/pending
+    state, then removes only its own reservation. Mid-finalization failures
+    block repeat dispatch; an error syncing the parent after reservation removal
+    explicitly reports uncertainty and does not claim the host is still blocked.
+    Tests inject sync, pending-write and atomic-replacement failures and retain
+    partial evidence instead of cleaning it up. No recovery/unlock mutator is
+    exposed. These tests run on the controller's local filesystem, not the Pi;
+    real target reboot/power-loss and daemon-quiescence acceptance remain open.
+12. **Real Ansible completion evidence (2026-11-13).** Added an opt-in aggregate
+    callback and internal controller validator. Allowlisted records contain
+    operation/host identity, sequence, stable required-task IDs and outcomes,
+    not task names, payloads, arguments or item values. The controller checks
+    exact expected starts/terminal outcomes after process exit, all failure/
+    unreachable/rescued/ignored statistics and a sticky callback error flag.
+    The first real integration run exposed that Ansible rejects `/dev/null` as
+    `ANSIBLE_CONFIG` because it has no supported extension. Replaced that
+    assumption with a repository-controlled minimal `.cfg`; real plays now pass.
+    Successful handlers finish before receipt creation; failed or missing
+    required handlers, ignored/rescued failures, unreachable hosts and invalid
+    streams block completion. Actual Ansible is used, not a simulated callback
+    event ordering. The runner does not dispatch finalization.
+13. **Terminal persistence failure correction (2026-11-13).** A callback can
+    write complete-looking terminal JSON and then fail its final `fsync`.
+    Reading that file and seeing exit zero would not establish successful
+    reporting. Added a private inherited pipe: after the last terminal write
+    and sync, the callback acknowledges success only when its sticky error flag
+    is clear. Missing, failed or duplicate acknowledgements block completion;
+    reads are nonblocking after process exit, so an inherited daemon descriptor
+    cannot make the runner wait for EOF. A regression reproduces final-sync
+    failure with readable success-shaped JSON and requires a failure signal.
+    Required retries, loops, conditional skips and async jobs are deliberately
+    prohibited by this initial validator, as allowed by the closed design,
+    until their richer mapping is implemented. No unsupported pattern is
+    inferred successful. This is a restriction on the new internal runner,
+    not a behavioral change to existing playbooks.
+
+The primitives also pass a combined fixture in which actual local Ansible
+completion is consumed by a separate state finalization. That fixture does
+not perform or certify a container deployment or independent routing check.
+Operator `apply` stays blocked: target preflight, protected snapshots,
+backup/restore, actual deployment/check orchestration, production use of
+committed pins and manual recovery still need integration and acceptance.
+The Pi was not contacted or changed during iterations 10–13.
+
+14. **Linux/Python compatibility loop (2026-11-13).** The full controller suite
+    ran 666 tests: 664 passed, two skipped. Then ran the state tests inside a
+    cached ARM64 web image with Python 3.12, network disabled, all capabilities
+    dropped, a read-only root/repository and disposable tmpfs test data. That
+    exposed an import-time `typing.Generator[int]` failure: Python 3.12 requires
+    all three type arguments, unlike the controller's Python 3.13. Corrected
+    both annotations to `Generator[int, None, None]`. All 24 Linux state tests
+    and all 68 focused controller deployment tests subsequently passed; a final
+    combined Linux state/image run also passed all 38 tests.
+    Pylance found no errors in the new state, validator or callback modules;
+    the callback suppresses only Ansible's missing-third-party-stubs diagnostic.
+    The preview playbook syntax and whitespace checks passed. The Linux run
+    validates syscall/error behavior on disposable tmpfs, not persistent-disk
+    reboot/power-loss durability. No image was pulled, no hardware exposed,
+    no network used and no target contacted.
+
+### Protected input snapshots and explicit target preflight
+
+15. **Approved input bytes and stable runtime copies (2026-11-13).** Added an
+    internal protected-input API. It exclusively creates one private operation
+    directory, copies explicitly selected private single-link regular files,
+    and seals a private manifest in memory. Snapshot files are `0400`; directories
+    are `0700`. Paths/content fingerprints stay in that private manifest and
+    are excluded from diagnostics and public records. Sources are rechecked
+    for content, file identity, ownership, permissions and timestamps;
+    replacement with identical bytes still requires renewed approval. Copying
+    verifies both the open descriptor and current source entry. The shared
+    descriptor-based path checker is reused by state and snapshots; existing
+    state regressions remain passing.
+    Install consumes staged bytes, never rereads a changed source as approval,
+    exclusively creates a stable runtime file outside the staging tree, and
+    verifies owner/group/mode/content. Existing destinations are preserved,
+    not automatically replaced. A separate reader works after staging cleanup.
+    Incomplete writes retain staging/partial destination evidence. Cleanup is
+    explicit after independently resolved work and removes only known files
+    for that operation, not other operations or source/runtime files.
+    This first API supports modes `0400`/`0600`, at most 64 inputs of 16 MiB
+    each; it has no operator CLI or cross-process reload/transfer protocol.
+    Persisting private seal custody and wiring approval/recheck points into
+    the runner remain open. It is not a live-state backup or writer fence.
+16. **Opt-in first-install target inspection (2026-11-13).** Added
+    `russound_action=preflight` to the existing dev entry point. Default
+    preview still makes no target connection. Controller input validation and
+    Compose rendering run before target inspection. Preflight uses normal
+    Ansible target Python discovery, avoiding a duplicate Python-path option,
+    then sends the standalone standard-library probe to that interpreter.
+    It checks Linux/local Docker/Compose and matching daemon platform,
+    rejects namespace-remapped identities, reports free space, checks existing
+    projects and overlapping mount data, required existing bind directories,
+    mode-based service access, a private secrets directory and host listener
+    availability. Managed mode additionally checks device type/group/mode,
+    container assignments and open process descriptors; external/dummy modes
+    do not need a serial device. Existing/stopped projects or conflicting
+    mounts/devices require recorded-rerun/adoption work, not an implicit
+    overwrite. No files are provisioned, images pulled, host reserved, service
+    stopped or trust broadened. Normal Ansible temporary module files and a
+    brief bind/close listener probe are the only preparation side effects.
+17. **Preflight integration/fix loop (2026-11-13).** Existing offline Ansible
+    regressions caught an accidental malformed task conditional while wiring
+    the action; corrected it and verified preview remains target-disconnected.
+    Actual local Ansible tests prove opt-in target execution, redacted failure
+    reporting and controller validation before any unreachable-target attempt.
+    Checked the real Docker CLI output shape: container IDs use JSON-lines,
+    and Compose version uses a JSON object; do not assume an array for listing.
+    Deterministic fixtures cover incompatible/remote daemons, unavailable
+    ports without stopping their listeners, unsafe paths/modes/ACLs and
+    existing project/data/device conflicts.
+    A Linux check exposed a too-strict generic permission policy for typical
+    group-writable serial devices. Only the character-device leaf may now
+    have group-write permission; world-writable devices and writable
+    directories still fail. A real open pseudo-terminal verifies the process
+    holder is detected without hardware. The Linux standalone CLI uses
+    fixture Docker metadata with real paths and socket checks; it does not
+    mount the Docker socket. Its first fixture invocation failed because the
+    container's disposable tmpfs defaults to `noexec`; explicitly enabled
+    execution only there for the fixture CLI, retaining a read-only root and
+    checkout, no network/capabilities/host hardware devices and automatic
+    container cleanup. A final access review added service-mode traversal of
+    all data/runtime ancestors: successful reads by the deploying root user
+    cannot substitute for service access through a root-private parent.
+
+Preflight reports `safe_to_apply: false`, routing/proxy checks not run, runtime
+write access not tested and saved configuration not validated. Space reporting
+does not certify adequate backup/image capacity. These point-in-time checks do
+not reserve resources, establish hardware readiness or authorize apply.
+Recorded-installation preflight, actual runtime-access/config validation,
+proxy/container routing, snapshot orchestration, backup/restore and the full
+apply/check/finalize/recovery runner remain outstanding. The Pi was not
+contacted or changed during iterations 15–17.
+
+Validation: the final full controller suite ran 693 tests, with 689 passing and
+four skipped (two existing opt-ins plus two Linux-only preflight checks).
+After adding operation-isolation cleanup and ancestor-traversal regressions,
+the isolated Linux state/image/input/preflight run passed all 63 tests.
+All eight real Compose/Ansible profile tests passed,
+including offline-preview compatibility and explicit preflight failures.
+Pylance reports no diagnostics in the new production modules or the refactored
+state layer; changed Python test syntax, playbook syntax and whitespace checks
+passed. No live target acceptance or complete deployment/recovery loop is
+claimed.
+
+### Private file backup and isolated container recovery
+
+18. **Verified stopped-writer bundles (2026-11-13).** Added an internal
+    streaming file-backup API for explicitly selected roots. Capture requires
+    a raising quiescence guard before/during/after work, not a status boolean
+    or an assumption that the reservation stops writers. It checks descriptor
+    and path identity while copying and repeats the whole source inventory/
+    content comparison before the manifest is written. Exclusive private
+    operation directories contain read-only blobs and a manifest written last,
+    with layout, private source paths, ownership/mode/mtime, sizes and checksums.
+    No partial artifact is automatically deleted or retried. A separately
+    retained manifest identity is required to reopen/verify a bundle, including
+    a copy in another private storage directory and process. Public reports
+    omit source paths and content hashes. Limits are 64 roots, 10,000 entries,
+    depth 64, 8 GiB of streamed contents and an 8 MiB manifest.
+19. **Isolated restore and fidelity failures (2026-11-13).** Verification checks
+    strict schema, safe relative membership/parent ordering, bounded numeric
+    metadata, exact source coverage and expected payload set before creating
+    any restore destination. Restore exclusively creates a separate tree,
+    never overlaps original source/backup paths, verifies written bytes by
+    rereading them and restores/checks owner/group/mode/mtime. Existing targets
+    are not overwritten. Special files, links, special permission bits,
+    shared-writable paths and unsupported ownership are blocked. Extended
+    attributes, ACLs and filesystem flags also block: silently discarding
+    unsupported metadata would not be a valid recovery copy.
+    Linux xattr inspection is required; macOS unit fixtures explicitly shim
+    that unavailable API, while actual Linux tests use the real API.
+    Backups remain until explicitly removed, with no expiry/deletion command.
+    Captures accept objects owned by root/capture account under the existing
+    safe ancestor policy; mixed-service ownership/adoption needs separately
+    verified capture scopes and privileges, not an ownership fallback.
+20. **SQLite and interrupted-I/O loop (2026-11-13).** A subprocess writes a
+    committed SQLite WAL transaction then exits without clean close. With that
+    writer gone, capture includes database/WAL/SHM; isolated restore recovers
+    the transaction and passes `PRAGMA integrity_check`, without touching
+    original bytes. This implements the stopped-writer option, not online
+    SQLite backup or code/schema compatibility. Tests inject short writes,
+    silent output corruption, sync/write/metadata failures, source changes
+    during and after their own copy, unexpected/missing/tampered files and
+    process exit before manifest persistence. Restore errors retain the new
+    partial tree and original backup; state/pending/reservation are never
+    cleared by file recovery. A malformed/deep-JSON regression initially
+    expected one parser error message; some runtimes parse that depth and
+    reject the resulting manifest schema instead. Corrected the test to
+    require explicit `BackupError` and no destination, not parser wording.
+21. **Real Compose/Ansible failed-update recovery rehearsal (2026-11-13).**
+    Added an opt-in local test using an already cached ARM64 web digest
+    and current dummy source via a test-only image/entrypoint override, no
+    image pull/build. Initial fixture runs failed because the reused web
+    image's HTTP healthcheck was wrong for the dummy and because direct
+    module execution defaults to loopback rather than the dummy entrypoint's
+    environment handling. Corrected the fixture with an explicit TCP
+    healthcheck, `0.0.0.0`, port and persistent seeded state; no production
+    layout was changed for the fixture.
+    A backup attempt on Docker Desktop's shared bind mount failed Linux
+    descriptor xattr inspection with `EOPNOTSUPP`. Kept production validation
+    strict and moved disposable fixture data to a uniquely named local Linux
+    Docker volume. Its setup initially changed parent ownership before
+    children under a capability-restricted helper; reversed that order.
+    Only setup adds `CHOWN`, only for the fixture volume. Subsequent
+    backup/restore helpers run as the service user with all capabilities
+    dropped, read-only root/checkout, no network or Docker socket.
+    The corrected loop passes routing and no-change rerun, persists synthetic
+    pending state, stops its own web/dummy writers and verifies them stopped,
+    captures a verified backup, then runs a controlled real Ansible/Compose
+    apply with a deliberately unavailable candidate and `--pull never`.
+    Failure produces no completion receipt; pending remains unchanged and
+    another deployment ID stays blocked. Restore uses a new tree and the
+    known prior cached image; actual web-to-dummy controller routing passes,
+    config/unknown fields/state/secrets remain intact and a rerun retains
+    container identity. Recovery deliberately does not clear pending or
+    claim live recovery finalization. All fixture containers, networks and
+    its named volume are removed by exact project/volume identity.
+
+The rehearsal verifies file recovery with a cached prior image, not image
+archive save/load, off-host transfer durability, service-wide writer discovery,
+live restore/cutover, power-loss durability or the finished automated runner.
+The guard inside the isolated helper relies on the test exclusively controlling
+its two stopped writers, checked from the controller before/after helper calls;
+this is not offered as a production daemon-quiescence mechanism.
+The new backup API has no operator CLI. Automatic apply stays blocked until
+service-aware preflight/backup/image handling, protected approval custody,
+independent checks and explicit recovery/finalization orchestration are wired
+and tested together. No Pi connection or live change occurred in iterations
+18–21.
+
+Validation: the final controller suite ran 721 tests, with 715 passing and six
+skipped (three opt-in container tests and three Linux-only checks). All 27
+backup tests passed on isolated Linux/Python 3.12 with real extended-attribute
+inspection. The opt-in real Ansible/Compose failed-update and restored-routing
+test also passed with the final backup code. Pylance reports no diagnostics in
+the production backup module; changed test syntax and whitespace checks pass.
+The full suite still emits socket-resource warnings in existing connector
+failure-path tests; no unrelated connector change was made. No recovery test
+container or volume remained after cleanup.
+
+### Approved Pi same-pin redeployment smoke test (2026-11-13)
+
+Following explicit approval to test redeployment, verified that the Pi's two
+Compose files exactly match the current repository. Used the existing
+`russound-dev` project and pinned web/gateway images, without pulling or building
+images or enabling the unfinished Ansible apply path.
+
+- An unchanged Compose rerun preserved both container identities.
+- Stopped only web and ser2net, then archived deployment inputs and their data
+  with numeric ownership, ACLs and extended attributes. Compared the archive
+  against the stopped sources and verified an off-Pi copy by SHA-256 before
+  recreating containers. The archive is private recovery evidence, not a
+  tested full image/system recovery bundle.
+- Forced recreation changed both container identities, retained the same
+  image IDs and reached healthy state with zero restarts. A subsequent
+  unchanged rerun again preserved container identities.
+- Three post-redeployment samples confirmed controller connectivity, four
+  zones, no setup requirement and playback agent status `ok`.
+- Configuration/secret/input hashes and native playback/audio/proxy service
+  PIDs, restart counts and active states were unchanged.
+- Shutdown remains imperfect: web required forced termination after its
+  20-second stop allowance (exit 137, not OOM); ser2net exited 1 on stop.
+  Recreation and routing passed, but this does not certify graceful shutdown.
+
+The healthy recreated stack was left running. Private operation evidence is
+under the Pi trial directory's `redeploy-check-20261113T2216` subdirectory,
+with a verified archive copy in the controller session storage. This was a
+manual same-pin Compose redeployment, not an image update, automated Ansible
+apply acceptance, physical audio test or six-hour observation.
+
+### Runtime shutdown and import-safe setup logging
+
+22. **Reproduce and fix web shutdown (2026-11-13).** Continued locally after
+    the approved same-pin Pi redeployment exposed forced web termination.
+    Actual Waitress subprocess regressions first failed: SIGTERM exited -15
+    without cleanup, while SIGINT with an open SSE stream produced a
+    still-running-worker warning after Waitress's drain timeout. The source
+    had no SIGTERM handler and an unconditional watcher loop, and event
+    streams could wait 15 seconds on their queue. As container PID 1 the
+    unhandled termination signal also explains why Docker needed its kill
+    fallback. Added scoped main-thread SIGTERM/SIGINT handlers, restored
+    afterward, with repeated termination ignored during cleanup. Shutdown
+    rejects new requests, ends SSE streams with half-second stop checks
+    while retaining the normal ping cadence, drains/closes Waitress and
+    stops/joins the watcher before releasing the gateway connection.
+    Missing Waitress or startup errors no longer leave newly started
+    background pollers behind. Stopped server objects cannot be reused.
+23. **Require explicit background shutdown outcomes (2026-11-13).** Playback
+    clients now support a non-blocking stop request; every poller receives
+    that request before waiting for individual joins. A stopped poll does not
+    send the next health/capability/inventory/favorites request. An
+    eight-second poller timeout raises an error instead of returning from
+    `close` as if it had stopped. The backend watcher has a ten-second join
+    allowance; uncleared HTTP dispatcher workers also fail explicitly.
+    Cleanup still attempts remaining clients/connections if one close fails.
+    New dev/prod profiles provide a 30-second web stop grace period. Tests
+    verify open-stream exit and that an in-flight request completes its
+    write before clean process exit; these are not guarantees for
+    arbitrarily stuck kernel/network calls. The standalone allowlist route
+    fixture exposed reliance on leaked shared-backend state once cleanup
+    became real; gave its command a local mock backend instead of requiring
+    reachable hardware for a response-shape assertion.
+    Final repeated validation exposed a separate readiness-fixture race:
+    a bound-but-non-listening local socket can make connect time out after
+    five seconds on macOS, racing the HTTP readiness timeout before a
+    shutdown signal was sent. Timed child-process output distinguished that
+    startup delay from shutdown latency. Replaced that fixture endpoint with
+    a real disposable dummy gateway rather than weakening the assertions.
+24. **Linux PID-1 recovery loop (2026-11-13).** Extended the disposable
+    Compose recovery fixture to bind current web source read-only into the
+    cached Python-capable image, as already done for dummy source. No image
+    build/pull or Pi change is involved. Opens a real SSE stream, stops web
+    with an eight-second Docker timeout and requires exit 0 in less than
+    six seconds, no OOM and no unfinished-worker warnings. Then stops
+    its dummy writer, runs the existing verified file-backup/failed-Ansible-
+    update/isolated-restore loop and rechecks real controller routing and
+    retained pending state. This tests current source on Linux/Python 3.12,
+    not a newly published application image or the physical gateway.
+25. **Remove import-time logging (2026-11-13).** Fresh-process tests reproduced
+    global logger changes in all six audio-helper/setup import orders and
+    implicit relative debug-file creation. Moved setup logging after CLI
+    argument validation and removed audio helper logging initialization.
+    Audio and MPD setup explicitly choose INFO or `--debug` DEBUG on stderr,
+    replacing pre-existing handlers once to avoid duplicate/missing output.
+    Audio setup now accepts `--debug`; MPD setup retains its existing flag.
+    Imports and help do not create or alter logging handlers/files. Existing
+    `russound_debugging.log` files are not removed. Tests cover exact diagnostic/
+    operational/warning output and destinations even after a prior logging
+    configuration. Native service behavior otherwise remains unchanged.
+
+These are lifecycle and S3 logging prerequisites, not completion of S3–S5.
+Recorded-installation preflight/adoption, runtime config/access validation,
+image archive/off-host recovery orchestration, approval custody and the
+complete apply/check/finalize/manual-recovery entry point remain open.
+Automated Ansible apply is still blocked. Existing Pi pins do not gain
+the shutdown fix until a separately built/published image is selected and
+deployed; the Pi was not contacted or modified in iterations 22–25.
+
+Validation: the full controller suite ran 738 tests, with 732 passing and six
+skipped. The three actual Waitress lifecycle tests and three isolated logging
+tests also passed on Linux/Python 3.12 with a read-only checkout/root,
+capabilities dropped and no external network. The real Compose/Ansible
+PID-1 shutdown and backup/recovery loop passed. Audio/MPD setup regression
+tests and dev/prod Compose rendering passed. Pylance found no new production
+type errors in the lifecycle/audio logging changes; MPD setup retains its
+pre-existing generic-config typing diagnostics. Existing unrelated resource
+warnings are not treated as shutdown acceptance. After the readiness-fixture
+correction, all three lifecycle cases passed five consecutive runs (15
+checks), then the complete 738-test suite and container recovery loop passed
+again. Disposable recovery containers and volumes are removed after the test.
 
 ## Acceptance and verification
 

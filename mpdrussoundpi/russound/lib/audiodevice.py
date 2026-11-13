@@ -1,10 +1,7 @@
-import logging
 from collections.abc import Mapping
 from typing import cast
 from lib.sink import Sink, config2sink
 from lib.audioidentity import HardwareSelector, hardware_configuration, object_mapping
-
-logging.basicConfig(level=logging.DEBUG)
 
 class AudioDevice:
     def __init__(self, name: str, card_profile: str, sinks: list[Sink],

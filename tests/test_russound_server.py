@@ -1,6 +1,7 @@
 import logging
 import json
 import socket
+import signal
 import sys
 import tempfile
 import threading
@@ -238,7 +239,8 @@ class RussoundServerTests(unittest.TestCase):
                     self.assertNotIn("admin-only documentation", client.get(path).get_data(as_text=True))
                 self.assertIn("admin-only documentation", config_path.read_text())
 
-                response = client.post("/api/system/power", json={"power": False})
+                with patch("web.russound_controller.RussoundBackend"):
+                    response = client.post("/api/system/power", json={"power": False})
                 self.assertEqual(set(response.json), set(rooms))
             finally:
                 _close_server(server)
@@ -931,6 +933,7 @@ class RussoundServerTests(unittest.TestCase):
             with patch.object(server, "_start_backend_change_watcher"), patch(
                 "web.russound_server.importlib.import_module"
             ) as import_module:
+                import_module.return_value.create_server.return_value.task_dispatcher.threads = set()
                 server.run("127.0.0.1", 8000, waitress_threads=10, tcp_user_timeout_seconds=30)
 
             self.assertEqual(server._max_event_streams, 6)
@@ -948,6 +951,7 @@ class RussoundServerTests(unittest.TestCase):
             with patch.object(server, "_start_backend_change_watcher"), patch.object(
                 server.app, "run"
             ) as flask_run, patch("web.russound_server.importlib.import_module") as import_module:
+                import_module.return_value.create_server.return_value.task_dispatcher.threads = set()
                 server.run("127.0.0.1", 8000, debug=True, waitress_threads=10)
 
             flask_run.assert_not_called()
@@ -973,6 +977,130 @@ class RussoundServerTests(unittest.TestCase):
                             server.run("127.0.0.1", 8000, debug=debug)
                 finally:
                     _close_server(server)
+
+    def test_shutdown_drains_event_streams_and_rejects_new_requests(self):
+        server = RussoundHTTPServer(None, None)
+        response = server.app.test_client().get("/api/events", buffered=False)
+        try:
+            chunks = iter(response.response)
+            self.assertTrue(next(chunks).startswith(b"retry:"))
+            server.server_close()
+            self.assertEqual(list(chunks), [])
+            self.assertEqual(server._event_clients, {})
+            self.assertIsNone(server.register_event_client("127.0.0.1", "late"))
+            with patch.object(server.controller, "handle_system_power_change") as mutate:
+                rejected = server.app.test_client().post("/api/system/power", json={"power": True})
+            self.assertEqual(rejected.status_code, 503)
+            mutate.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, "cannot be restarted"):
+                server.run("127.0.0.1", 8000)
+        finally:
+            response.close()
+
+    def test_shutdown_wakes_and_joins_background_watcher_and_closes_backend(self):
+        server = RussoundHTTPServer(None, None)
+        server.controller = Mock()
+        server.controller.backend_health_snapshot.return_value = {}
+        backend = Mock()
+        server._event_backend = backend
+        entered = threading.Event()
+        try:
+            with patch.object(server, "_start_unsolicited_update_listener"), patch.object(
+                    server, "_ensure_update_listener", side_effect=entered.set):
+                server._start_backend_change_watcher()
+                self.assertTrue(entered.wait(2))
+                server.server_close()
+            self.assertIsNotNone(server._backend_watcher_thread)
+            self.assertFalse(server._backend_watcher_thread.is_alive())
+            backend.close.assert_called_once_with()
+            server.controller.set_shared_backend.assert_called_once_with(None)
+            server.server_close()
+            backend.close.assert_called_once_with()
+        finally:
+            server.server_close()
+
+    def test_incomplete_background_shutdown_is_an_error_but_other_resources_are_closed(self):
+        server = RussoundHTTPServer(None, None)
+        watcher = Mock()
+        watcher.is_alive.return_value = True
+        server._backend_watcher_thread = watcher
+        backend = Mock()
+        server._event_backend = backend
+        client = Mock()
+        server._playback_clients = [client]
+        with self.assertRaisesRegex(RuntimeError, "Backend watcher did not stop"):
+            server.server_close()
+        self.assertFalse(server._closed)
+        client.request_stop.assert_called_once_with()
+        client.close.assert_called_once_with()
+        backend.close.assert_called_once_with()
+        watcher.join.assert_called_once()
+
+    def test_cleanup_attempts_every_playback_client_even_when_one_fails(self):
+        server = RussoundHTTPServer(None, None)
+        first, second = Mock(), Mock()
+        second.close.side_effect = RuntimeError("poller still running")
+        server._playback_clients = [first, second]
+        with self.assertRaisesRegex(RuntimeError, "poller still running"):
+            server.server_close()
+        first.close.assert_called_once_with()
+        second.close.assert_called_once_with()
+        self.assertFalse(server._closed)
+
+    def test_http_worker_shutdown_failure_restores_signal_handlers_and_closes_background(self):
+        server = RussoundHTTPServer(None, None)
+        previous = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)}
+        with patch.object(server, "_start_backend_change_watcher"), patch(
+                "web.russound_server.importlib.import_module") as imported:
+            waitress = imported.return_value.create_server.return_value
+            waitress.task_dispatcher.threads = {1}
+            with self.assertRaisesRegex(RuntimeError, "HTTP workers did not stop"):
+                server.run("127.0.0.1", 8000)
+        self.assertTrue(server._closed)
+        waitress.close.assert_called_once_with()
+        waitress.task_dispatcher.shutdown.assert_called_once_with()
+        for number, handler in previous.items():
+            self.assertEqual(signal.getsignal(number), handler)
+
+    def test_startup_error_closes_listener_and_dispatcher_before_any_background_start(self):
+        server = RussoundHTTPServer(None, None)
+        with patch.object(server, "_start_backend_change_watcher", side_effect=RuntimeError("startup failed")), patch(
+                "web.russound_server.importlib.import_module") as imported:
+            waitress = imported.return_value.create_server.return_value
+            waitress.task_dispatcher.threads = set()
+            with self.assertRaisesRegex(RuntimeError, "startup failed"):
+                server.run("127.0.0.1", 8000)
+        waitress.close.assert_called_once_with()
+        waitress.task_dispatcher.shutdown.assert_called_once_with()
+        self.assertTrue(server._closed)
+
+    def test_repeated_termination_signal_does_not_interrupt_cleanup(self):
+        server = RussoundHTTPServer(None, None)
+        previous = signal.getsignal(signal.SIGTERM)
+        with server._termination_signals():
+            terminate = signal.getsignal(signal.SIGTERM)
+            assert callable(terminate)
+            with self.assertRaises(KeyboardInterrupt):
+                terminate(signal.SIGTERM, None)
+            terminate(signal.SIGTERM, None)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+        server.server_close()
+
+    def test_embedded_thread_does_not_install_process_signal_handlers(self):
+        server = RussoundHTTPServer(None, None)
+        completed = threading.Event()
+
+        def embedded():
+            with server._termination_signals():
+                completed.set()
+
+        with patch("web.russound_server.signal.signal") as install:
+            thread = threading.Thread(target=embedded)
+            thread.start()
+            thread.join(timeout=2)
+        self.assertTrue(completed.is_set())
+        install.assert_not_called()
+        server.server_close()
 
     def test_main_enables_debug_logging_from_flag_or_environment(self):
         from web.russound_server import main

@@ -1,0 +1,49 @@
+services:
+  russound-web:
+    image: "${RUSSOUND_WEB_IMAGE:?Set an exact web image digest}"
+    platform: "${RUSSOUND_PLATFORM:?Set the target platform}"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
+    ports:
+      - "${RUSSOUND_PUBLISH_HOST:-0.0.0.0}:${RUSSOUND_PUBLISH_PORT:-8000}:8000"
+    environment:
+      RUSSOUND_WEB_HOST: "0.0.0.0"
+      RUSSOUND_WEB_PORT: "8000"
+      RUSSOUND_BACKEND_HOST: "${RUSSOUND_BACKEND_HOST:-}"
+      RUSSOUND_BACKEND_PORT: "${RUSSOUND_BACKEND_PORT:-}"
+      RUSSOUND_PLAYBACK_AGENTS: "${RUSSOUND_PLAYBACK_AGENTS:-}"
+      RUSSOUND_CONFIG: /config/russound_config.json
+      RUSSOUND_STATE: /data/russound_state.json
+      RUSSOUND_LOG_FILE: /logs/russound-web.log
+      RUSSOUND_DEBUG: "true"
+      RUSSOUND_ALLOWED_HOSTS: "${RUSSOUND_ALLOWED_HOSTS:-}"
+      RUSSOUND_ALLOWED_ORIGINS: "${RUSSOUND_ALLOWED_ORIGINS:-}"
+      RUSSOUND_TRUSTED_PROXY_COUNT: "${RUSSOUND_TRUSTED_PROXY_COUNT:-0}"
+    volumes:
+      - type: bind
+        source: "${RUSSOUND_DATA_DIR:?Set an absolute deployment data directory}/config"
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${RUSSOUND_DATA_DIR:?Set an absolute deployment data directory}/data"
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${RUSSOUND_DATA_DIR:?Set an absolute deployment data directory}/logs"
+        target: /logs
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${RUSSOUND_DATA_DIR:?Set an absolute deployment data directory}/secrets"
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

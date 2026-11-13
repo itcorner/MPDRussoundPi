@@ -30,16 +30,25 @@
     - name: Require an explicit external endpoint when not managing the serial gateway
       ansible.builtin.assert:
         that:
-          - russound_manage_serial_gateway | bool or russound_backend_host != 'russound-ser2net'
-        fail_msg: "Set russound_backend_host to the existing gateway when russound_manage_serial_gateway=false."
+          - >-
+            russound_manage_serial_gateway | bool or
+            (russound_backend_host is string and russound_backend_host | trim | length > 0 and
+             russound_backend_host == (russound_backend_host | trim) and russound_backend_host != 'russound-ser2net')
+        fail_msg: "Set russound_backend_host to a nonblank existing gateway host without surrounding whitespace when russound_manage_serial_gateway=false."
 
     - name: Require explicit published image references
       ansible.builtin.assert:
         that:
-          - not (russound_use_published_images | bool) or russound_web_image | length > 0
-          - not (russound_use_published_images | bool) or not (russound_manage_serial_gateway | bool) or russound_ser2net_image | length > 0
+          - >-
+            not (russound_use_published_images | bool) or
+            (russound_web_image is string and russound_web_image | trim | length > 0 and
+             russound_web_image == (russound_web_image | trim))
+          - >-
+            not (russound_use_published_images | bool) or not (russound_manage_serial_gateway | bool) or
+            (russound_ser2net_image is string and russound_ser2net_image | trim | length > 0 and
+             russound_ser2net_image == (russound_ser2net_image | trim))
           - russound_published_pull_policy in ['always', 'missing', 'never']
-        fail_msg: "Set explicit web and managed serial gateway image references when using published images."
+        fail_msg: "Set nonblank web and managed serial gateway image references without surrounding whitespace when using published images."
 
     - name: Check whether the serial device is present
       ansible.builtin.stat:

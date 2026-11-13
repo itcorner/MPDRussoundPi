@@ -89,6 +89,51 @@ class PlaybackStatusTests(unittest.TestCase):
         config = PlaybackAgentConfig("http://127.0.0.1:8081", "musicpi", str(token_path))
         return PlaybackStatusClient(config)
 
+    def test_stop_during_poll_does_not_dispatch_another_request(self) -> None:
+        for active_request in range(3):
+            with self.subTest(active_request=active_request), tempfile.TemporaryDirectory() as directory:
+                client = self.create_client(Path(directory) / "token")
+                payloads = [self.health, self.capabilities, self.fixture["healthy_inventory"]]
+                calls = []
+
+                def response(path):
+                    calls.append(path)
+                    index = len(calls) - 1
+                    if index == active_request:
+                        client.request_stop()
+                    return payloads[index]
+
+                with patch.object(client, "_get_json", side_effect=response):
+                    self.assertFalse(client.poll_once())
+                self.assertEqual(len(calls), active_request + 1)
+                self.assertEqual(client.snapshot()["agents"][0]["status"], "unavailable")
+                client.close()
+
+    def test_close_releases_running_poller_after_active_request_without_further_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.create_client(Path(directory) / "token")
+            opener = BlockingOpener(FakeResponse(self.health))
+            with patch("web.playback_status.build_opener", return_value=opener) as requests:
+                try:
+                    client.start()
+                    self.assertTrue(opener.entered.wait(2))
+                    client.request_stop()
+                    opener.release.set()
+                    client.close()
+                    self.assertFalse(client._thread.is_alive())
+                    self.assertEqual(requests.call_count, 1)
+                finally:
+                    opener.release.set()
+                    client.close()
+
+    def test_unstopped_poller_is_not_reported_as_successful_close(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.create_client(Path(directory) / "token")
+            client._thread = Mock()
+            client._thread.is_alive.return_value = True
+            with self.assertRaisesRegex(RuntimeError, "did not stop"):
+                client.close()
+
     def test_configuration_requires_all_values_and_restricts_plain_http(self) -> None:
         with patch.dict(os.environ, {"RUSSOUND_PLAYBACK_AGENTS": "not-json"}, clear=True):
             with self.assertRaisesRegex(ValueError, "JSON array"):

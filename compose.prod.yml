@@ -1,0 +1,7 @@
+services:
+  russound-web:
+    extends:
+      file: compose.dev.yml
+      service: russound-web
+    environment:
+      RUSSOUND_DEBUG: "false"

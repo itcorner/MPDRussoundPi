@@ -10,7 +10,7 @@ ExecStart={{ venv_dir }}/bin/python -m web.russound_server --config {{ russound_
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-Environment='RUSSOUND_PLAYBACK_AGENTS={{ russound_playback_agents | to_json }}'
+Environment="RUSSOUND_PLAYBACK_AGENTS={% if russound_playback_agents != [] %}{{ (russound_playback_agents | to_json) | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') }}{% endif %}"
 User={{ deploy_user }}
 Group={{ deploy_user }}
 

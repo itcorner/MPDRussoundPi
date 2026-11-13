@@ -93,10 +93,13 @@ ansible-playbook -i ansible/inventory.yaml \
 ```
 
 The play installs root-owned helpers, `mpdrussoundpi-egress.service`, the user
-`mpdstreams.slice` and per-MPD `50-egress.conf` drop-ins, then restarts configured
-MPD instances into the protected slice. It leaves existing host firewall tables
-unchanged. UDP DNS is excepted only to the supplied resolver IPs on port 53;
-HTTP streams to those IPs remain blocked.
+`mpdstreams.slice` and per-MPD `50-egress.conf` drop-ins, then restarts
+matching MPD instances into the protected slice. The current play discovers
+matching `mpd_*.service` files, not just configured outputs; inspect those
+units before activation because unrelated matches may be modified or restarted.
+It leaves existing host firewall tables unchanged. UDP and TCP DNS are
+excepted only to the supplied resolver IPs on port 53; HTTP streams to those
+IPs remain blocked.
 
 MPD startup fails if the root service is unavailable or its recorded cgroup
 inode no longer matches. Restart the root service after recreating the slice.
@@ -217,6 +220,13 @@ RUSSOUND_PLAYBACK_AGENTS=[{"agent_id":"musicpi","url":"https://192.168.1.105:844
 ```
 
 The URL host must match the certificate SAN. Never disable TLS verification.
+Changing Docker projects may change the web container's source subnet. Verify
+the proxy's explicit allowed CIDRs against the new network before cutover;
+HTTP 403 can indicate source authorization failure, not a bad token or CA.
+Back up and validate proxy changes before applying them. Existing installations
+whose proxy unit lacks `ExecReload` can use Caddy's direct reload command with
+the configured admin endpoint `127.0.0.1:2020`; do not assume `systemctl reload`
+is supported until the unit has been updated.
 For an Ansible-managed Docker deployment, supply the agent list through
 `russound_playback_agents` instead: the play rewrites `.env` on rerun.
 For a manually launched native web process, set `RUSSOUND_PLAYBACK_AGENTS`
@@ -226,12 +236,11 @@ unit sets this environment value explicitly, so changing a shell environment
 does not update the service.
 `.env`, private tokens, runtime config/state and TLS private keys stay outside Git.
 
-Rebuild/recreate only the web service when using an existing external gateway:
-
-```sh
-docker compose build russound-web
-docker compose up -d --no-deps --no-build russound-web
-```
+For a new isolated container installation, follow the
+[container guide](container-deployment.md) and use only its external-gateway
+web profile. For an existing installation, retain its actual ordered Compose
+files and image selection; do not rebuild or switch layouts simply to add an
+agent. The new Ansible preview does not provision playback credentials.
 
 Open `http://<web-host>:8000/playback`. A stream's Config dialog contains
 transport controls, station favorites/search and calibration gain. Favorites

@@ -200,6 +200,115 @@ dependencies, and staging audio without starting/enabling playback.
 All deployment playbooks are separately syntax-checked. These are controller
 checks, not execution of the native/Docker provisioning paths on a new Pi.
 
+[Profile tests](../../tests/test_container_profiles.py) render the new dev/prod
+layouts with external, managed and dummy backends, verify mount/logging/build
+boundaries, and exercise the real inventory-driven preview against a deliberately
+unreachable target. Invalid inputs and apply requests must fail locally.
+Saved image candidates are reused for all three gateway modes, including
+Ansible check mode; conflicting inputs, wrong platform and missing files must
+fail without changing the saved selection.
+[Image-selection tests](../../tests/test_deployment_images.py) use deterministic
+registry metadata to check revision pairing, ARM64/AMD64 selection, digest and
+descriptor validation, publication races, malformed metadata, credential-free
+CDN redirects, exclusive private file creation, offline reuse and non-mutating
+index-level update checks. Public registry availability is a separate manual
+metadata integration check, not a dependency of the unit suite.
+[Persistent-state tests](../../tests/test_deployment_state.py) use disposable
+private directories, competing processes and process exit to verify host-wide
+exclusion, retained pending/committed records, strict identities, unsafe-file
+rejection and separate finalization. Injected file/sync/rename failures must
+retain evidence; an error after reservation removal must remain explicitly
+uncertain. They do not prove power-loss durability on the target filesystem.
+[Completion tests](../../tests/test_deployment_completion.py) run actual local
+Ansible plays with the controlled callback, including successful/failed handlers,
+rescued/ignored failures, an unreachable fixture and prohibited retry/loop/
+conditional/async patterns. Missing, duplicate or contradictory outcomes and
+callback write/sync errors block completion. A separate pipe acknowledgement
+prevents a terminal sync failure from being mistaken for success merely because
+complete-looking JSON is readable. Event content excludes task/result/item values.
+These are internal runner tests; automated target apply remains disabled.
+[Protected-input tests](../../tests/test_deployment_inputs.py) check private
+snapshot creation, source/content/identity/mode drift, unsafe file types,
+exclusive stable installation, retained partial evidence and readability after
+staging cleanup. They do not prove cross-process approval-seal custody or
+runtime service acceptance.
+[Target preflight tests](../../tests/test_deployment_preflight.py) exercise
+read-only directory/listener checks, incompatible or remote daemons, existing
+projects and mount/device conflicts, serial mode/holder inspection and redacted
+failure output. A standalone Linux test uses fixture Docker metadata with real
+paths and socket operations; a Linux pseudo-terminal tests actual open-device
+detection without hardware. The real Ansible entry point is tested for explicit
+target execution/failure and controller-first validation; default previews remain
+target-disconnected. These checks do not establish deployment safety or routing.
+[Backup tests](../../tests/test_deployment_backup.py) validate private stopped-writer
+bundles, strict paths/metadata/size limits, separate manifest identities,
+cross-process copied-bundle verification, stream short writes, process loss,
+corruption and failed persistence/restore operations. They restore a real SQLite
+database with committed WAL content left by an exited writer and verify database
+integrity. Source mutation, unexpected attributes and unsafe links/types fail
+explicitly; restore never overwrites an existing destination or clears pending.
+On macOS these unit fixtures shim the unavailable Linux xattr API to an empty
+attribute set; Linux runs exercise real inspection and extended-attribute
+rejection. This does not certify target power-loss durability or live recovery.
+[Template integration](../../tests/test_deployment_render_integration.py) uses
+actual Ansible and Compose rendering for agent configuration and preflight.
+
+[Web lifecycle tests](../../tests/test_web_lifecycle.py) use actual Waitress
+subprocesses, SIGTERM/SIGINT and open SSE streams, requiring exit 0 within
+eight seconds of the signal without unfinished-worker warnings. An in-flight
+request fixture must finish its write before process exit. Unit tests cover
+signal-handler restoration, repeated signals, embedded threads, startup failure,
+new-request rejection, watcher join/connection release, complete cleanup attempts
+and explicit errors for workers/pollers that fail to stop.
+[Logging initialization tests](../../tests/test_logging_initialization.py) use
+fresh processes and all six audio-helper/setup import orders, requiring root
+logger state to stay unchanged and no relative debug file to be created.
+Setup commands must emit one copy of operational/warning messages to stderr;
+diagnostics require `--debug`, even when logging was configured earlier.
+Help remains side-effect-free. These fixtures never invoke native service or
+audio commands.
+
+[Opt-in runtime integration](../../tests/test_container_runtime.py) requires a
+local Docker socket, an already cached published web digest and a local dummy
+image. It creates a unique disposable Compose project, private bind data, an
+internal backend network and a separate web frontend published on an ephemeral
+loopback port. Tests verify host HTTP/backend routing, unchanged reruns,
+recreation with preserved data, failure for an unavailable image without
+replacing web, and external-gateway routing. Cleanup targets that project only.
+This tests the cached web image, not a build of current web source. It does not
+validate USB, hardware, native systemd, migration, backup/restore or a remote
+deployment. Run explicitly after preparing the two images:
+
+```sh
+RUSSOUND_RUN_CONTAINER_TESTS=1 \
+RUSSOUND_TEST_WEB_IMAGE=itcornernet/mpdrussoundpi-web@sha256:VERIFIED_DIGEST \
+RUSSOUND_TEST_DUMMY_IMAGE=mpdrussoundpi-dummy:local \
+  .venv/bin/python -m unittest discover -s tests -p test_container_runtime.py
+```
+
+[Opt-in recovery integration](../../tests/test_container_recovery.py) requires
+local Docker, Ansible and the cached web image, but no additional image build.
+A test-only override runs current web and dummy source with that cached Python-capable
+image, explicitly setting the dummy host/state and TCP healthcheck. The test owns a
+unique local Linux volume and Compose project. After routing and unchanged
+rerun checks, it opens a real SSE connection and requires the web container
+(Python as PID 1) to stop with exit 0 in under six seconds rather than reaching
+its eight-second forced-kill timeout. It then stops the dummy writer,
+captures/verifies their data and injects a
+real failed Ansible/Compose update with `--pull never`, restores a separate
+tree and verifies routing and preserved config/state/secrets from the restored
+stack. Pending state and reservation must stay blocked. Setup temporarily adds
+only `CHOWN` to a no-network helper for its own volume ownership; backup/restore
+helpers run as the service user with all capabilities dropped. Cleanup targets
+only the test's project and volume. This is not the finished apply/recovery
+entry point, real serial/proxy/audio acceptance or image-archive restoration.
+
+```sh
+RUSSOUND_RUN_CONTAINER_TESTS=1 \
+RUSSOUND_TEST_WEB_IMAGE=itcornernet/mpdrussoundpi-web@sha256:VERIFIED_CACHED_DIGEST \
+  .venv/bin/python -m unittest discover -s tests -p test_container_recovery.py
+```
+
 ## Public-only playback egress
 
 [Public network tests](../../tests/test_publicnetwork.py) cover IPv4/IPv6 public
@@ -207,7 +316,7 @@ classification, mixed/empty/private DNS answers, rebinding between validation
 and connection, pinned socket addresses, original HTTP Host/TLS hostname,
 certificate validation, redirect revalidation and disabled environment proxies.
 [Filter tests](../../tests/test_playbackegress.py) cover cgroup-only scoping,
-control replies, exact UDP DNS exceptions, shared address sets, input rejection,
+control replies, exact UDP and TCP DNS exceptions, shared address sets, input rejection,
 fail-closed startup, cgroup identity changes and persistent unit configuration.
 [TuneIn tests](../../tests/test_tunein.py) retain search/cache and bounded
 playlist/error coverage with deterministic DNS.

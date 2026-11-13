@@ -1,0 +1,34 @@
+services:
+  russound-web:
+    environment:
+      RUSSOUND_BACKEND_HOST: russound-dummy
+      RUSSOUND_BACKEND_PORT: "6666"
+    depends_on:
+      russound-dummy:
+        condition: service_healthy
+
+  russound-dummy:
+    image: "${RUSSOUND_DUMMY_IMAGE:?Build and select an explicit local dummy image}"
+    platform: "${RUSSOUND_PLATFORM:?Set the target platform}"
+    restart: unless-stopped
+    init: true
+    tty: true
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
+    environment:
+      RUSSOUND_DUMMY_HOST: "0.0.0.0"
+      RUSSOUND_DUMMY_PORT: "6666"
+      RUSSOUND_DUMMY_STATE: /data/dummy_state.json
+      RUSSOUND_DUMMY_TUI: "${RUSSOUND_DUMMY_TUI:-false}"
+      RUSSOUND_DUMMY_TMUX_SESSION: dummy
+      RUSSOUND_DUMMY_DEBUG: "false"
+    volumes:
+      - type: bind
+        source: "${RUSSOUND_DATA_DIR:?Set an absolute deployment data directory}/dummy-data"
+        target: /data
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

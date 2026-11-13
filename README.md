@@ -155,7 +155,7 @@ Then open:
 
 With no valid config, the browser opens setup. Configure the serial/TCP gateway,
 controllers, zones and sources. No hardware is needed to save configuration.
-For a fully hardware-free test use the [dummy stack](#dummy-backend-container-no-hardware).
+For a fully hardware-free test use the [dummy layout](docs/documentation/container-deployment.md#dummy-no-hardware).
 An offline hardware warning is separate from web service health.
 
 ## Choose a deployment
@@ -163,8 +163,10 @@ An offline hardware warning is separate from web service health.
 | Goal | Procedure |
 | --- | --- |
 | Run locally from source | Quick start above |
-| Web container with an existing Pi/LAN serial gateway | [Web-only Docker](#first-run-setup-and-recovery) |
-| Web plus a USB serial gateway container on Linux | [Serial gateway](#serial-gateway-container-ser2net) |
+| New development container, external/managed/dummy gateway | [Container deployment guide](docs/documentation/container-deployment.md) |
+| Select matching published dev images without pulling or deploying | [Image selection](docs/documentation/container-deployment.md#select-published-development-images) |
+| Preview the new development layout without changing a host | [Ansible preview](docs/documentation/container-deployment.md#ansible-preview) |
+| Inspect prerequisites for a new Linux target without deploying | [Explicit target preflight](docs/documentation/container-deployment.md#explicit-target-preflight) |
 | Native Linux web service | [Native web deployment](#native-web-deployment) |
 | Pi playback, agent, TLS and outbound enforcement | [Playback deployment](docs/documentation/playback-agent-deployment.md) |
 
@@ -272,43 +274,22 @@ Each part runs in its own container:
 | `mpdrussoundpi-ser2net` | `Dockerfile.ser2net` | Serial gateway (RS-232 to TCP) |
 | `mpdrussoundpi-dummy` | `Dockerfile.dummy` | Hardware-free [dummy backend](tool/dummy_backend/README.md) |
 
-Two stacks combine them: `docker-compose.yml` runs the web application with the ser2net gateway (hardware), `docker-compose.dummy.yml` runs it with the dummy backend (no hardware).
+Use the [container deployment guide](docs/documentation/container-deployment.md)
+for the new web-only development profile and its optional managed-gateway or
+dummy overlay. It provides one procedure for images, data paths, startup and
+verification. The new Ansible entry point supports controller preview and an
+explicit read-only first-install target preflight. Apply stays blocked until
+its safety runner is integrated; production is not available yet.
 
-For the hardware stack, use a Linux USB host with no other gateway holding the
-serial device. Create bind-mount directories as your deployment user before
-Compose starts, and set matching ownership and serial-group IDs:
-
-```bash
-mkdir -p docker/config docker/data docker/logs
-install -d -m 700 docker/secrets
-export RUSSOUND_UID="$(id -u)"
-export RUSSOUND_GID="$(id -g)"
-export RUSSOUND_SERIAL_GID="$(stat -c '%g' /dev/ttyUSB0)"
-docker compose up -d --build
-```
-
-Persist the numeric IDs in the local `.env` for future Compose runs. Existing
-root-owned mount directories need ownership correction before starting.
-
-The UI is then available on `http://<host>:8000/`. With no valid configuration,
-the browser opens setup. Set the TCP gateway to `russound-ser2net`, port `6666`,
-select the installed controllers and zone counts, and enable/name the connected
-zones and sources. An existing valid config is retained.
+The old `docker-compose.yml` and `docker-compose.dummy.yml` remain legacy
+build-oriented stacks for existing users. They have not been silently changed
+to the new layouts. Do not mix the two workflows or use either to migrate the
+running Pi without a reviewed backup and explicit approval.
 
 ### First-run setup and recovery
 
 The web image can start with empty config/data volumes; no template file is required.
-For example, using an image built from this checkout:
-
-```bash
-docker build -t russound-web:local .
-docker run -d --name russound-web --restart unless-stopped \
-  -p 8000:8000 \
-  -v russound-config:/config \
-  -v russound-data:/data \
-  -v russound-logs:/logs \
-  russound-web:local
-```
+See the [container guide](docs/documentation/container-deployment.md) for startup.
 
 Open `http://<host>:8000/` and configure the backend and hardware layout. The
 web-only example requires an existing TCP gateway reachable from the container,
@@ -332,51 +313,15 @@ an authenticated reverse proxy; the setup page can change the backend destinatio
 
 ### Serial gateway container (ser2net)
 
-The `russound-ser2net` container bridges the USB serial cable to TCP, so no gateway is needed on the host. The web container connects to it on `russound-ser2net:6666` over the compose network.
-
-The USB device is changeable without rebuilding the image:
-
-```bash
-RUSSOUND_SERIAL_DEVICE=/dev/ttyUSB1 docker compose up -d
-```
-
-The same variable also controls the `devices:` passthrough, so the device is mapped into the container at the same path.
-
-Set `RUSSOUND_SERIAL_GID` to the group owning the device on the host (`stat -c '%g' /dev/ttyUSB0`, usually `dialout`) so the non-root container user may open it.
-
-To use a ser2net instance on the host or another machine instead, point the web container elsewhere and skip the gateway service:
-
-```bash
-RUSSOUND_BACKEND_HOST=192.168.1.105 docker compose up -d --build --no-deps russound-web
-```
-
-This skips the serial container on startup. If a gateway container is already
-running, explicitly stop it only when switching away from that device.
-`host.docker.internal` can be used when the gateway runs on the Docker host.
+Use the [managed gateway procedure](docs/documentation/container-deployment.md#managed-usb-gateway).
+An external gateway uses the web-only profile instead; no disabled serial
+service or serial-device defaults are required in that layout.
 
 ### Dummy backend container (no hardware)
 
-`docker-compose.dummy.yml` starts the dummy backend together with the web container, which is pointed at `russound-dummy:6666`:
-
-```bash
-mkdir -p docker/config docker/data docker/dummy-data
-export RUSSOUND_UID="$(id -u)"
-export RUSSOUND_GID="$(id -g)"
-docker compose -f docker-compose.dummy.yml up -d --build
-```
-
-On first run, configure the controller/zone/source layout in the web setup page.
-The dummy stack overrides the TCP backend to `russound-dummy:6666`; the editor
-shows these environment overrides explicitly.
-
-The curses TUI runs inside a `tmux` session in the container and can be attached
-to at any time:
-
-```bash
-docker exec -it russound-dummy tmux attach -t dummy
-```
-
-Detach again with `Ctrl-b d`; pressing `Q` in the TUI quits the backend and stops the container. `S` saves the state to `docker/dummy-data/dummy_state.json`, which is seeded from `tool/dummy_backend/example_state.json` on first start. Set `RUSSOUND_DUMMY_TUI=false` to run the TCP server only.
+Use the [dummy procedure](docs/documentation/container-deployment.md#dummy-no-hardware)
+for isolated state, explicit image builds and optional TUI access. This layout
+does not validate physical controller communication.
 
 ### Volumes
 
@@ -406,10 +351,10 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_SERIAL_OPTIONS` | Serial line settings (ser2net container) | `19200n81` |
 | `RUSSOUND_SER2NET_BIND` | ser2net bind address | `0.0.0.0` |
 | `RUSSOUND_SER2NET_PORT` | ser2net listening port | `6666` |
-| `RUSSOUND_SERIAL_GID` | Host GID owning the serial device | `20` |
+| `RUSSOUND_SERIAL_GID` | Host GID owning the serial device | required in new gateway overlay; legacy default `20` |
 | `RUSSOUND_CONFIG` | Config file path | `/config/russound_config.json` |
 | `RUSSOUND_STATE` | State file path | `/data/russound_state.json` |
-| `RUSSOUND_DEBUG` | Enable debug logging; Waitress remains the HTTP server and Flask's debugger is not enabled | `false` |
+| `RUSSOUND_DEBUG` | Enable debug logging; Waitress remains the HTTP server and Flask's debugger is not enabled | image `false`; new dev profile `true`, prod layout `false` |
 | `RUSSOUND_WAITRESS_THREADS` | Waitress worker threads | `24` |
 | `RUSSOUND_MAX_EVENT_STREAMS` | Max concurrent live-update (SSE) streams; capped at threads − 4 so page loads and API calls always have free threads | threads − 4 |
 | `RUSSOUND_TCP_USER_TIMEOUT_SECONDS` | Drop client connections whose sent data stays unacknowledged this long (Linux only, `0` disables) | `30` |
@@ -432,78 +377,14 @@ On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the
 
 ### Raspberry Pi provisioning
 
-`ansible/playbooks/deploy-russound-docker.yml` prepares a Pi for the container deployment: it installs Docker Engine and the Compose plugin, clones the repository, seeds `docker/config/russound_config.json`, writes a `.env` file, and starts the `docker-compose.yml` stack (web application plus ser2net gateway).
-
-**Known issue:** Both web playbooks currently render their default empty
-playback-agent list as `[]`, which the web process rejects at startup. Until
-fixed, configure a valid nonempty `russound_playback_agents` list when using
-these plays; they do not currently provide a working no-agent default.
-
-```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml
-```
-
-By default it disables the host `ser2net` and `russound-web` services when
-present, because the containers provide both. When serial gateway management
-is disabled, it leaves host `ser2net` alone.
-
-Override play-level defaults on the command line:
-
-```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml \
-  -e russound_serial_device=/dev/ttyUSB1 -e russound_publish_port=8080
-```
-
-The play's `vars` take precedence over same-named host inventory variables;
-setting those defaults only in inventory does not override them. Use explicit
-`-e` values for these play variables until the deployment rework resolves
-their precedence.
-
-The playbook detects the serial device's group and the deployment user's UID/GID
-and creates writable config/data/log directories. It refuses to change services
-if the managed serial device is absent. Existing runtime configuration is preserved and a
-dirty Git checkout is not forcibly reset.
-
-To pull explicit published images instead of building on the Pi, use matching
-tags appropriate for the checkout and target architecture:
-
-**Existing Pi warning:** This play uses its own Compose file list. If the
-running deployment uses additional overrides, the play may select a different
-image or configuration. Inventory and preserve the actual ordered inputs and
-local images before any redeployment; do not treat this command as a no-change
-rerun of the current Pi installation.
-
-```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml \
-  -e russound_use_published_images=true \
-  -e russound_web_image=itcornernet/mpdrussoundpi-web:TAG \
-  -e russound_ser2net_image=itcornernet/mpdrussoundpi-ser2net:TAG
-```
-
-The override is stored outside the Git checkout. Published image deployment
-uses `--no-build`; it does not publish images or select a release automatically.
-If the exact images have already been securely loaded on the target, set
-`russound_published_pull_policy=never` to deploy without registry access.
-Set `russound_verify_backend=true` to require a response from the Russound
-controller, not just an HTTP response from the web application.
-
-For an existing host/LAN gateway, keep its host ser2net service and start only web:
-
-```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-docker.yml \
-  -e russound_manage_serial_gateway=false \
-  -e russound_backend_host=192.168.1.105
-```
-
-This mode does not stop an already-running serial container. Stop a previous
-container explicitly if it is no longer wanted. The play rewrites `.env`;
-manage playback integration through its `russound_playback_agents` variable
-rather than hand-editing that file after each run. Provision the referenced
-token and certificate files under `docker/secrets` on the target web host first.
-The current play does not reject a blank external host: always provide a
-nonblank, reachable host explicitly. Its default backend port remains an
-override even when the host is blank and can switch a saved serial connection
-to TCP.
+The [new Ansible preview](docs/documentation/container-deployment.md#ansible-preview)
+does not change or contact the Pi. The old
+`ansible/playbooks/deploy-russound-docker.yml` remains a legacy provisioning
+play, not the new workflow. It can install Docker, update a target checkout,
+rewrite `.env` and stop native services. See the
+[compatibility boundary](docs/documentation/container-deployment.md#existing-installations-and-legacy-entry-points)
+before using it. In particular, it does not preserve the current Pi's extra
+Compose override automatically.
 
 ### Native web deployment
 

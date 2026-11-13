@@ -24,9 +24,6 @@ PULSE_WRAPPER = "# MPDRussoundPi PulseAudio wrapper\n.include /etc/pulse/default
 PULSE_BEGIN = "\n# BEGIN MPDRussoundPi managed include\n"
 PULSE_END = "# END MPDRussoundPi managed include\n"
 
-logging.basicConfig(filename='russound_debugging.log', level=logging.DEBUG,
-                    format='%(asctime)s:%(name)s:%(levelname)s:%(funcName)s():%(message)s')
-
 def detect_audio_processor() -> dict[str, bool]:
     """Detect active audio processor and return the selected processor."""
     pipewire_active = subprocess.run(['systemctl', '--user', 'is-active', 'pipewire'], 
@@ -224,10 +221,13 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument('--install', action='store_true', help='Install audio configuration')
     action.add_argument('--cleanup', action='store_true', help='Remove only owned audio configuration')
     parser.add_argument('--audio-processor', choices=['pulseaudio', 'pipewire'], help='Override auto-detection of audio processor.')
+    parser.add_argument('--debug', action='store_true', help='Enable diagnostic logging')
     parser.add_argument('json', nargs='?', help='Configuration file (required for install only)')
     args = parser.parse_args(argv)
     if args.install and args.json is None:
         parser.error("Install requires a JSON configuration file")
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s", force=True)
     try:
         with setup_lock():
             if args.cleanup:
