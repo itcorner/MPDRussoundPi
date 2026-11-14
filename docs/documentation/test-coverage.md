@@ -45,6 +45,17 @@ Python 3.13. These are local runtime/packaging checks, not Pi hardware,
 live credential-rotation or every-version-within-range certification.
 See the [S3 completion record](../plans/general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14).
 
+**Subsequent approved Pi rehearsal:** clean committed ARM64 S3 images passed
+isolated web/dummy deployment, actual authenticated agent TLS routing,
+effective-config and runtime-input checks, production/DEBUG logging and
+unchanged redeployment. Isolated native-source contract/liveness checks ran
+without package installation, MPD access or activation of live native services.
+Original live identities/protected files remained unchanged. A durable
+30-minute read-only observer began at 18:21:28 CET on 2026-11-14; its first full
+sample passed, but completion was still pending at handoff. This does not
+certify live S3 activation or the unfinished S4 operator/dummy path. See the
+[rehearsal record](../plans/general_open_simplify-deployment-configuration.md#isolated-s3-pi-deployment-and-background-observation-2026-11-14).
+
 ## Blind Spots
 
 - `web/config_types.py` has no dedicated tests for malformed configuration, boolean-vs-integer rejection, endpoint defaults, or controller-limit normalization.

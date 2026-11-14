@@ -3370,12 +3370,74 @@ values and extra newlines no longer receive different treatment by web,
 agent and preflight. Existing nonconforming inputs require reviewed correction
 before deployment, not automatic rewriting or rotation.
 
-**Deployment boundary:** no S3 source was installed on the Pi, no working
+**Deployment boundary at local completion:** no S3 source was installed on the Pi, no working
 credential/environment was changed and no service was restarted. S4 still
 owns remaining layout/shared-Ansible work, typed variable fixes and staged
 agent activation; S5 owns approved migration/live activation and remaining
 layout/physical acceptance. The prior successful freshness-fix six-hour
 observation does not certify these undeployed S3 changes.
+
+### Isolated S3 Pi deployment and background observation (2026-11-14)
+
+Following explicit operator approval, committed S3 separately as
+`b973cbd74e6054fd77b5f8ace531901b15001246`; the unrelated guided-setup plan
+remained outside that commit. Built the ARM64 web and explicit dummy images
+on the controller from a clean detached worktree at that revision. Verified
+the web bundle manifest/archive, dummy archive transfer hashes, loaded image
+IDs/platforms and revision labels on the Pi before starting anything.
+
+The test is a **manual isolated development rehearsal**, not certification of
+the unfinished S4 dummy/operator deployment path:
+
+- Project `russound-s3-b973cbd`, web bound only to `127.0.0.1:18080`, separate
+  private config/state/log/credential copies and an internal dummy network.
+  No serial device is assigned; the dummy does not control physical hardware.
+- Web alone also joins the initially empty, already-allowlisted
+  `mpdrussoundpi_default` bridge for existing authenticated agent HTTPS access.
+  This is an external egress bridge, not a fully network-isolated test.
+  No live proxy allowlist, production network/service configuration or
+  credential was changed. The live gateway is not used by the test web.
+- Production-minimum logging is selected deliberately for the test web;
+  explicit DEBUG was also exercised in isolated logging checks.
+- Actual Pi web-to-dummy TCP/controller responses and CA/hostname-verified
+  authenticated TLS polling of the existing read-only agent passed. All
+  three live audio outputs reported fresh readiness and correct routes.
+- The new API metadata agreed across endpoints, reported environment-forced
+  TCP over a saved synthetic serial endpoint, and retained saved configuration.
+  A subprocess partial-port override correctly reported the default host.
+  Invalid runtime input failed startup without echoing the supplied value.
+- Native source was extracted separately under the test directory. Using the
+  existing agent interpreter without installing packages, token-boundary,
+  redaction, production/DEBUG and supervisor help/import checks passed.
+  A temporary loopback-only read-only agent on port 18081 passed authenticated
+  liveness, HTTP 401 without auth and graceful SIGTERM exit 0, then was stopped.
+  Its intentionally missing config prevented MPD/audio access; this is **not**
+  live native-agent/supervisor activation or operational hardware acceptance.
+  Invalid-token CLI execution created no operation ledger.
+- An unchanged Compose rerun preserved exact candidate container IDs, start
+  times, images, mounts and networks. Both test containers are healthy with
+  zero restarts. Original live container identities, native service PIDs/
+  restart counts, protected config/credentials and installed native source
+  hashes matched the pre-test baseline after all checks.
+
+Only after those checks passed, started durable user service
+`russound-s3-b973cbd-observation.service`. Timed observation began
+**18:21:28 CET**, duration **1800 seconds**, expected completion about
+**18:51:28 CET**. It samples candidate API/metadata/audio freshness every
+10 seconds and performs full identity, protected-file, direct routing and
+original-live-deployment checks about once a minute. It stops on the first
+failed sample, records named failures and performs no automatic remediation.
+Three synthetic observer tests verify named failure reporting, identity-drift
+detection and persisted unsuccessful early completion.
+
+**At handoff: running, first full sample passed, zero failures.** This is not
+yet a completed 30-minute pass. Private baselines, check reports, append-only
+observation records and atomic status reside on the Pi under
+`~/.local/state/mpdrussoundpi-s3-test-b973cbd-20261114/`.
+The original live deployment remains active. Test containers/private credential
+copies remain isolated for observation and require explicit scoped cleanup
+after the result is reviewed. No six-hour rerun or live S3 replacement has
+been started.
 
 ## Acceptance and verification
 
