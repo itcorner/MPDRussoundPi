@@ -1,0 +1,7 @@
+services:
+  russound-web:
+    image: {{ russound_web_image | to_json }}
+{% if russound_manage_serial_gateway | bool %}
+  russound-ser2net:
+    image: {{ russound_ser2net_image | to_json }}
+{% endif %}

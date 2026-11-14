@@ -1,0 +1,6 @@
+---
+- name: Validate web playback registry before changing the target
+  ansible.builtin.assert:
+    that:
+      - (russound_playback_agents | deployment_agents) is string
+    quiet: true

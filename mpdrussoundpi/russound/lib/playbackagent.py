@@ -15,6 +15,7 @@ from lib.mpdbackend import BackendError, MPDBackend
 from lib.playbackstatus import OutputObservation, PlaybackCollector
 from lib.playbackoperations import ACTIONS, FAVORITE_ACTIONS, OperationError, OperationManager
 from lib.stations import Station
+from lib.servicecredentials import validate_service_token
 
 
 AUDIO_REFRESH_INTERVAL_SECONDS = 20.0
@@ -81,13 +82,13 @@ class AgentObserver:
                 self._favorites, self._control_revision,
             )
         if previous.error_code != error_code or previous.config_revision != config_revision:
-            logging.info("Agent inventory transition: %s", error_code)
+            logging.getLogger("russound.health").info("Agent inventory transition: %s", error_code)
         if outputs is not None:
             old = {output.id: output for output in previous.outputs or ()}
             for output in outputs:
                 prior = old.get(output.id)
                 if prior is None or prior.playback.status != output.playback.status:
-                    logging.info("Output %s playback observation: %s", output.id, output.playback.status)
+                    logging.getLogger("russound.health").info("Output %s playback observation: %s", output.id, output.playback.status)
 
     def tick(self) -> None:
         """One scheduler iteration; never called by a request handler."""
@@ -184,8 +185,7 @@ def create_app(
 ) -> Flask:
     if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", agent_id) is None:
         raise ValueError("Invalid agent identity")
-    if len(token) < 32 or not token.isascii() or any(character.isspace() for character in token):
-        raise ValueError("Service token must be at least 32 ASCII characters without whitespace")
+    validate_service_token(token)
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 2048
     epoch = uuid4().hex

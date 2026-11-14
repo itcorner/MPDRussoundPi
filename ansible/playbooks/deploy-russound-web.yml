@@ -2,19 +2,14 @@
 - name: Deploy Russound web server
   hosts: musicpi
   become: true
-  vars:
-    deploy_user: "{{ ansible_user | default('musicpi') }}"
-    app_dir: "/home/{{ deploy_user }}/MPDRussoundPi"
-    venv_dir: "/home/{{ deploy_user }}/.local/share/russound-web/venv"
-    russound_config_dir: "/home/{{ deploy_user }}/.config/russound-web"
-    russound_state_dir: "/home/{{ deploy_user }}/.local/state/russound-web"
-    russound_playback_agents: []
-    russound_manage_serial_gateway: true
-    repo_url: https://github.com/itcorner/MPDRussoundPi.git
-    repo_version: main
-    russound_host: "0.0.0.0"
-    russound_port: 8000
-    ansible_python_interpreter: /usr/bin/python3
+  pre_tasks:
+    - name: Validate native web inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: web
+      tags: always
+  roles:
+    - role: ../roles/deployment_account
   tasks:
     - name: Install base OS packages
       apt:
@@ -39,7 +34,7 @@
         path: "{{ app_dir }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0755"
 
     - name: Clone or update repository
@@ -56,7 +51,7 @@
         path: "{{ app_dir }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         recurse: true
 
     - name: Create persistent web configuration, state and environment directories
@@ -64,7 +59,7 @@
         path: "{{ item }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0700"
       loop:
         - "{{ russound_config_dir }}"
@@ -116,7 +111,7 @@
 
     - name: Verify the web service responds
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ russound_port }}/"
+        url: "{{ russound_probe_url }}"
         status_code: 200
       register: russound_web_check
       retries: 15

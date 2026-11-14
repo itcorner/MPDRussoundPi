@@ -1,6 +1,7 @@
 from lib.outputconfig import parse_configuration
 from lib.mpdinstance import MPDInstance, config2mpd
 from lib.setuplock import setup_lock
+from lib.mpdownership import MARKER, CONTROL_UNITS, configured_units, preflight as ownership_preflight
 import argparse
 import os
 import subprocess
@@ -18,6 +19,7 @@ WIREPLUMBER_CONFIG = os.path.expanduser('~/.config/pipewire/wireplumber.conf.d/c
 SYSTEMD_USER_CONFIG_DIR = os.path.expanduser('~/.config/systemd/user/')
 SYSTEMD_MPD_METASERVICE = 'mpd_meta_control.service'
 SYSTEMD_MPD_SUPERVISOR = 'mpd_playback_supervisor.service'
+SELECTED_SERVICES: list[str] | None = None
 
 
 def systemd_quote(value: str) -> str:
@@ -32,7 +34,7 @@ def create_supervisor_service(config_path: str):
     command = " ".join(systemd_quote(value) for value in (sys.executable, script, str(Path(config_path).resolve())))
     with open(os.path.join(SYSTEMD_USER_CONFIG_DIR, SYSTEMD_MPD_SUPERVISOR), "w") as output:
         output.write(
-            "[Unit]\nDescription=MPD intended playback reconciliation\n"
+            MARKER + "[Unit]\nDescription=MPD intended playback reconciliation\n"
             f"Wants={SYSTEMD_MPD_METASERVICE} pipewire.service pipewire-pulse.service wireplumber.service\n"
             f"After={SYSTEMD_MPD_METASERVICE} pipewire.service pipewire-pulse.service wireplumber.service\n"
             "StartLimitIntervalSec=60\nStartLimitBurst=10\n\n"
@@ -41,9 +43,6 @@ def create_supervisor_service(config_path: str):
             "\n[Install]\nWantedBy=default.target\n"
         )
 
-
-logging.basicConfig(filename='russound_debugging.log', level=logging.DEBUG,
-                    format='%(asctime)s:%(name)s:%(levelname)s:%(funcName)s():%(message)s')
 
 def mpd_config_filename(instance_name: str) -> str:
     """Generate a safe filename for the MPD config based on the instance name."""
@@ -64,7 +63,7 @@ def create_mpd_config(mpd_instance: MPDInstance):
     config_file = os.path.join(MPD_CONFIG_DIR, config_filename)
     with open(config_file, 'w') as f:
         # Write basic MPD config settings
-        f.write(mpd_instance.to_mpd_config())
+        f.write(MARKER + mpd_instance.to_mpd_config())
         logging.info(f"Created MPD config: {config_file}")
 
 def create_mpd_metaservice(mpd_instances: list[MPDInstance]):
@@ -75,7 +74,7 @@ def create_mpd_metaservice(mpd_instances: list[MPDInstance]):
     service_file = os.path.join(SYSTEMD_USER_CONFIG_DIR, SYSTEMD_MPD_METASERVICE)
     services = " ".join(mpd_service_filename(instance.name) for instance in mpd_instances)
     with open(service_file, 'w') as f:
-        f.write(f"[Unit]\nDescription=MPD Meta Control Service\nAfter=network.target sound.target\n\n")
+        f.write(MARKER + "[Unit]\nDescription=MPD Meta Control Service\nAfter=network.target sound.target\n\n")
         if services:
             f.write(f"Wants={services}\nAfter={services}\n")
         f.write(f"[Service]\nType=oneshot\nExecStart=/bin/true\nExecStop=/bin/true\nRemainAfterExit=yes\n")
@@ -103,7 +102,7 @@ def create_mpd_systemd_service(mpd_instance: MPDInstance, config_path: str = "co
     config_filename = mpd_config_filename(mpd_instance.name)
     config_file = os.path.join(MPD_CONFIG_DIR, config_filename)
     with open(service_file, 'w') as f:
-        f.write(f"[Unit]\nDescription=MPD instance for {mpd_instance.name}\nAfter=network.target sound.target\n")
+        f.write(MARKER + f"[Unit]\nDescription=MPD instance for {mpd_instance.name}\nAfter=network.target sound.target\n")
         f.write(f"StopPropagatedFrom={SYSTEMD_MPD_METASERVICE}\nReloadPropagatedFrom={SYSTEMD_MPD_METASERVICE}\n\n")
         f.write("Wants=pipewire.service pipewire-pulse.service wireplumber.service\n"
                 "After=pipewire.service pipewire-pulse.service wireplumber.service\n"
@@ -124,25 +123,15 @@ def create_mpd_systemd_service(mpd_instance: MPDInstance, config_path: str = "co
 
 
 def kill_all_mpd_instances():
-    """Kill all running MPD instances."""
-    try:
-        subprocess.run(['pkill', '-f', 'mpd'], check=True)
-        logging.info("Killed all running MPD instances.")
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error killing MPD instances: {e}")
+    """Signal only the configured, ownership-checked systemd cgroups."""
+    for service in get_available_systemd_mpd_services():
+        subprocess.run(['systemctl', '--user', 'kill', '--signal=SIGKILL', service], check=True)
 
 def get_available_systemd_mpd_services() -> list[str]:
     """Get a list of available systemd services for MPD instances."""
-    services: list[str] = []
-
-    if not os.path.exists(SYSTEMD_USER_CONFIG_DIR):
-        logging.info(f"No systemd user config directory found at {SYSTEMD_USER_CONFIG_DIR}.")
-    else:    
-        for filename in os.listdir(SYSTEMD_USER_CONFIG_DIR):
-            if (filename.startswith('mpd_') and filename.endswith('.service')
-                    and filename not in (SYSTEMD_MPD_METASERVICE, SYSTEMD_MPD_SUPERVISOR)):
-                services.append(filename)
-    return services
+    if SELECTED_SERVICES is None:
+        raise ValueError("Select and preflight a configuration before operating MPD services")
+    return list(SELECTED_SERVICES)
 
 def start_all_mpd_services():
     """Start all available systemd services for MPD instances."""
@@ -176,12 +165,8 @@ def enable_all_mpd_services_individually():
         print("No systemd services found for MPD instances.")
     else:
         for service in services:
-            try:
-                subprocess.run(['systemctl', '--user', 'enable', service], check=True)
-                logging.info(f"Enabled systemd service: {service}")
-            except subprocess.CalledProcessError as e:
-                logging.error(f"Error enabling systemd service {service}: {e}")
-                print(f"Error enabling systemd service {service}: {e}")
+            subprocess.run(['systemctl', '--user', 'enable', service], check=True)
+            logging.info(f"Enabled systemd service: {service}")
 
 def stop_all_mpd_services():
     """Stop all available systemd services for MPD instances."""
@@ -199,36 +184,31 @@ def start_mpd_service_by_instance(mpd_instance: MPDInstance):
     service_filename = mpd_service_filename(mpd_instance.name)
     service_file = os.path.join(SYSTEMD_USER_CONFIG_DIR, service_filename)
     if os.path.exists(service_file):
-        try:
-            subprocess.run(['systemctl', '--user', 'start', service_filename], check=True)
-            logging.info(f"Started systemd service: {service_filename}")
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Error starting systemd service {service_filename}: {e}")
+        if service_filename not in get_available_systemd_mpd_services():
+            raise ValueError(f"Instance is not in the preflighted configuration: {service_filename}")
+        subprocess.run(['systemctl', '--user', 'start', service_filename], check=True)
+        logging.info(f"Started systemd service: {service_filename}")
     else:
-        logging.warning(f"No systemd service file found for instance '{mpd_instance.name}' at {service_file}. Cannot start service.")
+        raise ValueError(f"No configured systemd service file found: {service_file}")
 
 def cleanup_mpd_configs():
     """Remove all auto-generated MPD config files."""
     if not os.path.exists(MPD_CONFIG_DIR):
         logging.info(f"No MPD config directory found at {MPD_CONFIG_DIR}. Nothing to clean up.")
         return
-    for filename in os.listdir(MPD_CONFIG_DIR):
-        if filename.startswith('mpd_') and filename.endswith('.conf'):
-            os.remove(os.path.join(MPD_CONFIG_DIR, filename))
-            logging.info(f"Removed MPD config file: {filename}")
+    for service in get_available_systemd_mpd_services():
+        filename = str(Path(service).with_suffix(".conf"))
+        os.remove(os.path.join(MPD_CONFIG_DIR, filename))
+        logging.info(f"Removed MPD config file: {filename}")
 
 def cleanup_systemd_services():
     """Remove all auto-generated systemd service files."""
     if not os.path.exists(SYSTEMD_USER_CONFIG_DIR):
         logging.info(f"No systemd user config directory found at {SYSTEMD_USER_CONFIG_DIR}. Nothing to clean up.")
     else:
-        for filename in os.listdir(SYSTEMD_USER_CONFIG_DIR):
-            if filename.startswith('mpd_') and filename.endswith('.service'):
-                os.remove(os.path.join(SYSTEMD_USER_CONFIG_DIR, filename))
-                logging.info(f"Removed systemd service file: {filename}")
-    # Also remove the MPD meta-control service file
-    # Should already be removed by cleanup_systemd_services(), but just in case, call the specific cleanup for the meta-control service as well
-    cleanup_mpd_metaservice()
+        for filename in get_available_systemd_mpd_services() + list(CONTROL_UNITS):
+            os.remove(os.path.join(SYSTEMD_USER_CONFIG_DIR, filename))
+            logging.info(f"Removed systemd service file: {filename}")
 
 def cleanup_all():
     """Remove all auto-generated config files."""
@@ -260,11 +240,25 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('json', help='Path to JSON configuration file')    
     args = parser.parse_args()
+    actions = [args.start, args.stop, args.restart, args.enable, args.disable, args.killmpd, args.cleanup]
+    if sum(actions) > 1 or (args.install and (args.stop or args.killmpd or args.cleanup)):
+        parser.error("Select at most one action; --install may be combined with start, restart, enable or disable")
 
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logging.debug("Debug logging enabled.")
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s", force=True)
 
+    def select_services():
+        global SELECTED_SERVICES
+        load_configuration(args.json, parser)
+        try:
+            SELECTED_SERVICES = ownership_preflight(
+                Path(args.json), Path(SYSTEMD_USER_CONFIG_DIR), Path(MPD_CONFIG_DIR), install=args.install,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            parser.exit(1, f"MPD ownership preflight failed: {error}\n")
+
+    if not args.cleanup and not args.install and any(actions):
+        select_services()
     if args.killmpd:
         # Stop all running MPD instances (in case any are still running)
         stop_all_mpd_services()
@@ -275,6 +269,7 @@ if __name__ == "__main__":
         exit(0)
     elif args.cleanup:
         with setup_lock('mpd_setup.lock'):
+            select_services()
             if os.path.isfile(os.path.join(SYSTEMD_USER_CONFIG_DIR, SYSTEMD_MPD_SUPERVISOR)):
                 subprocess.run(["systemctl", "--user", "disable", "--now", SYSTEMD_MPD_SUPERVISOR], check=True)
             stop_all_mpd_services()
@@ -284,6 +279,7 @@ if __name__ == "__main__":
         exit(0)
     elif args.install:
         with setup_lock('mpd_setup.lock'):
+            select_services()
             config = load_configuration(args.json, parser)
 
             sink_dict: dict[str, sink.Sink] = {}

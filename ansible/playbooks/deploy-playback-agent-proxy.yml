@@ -2,34 +2,19 @@
 - name: Configure the TLS proxy for the loopback-only playback agent
   hosts: musicpi
   become: true
-  vars:
-    playback_agent_port: 8081
-    playback_proxy_port: 8443
-    playback_proxy_caddy_binary: /usr/bin/caddy
-    playback_proxy_caddyfile: /etc/caddy/mpdrussoundpi-playback-agent.Caddyfile
-    playback_proxy_unit: /etc/systemd/system/mpdrussoundpi-playback-agent-proxy.service
-    playback_proxy_certificate: /etc/caddy/certs/mpdrussoundpi-playback-agent.crt
-    playback_proxy_private_key: /etc/caddy/certs/mpdrussoundpi-playback-agent.key
-    playback_proxy_start: false
-    playback_proxy_enable_operations: false
+  pre_tasks:
+    - name: Validate playback proxy inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: proxy
+      tags: always
   tasks:
-    - name: Require a DNS name or IPv4 address, a Docker source CIDR and proxy startup approval
+    - name: Require an unprivileged proxy listener port
       ansible.builtin.assert:
         that:
-          - playback_proxy_hostname is defined
-          - playback_proxy_hostname | length <= 253
-          - playback_proxy_hostname is match('^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$')
-          - "'..' not in playback_proxy_hostname"
-          - playback_proxy_allowed_cidr is defined
-          - playback_proxy_allowed_cidr is match('^[0-9A-Fa-f.:/]+$')
-          - playback_agent_port | int > 0
-          - playback_agent_port | int < 65536
-          - playback_proxy_port | int >= 1024
-          - playback_proxy_port | int <= 65535
-        fail_msg: >-
-          Supply playback_proxy_hostname matching the certificate SAN and
-          playback_proxy_allowed_cidr as the Docker host's source IP/CIDR.
-          The proxy listens on an unprivileged port by default.
+          - playback_proxy_port | deployment_port >= 1024
+        fail_msg: "The proxy listener must use a validated unprivileged port of at least 1024."
+        quiet: true
 
     - name: Require the preinstalled Caddy binary and service account
       ansible.builtin.stat:
@@ -230,6 +215,7 @@
         owner: root
         group: caddy
         mode: "0640"
+        validate: "{{ playback_proxy_caddy_binary }} validate --config %s --adapter caddyfile"
       register: playback_proxy_configuration
 
     - name: Install the dedicated Caddy system service

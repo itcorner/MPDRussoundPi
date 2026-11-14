@@ -19,7 +19,7 @@ automatic upgrades, pulls, deployments or reboots.
 Use a shared component identity, release-channel policy and availability cache
 with the image-installation idea; do not build a second registry checker.
 Checking, installing and restarting are separate actions with separate consent.
-The [deployment simplification idea](./general_idea_simplify-deployment-configuration.md)
+The [deployment simplification plan](./general_open_simplify-deployment-configuration.md)
 defines supported modes and image selection.
 
 ## Status and update checks

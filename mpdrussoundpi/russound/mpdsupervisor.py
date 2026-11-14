@@ -5,6 +5,7 @@ import subprocess
 
 from lib.mpdbackend import BackendError, MPDBackend
 from lib.playbackwatchdog import create_watchdog
+from lib.runtimelogging import configure_console
 
 
 def main() -> None:
@@ -12,8 +13,9 @@ def main() -> None:
     parser.add_argument("json")
     parser.add_argument("--initialize", action="store_true", help="Persist default runtime state for new outputs and exit")
     parser.add_argument("--once", action="store_true", help="Reconcile every output once; fail if any output fails")
+    parser.add_argument("--debug", action="store_true", help="Enable diagnostic logging")
     args = parser.parse_args()
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+    configure_console(args.debug)
     logging.getLogger("mpd").setLevel(logging.WARNING)
     backend = MPDBackend(args.json)
     if args.initialize:
@@ -47,7 +49,7 @@ def main() -> None:
                 failures[output.id] = (time.monotonic() + delay, min(delay * 2, 30.0))
             else:
                 if output.id in failures:
-                    logging.info("Recovered %s", output.id)
+                    logging.getLogger("russound.health").info("Recovered %s", output.id)
                     del failures[output.id]
         if args.once:
             if failed:

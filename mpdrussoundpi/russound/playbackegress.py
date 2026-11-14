@@ -52,7 +52,8 @@ def ruleset(uid: int, resolvers: list[str]) -> str:
     for resolver in resolvers:
         address = ipaddress.ip_address(resolver)
         family = "ip" if address.version == 4 else "ip6"
-        lines.append(f"    {family} daddr {address} udp dport 53 counter return")
+        for protocol in ("udp", "tcp"):
+            lines.append(f"    {family} daddr {address} {protocol} dport 53 counter return")
     lines.extend([
         "    ip daddr @blocked4 counter reject",
         "    ip6 daddr @blocked6 counter reject",
@@ -87,6 +88,8 @@ def main() -> None:
     parser.add_argument("--uid", type=int)
     parser.add_argument("--resolver", action="append", default=[])
     args = parser.parse_args()
+    if args.wait and (args.user is not None or args.uid is not None or args.resolver):
+        parser.error("--wait cannot be combined with filter installation arguments")
     if args.wait:
         wait_for_filter()
         return

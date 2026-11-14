@@ -81,9 +81,34 @@ class PlaybackAgentTests(unittest.TestCase):
 
     def test_identity_and_token_are_required(self):
         for identity, token in (("MusicPi", TOKEN), ("x/y", TOKEN), ("musicpi", ""),
-                                ("musicpi", "x" * 32 + "\n"), ("musicpi", "\u00e9" * 32)):
+                                ("musicpi", "x" * 31), ("musicpi", "x" * 4097),
+                                ("musicpi", "x" * 32 + "\n"), ("musicpi", "\u00e9" * 32),
+                                ("musicpi", "x" * 32 + "\x7f"), ("musicpi", "x" * 32 + " ")):
             with self.assertRaises(ValueError):
                 agent.create_app(self.observer, identity, token)
+        for size in (32, 4096):
+            app = agent.create_app(self.observer, "musicpi", "x" * size)
+            response = app.test_client().get("/v1/health", headers={"Authorization": "Bearer " + "x" * size})
+            self.assertEqual(response.status_code, 200)
+
+    def test_cli_rejects_credentials_before_opening_config_or_creating_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            token = Path(directory) / "private-token"
+            ledger = Path(directory) / "operations.sqlite"
+            config = Path(directory) / "missing-config.json"
+            for identity, value in (("musicpi", "short-secret"), ("MusicPi", TOKEN),
+                                    ("musicpi", TOKEN + "\n\n")):
+                token.write_text(value)
+                result = subprocess.run([
+                    sys.executable, str(SCRIPTS / "playbackagent.py"), str(config),
+                    "--agent-id", identity, "--token-file", str(token),
+                    "--operations-db", str(ledger),
+                ], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("Invalid agent identity or service token file", result.stderr)
+                self.assertNotIn(value.strip(), result.stdout + result.stderr)
+                self.assertFalse(ledger.exists())
+                self.assertFalse(config.exists())
 
     def test_cold_inventory_and_single_output_are_cached(self):
         self.observer.tick()

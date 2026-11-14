@@ -288,14 +288,7 @@ async function refreshBackendStatus() {
       configPayload.resolved_inputs = payload.resolved_inputs || [];
       for (const row of configSources.querySelectorAll(".config-source-row")) updatePlaybackPreview(row);
     }
-    const backend = payload.backend || {};
-    const overrides = configPayload?.backend_overrides || {};
-    const hasOverrides = Boolean(overrides.RUSSOUND_BACKEND_HOST || overrides.RUSSOUND_BACKEND_PORT);
-    const host = overrides.RUSSOUND_BACKEND_HOST || backend.host;
-    const port = Number(overrides.RUSSOUND_BACKEND_PORT || backend.port || 6666);
-    const configured = !hasOverrides && backend.device
-      ? Boolean(String(backend.device).trim())
-      : typeof host === "string" && Boolean(host.trim()) && Number.isInteger(port) && port >= 1 && port <= 65535;
+    const configured = payload.effective_backend?.configured === true;
     if (payload.config_required || !configured) {
       setBackendConnectionStatus("incomplete", "Configuration incomplete", "Complete and save the backend configuration.");
     } else if (payload.backend_status?.connected) {
@@ -396,6 +389,14 @@ function recomputeUnsavedChanges() {
   updateSaveButtonState();
 }
 
+function describeEffectiveBackend(effective) {
+  if (!effective) return "";
+  const endpoint = effective.mode.value === "serial"
+    ? "serial (saved device)"
+    : `${effective.host.value} (${effective.host.source}):${effective.port.value} (${effective.port.source})`;
+  return `Runtime connection: ${endpoint}. Fields below edit saved settings; environment overrides are changed in deployment configuration.`;
+}
+
 function renderEditor(payload) {
   configPayload = payload;
   controllerZones.innerHTML = "";
@@ -421,9 +422,9 @@ function renderEditor(payload) {
   }
   document.getElementById("controllerCountBadge").textContent = `${collectControllers().length} enabled`;
   baselineConnectionHash = connectionHash();
-  const overrides = Object.entries(payload.backend_overrides || {});
-  backendOverrides.hidden = overrides.length === 0;
-  backendOverrides.textContent = overrides.length ? `Environment overrides: ${overrides.map(([name, value]) => `${name}=${value}`).join(", ")}` : "";
+  const effective = payload.effective_backend;
+  backendOverrides.hidden = !effective;
+  backendOverrides.textContent = describeEffectiveBackend(effective);
   baselineZoneSlotsHash = hashZoneSlots(payload.zone_slots || []);
   baselineSourceSlotsHash = hashSourceSlots(payload.source_slots || []);
   hasUnsavedChanges = false;

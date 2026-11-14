@@ -1,4 +1,5 @@
-# UNTESTED: this stack has not been started yet.
+# Legacy build-oriented stack; new layouts: docs/documentation/container-deployment.md.
+# UNTESTED: this legacy stack has not been started yet.
 # Hardware-free test stack: the web UI talks to the dummy Russound backend
 # container instead of ser2net/RS-232.
 services:

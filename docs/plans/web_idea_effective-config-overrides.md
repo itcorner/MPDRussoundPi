@@ -2,6 +2,15 @@
 
 Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
 
+**S3 runtime foundation implemented locally, 2026-11-14:** the shared resolver
+now supplies additive `effective_backend` metadata to the editor, config-state
+API and successful saves. Connectivity uses its `configured` value rather
+than reimplementing environment precedence in JavaScript. The editor shows a
+runtime/source summary but deliberately still edits saved fields. Full inline
+badges/read-only fields, accessibility/help design and API write restrictions
+below remain unimplemented; S3 does not authorize them. See the
+[S3 record](./general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14).
+
 ## Goal
 
 On the configuration page, show the values actually used by the running
@@ -23,14 +32,14 @@ The UI must not expose secret values or arbitrary environment variables.
 - The editor renders saved backend host/port from `config` and separately
   displays `backend_overrides`; see
   [`renderEditor`](../../web/static/config.js) and
-  [`GET /api/config`](../../web/API.md#get-apiconfig). The status calculation
-  also interprets the override map independently.
-- For the backend endpoint, non-empty `RUSSOUND_BACKEND_HOST` and **valid**
+  [`GET /api/config`](../../web/API.md#get-apiconfig). Since S3, the summary
+  and status use the shared effective metadata, not the legacy override map.
+- For the backend endpoint, non-empty `RUSSOUND_BACKEND_HOST` and valid
   `RUSSOUND_BACKEND_PORT` independently override the saved value. Blank or
   whitespace-only values do not override; a non-integer or out-of-range port
-  is logged and ignored by the runtime. An invalid port is nevertheless listed
-  in the current `backend_overrides` map because that map tests only for a
-  non-empty string. The UI must not treat a rejected value as effective.
+  now fails startup explicitly. The former logged-and-ignored behavior and its
+  misleading override map were corrected in S3. Blank optional overrides remain
+  unset; deployment errors are not disguised as effective settings.
 - A valid host **or** port override selects TCP even when the saved endpoint is
   serial. A port-only override of a serial configuration currently resolves to
   TCP host `127.0.0.1` and the overridden port. This mode change is significant
@@ -46,14 +55,13 @@ The UI must not expose secret values or arbitrary environment variables.
 These endpoint cases were checked against
 [`resolve_backend_endpoint`](../../web/config_types.py) with saved TCP and
 serial configurations, blank/valid/invalid environment values, and an
-independent port-only override. The invalid-port mismatch is between this
-resolver and the map returned by
-[`RussoundController`](../../web/russound_controller.py).
+independent port-only override. S3 regression tests now also verify API source
+parity, offline save preservation and shared browser status consumption.
 
 ## Proposed behavior
 
 Coordinate the target precedence with
-[deployment simplification](./general_idea_simplify-deployment-configuration.md)
+[deployment simplification](./general_open_simplify-deployment-configuration.md)
 before changing it. The editor and
 [deployment overview](./general_idea_deployment-status-overview.md) should
 consume the same allowlisted effective-value/source metadata, not duplicate
@@ -66,9 +74,10 @@ precedence logic. Coordinate persistence and stale-editor handling with
   only one is overridden. Disable editing of the effective connection mode
   when the override forces TCP; explain why. The displayed source for the other
   TCP field may be saved configuration or a runtime default.
-- For a present but invalid override, show an actionable validation warning
-  without representing it as active or locking an otherwise editable field.
-  Do not hide startup/configuration errors or reveal sensitive values.
+- Under the approved S3 contract an invalid nonblank runtime override rejects
+  startup, rather than producing a running editor with a warning. A future
+  deployment UI may explain that startup error without exposing its value;
+  it must not pretend the override is active or silently ignore it.
 - Preserve existing saved values independently of the displayed effective
   values. Saving a different field must not silently write an override into
   the config file, erase a hidden serial configuration, change mode, or create
@@ -99,8 +108,10 @@ precedence logic. Coordinate persistence and stale-editor handling with
 - [ ] Decide the read-only API contract, behavior for editing a saved serial
   configuration while TCP is forced, invalid override warning and where
   durable deployment-specific change instructions are maintained.
-- [ ] Define source/validity metadata and compatibility; implement it from a
-  shared endpoint resolver and update [web API documentation](../../web/API.md).
+- [x] Define additive allowlisted source metadata from the shared endpoint
+  resolver, preserve saved/legacy API fields, and update
+  [web API documentation](../../web/API.md) (S3). Invalid nonblank runtime
+  ports now reject startup; full inline editor policy remains open.
 - [ ] Update the configuration UI, save/diff logic and help text; retain
   configuration persistence and non-overridden edits across all supported
   deployment layouts.

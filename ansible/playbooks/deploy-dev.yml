@@ -1,0 +1,7 @@
+---
+- name: Preview the development container layout or explicitly inspect target prerequisites
+  hosts: all
+  gather_facts: false
+  become: false
+  roles:
+    - role: ../roles/container_dev

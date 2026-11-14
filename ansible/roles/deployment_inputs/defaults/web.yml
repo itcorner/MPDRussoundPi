@@ -1,0 +1,16 @@
+---
+deployment_component: web
+deployment_boolean_inputs: [russound_manage_serial_gateway]
+deployment_port_inputs: [russound_port]
+deploy_user: "{{ ansible_user | default('musicpi') }}"
+app_dir: "{{ deploy_home }}/MPDRussoundPi"
+venv_dir: "{{ deploy_home }}/.local/share/russound-web/venv"
+russound_config_dir: "{{ deploy_home }}/.config/russound-web"
+russound_state_dir: "{{ deploy_home }}/.local/state/russound-web"
+russound_playback_agents: []
+russound_manage_serial_gateway: true
+repo_url: https://github.com/itcorner/MPDRussoundPi.git
+repo_version: main
+russound_host: "0.0.0.0"
+russound_port: 8000
+ansible_python_interpreter: /usr/bin/python3

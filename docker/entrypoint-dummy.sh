@@ -1,5 +1,5 @@
 #!/bin/sh
-# UNTESTED: dummy backend startup inside the container has not been verified yet.
+# Headless startup is exercised by the local container integration test.
 set -e
 
 state_file="${RUSSOUND_DUMMY_STATE:-/data/dummy_state.json}"

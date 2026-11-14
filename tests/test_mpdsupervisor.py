@@ -14,6 +14,9 @@ with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
 
 class SupervisorTests(unittest.TestCase):
     def setUp(self):
+        logging_patcher = patch.object(supervisor, "configure_console")
+        logging_patcher.start()
+        self.addCleanup(logging_patcher.stop)
         patcher = patch.object(supervisor, "MPDBackend")
         self.api = patcher.start().return_value
         self.addCleanup(patcher.stop)
