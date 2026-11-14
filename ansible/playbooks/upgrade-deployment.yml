@@ -157,6 +157,7 @@
               - -m
               - tool.deployment_operator
               - --help
+            chdir: /opt/mpdrussoundpi-deploy
           changed_when: false
         - name: Verify the state reader under the tooling reservation
           ansible.builtin.script:

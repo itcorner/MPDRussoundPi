@@ -103,6 +103,7 @@
               - -m
               - tool.deployment_operator
               - --help
+            chdir: /opt/mpdrussoundpi-deploy
           changed_when: false
         - name: Release reservation after restore verification
           ansible.builtin.script:

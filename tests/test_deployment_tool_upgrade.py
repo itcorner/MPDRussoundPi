@@ -213,6 +213,22 @@ class ToolingUpgradePlaybookTests(unittest.TestCase):
         self.assertIn("deployment_tools_restore_revision", restore_tasks)
         self.assertIn("deployment_tool_upgrade.py", upgrade_tasks)
         self.assertIn("deployment_tool_upgrade.py", restore_tasks)
+        upgrade_operator = next(
+            task for task in upgrade_play["tasks"][0]["block"]
+            if task["name"] == "Verify the reviewed deployment operator starts and exposes help"
+        )
+        restore_operator = next(
+            task for task in restore_play["tasks"][0]["block"]
+            if task["name"] == "Verify restored deployment operator entry point"
+        )
+        self.assertEqual(
+            upgrade_operator["ansible.builtin.command"]["chdir"],
+            "/opt/mpdrussoundpi-deploy",
+        )
+        self.assertEqual(
+            restore_operator["ansible.builtin.command"]["chdir"],
+            "/opt/mpdrussoundpi-deploy",
+        )
         self.assertNotIn("systemd", upgrade_tasks)
         self.assertNotIn("docker", upgrade_tasks.lower())
         self.assertNotIn("systemd", restore_tasks)
