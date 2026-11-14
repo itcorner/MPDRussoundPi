@@ -235,7 +235,8 @@ class ComposeDeployment:
 
     def current_signature(self, containers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted([{
-            "id": item["Id"], "image": item["Image"], "mounts": item["Mounts"],
+            "id": item["Id"], "image": item["Image"],
+            "mounts": sorted(item["Mounts"], key=lambda mount: mount["Destination"]),
             "config": item["Config"], "host": item["HostConfig"],
             "networks": {name: network["NetworkID"] for name, network in item["NetworkSettings"]["Networks"].items()},
         } for item in containers], key=lambda item: item["id"])

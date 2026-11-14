@@ -140,6 +140,27 @@ class OperatorContractTests(unittest.TestCase):
             target.preflight()
         self.assertEqual(target.baseline, [])
 
+    def test_runtime_signature_ignores_mount_order_but_detects_mount_changes(self):
+        target = self.target()
+        item = {
+            "Id": "fixture", "Image": "sha256:" + "a" * 64, "Config": {}, "HostConfig": {},
+            "NetworkSettings": {"Networks": {"default": {"NetworkID": "fixture"}}},
+            "Mounts": [
+                {"Source": "/live/config", "Destination": "/config", "RW": True},
+                {"Source": "/live/secrets", "Destination": "/run/secrets", "RW": False},
+            ],
+        }
+        expected = target.current_signature([item])
+        reordered = copy.deepcopy(item)
+        reordered["Mounts"].reverse()
+        self.assertEqual(target.current_signature([reordered]), expected)
+        self.assertEqual(item["Mounts"][0]["Destination"], "/config")
+        for field, value in (("Source", "/elsewhere"), ("Destination", "/elsewhere"), ("RW", True)):
+            changed = copy.deepcopy(reordered)
+            changed["Mounts"][0][field] = value
+            with self.subTest(field=field):
+                self.assertNotEqual(target.current_signature([changed]), expected)
+
     def test_channel_rejects_truncation_oversize_and_nonobjects(self):
         import struct
         for value in (b"", b"\x00", struct.pack("!Q", 9 * 1024**2),
