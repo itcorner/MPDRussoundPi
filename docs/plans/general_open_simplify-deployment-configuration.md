@@ -2366,11 +2366,12 @@ let those interfaces independently define precedence.
   pass; API/UI foundations coordinated with the effective-config idea.
   See the [completion record](#s3-runtime-configuration-and-logging-completion-2026-11-14).
   No S3 Pi cutover or audio-environment switch is implied.
-- [ ] **S4 — Compose and Ansible.** Implement supported profiles/entry points
-  and shared tasks, the per-parameter dispositions and simplified operator
-  experience above, preflight and non-destructive migration controls. Test
-  rendering, source/pull behavior, idempotence and failure paths without a live
-  cutover. Exit: local/CI tests and Ansible checks pass for available modes.
+- [x] **S4 — Compose and Ansible.** Completed locally: implemented supported
+  profiles/entry points and shared tasks, the per-parameter dispositions and
+  simplified operator experience above, preflight and non-destructive
+  migration controls. Rendering, source/pull behavior, idempotence and failure
+  paths pass local/CI tests and Ansible checks for available modes. See
+  [S4 controller-side acceptance](#s4-controller-side-acceptance-2026-11-14).
 - [ ] **S5 — Migration, documentation and acceptance.** Update authoritative
   guides and examples, rehearse backup/restore and approved layout changes,
   and verify end-to-end routing and health. Live changes require a separate
@@ -3479,6 +3480,25 @@ services untouched; a subsequent read-only check found the web/ser2net
 containers and playback/audio user services active. This validates fresh
 candidate directory creation only, not native activation or physical audio
 acceptance.
+
+### S4 controller-side acceptance (2026-11-14)
+
+The remaining controller-side S4 acceptance checks passed on the published
+`6e78940d52ef5a682c350c6b0739d24d8ddc35d1` head:
+
+- The documented opt-in local build/load, SSH transfer and deployment runner
+  set passed: **64 tests, OK**.
+- All **11** repository Ansible playbooks passed syntax checks.
+- The JavaScript suite passed: **112 tests, 102 passed, 10 skipped**.
+- PR #45 CI passed Python/JavaScript tests and amd64/arm64 container checks.
+- `git diff --check` passed. The only other worktree change is the unrelated
+  guided-first-time-setup plan, which is not part of this acceptance.
+
+Together with the previously recorded full Python suite (**853 passed, 11
+skipped**), focused Compose/input/staging tests, and isolated deployment and
+recovery rehearsal (**34 tests, 33 passed, one skipped**), this closes S4's
+local/CI implementation gate. It does not claim S5 live migration, native
+activation, physical audio/routing acceptance, or a six-hour observation.
 
 ### Isolated S3 Pi deployment and background observation (2026-11-14)
 
