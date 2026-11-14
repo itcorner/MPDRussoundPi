@@ -2358,14 +2358,14 @@ let those interfaces independently define precedence.
   safety controls and migration runbook guide S3/S4; unresolved implementation
   and rehearsal requirements remain in S4/S5. Stable mode remains blocked when
   an approved release is unavailable.
-- [ ] **S3 — Runtime configuration and logging.** Implement the approved
-  setting resolution/validation and logging contract with compatibility
-  handling and focused tests, including effective endpoint reporting and
-  consistent agent/web credential validation. Waitress/debug decoupling was
-  implemented early at the user's request; per-component logging details
-  still need design.
-  Exit: precedence, invalid values, redaction and regression tests
-  pass; API changes coordinated with the effective-config idea.
+- [x] **S3 — Runtime configuration and logging.** Completed locally
+  2026-11-14: strict runtime validation and CLI precedence, shared effective
+  endpoint/source metadata, consistent agent/web/deployment credential
+  validation, production/development logging and bounded component
+  dependencies. Precedence, invalid-value, redaction and regression checks
+  pass; API/UI foundations coordinated with the effective-config idea.
+  See the [completion record](#s3-runtime-configuration-and-logging-completion-2026-11-14).
+  No S3 Pi cutover or audio-environment switch is implied.
 - [ ] **S4 — Compose and Ansible.** Implement supported profiles/entry points
   and shared tasks, the per-parameter dispositions and simplified operator
   experience above, preflight and non-destructive migration controls. Test
@@ -3289,6 +3289,93 @@ physical acceptance, deliberate controller-fault checks, live-project rollback,
 power-loss testing and other layout migrations are not inferred from these
 results. The user's approved scope deliberately used isolated recovery and
 read-only audio checks; remaining S3/S4 work is unchanged.
+
+## S3 runtime configuration and logging completion (2026-11-14)
+
+Implemented locally at the operator's request to finish S3. This supersedes
+earlier *source-level* pending S3 statements, not their historical observations
+or the remaining S4/S5 deployment gates.
+
+### Delivered contracts
+
+- **D4 resolution and validation:** explicit CLI values override environment
+  defaults without first parsing a lower-priority malformed value. Added
+  `--no-debug`; Waitress still serves development and production. Invalid
+  nonblank environment booleans/integers, invalid listener/backend ports,
+  insufficient workers and excess explicit event streams fail before
+  daemonization/server creation. Optional blank values remain unset.
+  Integer inputs deliberately use bounded ASCII decimal syntax, not Python's
+  permissive integer parser. Missing/invalid saved application configuration
+  retains the existing recoverable setup UI, without automatic rewrites.
+- **Effective endpoint API/UI foundation:** `/api/config`, successful saves and
+  `/api/config/state` expose additive allowlisted `effective_backend` metadata
+  from the connection resolver. Host/port remain independently overridable,
+  including serial-to-TCP/default-host behavior. Source labels describe actual
+  resolution, not merely the presence of a saved key. The browser consumes
+  metadata for connectivity and displays a source summary; fields still edit
+  saved settings. Offline saves preserve saved serial settings, and removing
+  overrides restores their runtime selection. No secret/device path is
+  included in the new metadata. Full inline read-only UI remains the separate
+  [effective-config idea](./web_idea_effective-config-overrides.md).
+- **Credentials:** web and agent share a bounded file parser and validator,
+  including exact 32/4096-byte boundaries, printable ASCII and the single
+  optional LF/CRLF policy. Native CLI rejects invalid identity/token before
+  opening configuration/creating a ledger. The agent play's read-only local
+  preflight now calls that same parser before installing anything, also in
+  check mode, without logging secret contents. TLS trust errors use safe
+  messages. This is not staged activation or cross-host credential rotation.
+- **D5 logging:** web and native Python services use DEBUG on explicit request,
+  otherwise warnings/errors plus named essential health transitions.
+  Shared formatters redact HTTP(S) URLs, Bearer values and named secret/session/
+  protected-path assignments, including quoted records and exception text.
+  Web rotation remains 10 MiB plus five backups; protocol audit remains a
+  separate opt-in at 5 MiB plus three. Container `10m`/three-file retention is
+  unchanged. Native stderr goes to the existing journal; no global retention
+  changes or implicit files. Explicit interactive setup commands retain INFO
+  operational output and opt-in DEBUG. Existing third-party daemon levels are
+  host-managed. Formatter redaction is defense in depth, not a guarantee that
+  arbitrary secret-bearing messages are safe.
+- **D7 dependencies:** bounded web/agent/audio/deployment manifests, no
+  unconditional upgrades; the audio setup play consumes its audio-only
+  manifest. A disposable isolated audio environment passed installation,
+  `pip check`, repository backend import and absence of Flask. The working
+  audio environment was not modified. The
+  [candidate preparation procedure](../documentation/mpd-headless-deployment.md#isolated-audio-dependencies)
+  explicitly retains it until a reviewed switch. Bounds are not lock files
+  or certification of every satisfiable release; explicit update/retest
+  guidance is in the [container guide](../documentation/container-deployment.md#runtime-configuration-logs-and-dependencies).
+
+### Verification and compatibility
+
+- Full Python suite: **831 tests, OK, 11 skipped** on the local Python 3.13
+  environment; skips remain explicit, not simulated hardware passes.
+- Node suite: **112 tests, 102 passed, 10 skipped, zero failures**.
+- Both changed Ansible plays passed syntax checks. The localhost-only
+  inventory intentionally matches no `musicpi` target; no target tasks ran.
+- Built and ran the real web image locally with Python 3.12.15, Flask 3.1.3
+  and Waitress 3.0.2. Nonroot, read-only root filesystem, tmpfs data/log paths,
+  **no external network or published ports**: startup, real config API,
+  default-source metadata, shared-helper imports and graceful SIGTERM exit 0
+  passed. The image was a disposable smoke artifact, not a deployment pin.
+- Pylance reports no diagnostics in the new shared helpers, web playback client
+  or supervisor; agent/server have only existing unused/static-platform hints.
+  Existing validator unknown-type and unnecessary-check diagnostics in
+  `config_types.py` were not broadened into unrelated cleanup; no diagnostic
+  points into the new resolver metadata.
+
+**Intentional compatibility changes:** malformed nonblank runtime values no
+longer silently fall back; non-ASCII/oversized integer spellings are rejected.
+Credentials shorter than 32 characters, non-ASCII/control characters, padded
+values and extra newlines no longer receive different treatment by web,
+agent and preflight. Existing nonconforming inputs require reviewed correction
+before deployment, not automatic rewriting or rotation.
+
+**Deployment boundary:** no S3 source was installed on the Pi, no working
+credential/environment was changed and no service was restarted. S4 still
+owns remaining layout/shared-Ansible work, typed variable fixes and staged
+agent activation; S5 owns approved migration/live activation and remaining
+layout/physical acceptance. The prior successful freshness-fix six-hour
+observation does not certify these undeployed S3 changes.
 
 ## Acceptance and verification
 

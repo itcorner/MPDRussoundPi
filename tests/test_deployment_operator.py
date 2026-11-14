@@ -257,7 +257,7 @@ class OperatorContractTests(unittest.TestCase):
         for name in ("config", "data", "logs", "secrets"):
             (live / name).mkdir(mode=0o700)
         token = live / "secrets/token"
-        token.write_text("synthetic-token")
+        token.write_text("synthetic-token-" + "x" * 32)
         token.chmod(0o600)
         value = json.dumps([{"agent_id": "fixture", "url": "http://127.0.0.1:8081",
                              "token_file": "/run/secrets/token"}])
@@ -270,7 +270,7 @@ class OperatorContractTests(unittest.TestCase):
                 token.write_text(invalid)
                 with self.assertRaises(ValueError):
                     validate_runtime_files(spec, {"RUSSOUND_PLAYBACK_AGENTS": value})
-            token.write_text("synthetic-token")
+            token.write_text("synthetic-token-" + "x" * 32)
             token.chmod(0o000)
             with self.assertRaises(ComposeError):
                 validate_runtime_files(spec, {"RUSSOUND_PLAYBACK_AGENTS": value})

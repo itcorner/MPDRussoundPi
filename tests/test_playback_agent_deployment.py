@@ -86,8 +86,13 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
             if "headers" in config:
                 self.assertTrue(task["no_log"])
         self.assertNotIn("Authorization", SERVICE.read_text())
-        assertions = self.tasks(self.deploy, "ansible.builtin.assert")
-        self.assertTrue(any(task.get("no_log") for task in assertions))
+        validation = next(task for task in self.tasks(self.deploy, "ansible.builtin.command")
+                          if "bearer token" in task["name"])
+        self.assertTrue(validation["no_log"])
+        self.assertEqual(validation["delegate_to"], "localhost")
+        self.assertFalse(validation["changed_when"])
+        self.assertFalse(validation["check_mode"])
+        self.assertIn("read_service_token", validation["ansible.builtin.command"]["argv"][2])
 
     def test_only_agent_sources_and_isolated_dependencies_are_installed(self):
         copies = self.tasks(self.deploy, "ansible.builtin.copy")

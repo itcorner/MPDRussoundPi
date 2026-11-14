@@ -85,7 +85,7 @@ class PlaybackStatusTests(unittest.TestCase):
         }
 
     def create_client(self, token_path: Path) -> PlaybackStatusClient:
-        token_path.write_text("mock-value\n", encoding="utf-8")
+        token_path.write_text("mock-value-" + "x" * 32 + "\n", encoding="utf-8")
         config = PlaybackAgentConfig("http://127.0.0.1:8081", "musicpi", str(token_path))
         return PlaybackStatusClient(config)
 
@@ -192,7 +192,7 @@ class PlaybackStatusTests(unittest.TestCase):
     def test_client_loads_configured_tls_ca_for_https(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             token_path = Path(directory) / "token"
-            token_path.write_text("mock-value\n", encoding="utf-8")
+            token_path.write_text("mock-value-" + "x" * 32 + "\n", encoding="utf-8")
             ca_path = Path(directory) / "agent-ca.pem"
             ca_path.write_text("test certificate placeholder", encoding="ascii")
             config = PlaybackAgentConfig(

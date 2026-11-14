@@ -165,18 +165,15 @@ def env_str(name: str) -> str | None:
 
 
 def env_port(name: str) -> int | None:
-    """Return a valid TCP port from the environment, ignoring malformed values."""
+    """Return a valid TCP port; reject nonblank malformed overrides."""
     raw_value = env_str(name)
     if raw_value is None:
         return None
-    try:
-        port = int(raw_value)
-    except ValueError:
-        LOGGER.warning("Ignoring %s=%r because it is not an integer", name, raw_value)
-        return None
+    if re.fullmatch(r"[0-9]+", raw_value) is None or len(raw_value) > 5:
+        raise ValueError(f"{name} must be an integer from 1 to 65535")
+    port = int(raw_value)
     if not 1 <= port <= 65535:
-        LOGGER.warning("Ignoring %s=%d because it is outside 1-65535", name, port)
-        return None
+        raise ValueError(f"{name} must be an integer from 1 to 65535")
     return port
 
 
@@ -223,6 +220,30 @@ def resolve_backend_endpoint(config: RussoundConfig | None) -> BackendEndpoint:
         port=port_override or endpoint.port,
         loaded_from_config=True,
     )
+
+
+def backend_endpoint_metadata(config: RussoundConfig | None) -> dict[str, object]:
+    """Allowlisted provenance from the same resolver used by connections."""
+    saved = _backend_endpoint_from_config(config)
+    effective = resolve_backend_endpoint(config)
+    host_override = env_str(BACKEND_HOST_ENV_VAR) is not None
+    port_override = env_port(BACKEND_PORT_ENV_VAR) is not None
+    forced_tcp = host_override or port_override
+    backend: BackendConfig = config.get("backend", {}) if config else {}
+    saved_tcp = saved.loaded_from_config and "host" in backend and "port" in backend
+
+    def field(value: object, source: str) -> dict[str, object]:
+        return {"value": value, "source": source, "overridden": source == "environment"}
+
+    return {
+        "mode": field("serial" if effective.device else "tcp",
+                      "environment" if forced_tcp else "saved" if saved.loaded_from_config else "default"),
+        "host": field(effective.host, "environment" if host_override else
+                      "saved" if saved_tcp else "default"),
+        "port": field(effective.port, "environment" if port_override else
+                      "saved" if saved_tcp else "default"),
+        "configured": config is not None and bool(effective.device or effective.host and effective.port),
+    }
 
 
 def resolve_controller_zone_limits(config: RussoundConfig | None) -> dict[int, int]:

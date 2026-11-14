@@ -129,8 +129,15 @@ install -d -m 700 "$HOME/.config/mpdrussoundpi-deploy"
 
 Do not rerun generation over an existing token. Keep its contents out of shell
 arguments, inventory, logs and browser code. The example creates a 64-character
-token; avoid oversized tokens, because the web client rejects stripped tokens
-longer than 4096 characters even though the current agent play accepts them.
+token. Updated web, native agent and controller-side Ansible preflight share
+one parser: 32-4096 printable ASCII characters without spaces/control
+characters, optionally followed by one LF or CRLF in the file. Other leading/
+trailing whitespace, extra newlines and oversized files are errors. Old
+short/whitespace-padded credentials require a separately coordinated correction
+before updating; do not generate or replace a working credential automatically.
+The CLI validates identity/token before opening configuration or creating the
+operation ledger. Preflight reads locally without logging the secret or
+modifying a target. This does not make the legacy play a safe staged updater.
 Activate:
 
 ```sh

@@ -69,13 +69,21 @@
         fail_msg: "The audio user's private runtime directory and active user bus must already exist."
 
     - name: Validate the controller-side bearer token without logging it
-      ansible.builtin.assert:
-        that:
-          - playback_agent_token | length >= 32
-          - playback_agent_token is match('^[!-~]+$')
-        fail_msg: "Service token must be at least 32 non-whitespace ASCII characters."
-      vars:
-        playback_agent_token: "{{ lookup('ansible.builtin.file', playback_agent_token_source) }}"
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import sys;
+            sys.path.insert(0, sys.argv[1]);
+            from mpdrussoundpi.russound.lib.servicecredentials import read_service_token;
+            read_service_token(sys.argv[2])
+          - "{{ playbook_dir }}/../.."
+          - "{{ playback_agent_token_source }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      check_mode: false
       no_log: true
 
     - name: Ensure the agent-only installation directories exist

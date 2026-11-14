@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 import socket
 import signal
 import sys
@@ -23,6 +24,44 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_effective_endpoint_metadata_preserves_saved_serial_configuration(self):
+        for overrides in ({"RUSSOUND_BACKEND_HOST": "gateway.local"},
+                          {"RUSSOUND_BACKEND_PORT": "7000"}):
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as directory, patch.dict(
+                os.environ, overrides, clear=True
+            ):
+                config_path = Path(directory) / "config.json"
+                saved_backend = {"device": "/private/serial-device", "baud": 19200}
+                config_path.write_text(json.dumps({
+                    "backend": saved_backend,
+                    "controllers": [{"id": 1, "zone_count": 6}],
+                    "zones": [], "inputs": [], "shortcuts": [],
+                }))
+                server = RussoundHTTPServer(config_path, Path(directory) / "state.json")
+                try:
+                    client = server.app.test_client()
+                    editor = client.get("/api/config").json
+                    metadata = editor["effective_backend"]
+                    self.assertEqual(metadata["mode"]["value"], "tcp")
+                    self.assertNotIn("/private", json.dumps(metadata))
+                    self.assertEqual(client.get("/api/config/state").json["effective_backend"], metadata)
+                    with patch("web.russound_controller.RussoundBackend.connect",
+                               side_effect=AssertionError("Save must not contact hardware")):
+                        response = client.post("/api/config", json={
+                            "backend": editor["config"]["backend"],
+                            "controllers": editor["config"]["controllers"],
+                            "zone_slots": editor["zone_slots"], "source_slots": editor["source_slots"],
+                        })
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json["effective_backend"], metadata)
+                    self.assertEqual(json.loads(config_path.read_text())["backend"], saved_backend)
+                    with patch.dict(os.environ, {}, clear=True):
+                        restored = client.get("/api/config").json["effective_backend"]
+                    self.assertEqual(restored["mode"]["value"], "serial")
+                    self.assertEqual(restored["mode"]["source"], "saved")
+                finally:
+                    _close_server(server)
+
     def test_tunein_search_api_returns_normalized_station_results(self):
         server = RussoundHTTPServer(None, None)
         stations = [{
@@ -225,7 +264,7 @@ class RussoundServerTests(unittest.TestCase):
 
                 config_state = client.get("/api/config/state").json
                 self.assertEqual(set(config_state), {
-                    "api_version", "config_required", "backend_status", "backend",
+                    "api_version", "config_required", "backend_status", "backend", "effective_backend",
                     "zones", "resolved_inputs", "revision", "epoch",
                 })
                 self.assertEqual(config_state["backend"], {"host": "gateway", "port": 6666})
@@ -1150,7 +1189,7 @@ class RussoundServerTests(unittest.TestCase):
         self.assertEqual(basic_config.call_args.kwargs["level"], logging.DEBUG)
         self.assertEqual(basic_config.call_args.kwargs["stream"], sys.stdout)
         self.assertGreater(get_logger.call_count, 1)
-        self.assertEqual(get_logger.return_value.setLevel.call_args_list[0].args[0], logging.DEBUG)
+        self.assertIn(unittest.mock.call(logging.DEBUG), get_logger.return_value.setLevel.call_args_list)
 
 
 if __name__ == "__main__":

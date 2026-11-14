@@ -16,6 +16,35 @@ This review covers the Python production modules in `web/` and `tool/`.
 - `tool/dummy_backend/dummy_backend.py` has TCP integration tests for zone reads/writes, broadcasts, persistence, checksums, and keypad displays.
 - Connector tests cover checksum generation, selected frame parsing, zone information, user parameter normalization, displays, audit logging, and connection-reset handling.
 
+## S3 runtime contracts (2026-11-14)
+
+The [runtime configuration tests](../../tests/test_runtime_configuration.py)
+cover independent host/port overrides, saved/default provenance, serial-to-TCP
+selection, missing configuration, strict invalid input and CLI precedence over
+malformed environment defaults. They check exact credential bounds/newline
+handling in the shared parser and web client, production filtering, essential
+health events, DEBUG output, URL/credential/path redaction and file rotation.
+[Agent tests](../../tests/test_playbackagent.py) verify matching authentication
+boundaries and subprocess CLI failure before config/ledger creation.
+[API tests](../../tests/test_russound_server.py) verify metadata parity,
+offline saves preserving serial config and selection after override removal.
+[UI tests](../../tests/test_config_ui.js) check runtime/source summaries and
+authoritative metadata-based status rather than browser-side precedence.
+Agent deployment checks verify the private read-only local credential preflight
+uses the same parser; supervisor tests retain real error-log assertions while
+mocking only entry-point logging initialization.
+
+Full local Python regression: **831 tests, OK, 11 skipped**. Node:
+**112 tests, 102 passed, 10 skipped, no failures**. Both changed Ansible plays
+passed syntax checks without target execution. A fresh isolated audio venv
+installed bounded python-mpd2 3.1.1, passed `pip check`/backend imports and had
+no Flask dependency. The actual web image passed nonroot/read-only,
+network-isolated startup/API/metadata/SIGTERM checks on Python 3.12.15 with
+Flask 3.1.3 and Waitress 3.0.2. Python regression/audio-env checks used local
+Python 3.13. These are local runtime/packaging checks, not Pi hardware,
+live credential-rotation or every-version-within-range certification.
+See the [S3 completion record](../plans/general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14).
+
 ## Blind Spots
 
 - `web/config_types.py` has no dedicated tests for malformed configuration, boolean-vs-integer rejection, endpoint defaults, or controller-limit normalization.

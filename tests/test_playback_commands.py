@@ -73,7 +73,7 @@ class PlaybackCommandTests(unittest.TestCase):
         self.assertEqual(request.method, "POST")
         self.assertEqual(json.loads(request.data), self.request())
         self.assertEqual(timeout, 2)
-        self.assertEqual(request.get_header("Authorization"), "Bearer mock-value")
+        self.assertEqual(request.get_header("Authorization"), "Bearer " + client._token)
 
     def test_status_lookup_uses_registered_agent_and_fixed_path(self):
         client, browser = self.prepare()

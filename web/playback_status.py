@@ -15,6 +15,7 @@ from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_ope
 
 from mpdrussoundpi.russound.lib.tunein import TuneInCatalog
 from web.config_types import env_str
+from mpdrussoundpi.russound.lib.servicecredentials import read_service_token
 
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
@@ -162,18 +163,16 @@ class PlaybackStatusClient:
     """One read-only polling/cache worker for the configured playback agent."""
 
     def __init__(self, config: PlaybackAgentConfig, on_change: Callable[[], None] | None = None) -> None:
-        with open(config.token_file, encoding="utf-8") as token_file:
-            token = token_file.read(4097).strip()
-        if len(token) > 4096:
-            raise ValueError("Playback token file exceeds the supported size")
-        if not token or "\n" in token or "\r" in token:
-            raise ValueError("Playback token file must contain one non-empty token")
+        token = read_service_token(config.token_file)
         self._config = config
-        self._ssl_context = (
-            ssl.create_default_context(cafile=config.tls_ca_file)
-            if config.tls_ca_file is not None
-            else ssl.create_default_context()
-        )
+        try:
+            self._ssl_context = (
+                ssl.create_default_context(cafile=config.tls_ca_file)
+                if config.tls_ca_file is not None
+                else ssl.create_default_context()
+            )
+        except (OSError, ValueError):
+            raise ValueError("Cannot load playback TLS trust; check the protected CA file") from None
         self._on_change_callback = on_change
         self._token = token
         self._lock = threading.Lock()

@@ -34,8 +34,61 @@ they must also have separate data directories and non-conflicting host ports.
 None of these files contains `build`. Starting containers never implicitly
 builds an application image. The development profile enables debug logging;
 the production layout disables it. Every container rotates Docker logs at
-10 MiB, three files. This is not yet the complete cross-component logging
-contract.
+10 MiB, three files. Updated runtime source implements the following logging
+and configuration contract; older pinned images do not acquire it on redeploy.
+
+### Runtime configuration, logs and dependencies
+
+For settings with multiple sources, explicit CLI options win over environment,
+then saved configuration, then built-in defaults. Ansible variable precedence
+and Compose interpolation happen **before** the process starts; they do not
+add runtime sources. The editor continues to save file settings, not deployment
+overrides. Its effective backend summary and connectivity status consume shared
+[API metadata](../../web/API.md#get-apiconfig).
+
+Optional blank/whitespace environment values are unset. Nonblank invalid
+booleans/integers are startup errors, without echoing their values. Boolean
+values accept `true/false`, `yes/no`, `on/off` and `1/0` (case-insensitive).
+Environment integers are nonnegative ASCII decimal strings of at most nine
+digits; listener/backend ports allow at most five digits and require
+`1..65535`. Worker threads must exceed the four reserved request workers;
+an explicit event-stream limit cannot exceed the remaining workers.
+`RUSSOUND_MAX_EVENT_STREAMS=0` selects automatic sizing;
+`RUSSOUND_TCP_USER_TIMEOUT_SECONDS=0` disables that socket timeout.
+Its maximum is 2147483 seconds so conversion to milliseconds fits the socket
+API's signed integer without overflowing on the first client connection.
+`--debug` / `--no-debug`, `--port` and `--waitress-threads` override even a
+malformed corresponding environment value. Invalid nonblank backend ports
+now fail instead of being ignored. Missing/invalid saved application config
+still opens the existing setup UI and never triggers an automatic rewrite.
+
+| Component | Destination and level |
+|---|---|
+| Web | stdout plus optional `RUSSOUND_LOG_FILE`; DEBUG in development, WARNING/errors plus essential health/security events in production. Files rotate at 10 MiB plus five backups. Waitress serves both modes; no Flask debugger. |
+| Native playback agent / supervisor | stderr, captured by the user-service journal; same production minimum, with explicit `--debug` for development. No implicit log files. |
+| Interactive audio/MPD setup commands | stderr at INFO for requested setup actions, DEBUG with `--debug`; imports/`--help` do not configure logging. |
+| Protocol-frame audit | Separate explicit opt-in via saved config; 5 MiB plus three backups. Ordinary reruns preserve that choice. Disabling an existing audit requires the separately approved, backed-up migration. |
+| Docker services / existing native daemons | Docker stdout/stderr uses the bounded driver above. Native daemon/journal settings remain host-managed; no global retention change. |
+
+Web and native Python services redact HTTP(S) URLs, Bearer values and named
+credential/session/path assignments in their formatters, including exception
+text and quoted dictionaries/JSON. This is defense in depth, not permission to
+log arbitrary secrets. Do not put credentials in command arguments, debug
+messages or audit frames.
+
+Dependencies use separate bounded manifests: web Flask `>=3.1,<4` and Waitress
+`>=3.0.2,<4`; native agent adds python-mpd2 `>=3.1,<4`; audio-only uses just that
+python-mpd2 range. Deployment tooling reuses web requirements and bounds
+ansible-core to `>=2.19,<2.22`. Ordinary installs do not request package upgrades.
+Fresh installations can resolve different compatible releases; these are not
+locks or certification of every possible version/platform combination.
+Security/dependency updates are explicit: review a changed bound or an update
+within it, resolve/install in a disposable environment, run `pip check` and
+the relevant regression/image tests, then use the reviewed deployment/update
+workflow. Do not upgrade the live audio environment as a side effect of web
+work. Prepare and validate a separate
+[audio candidate environment](./mpd-headless-deployment.md#isolated-audio-dependencies)
+and retain the working one until an approved switch.
 
 ### Runtime shutdown and native setup logging
 

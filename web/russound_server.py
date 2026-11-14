@@ -26,13 +26,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from web.config_types import coerce_russound_config, env_port, env_str, resolve_backend_endpoint, resolve_backend_poll_interval_seconds, resolve_backend_protocol_audit_log_file
+from web.config_types import backend_endpoint_metadata, coerce_russound_config, env_port, env_str, resolve_backend_endpoint, resolve_backend_poll_interval_seconds, resolve_backend_protocol_audit_log_file
 from web.russound_backend import RussoundBackend
 from web.russound_controller import get_controller
 from web.russound_state import RussoundState
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
 from mpdrussoundpi.russound.lib.tunein import TuneInCatalog, TuneInError
+from mpdrussoundpi.russound.lib.runtimelogging import SafeFormatter, configure_console
 
 WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"
@@ -49,6 +50,7 @@ EVENT_QUEUE_MAXSIZE = 8
 RESERVED_REQUEST_THREADS = 4
 DEFAULT_WAITRESS_THREADS = 24
 DEFAULT_TCP_USER_TIMEOUT_SECONDS = 30
+MAX_TCP_USER_TIMEOUT_SECONDS = (2**31 - 1) // 1000
 BACKEND_CHANGE_POLL_INTERVAL_SECONDS = 2.0
 # Gives the controller time to apply a keypad action and coalesces bursts of key presses.
 ZONE_REFRESH_DEBOUNCE_SECONDS = 0.5
@@ -664,7 +666,7 @@ class RussoundHTTPServer:
             logging.debug("Russound gateway reconnect attempt failed: %s", exc)
             reconnected = False
         if reconnected:
-            logging.info("Russound gateway connection re-established")
+            logging.getLogger("russound.health").info("Russound gateway connection re-established")
             self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
             return
         self._next_reconnect_at = now + self._reconnect_delay_seconds
@@ -1131,6 +1133,7 @@ class RussoundHTTPServer:
             "config_required": bool(payload.get("config_required")),
             "backend_status": payload.get("backend_status"),
             "backend": config.get("backend") or {},
+            "effective_backend": backend_endpoint_metadata(coerce_russound_config(config)),
             "zones": [
                 {
                     field: zone.get(field)
@@ -1218,7 +1221,7 @@ class RussoundHTTPServer:
 
 def _configure_logging(debug: bool) -> None:
     """Configure logging so debug output is emitted to stdout when requested."""
-    level = logging.DEBUG if debug else logging.INFO
+    level = logging.DEBUG if debug else logging.WARNING
     log_file = env_str("RUSSOUND_LOG_FILE")
     file_handler: logging.Handler | None = None
     if log_file:
@@ -1226,13 +1229,8 @@ def _configure_logging(debug: bool) -> None:
 
         Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
-        file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logging.basicConfig(
-        level=level,
-        stream=sys.stdout,
-        format="%(asctime)s %(levelname)s %(message)s",
-        force=True,
-    )
+        file_handler.setFormatter(SafeFormatter("%(asctime)s %(levelname)s %(message)s"))
+    configure_console(debug, stream=sys.stdout)
     if file_handler is not None:
         logging.getLogger().addHandler(file_handler)
     for logger_name in ("web", "web.russound_backend", "web.russound_connector", "web.russound_controller", "web.russound_state", "web.zone", "web.russound_server"):
@@ -1271,6 +1269,8 @@ def _env_flag(name: str, default: bool = False) -> bool:
     value = env_str(name)
     if value is None:
         return default
+    if value.lower() not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+        raise ValueError(f"{name} must be a boolean (true/false, yes/no, on/off, 1/0)")
     return value.lower() in {"1", "true", "yes", "on"}
 
 
@@ -1278,28 +1278,46 @@ def _env_int(name: str, default: int) -> int:
     value = env_str(name)
     if value is None:
         return default
-    try:
-        return int(value)
-    except ValueError:
-        logging.getLogger(__name__).warning("Ignoring %s=%r because it is not an integer", name, value)
-        return default
+    if not value.isascii() or not value.isdecimal() or len(value) > 9:
+        raise ValueError(f"{name} must be a nonnegative integer")
+    return int(value)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the Russound web controller")
-    parser.add_argument("--host", default=env_str("RUSSOUND_WEB_HOST") or "0.0.0.0")
-    parser.add_argument("--port", type=int, default=env_port("RUSSOUND_WEB_PORT") or 8000)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--config", default=env_str("RUSSOUND_CONFIG"))
     parser.add_argument("--state", default=env_str("RUSSOUND_STATE") or str(WEB_ROOT / "russound_state.json"))
     parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
-    parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging (the server still uses Waitress)")
+    parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=None, help="Enable debug logging (the server still uses Waitress)")
     parser.add_argument(
         "--waitress-threads",
         type=int,
-        default=_env_int("RUSSOUND_WAITRESS_THREADS", DEFAULT_WAITRESS_THREADS),
+        default=None,
         help=f"Worker thread count for Waitress (min {RESERVED_REQUEST_THREADS + 1}, default {DEFAULT_WAITRESS_THREADS})",
     )
     args = parser.parse_args()
+
+    try:
+        args.host = args.host if args.host is not None else env_str("RUSSOUND_WEB_HOST") or "0.0.0.0"
+        args.port = args.port if args.port is not None else env_port("RUSSOUND_WEB_PORT") or 8000
+        args.debug = args.debug if args.debug is not None else _env_flag("RUSSOUND_DEBUG")
+        args.waitress_threads = args.waitress_threads if args.waitress_threads is not None else _env_int("RUSSOUND_WAITRESS_THREADS", DEFAULT_WAITRESS_THREADS)
+        proxy_count = _env_int("RUSSOUND_TRUSTED_PROXY_COUNT", 0)
+        max_streams = _env_int("RUSSOUND_MAX_EVENT_STREAMS", 0) or None
+        tcp_timeout = _env_int("RUSSOUND_TCP_USER_TIMEOUT_SECONDS", DEFAULT_TCP_USER_TIMEOUT_SECONDS)
+        if tcp_timeout > MAX_TCP_USER_TIMEOUT_SECONDS:
+            raise ValueError(f"RUSSOUND_TCP_USER_TIMEOUT_SECONDS must not exceed {MAX_TCP_USER_TIMEOUT_SECONDS}")
+        if not args.host.strip() or not 1 <= args.port <= 65535:
+            raise ValueError("Web host must be nonblank and port must be between 1 and 65535")
+        if args.waitress_threads <= RESERVED_REQUEST_THREADS:
+            raise ValueError(f"Waitress threads must exceed {RESERVED_REQUEST_THREADS}")
+        if max_streams is not None and max_streams > args.waitress_threads - RESERVED_REQUEST_THREADS:
+            raise ValueError("Maximum event streams exceeds available Waitress workers")
+        resolve_backend_endpoint(None)
+    except ValueError as error:
+        parser.error(str(error))
 
     if args.daemon:
         _daemonize_process()
@@ -1310,8 +1328,8 @@ def main() -> None:
         args.state,
         allowed_hosts=_split_env_list("RUSSOUND_ALLOWED_HOSTS"),
         allowed_origins=_split_env_list("RUSSOUND_ALLOWED_ORIGINS"),
-        trusted_proxy_count=_env_int("RUSSOUND_TRUSTED_PROXY_COUNT", 0),
-        max_event_streams=_env_int("RUSSOUND_MAX_EVENT_STREAMS", 0) or None,
+        trusted_proxy_count=proxy_count,
+        max_event_streams=max_streams,
     )
     if not args.daemon:
         print(f"Listening on http://{args.host}:{args.port}")
@@ -1322,7 +1340,7 @@ def main() -> None:
             port=args.port,
             debug=args.debug,
             waitress_threads=args.waitress_threads,
-            tcp_user_timeout_seconds=_env_int("RUSSOUND_TCP_USER_TIMEOUT_SECONDS", DEFAULT_TCP_USER_TIMEOUT_SECONDS),
+            tcp_user_timeout_seconds=tcp_timeout,
         )
     except KeyboardInterrupt:
         print("\nShutting down Russound server...")

@@ -118,6 +118,35 @@ defaults.
 `streamlevels.py` measures each output's current (or default) station and
 `--output-config` writes the recommendations as `default_gain_db`.
 
+### Isolated audio dependencies
+
+The audio/control/supervisor dependency manifest is
+[`requirements-audio.txt`](../../mpdrussoundpi/russound/requirements-audio.txt)
+(`python-mpd2>=3.1,<4`), separate from Flask/Waitress and Ansible.
+The setup play installs this bounded manifest without an unconditional upgrade.
+It still targets its configured environment; **do not run it against a working
+installation merely to prepare an environment**.
+
+For a candidate, choose a new unused path and leave existing service units and
+`~/russound-venv` untouched. From a reviewed checkout on the intended host:
+
+```sh
+test ! -e "$HOME/russound-audio-candidate" &&
+python3 -m venv "$HOME/russound-audio-candidate" &&
+"$HOME/russound-audio-candidate/bin/python" -m pip install \
+  -r mpdrussoundpi/russound/requirements-audio.txt &&
+"$HOME/russound-audio-candidate/bin/python" -m pip check &&
+"$HOME/russound-audio-candidate/bin/python" -I -c 'import mpd; print("Audio dependency import OK")'
+```
+
+Stop if any command fails; do not proceed using a pre-existing candidate.
+Also check the target Python/system packages, repository imports, generated
+audio assets and existing configuration before requesting a maintenance-window
+switch. Do not run audio setup, change units or restart playback during this
+preparation. Keep the old environment and backed-up units/config/state for an
+explicitly approved switch/recovery. Local clean-environment import tests are
+not Pi hardware acceptance.
+
 Use the operational configuration for **all** control and calibration commands:
 
 Run the following commands on the Pi as the audio user, from the script

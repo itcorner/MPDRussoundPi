@@ -66,10 +66,14 @@
           ansible.builtin.command:
             argv: [/usr/bin/python3, -m, venv, "{{ venv_dir }}"]
             creates: "{{ venv_dir }}/bin/python"
-        - name: Install playback dependencies
+        - name: Copy bounded playback dependencies into the isolated environment
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../../mpdrussoundpi/russound/requirements-audio.txt"
+            dest: "{{ venv_dir }}/requirements-audio.txt"
+            mode: "0600"
+        - name: Install playback dependencies without upgrading satisfied packages
           ansible.builtin.pip:
-            name:
-              - python-mpd2
+            requirements: "{{ venv_dir }}/requirements-audio.txt"
             virtualenv: "{{ venv_dir }}"
       tags:
         - init
