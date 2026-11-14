@@ -18,6 +18,9 @@ from lib.stations import Station
 from lib.servicecredentials import validate_service_token
 
 
+AUDIO_REFRESH_INTERVAL_SECONDS = 20.0
+
+
 @dataclass(frozen=True)
 class CachedInventory:
     revision: int = 0
@@ -147,7 +150,7 @@ class AgentObserver:
         if audio:
             # Audio work uses its own pool even when an MPD is backing off.
             collector.refresh(audio=True, playback=False)
-            self._audio_due = now + 30
+            self._audio_due = now + AUDIO_REFRESH_INTERVAL_SECONDS
 
     def start(self) -> None:
         if self._thread is not None or self._stop.is_set():

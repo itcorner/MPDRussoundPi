@@ -377,6 +377,12 @@ class PlaybackStatusTests(unittest.TestCase):
             for identity in ("front", "centerlfe", "rear"):
                 self.collector._jobs[(identity, "playback")].result(timeout=2)
                 self.assertEqual(self.output(identity).playback.status, "ok")
+            audio_jobs = {identity: self.collector._jobs[(identity, "audio")]
+                          for identity in ("front", "centerlfe", "rear")}
+            self.collector.refresh(audio=True, playback=False)
+            for identity, job in audio_jobs.items():
+                self.assertIs(self.collector._jobs[(identity, "audio")], job)
+            self.assertLessEqual(len(self.collector._jobs), 6)
         finally:
             release.set()
 
