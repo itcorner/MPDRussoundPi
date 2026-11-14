@@ -3645,6 +3645,80 @@ web/ser2net containers remain running; no dummy deployment or dummy observer
 is active. Remaining S4/S5 layout/refactoring/migration work is not closed by
 this scoped manual native activation and real managed-layout rehearsal.
 
+### Guarded tooling upgrade retry (2026-11-14)
+
+The first tooling-only upgrade attempt to `5d60b23d4f645fa93393e22f246cd49027b066ec`
+atomically switched the checkout and installed dependencies, then failed its
+operator `--help` check because Ansible invoked the module outside the checkout
+working directory. The playbook rollback restored the original
+`784e17d0896be54bba3f6c5f7b128ae1bfcf0ec6` checkout, released the reservation,
+and left the failed candidate at
+`/opt/mpdrussoundpi-deploy.upgrade-5d60b23d4f645fa93393e22f246cd49027b066ec`
+for inspection. The incident did not change application services.
+
+PR #48 corrected the operator-check working directory in both upgrade and
+restore playbooks and added a parsed-YAML test. Focused tests, both playbook
+syntax checks, and all CI jobs passed. The merged tooling commit
+`ff2f4281392efacb1cf015534bda588d0dd31e57` was then applied through the guarded
+upgrade play. The active checkout reports that exact revision, its isolated
+environment passes `pip check`, the operator help check passes, and deployment
+state is unblocked with no active reservation. The original checkout remains
+retained at the revision-specific sibling path. Web and ser2net container IDs
+remain `a5c40f5cf5f3` and `745f860c81fa`, both healthy; the playback supervisor,
+three MPD services, playback agent, PipeWire, and WirePlumber remain running.
+No application image, service, configuration, or credential was changed.
+The six-hour observation remains deferred and has not started.
+
+### Isolated backup and recovery rehearsal (2026-11-14)
+
+Reviewed the operator deployment/recovery runbook in
+[`container-deployment.md`](../documentation/container-deployment.md#failure-explicit-recovery-and-retained-evidence)
+against the backup and recovery implementation. It documents stopped-writer
+backup capture, independent off-host verification, separate approval,
+matching code/data restoration, preservation of post-backup trees, one-shot
+failure behavior, and the prohibition on forced unlock or automatic cleanup.
+
+The focused file-backup suite passed **27 tests with one Linux extended-
+attribute test skipped on this host**. The opt-in container recovery rehearsal
+initially found a stale test fixture that tried to resolve a registry dummy
+image, which is intentionally unsupported. The fixture now uses a synthetic
+valid external web-image candidate solely to inject an unavailable image for
+the failed-apply path; it does not claim registry verification or adoption.
+After that correction, the isolated ARM64 Docker rehearsal passed. It used a
+unique temporary Compose project and labeled named volume, verified web-to-
+dummy routing, retained pending state after failed apply, restored the
+synthetic config/data/secret tree into a new isolated path, and verified
+routing and repeat-run stability after restoration. The test cleaned up its
+project and volume.
+
+This validates the bounded local recovery rehearsal only. It is not a Pi
+migration, off-host disaster-recovery exercise, schema-compatibility check,
+physical-controller/audio acceptance, or six-hour observation. S5 live
+acceptance remains open and requires its own approved scope; the six-hour
+observation remains deferred.
+
+### Live Pi routing and playback software check (2026-11-14)
+
+With the operator's approval for S5 verification, performed read-only checks
+against the existing Pi deployment. The deployment state remained unblocked
+with no active reservation. The web and ser2net containers remained healthy
+with their existing IDs. `GET /api/rooms` reported four zones and
+`backend_status.connected: true`; `GET /api/playback/health` reported the
+configured playback integration `ok` with its agent `ok`. Its fresh snapshot
+was not stale (846 ms at observation) and reported all three outputs playing,
+audio-ready and correctly routed. Native `mpdctrl.py --status` and
+`--check-route` agreed for `stereo_front`, `stereo_centerlfe` and `stereo_rear`.
+The non-enforcing audio readiness check found the configured hardware/profile
+and sinks ready. A TCP connection from the actual web container to
+`russound-ser2net:6666` succeeded.
+
+No application service, image, configuration, credential, saved gain or
+playback intention was changed. Because all outputs were already playing, no
+start/stop/gain command was issued that could replace or interrupt the
+operator's current content. These checks verify software/controller routing
+and playback telemetry, not that sound was audibly confirmed in the room.
+Six-hour observation remains deferred and unstarted.
+
 ## Acceptance and verification
 
 - Render Compose configurations for dev Hub, dev local build and production;
