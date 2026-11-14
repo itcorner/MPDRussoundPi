@@ -170,6 +170,10 @@ control-state replacement or production rollback was performed for S04.
   Targeted agent/collector/backend/readiness/CLI/supervisor run: 94 passed
   (2026-10-15). No Pi deployment, production transport, browser integration or
   real-LAN latency claim is made.
+- Audio diagnostic refresh regressions verify a 20-second refresh interval
+  against the unchanged 30-second stale threshold, delayed worker publication,
+  genuine stale/error observations and blocked-job deduplication. See the
+  [diagnostic incident record](../plans/general_open_audio-diagnostic-freshness.md).
 - [Agent deployment tests](../../tests/test_playback_agent_deployment.py) perform
   static YAML/template validation only: loopback user unit, opt-in activation,
   isolated sources/venv, private credentials, no audio/MPD service operations
