@@ -462,6 +462,21 @@ uses separate read/write streams because controlling terminals are nonseekable;
 tests preserve exact-phrase approval and rejection of other input. Full local
 regression after these fixes: **818 tests, 812 passing, six skipped**.
 
+Separately approved live Pi acceptance (2026-11-14) deployed locally built ARM64
+revision `f1f82ee31ce3575553bfd1dde423f17d6bd3c0df` through the public operator:
+real SSH/sudo/bootstrap, reserved image transfer, stopped-writer backup,
+independent off-host custody, controlled Ansible apply and committed state passed.
+Both services remained healthy with zero restarts over five samples spanning
+two minutes; direct web-to-gateway Docker DNS/TCP, HTTP and reported backend/
+playback health passed. An ordinary public-CLI rerun reused the committed pin
+without changing container IDs or start times. Configuration/secret contents,
+owners and modes matched the backup. Two group-writable README files were
+changed to `0644`, and one stopped legacy serial claimant was archived off-host
+and removed, each with explicit approval. Native services were not changed.
+This supplements, rather than broadens, the fixture's claims below: no live
+forced failure/recovery, fresh physical-controller fault test, audio command,
+reboot/power-loss test or six-hour observation was performed.
+
 [Operator tests](../../tests/test_deployment_operator.py) and
 [registry-load tests](../../tests/test_deployment_registry_load.py) cover bounded
 private framing, exact file lengths/checksums, truncation/corruption/replay,
@@ -511,11 +526,12 @@ fixture processes, containers, network, volume and operation-owned image tags
 are removed. The dependency image remains cached for reuse.
 
 Full suite with local-build, SSH-transfer and workflow opt-ins:
-**815 tests, 809 passing, six skipped**. Production Python modules have no
-Pylance diagnostics. The bootstrap play passes Ansible syntax checking without
-a target connection. The real Pi sudo/bootstrap path, full host `/proc`
-visibility, physical controller/audio, other layout migrations and filesystem/
-reboot/power-loss durability remain S5 acceptance, not inferred passes.
+**818 tests, 812 passing, six skipped**. Changed production Python modules have
+no Pylance diagnostics. Bootstrap syntax checking makes no target connection;
+the separately approved live run above covers actual Pi SSH/sudo/bootstrap.
+Adversarial host process-visibility checks, physical controller/audio, other
+layout migrations and filesystem/reboot/power-loss durability remain S5
+acceptance, not inferred passes.
 
 ## Public-only playback egress
 

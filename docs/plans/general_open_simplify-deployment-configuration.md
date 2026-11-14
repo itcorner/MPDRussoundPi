@@ -3229,6 +3229,29 @@ verified web image with fixture revisions; it is not release-source certificatio
 The next live test requires separately approved tooling installation/adoption
 and deployment. A six-hour observation has not started.
 
+### Approved live development acceptance (2026-11-14)
+
+42. Published the implementation through PR #45 and installed the exact trusted
+    tooling revision using real Pi SSH/sudo and the bootstrap play. Live
+    preflight exposed Docker null device lists and nonseekable terminal approval
+    streams; regression-tested fixes passed **818 tests, 812 passing, six
+    skipped**, plus required CI including amd64/ARM64 container checks.
+    Explicitly approved preparation corrected only two README modes and archived
+    and removed one stopped legacy serial-device claimant. The reviewed public
+    operator then deployed clean-source local ARM64 images from
+    `f1f82ee31ce3575553bfd1dde423f17d6bd3c0df`, operation
+    `539bd3a4-e8ae-4a85-8a3b-2733b963a4fc`, retaining independently verified
+    off-host old-image/data recovery assets before actual Ansible apply.
+    Required checks and durable finalization passed with no pending reservation.
+    Five health samples over two minutes showed both services healthy, zero
+    restarts, HTTP 200 and reported backend/playback health. Direct Docker
+    web-to-gateway TCP passed; ordinary CLI rerun preserved container IDs/start
+    times. Configuration/secrets matched backup content, ownership and modes.
+    Native services were untouched. This supersedes the earlier lack of live
+    bootstrap/deployment evidence, not the remaining S3-S5 work: live recovery,
+    physical fault/audio acceptance, reboot durability and six-hour observation
+    remain unperformed.
+
 ## Acceptance and verification
 
 - Render Compose configurations for dev Hub, dev local build and production;
