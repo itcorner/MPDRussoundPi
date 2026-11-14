@@ -29,6 +29,7 @@
 - name: Validate additional proxy CIDRs input type before changing the target
   ansible.builtin.assert:
     that:
+      - playback_proxy_additional_allowed_cidrs is sequence
       - playback_proxy_additional_allowed_cidrs is not string
       - playback_proxy_additional_allowed_cidrs is not mapping
     quiet: true

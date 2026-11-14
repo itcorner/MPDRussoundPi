@@ -3462,6 +3462,11 @@ each new revision directory as `0700` before cloning. A focused regression
 checks the ordering and exact mode. Existing staged revisions are deliberately
 not rewritten or reused; this correction applies only to fresh candidate paths.
 
+The shared proxy-input role now requires additional trusted CIDRs to be a
+sequence before combining them with the primary CIDR. Real Ansible regressions
+reject strings, numbers, booleans, null and mappings at the shared preflight,
+before address parsing or any mutation.
+
 ### Isolated S3 Pi deployment and background observation (2026-11-14)
 
 Following explicit operator approval, committed S3 separately as

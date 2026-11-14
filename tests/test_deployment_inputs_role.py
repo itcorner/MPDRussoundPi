@@ -128,12 +128,6 @@ class DeploymentInputRoleIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inventory = root / "inventory.yml"
-            inventory.write_text(yaml.safe_dump({"all": {"hosts": {"localhost": {
-                "ansible_connection": "local", "ansible_python_interpreter": sys.executable,
-                "playback_proxy_hostname": "musicpi.home.arpa",
-                "playback_proxy_allowed_cidr": "192.0.2.0/24",
-                "playback_proxy_additional_allowed_cidrs": "192.0.2.10",
-            }}}}))
             play = root / "proxy.yml"
             play.write_text(yaml.safe_dump([{
                 "hosts": "all", "gather_facts": False,
@@ -141,12 +135,21 @@ class DeploymentInputRoleIntegrationTests(unittest.TestCase):
                     "name": str(ROLE), "defaults_from": "proxy",
                 }}],
             }]))
-            result = subprocess.run(
-                [executable, "-i", str(inventory), str(play)],
-                capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Validate additional proxy CIDRs input type", result.stdout)
-            self.assertNotIn("changed=1", result.stdout)
+            for value in ("192.0.2.10", 42, True, None, {"cidr": "192.0.2.10"}):
+                with self.subTest(value=value):
+                    inventory.write_text(yaml.safe_dump({"all": {"hosts": {"localhost": {
+                        "ansible_connection": "local", "ansible_python_interpreter": sys.executable,
+                        "playback_proxy_hostname": "musicpi.home.arpa",
+                        "playback_proxy_allowed_cidr": "192.0.2.0/24",
+                        "playback_proxy_additional_allowed_cidrs": value,
+                    }}}}))
+                    result = subprocess.run(
+                        [executable, "-i", str(inventory), str(play)],
+                        capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Validate additional proxy CIDRs input type", result.stdout)
+                    self.assertNotIn("Validate proxy trust addresses", result.stdout)
+                    self.assertNotIn("changed=1", result.stdout)
 
     def test_component_booleans_and_ports_are_normalized_before_tasks_run(self):
         executable = str(Path(sys.executable).parent / "ansible-playbook")
