@@ -3252,6 +3252,44 @@ and deployment. A six-hour observation has not started.
     physical fault/audio acceptance, reboot durability and six-hour observation
     remain unperformed.
 
+### Isolated Pi recovery and reboot acceptance (2026-11-14)
+
+43. With separate approval, ran the full real deployment/recovery fixture on the
+    ARM64 Pi using only isolated projects, a dummy peer and disposable data.
+    Failed-update restore, preserved newer edits, lost backup acknowledgement,
+    first-install absence and unchanged rerun passed in **505.584 seconds**.
+    This did not roll back the live project or exercise disaster recovery
+    across independent physical hosts. The actual live off-host backup remains
+    retained. OpenSSH strict-mode/privilege prerequisites were accommodated
+    without changing host SSH policy. A real Docker inspection-order defect was
+    fixed by canonicalizing mount order, retaining exact mount fields; all 13
+    operator tests and required CI passed at tooling revision `784e17d`.
+44. Read-only web-to-gateway TCP and CA/hostname-verified authenticated TLS
+    polling passed, including a separate controller-to-Pi request, HTTP 401 for
+    an invalid token and handshake rejection for invalid SNI. Three audio
+    outputs reported fresh readiness and correct routes. No audio controls or
+    physical-controller fault injection were authorized or performed.
+45. Per approval, rebooted the Pi and confirmed a new boot ID, automatic native
+    service startup, healthy containers with zero restarts and no failed units.
+    Exact container IDs/images/mounts/network IDs, configuration/secrets,
+    persisted app state and committed deployment state were preserved.
+    An orderly reboot is not a power-loss durability test.
+46. Started durable read-only six-hour monitoring at **01:29:07 CET on
+    2026-11-14**, expected to finish around **07:29 CET**, as user service
+    `russound-acceptance-20261114.service`. Initial samples passed. It records
+    health, routing, authenticated TLS, fresh audio readiness, native services,
+    protected-file/identity drift and restarts, with no automatic remediation.
+    Private records reside under
+    `~/.local/state/mpdrussoundpi-acceptance-20261114/observation/` on the Pi.
+    **Six-hour acceptance remains pending until a complete successful record
+    is verified.** A lost/stale monitor is not a pass.
+
+This advances the scoped S5 gate but does not close the overall plan. Audible
+physical acceptance, deliberate controller-fault checks, live-project rollback,
+power-loss testing and other layout migrations are not inferred from these
+results. The user's approved scope deliberately used isolated recovery and
+read-only audio checks; remaining S3/S4 work is unchanged.
+
 ## Acceptance and verification
 
 - Render Compose configurations for dev Hub, dev local build and production;

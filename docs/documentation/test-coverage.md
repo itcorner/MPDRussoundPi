@@ -477,6 +477,66 @@ This supplements, rather than broadens, the fixture's claims below: no live
 forced failure/recovery, fresh physical-controller fault test, audio command,
 reboot/power-loss test or six-hour observation was performed.
 
+#### Pi recovery, authenticated routing and reboot acceptance (2026-11-14)
+
+A separately approved isolated ARM64 Pi run of
+`ActualDevelopmentWorkflowTests` passed in **505.584 seconds**. It exercised
+actual SSH/Ansible/Docker failed-update restoration, retained post-backup edits,
+lost-backup-acknowledgement resolution and first-install rollback to absence.
+The live project and serial device were not used by the fixture. The test
+controller and target ran on the same Pi in isolated storage: this is hardware
+execution evidence, not proof of independent disaster-recovery failure domains.
+The actual live deployment's independently verified controller-held backup
+remains retained separately.
+
+Linux OpenSSH strict-mode checks required the isolated test's temporary keys
+beneath a private home ancestor rather than `/tmp`, and a privileged isolated
+sshd; no system SSH configuration or authentication policy was changed.
+Repeated live Docker inspection exposed nondeterministic mount ordering.
+Runtime signatures now sort mounts by destination while preserving every field;
+a regression test proves reordered mounts compare equal and changed
+source/destination/write access still compare unequal. All **13 operator
+tests**, including the local real-workflow fixture, passed; required CI passed
+for revision `784e17d0896be54bba3f6c5f7b128ae1bfcf0ec6`.
+
+Read-only authenticated polling passed from both the running web container and
+a separate controller host to the Pi TLS proxy, using the configured CA with
+hostname verification. An invalid bearer token returned HTTP 401; an invalid
+SNI name was rejected during the server handshake (not reported as a
+client-side hostname-mismatch diagnostic). All three audio outputs reported
+fresh correct routes and readiness; no playback, volume or physical-controller
+fault commands were issued.
+
+The approved actual Pi reboot completed. Exact container IDs, image pins,
+mounts, network IDs, configuration/secret contents and metadata, application
+state and committed deployment state survived. Both containers automatically
+became healthy with zero restarts; native agent/proxy, MPD, supervisor and audio
+services returned without manual starts. No system or user units were failed.
+This tests an orderly reboot, not power-loss/filesystem crash durability.
+
+A separate read-only six-hour observation started at **2026-11-14 01:29:07 CET**
+(00:29:07 UTC), with expected completion around **07:29 CET**. It runs as the
+lingering user's `russound-acceptance-20261114.service`, independent of the SSH
+client/chat, with no automatic restart or recovery. It checks container/process
+identity and restarts, protected-file preservation, native services, HTTP,
+reported backend connectivity, fresh audio readiness/routes, direct gateway TCP
+and authenticated TLS polling approximately every minute. Initial samples
+passed. **The observation is pending, not completed or passed.**
+
+Read its private latest record on the Pi:
+
+```sh
+systemctl --user status russound-acceptance-20261114.service --no-pager
+cat ~/.local/state/mpdrussoundpi-acceptance-20261114/observation/observation-status.json
+```
+
+Only a final `event: complete` record with at least 21,600 elapsed seconds,
+`failed_samples: 0` and `passed: true` establishes observation success. A stale
+record, missing completion or failed service is incomplete/failed, never an
+implied pass. Audible verification, deliberate physical-controller faults and
+live-project rollback remain unperformed under the approved read-only/isolated
+scope; other deployment modes and migrations retain their separate gates.
+
 [Operator tests](../../tests/test_deployment_operator.py) and
 [registry-load tests](../../tests/test_deployment_registry_load.py) cover bounded
 private framing, exact file lengths/checksums, truncation/corruption/replay,
