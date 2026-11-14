@@ -3504,8 +3504,16 @@ failure, records the named failure and performs no automatic remediation.
 The installed helper still refreshes audio every 20 seconds; the independent
 stale threshold remains 30 seconds.
 
-**At handoff: active, first full sample passed, zero failures.** The 30-minute
-result remains pending, not an already-earned pass or a six-hour acceptance.
+**Verified completed at 19:05 CET:** the observation finished at
+**19:02:10 CET**, after **1800.247 seconds**, with **174 samples and zero
+failures**, `complete/passed:true`, no early stop and systemd result success/
+exit 0. Maximum readiness age was **20115 ms** and route age **20026 ms**,
+both below the unchanged 30000 ms stale threshold. A fresh full baseline
+comparison at 19:05 CET passed real routing, protected files, installed native
+sources and service identities; both containers were healthy with zero
+restarts. Completed JSONL/status and post-completion evidence were copied to
+the controller. This passes the scoped 30-minute real S3 check, **not**
+six-hour acceptance. No new long observation was started.
 Durable private records reside under
 `~/.local/state/mpdrussoundpi-s3-live-b973cbd-20261114/` on the Pi; native and
 container backups/check evidence also have independently verified controller

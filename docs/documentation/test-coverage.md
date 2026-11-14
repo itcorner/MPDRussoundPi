@@ -64,8 +64,13 @@ separate consistent native backup and independent verification of all 32
 archive members; no dependency/venv/credential migration or MPD/audio daemon
 restart occurred. Real controller/TCP/authenticated TLS, effective metadata,
 fresh audio on all outputs and an unchanged Compose rerun passed. A fresh
-30-minute observer began at **18:32:10 CET**, expected to finish about
-**19:02:10 CET**; first full sample passed, final result pending at handoff.
+30-minute observer ran **18:32:10–19:02:10 CET**: **1800.247 seconds,
+174 samples, zero failures**, complete/passed with service exit 0.
+Maximum readiness/route ages were **20115/20026 ms**, below the unchanged
+30000 ms stale threshold. A full post-completion check at **19:05 CET**
+also passed: real routing, unchanged protected files/native sources/service
+identities and zero container restarts. Completed evidence was copied off Pi.
+This short run is not six-hour acceptance; no additional observation was started.
 Startup pending-route samples precede timing and are not represented as a
 completed pass. See the [real deployment record](../plans/general_open_simplify-deployment-configuration.md#approved-real-s3-deployment-and-observation-2026-11-14).
 
