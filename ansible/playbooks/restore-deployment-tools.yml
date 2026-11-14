@@ -1,0 +1,132 @@
+---
+- name: Restore a retained deployment-tool checkout
+  hosts: musicpi
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require immutable active and retained tooling revisions
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_active_revision is defined
+          - deployment_tools_active_revision is match('^[a-f0-9]{40}$')
+          - deployment_tools_restore_revision is defined
+          - deployment_tools_restore_revision is match('^[a-f0-9]{40}$')
+          - deployment_tools_active_revision != deployment_tools_restore_revision
+        fail_msg: Supply the exact active and retained full tooling commit IDs.
+    - name: Require a root-owned real active checkout
+      ansible.builtin.stat:
+        path: /opt/mpdrussoundpi-deploy
+      register: deployment_tools_active
+    - name: Validate active tooling path and identity
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_active.stat.isdir | default(false)
+          - not deployment_tools_active.stat.islnk | default(false)
+          - deployment_tools_active.stat.pw_name | default('') == 'root'
+          - deployment_tools_active.stat.gr_name | default('') == 'root'
+        fail_msg: Active tooling is not a trusted real directory.
+    - name: Read active tooling revision
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - /opt/mpdrussoundpi-deploy
+          - rev-parse
+          - --verify
+          - HEAD
+      register: deployment_tools_actual
+      changed_when: false
+    - name: Require the stated active revision
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_actual.stdout == deployment_tools_active_revision
+        fail_msg: Active tooling differs from the explicitly reviewed revision.
+    - name: Define the retained prior checkout path
+      ansible.builtin.set_fact:
+        deployment_tools_retained: >-
+          /opt/mpdrussoundpi-deploy.upgrade-{{ deployment_tools_active_revision }}
+    - name: Verify the retained checkout revision
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ deployment_tools_retained }}"
+          - rev-parse
+          - --verify
+          - HEAD
+      register: deployment_tools_retained_revision
+      changed_when: false
+    - name: Require the stated retained revision
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_retained_revision.stdout == deployment_tools_restore_revision
+        fail_msg: Retained tooling does not match the explicitly requested restore revision.
+    - name: Confirm restore prerequisites without mutation
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/../../tool/deployment_tool_upgrade.py preflight"
+        executable: /usr/bin/python3
+      changed_when: false
+    - name: Acquire the host-wide reservation for tooling restore
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/../../tool/deployment_tool_upgrade.py acquire"
+        executable: /usr/bin/python3
+      register: deployment_tools_lock
+    - name: Record tooling restore operation identity
+      ansible.builtin.set_fact:
+        deployment_tools_operation: "{{ (deployment_tools_lock.stdout | from_json).operation }}"
+  tasks:
+    - name: Exchange to and verify the retained tooling checkout
+      block:
+        - name: Atomically restore the retained checkout
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py exchange
+              --active-revision {{ deployment_tools_active_revision }}
+              --staged-revision {{ deployment_tools_restore_revision }}
+              --path-revision {{ deployment_tools_active_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+          register: deployment_tools_restore_exchange
+        - name: Verify restored dependencies
+          ansible.builtin.command:
+            argv:
+              - /opt/mpdrussoundpi-deploy/.venv/bin/python
+              - -m
+              - pip
+              - check
+          changed_when: false
+        - name: Verify restored deployment operator entry point
+          ansible.builtin.command:
+            argv:
+              - /opt/mpdrussoundpi-deploy/.venv/bin/python
+              - -m
+              - tool.deployment_operator
+              - --help
+          changed_when: false
+        - name: Release reservation after restore verification
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py release
+              --active-revision {{ deployment_tools_restore_revision }}
+              --staged-revision {{ deployment_tools_active_revision }}
+              --path-revision {{ deployment_tools_active_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+      rescue:
+        - name: Reconcile an uncertain atomic restore
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py reconcile
+              --old-revision {{ deployment_tools_restore_revision }}
+              --new-revision {{ deployment_tools_active_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+          when: deployment_tools_restore_exchange is not defined or
+                deployment_tools_restore_exchange is failed
+        - name: Report restore failure and require state inspection
+          ansible.builtin.fail:
+            msg: >-
+              Tooling restore did not complete cleanly. If the atomic exchange was
+              confirmed, the host reservation remains until the restored checkout
+              is verified; inspect both checkout paths and state before proceeding.
