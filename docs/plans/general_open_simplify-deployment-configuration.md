@@ -3377,6 +3377,83 @@ agent activation; S5 owns approved migration/live activation and remaining
 layout/physical acceptance. The prior successful freshness-fix six-hour
 observation does not certify these undeployed S3 changes.
 
+### S4 local implementation in progress (2026-11-14)
+
+Implemented locally, without applying changes to the Pi:
+
+- Shared strict Ansible boolean, port, literal-IP/CIDR, hostname and playback
+  registry filters; component defaults now use role defaults so inventory has
+  higher precedence. Native web account/group resolution and bind-derived
+  readiness URL are shared. Audio no longer selects native ser2net by default.
+- MPD output operations now use exact configured IDs and managed unit markers,
+  reject legacy/overridden unit paths and unreviewed drop-ins before mutation,
+  preserve unrelated/stale matching units and never use broad `pkill -f mpd`.
+  Marker checks read only the bounded first-line signature; existing unit,
+  configuration and drop-in directories must be user-owned and not
+  group/world-writable. Conflicting MPD/egress CLI action options fail before
+  subprocess work.
+- Local image bundles can include a verified `web` + `dummy` pair. Dummy
+  registry selection remains unavailable; Compose validation requires explicit
+  backend-connectivity acceptance, the healthy dummy dependency, isolated
+  writable dummy state, web-to-dummy route and no hardware permissions.
+- `setup-musicpi.yml --tags stage` now creates a revision-specific candidate
+  checkout and bounded audio virtual environment, validating existing
+  operational config while leaving the active checkout, config, units,
+  gateway and services untouched. Default mode is stage. Its legacy in-place
+  activation path is explicitly blocked until native reservation, independently
+  verified off-host backup, interruption handling, recovery and health checks
+  are implemented. The playback-agent play now stages a revision-pinned source
+  and isolated dependency environment without touching credentials or active
+  services; its activation remains blocked on the same transaction workflow.
+- Added `stage-russound-web.yml` as a separate, candidate-only native web path.
+  It clones a full selected commit and creates an isolated dependency
+  environment, compiles candidate modules without writing into the checkout,
+  and validates existing operational config without contacting the gateway.
+  It does not update the legacy live web play, install system packages, write
+  units or start/restart services.
+- Development image-selection files are now read through descriptor-based
+  no-follow checks requiring a private, owner-owned, single-link `0600`
+  regular file; output validates the candidate and is exclusively created via
+  a checked directory descriptor. This closes symlink/hard-link/permission
+  races in selection reuse and creation.
+
+Typed-variable follow-up: the shared input role now converts validated
+inventory/default port values to integers after strict validation. Proxy
+additional-CIDR container type is checked before list concatenation, and
+hostname/address validation is centralized in that role; the proxy play keeps
+only its mode-specific unprivileged-port constraint. Extra vars retain
+Ansible's higher precedence, so templates still explicitly convert supported
+string boolean gates rather than relying on truthiness. Real Ansible tests
+verify boolean/port types across all seven component defaults, reject invalid
+proxy list shapes before mutation, and render string boolean extra vars through
+the actual agent unit template.
+
+Validation: full Python suite **851 tests, OK, 11 skipped**; Node suite **112
+tests, 102 passed, 10 skipped**. All seven changed or new Ansible plays pass
+syntax checks; the native web candidate play's `--tags stage` list contains
+only candidate tasks. The audio `--tags stage` list is candidate-only, and a
+local negative run of the legacy `init,new` tags fails in the pre-task guard
+before mutation. Tests verify dummy bundle identity, Compose route/state/
+hardware boundaries, typed inventory values and MPD ownership/CLI failure
+behavior. The agent and native web staging plays are syntax-checked and
+statically tested for their candidate-only behavior. Candidate staging itself
+was not run on the Pi. The safe-apply transaction and callback validation are
+implemented locally. The isolated SSH/Docker end-to-end failure/recovery
+rehearsal passed on the local Linux/ARM64 daemon: **34 tests, 33 passed, one
+skipped**, including update failure retention, independently held backup,
+approved recovery, lost backup acknowledgement, and first-install absence
+restoration. A cached web image whose Docker-save archive did not match its
+inspected identity was rejected before fixture resources were created; the
+rehearsal passed with a cached image whose archive identity verified. No Pi
+deployment or native activation occurred. Broader S4 exit criteria below are
+not yet claimed.
+
+Follow-up typed-input/shared-role validation after the full-suite run:
+**32 focused tests passed** across the input-role, render-integration,
+deployment-workflow and agent/proxy suites. All seven plays using the shared
+input role passed Ansible syntax checks. No target connection or mutation was
+performed.
+
 ### Isolated S3 Pi deployment and background observation (2026-11-14)
 
 Following explicit operator approval, committed S3 separately as
@@ -3549,3 +3626,34 @@ Related: [deployment status](./general_idea_deployment-status-overview.md),
 [update status and restarts](./general_idea_update-status-and-restarts.md),
 [image release pipeline](./general_open_cicd-docker-release.md), and
 [agent containerization](./mpd_new_agent-containerization.md).
+
+## Final step: retire legacy deployment paths and artifacts
+
+After the preceding implementation and acceptance work is complete, remove
+superseded deployment entry points so operators have one clean, documented
+path for each supported deployment intent. This is a planned final cleanup,
+not authorization to remove or alter anything on a live host before migration
+and recovery have been separately approved.
+
+- Inventory legacy Compose files, Ansible plays/roles/templates, scripts,
+  variables, defaults, CI jobs, examples and documentation references. For
+  each, identify its supported replacement or explicitly mark it unsupported;
+  do not leave two commands that appear to deploy the same intent differently.
+- Check repository references, packaging, automation and operator
+  documentation. Update active guidance to the reviewed entry points, retain
+  historical design/decision records where useful, and remove obsolete
+  instructions rather than silently redirecting legacy commands.
+- Remove obsolete scripts and generated/template artifacts only after
+  replacement behavior and supported migration/recovery paths have passed the
+  acceptance checks above. Preserve shared helpers and test fixtures still used
+  by supported workflows; verify no active playbook or CI job depends on the
+  removed files.
+- Keep target data, credentials, local-only images, deployment state, backups
+  and recovery evidence out of repository cleanup. Their retention or removal
+  requires a separate reviewed migration/recovery decision; repository cleanup
+  must never imply host cleanup.
+- Run the focused tests and syntax checks for every retained deployment
+  entry point, then the relevant full suites. Search for stale references and
+  confirm the published docs expose only supported paths, while documenting
+  unsupported layouts and the exact boundary of any remaining compatibility
+  support.

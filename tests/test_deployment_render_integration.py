@@ -12,6 +12,7 @@ from unittest.mock import patch
 import yaml
 
 from web.playback_status import PlaybackAgentConfig
+from deploymentfixtures import playbook as load_playbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,7 @@ DOCKER = shutil.which("docker")
 @unittest.skipUnless(ANSIBLE.is_file(), "local Ansible is required")
 class DeploymentRenderIntegrationTests(unittest.TestCase):
     def test_existing_docker_preflight_rejects_blank_host_and_image_references(self):
-        source = yaml.safe_load((ROOT / "ansible/playbooks/deploy-russound-docker.yml").read_text())[0]
+        source = load_playbook("deploy-russound-docker.yml")
         tasks = [task for task in source["tasks"] if task["name"] in {
             "Require an explicit external endpoint when not managing the serial gateway",
             "Require explicit published image references",

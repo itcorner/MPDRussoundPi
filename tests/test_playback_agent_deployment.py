@@ -3,6 +3,7 @@ import unittest
 
 from jinja2 import Environment, StrictUndefined
 import yaml
+from deploymentfixtures import playbook, boolean
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,22 +18,69 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
     """Static checks only: never run Ansible, systemctl, pip or target commands."""
 
     def setUp(self):
-        self.deploy = yaml.safe_load((PLAYBOOKS / "deploy-playback-agent.yml").read_text())[0]
+        self.deploy = playbook("deploy-playback-agent.yml")
         self.remove = yaml.safe_load((PLAYBOOKS / "remove-playback-agent.yml").read_text())[0]
 
     def tasks(self, play, module):
         return [task for task in play["tasks"] if module in task]
 
-    def test_separate_agent_play_has_no_audio_provisioning_or_repository_updates(self):
+    def test_agent_play_only_stages_a_revision_pinned_candidate(self):
         self.assertEqual(self.deploy["hosts"], "musicpi")
         self.assertFalse(self.deploy["become"])
-        self.assertFalse(self.deploy["vars"]["playback_agent_start"])
         for task in self.deploy["tasks"]:
-            self.assertNotIn("include_tasks", task)
-            self.assertNotIn("ansible.builtin.include_tasks", task)
-            self.assertNotIn("ansible.builtin.git", task)
-            self.assertNotIn("ansible.builtin.apt", task)
-            self.assertNotIn("ansible.builtin.user", task)
+            self.assertNotIn("ansible.builtin.systemd_service", task)
+            self.assertNotIn("ansible.builtin.uri", task)
+            self.assertNotIn("ansible.builtin.template", task)
+            self.assertIn("stage", task["tags"] if isinstance(task["tags"], list) else [task["tags"]])
+        git = next(task["ansible.builtin.git"] for task in self.deploy["tasks"]
+                   if "ansible.builtin.git" in task)
+        self.assertEqual(git["version"], "{{ playback_agent_revision }}")
+        self.assertFalse(git["update"])
+        self.assertFalse(git["force"])
+        defaults = yaml.safe_load(
+            (ROOT / "ansible/roles/deployment_inputs/defaults/agent.yml").read_text()
+        )
+        self.assertIn("agent-candidates", defaults["playback_agent_candidate_root"])
+        reserve = next(task["ansible.builtin.command"]["argv"] for task in self.deploy["tasks"]
+                       if "Atomically reserve" in task["name"])
+        self.assertIn("/usr/bin/mkdir", reserve)
+        self.assertIn("requirements-agent.txt", next(
+            task["ansible.builtin.pip"]["requirements"] for task in self.deploy["tasks"]
+            if "ansible.builtin.pip" in task))
+        mode = next(task["ansible.builtin.assert"]["that"] for task in self.deploy["pre_tasks"]
+                    if "Require explicit revision-pinned" in task["name"])
+        self.assertIn("playback_agent_mode == 'stage'", mode)
+        self.assertIn("'stage' in ansible_run_tags", mode)
+        self.assertIn("not ansible_check_mode", mode)
+        self.assertIn("playback_agent_revision is match('^[a-f0-9]{40,64}$')", mode)
+        text = (PLAYBOOKS / "deploy-playback-agent.yml").read_text()
+        for forbidden in ("playback_agent_token_source", "token_installed", "loginctl",
+                          "systemd_service", "playback_agent.service"):
+            self.assertNotIn(forbidden, text)
+
+    def test_agent_candidate_validates_existing_config_without_state_changes(self):
+        config_check = next(task for task in self.deploy["tasks"]
+                            if "Validate existing playback configuration" in task["name"])
+        self.assertTrue(config_check["no_log"])
+        self.assertFalse(config_check["changed_when"])
+        self.assertTrue(config_check["when"])
+        code = config_check["ansible.builtin.command"]["argv"][2]
+        compile(code, "<candidate-config-validation>", "exec")
+        self.assertIn("MPDBackend", code)
+        self.assertNotIn("refresh", code)
+        self.assertEqual(config_check["environment"]["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertFalse(self.tasks(self.deploy, "ansible.builtin.copy"))
+        self.assertFalse(self.tasks(self.deploy, "ansible.builtin.systemd_service"))
+
+    def test_candidate_preflight_rejects_reuse_and_untrusted_paths(self):
+        assertions = [task for task in self.deploy["pre_tasks"]
+                      if "Refuse an existing candidate" in task["name"]]
+        self.assertEqual(len(assertions), 1)
+        checks = assertions[0]["ansible.builtin.assert"]["that"]
+        self.assertTrue(any("playback_agent_candidate.stat.exists" in check for check in checks))
+        self.assertTrue(any("playback_agent_operational_config.stat.isreg" in check for check in checks))
+
+    def test_separate_agent_play_has_no_audio_provisioning_or_repository_updates(self):
         text = (PLAYBOOKS / "deploy-playback-agent.yml").read_text()
         for forbidden in ("audiosetup.py", "mpdsetup.py", "mpdsupervisor.py",
                           "mpd_meta_control.service", "pipewire.service", "ser2net"):
@@ -48,7 +96,9 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
             "playback_agent_port": 8081,
             "ansible_facts": {"user_uid": 1000},
         }
-        unit = Environment(undefined=StrictUndefined).from_string(SERVICE.read_text()).render(**variables)
+        environment = Environment(undefined=StrictUndefined)
+        environment.filters["bool"] = boolean
+        unit = environment.from_string(SERVICE.read_text()).render(**variables)
         self.assertIn("--host 127.0.0.1 --port 8081", unit)
         self.assertNotIn("--allow-remote", unit)
         self.assertIn("--token-file /home/musicpi/.config/mpdrussoundpi-agent/token", unit)
@@ -61,56 +111,6 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         self.assertNotIn("Wants=", unit)
         self.assertNotIn("Requires=", unit)
         self.assertNotIn("User=", unit)
-
-    def test_service_operations_target_only_agent_and_start_is_opt_in(self):
-        services = self.tasks(self.deploy, "ansible.builtin.systemd_service")
-        for task in services:
-            config = task["ansible.builtin.systemd_service"]
-            self.assertEqual(config["scope"], "user")
-            if "name" in config:
-                self.assertEqual(config["name"], "mpdrussoundpi-playback-agent.service")
-                self.assertIn("playback_agent_start | bool", task["when"])
-        for task in self.tasks(self.deploy, "ansible.builtin.uri"):
-            self.assertIn("playback_agent_start | bool", task["when"])
-            self.assertIn("not ansible_check_mode", task["when"])
-
-    def test_credentials_are_private_and_never_in_service_or_logs(self):
-        secret = next(task for task in self.tasks(self.deploy, "ansible.builtin.copy")
-                      if task["ansible.builtin.copy"]["dest"].endswith("/token"))
-        self.assertTrue(secret["no_log"])
-        self.assertFalse(secret["diff"])
-        self.assertEqual(secret["ansible.builtin.copy"]["mode"], "0600")
-        for task in self.tasks(self.deploy, "ansible.builtin.uri"):
-            config = task["ansible.builtin.uri"]
-            self.assertFalse(config["use_proxy"])
-            if "headers" in config:
-                self.assertTrue(task["no_log"])
-        self.assertNotIn("Authorization", SERVICE.read_text())
-        validation = next(task for task in self.tasks(self.deploy, "ansible.builtin.command")
-                          if "bearer token" in task["name"])
-        self.assertTrue(validation["no_log"])
-        self.assertEqual(validation["delegate_to"], "localhost")
-        self.assertFalse(validation["changed_when"])
-        self.assertFalse(validation["check_mode"])
-        self.assertIn("read_service_token", validation["ansible.builtin.command"]["argv"][2])
-
-    def test_only_agent_sources_and_isolated_dependencies_are_installed(self):
-        copies = self.tasks(self.deploy, "ansible.builtin.copy")
-        entries = next(task for task in copies if "loop" in task and isinstance(task["loop"], list))
-        self.assertEqual(entries["loop"], ["playbackagent.py", "requirements-agent.txt"])
-        dependencies = self.tasks(self.deploy, "ansible.builtin.pip")
-        self.assertEqual(len(dependencies), 1)
-        self.assertEqual(dependencies[0]["ansible.builtin.pip"]["virtualenv"], "{{ playback_agent_venv }}")
-        self.assertIn("requirements-agent.txt", dependencies[0]["ansible.builtin.pip"]["requirements"])
-        for task in copies:
-            self.assertNotEqual(task["ansible.builtin.copy"]["dest"], "{{ playback_agent_config }}")
-        check = next(task for task in self.tasks(self.deploy, "ansible.builtin.command")
-                     if "Validate configured inventory" in task["name"])
-        code = check["ansible.builtin.command"]["argv"][2]
-        compile(code, "<deployment-config-validation>", "exec")
-        self.assertNotIn("refresh", code)
-        self.assertIn("collector.close()", code)
-        self.assertFalse(check["changed_when"])
 
     def test_removal_preserves_code_token_configuration_and_lingering(self):
         tasks = self.tasks(self.remove, "ansible.builtin.file")
@@ -128,11 +128,13 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         self.assertFalse(self.tasks(self.remove, "ansible.builtin.command"))
 
     def test_tls_proxy_is_separate_loopback_only_and_start_is_opt_in(self):
-        play = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
+        play = playbook("deploy-playback-agent-proxy.yml")
         self.assertEqual(play["hosts"], "musicpi")
         self.assertTrue(play["become"])
         self.assertFalse(play["vars"]["playback_proxy_start"])
-        caddyfile = Environment(undefined=StrictUndefined).from_string(
+        environment = Environment(undefined=StrictUndefined)
+        environment.filters["bool"] = boolean
+        caddyfile = environment.from_string(
             PROXY_CADDYFILE.read_text()
         ).render(
             playback_proxy_hostname="musicpi.home.arpa",
@@ -175,11 +177,17 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         self.assertNotIn("CAP_NET_BIND_SERVICE", proxy_unit)
 
     def test_manual_operations_require_explicit_agent_and_proxy_opt_in(self):
-        self.assertFalse(self.deploy["vars"]["playback_agent_enable_operations"])
-        self.assertTrue(self.deploy["vars"]["playback_agent_enable_tunein_selection"])
-        proxy = yaml.safe_load(PROXY_PLAYBOOK.read_text())[0]
+        defaults = yaml.safe_load(
+            (ROOT / "ansible/roles/deployment_inputs/defaults/agent.yml").read_text()
+        )
+        self.assertFalse(defaults["playback_agent_enable_operations"])
+        self.assertTrue(defaults["playback_agent_enable_tunein_selection"])
+        self.assertEqual(defaults["playback_agent_mode"], "stage")
+        proxy = playbook("deploy-playback-agent-proxy.yml")
         self.assertFalse(proxy["vars"]["playback_proxy_enable_operations"])
-        service = Environment(undefined=StrictUndefined, trim_blocks=True).from_string(SERVICE.read_text())
+        environment = Environment(undefined=StrictUndefined, trim_blocks=True)
+        environment.filters["bool"] = boolean
+        service = environment.from_string(SERVICE.read_text())
         common = dict(
             playback_agent_dir="/home/musicpi/agent", playback_agent_venv="/home/musicpi/agent/venv",
             playback_agent_config="/home/musicpi/config.json", playback_agent_secret_dir="/home/musicpi/secrets",
@@ -197,7 +205,7 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         )
         self.assertIn("--disable-tunein-selection", tunein_disabled_unit)
         self.assertIn("\nEnvironment=PYTHONUNBUFFERED", unit)
-        caddy = Environment(undefined=StrictUndefined).from_string(PROXY_CADDYFILE.read_text())
+        caddy = environment.from_string(PROXY_CADDYFILE.read_text())
         variables = dict(
             playback_proxy_hostname="192.168.1.105", playback_proxy_port=8443,
             playback_proxy_certificate="/cert", playback_proxy_private_key="/key",

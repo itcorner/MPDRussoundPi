@@ -23,13 +23,13 @@ from uuid import uuid4
 from tool.deployment_files import FileSafetyError, checked_directory
 from tool.deployment_images import DIGEST, REVISION, SOURCE, SelectionError, validate_request
 from tool.deployment_inputs import attributes, read_file, write_file
-from tool.deployment_local import MAX_ARCHIVE, validate_manifest
+from tool.deployment_local import MAX_ARCHIVE, components, validate_manifest
 from tool.deployment_state import StateError, is_list, is_mapping
 
 
 MAX_SOURCE = 512 * 1024**2
 MAX_METADATA = 4 * 1024**2
-DOCKERFILES = {"web": "Dockerfile", "ser2net": "Dockerfile.ser2net"}
+DOCKERFILES = {"web": "Dockerfile", "ser2net": "Dockerfile.ser2net", "dummy": "Dockerfile.dummy"}
 
 
 class BuildError(ValueError):
@@ -342,7 +342,7 @@ def build(source: Path, revision: str, parent: Path, gateway: str, platform: str
             source_context(source, revision, context_root)
             if clean_source(source, revision) != tree:
                 raise BuildError("Source changed during snapshot creation")
-            for name in (("web", "ser2net") if gateway == "managed" else ("web",)):
+            for name in components(gateway):
                 tag = f"mpdrussoundpi-local/{name}:{operation}"
                 command(docker + ["buildx", "build", "--builder", context_name,
                          "--load", "--provenance=false", "--sbom=false",

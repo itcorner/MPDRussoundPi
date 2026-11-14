@@ -37,53 +37,42 @@ Required:
 - A trusted LAN. The browser UI has no login. Caddy restricts HTTP source CIDRs,
   not incoming packets. Do not expose either listener by router port forwarding.
 
-Capture a private backup before changing a running installation: admin config,
-runtime state, user/system units, source revision and agent credentials. Stop
-writers before copying the operation SQLite database, or use SQLite's backup
-API. Full audio deployment and egress activation interrupt playback.
-
-The current plays define many defaults at play level, which overrides
-same-named host inventory variables. Use explicit `-e` values as in the
-commands below rather than relying on inventory for those settings. In
-particular, an inventory-only `mpd_russoundpi_start_playback=false` does not
-override the audio play's `true` default; use the staging command below.
+Capture and independently verify an off-host backup before any approved
+activation. Stop writers before copying the operation SQLite database, or use
+SQLite's backup API. The audio setup playbook now stages only; native activation
+is blocked pending the shared reservation/recovery workflow. Component
+defaults are role defaults, so inventory values override them.
 
 ## 1. Prepare the Pi audio stack
 
 Review the seed's USB hardware selector, profile, sinks, output IDs/ports,
-station defaults and gains first. The first install seeds
-`~/.config/mpdrussoundpi/config.json`; later runs preserve it. Edit that
-persistent file for an existing installation.
+station defaults and gains before any future activation. Candidate staging
+does not create or alter `~/.config/mpdrussoundpi/config.json`; on an existing
+installation, that persistent file is only read for validation.
 
-Stage the audio/MPD units without starting playback:
+Stage an immutable audio candidate without changing the active services:
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/setup-musicpi.yml --tags init,new \
-  -e mpd_russoundpi_start_playback=false
+  ansible/playbooks/setup-musicpi.yml --tags stage \
+  -e mpd_russoundpi_revision=<full-40-or-64-character-commit>
 ```
 
-This prepares the user manager, audio services, native ser2net, MPD units and
-runtime defaults. It leaves MPD/supervision stopped and their meta/supervisor
-autostart disabled so egress can be installed
-before streams start. If audio-group membership was newly added to an already
-running user manager, reboot in a maintenance window before continuing.
-The `init` tag starts native ser2net and can replace its configuration and
-restart it. On a host using a containerized or external gateway, review that
-conflict before running the command; staging playback does not suppress it.
-
-Runtime defaults: an output with `default_station` initially intends to play;
-without it, it stays silent/stopped. Missing `default_gain_db` means 0 dB.
-Existing runtime station/gain/intention/favorites are preserved. Do not delete
-`playback.json` during an update.
+The play creates a new revision-specific source checkout and virtual
+environment, installs only the bounded audio dependency manifest, and
+validates the existing operational config when present. It does not modify the
+active checkout, gateway, native units, audio configuration, or playback
+state. An already-existing candidate path is refused instead of overwritten.
+Native activation, including backup, reservation, restart, recovery and health
+verification, is not implemented by this playbook yet. Do not use legacy
+`--tags init,new` as a substitute.
 
 ## 2. Install public-only stream enforcement
 
 Inspect the Pi's DNS resolver addresses (`cat /etc/resolv.conf`). Supply exact
 resolver IP literals, not names, as a typed JSON list as shown below. Do not
-pass a single resolver using `-e playback_egress_resolvers=192.168.1.1`: the
-current play accepts that nonempty string and its unit template iterates over
-individual characters instead of one address.
+pass a single resolver using `-e playback_egress_resolvers=192.168.1.1`; the
+shared Ansible input contract requires a nonempty typed list of IP literals.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -92,14 +81,15 @@ ansible-playbook -i ansible/inventory.yaml \
   -e '{"playback_egress_resolvers":["192.168.1.1"]}'
 ```
 
-The play installs root-owned helpers, `mpdrussoundpi-egress.service`, the user
-`mpdstreams.slice` and per-MPD `50-egress.conf` drop-ins, then restarts
-matching MPD instances into the protected slice. The current play discovers
-matching `mpd_*.service` files, not just configured outputs; inspect those
-units before activation because unrelated matches may be modified or restarted.
-It leaves existing host firewall tables unchanged. UDP and TCP DNS are
-excepted only to the supplied resolver IPs on port 53; HTTP streams to those
-IPs remain blocked.
+The play verifies exact configured MPD output IDs against managed unit
+markers, effective systemd fragment/drop-in paths and selected config files
+before mutation. Legacy, overridden or colliding units are refused for
+separate inspection/migration; stale or unrelated units are reported and left
+unchanged. It installs root-owned helpers, `mpdrussoundpi-egress.service`, the
+user `mpdstreams.slice` and per-output `50-egress.conf` drop-ins, then restarts
+only configured outputs. It leaves existing host firewall tables unchanged.
+UDP and TCP DNS are excepted only to supplied resolver IPs on port 53; HTTP
+streams to those IPs remain blocked.
 
 MPD startup fails if the root service is unavailable or its recorded cgroup
 inode no longer matches. Restart the root service after recreating the slice.
@@ -117,55 +107,33 @@ systemctl --user enable --now mpd_meta_control.service mpd_playback_supervisor.s
 
 Do not start supervision after a failed reconciliation; inspect diagnostics.
 
-## 3. Create a service token and activate the agent
+## 3. Stage an immutable agent candidate
 
-Generate the token once on the controller, outside Git, in a private directory.
-Use the same file when redeploying; replacing it is credential rotation.
-
-```sh
-install -d -m 700 "$HOME/.config/mpdrussoundpi-deploy"
-(umask 077; set -C; openssl rand -hex 32 > "$HOME/.config/mpdrussoundpi-deploy/musicpi-token")
-```
-
-Do not rerun generation over an existing token. Keep its contents out of shell
-arguments, inventory, logs and browser code. The example creates a 64-character
-token. Updated web, native agent and controller-side Ansible preflight share
-one parser: 32-4096 printable ASCII characters without spaces/control
-characters, optionally followed by one LF or CRLF in the file. Other leading/
-trailing whitespace, extra newlines and oversized files are errors. Old
-short/whitespace-padded credentials require a separately coordinated correction
-before updating; do not generate or replace a working credential automatically.
-The CLI validates identity/token before opening configuration or creating the
-operation ledger. Preflight reads locally without logging the secret or
-modifying a target. This does not make the legacy play a safe staged updater.
-Activate:
+The agent playbook currently stages only. It clones the exact selected commit
+into a new private candidate directory and installs only the bounded agent
+dependencies into a separate virtual environment. It refuses to overwrite an
+existing candidate; inspect a partial candidate and select a fresh revision
+path rather than rerunning over it.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
   ansible/playbooks/deploy-playback-agent.yml \
-  -e playback_agent_token_source="$HOME/.config/mpdrussoundpi-deploy/musicpi-token" \
-  -e playback_agent_enable_operations=true \
-  -e playback_agent_start=true
+  --tags stage \
+  -e playback_agent_revision=FULL_40_OR_64_CHARACTER_COMMIT_SHA
 ```
 
-Omit `playback_agent_enable_operations=true` for a read-only agent. TuneIn
-selection defaults on with manual operations; use
-`playback_agent_enable_tunein_selection=false` to disable new TuneIn selections.
-**Important:** Do not use `-e playback_agent_enable_operations=false` or
-`-e playback_proxy_enable_operations=false` to disable operations: the
-current templates treat the nonempty string `false` as true. Omit those
-variables for their read-only defaults, or use typed JSON values:
-`-e '{"playback_agent_enable_operations":false,"playback_proxy_enable_operations":false}'`.
-If services are already running, verify their active configuration and plan
-any necessary restart; rendering a new file does not itself update a running
-process.
-The agent-only play does not regenerate or restart MPD/audio and requires an
-existing user manager. Without `playback_agent_start=true`, it installs files
-but does not activate/reload a running process. It can still replace the
-installed source, dependencies and token. If an agent is already running,
-that process can retain the old in-memory token until it restarts. Do not use
-this as a staging or credential-rotation procedure; coordinate any token
-change with web and plan the interruption explicitly.
+Candidate staging may access Git and package indexes from the Pi. If an
+operational MPD configuration exists, candidate code parses it without
+contacting MPD or audio. Staging does not read or install credentials, alter
+the active agent source or service, enable lingering, start or restart any
+service, or activate the candidate. Active deployment and credential rotation
+remain blocked until the reviewed native transaction, verified recovery
+backup and health checks are implemented. The saved token, if one already
+exists, is not touched.
+
+Manual-operation and TuneIn settings apply only when activation is implemented.
+The installed agent and TLS proxy remain separate services; do not use proxy
+activation as evidence that a staged agent candidate is active.
 
 ## 4. Activate the TLS proxy
 

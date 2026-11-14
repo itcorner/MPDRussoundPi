@@ -59,6 +59,8 @@ class CallbackModule(CallbackBase):
         # and tested before the runner is allowed to accept those patterns.
         unsupported = len(tags) > 1 or bool(tags and (
             task.loop is not None or task.until or task.async_val or task.when or task.ignore_errors
+            or task.failed_when or task.ignore_unreachable
+            or task.delegate_to is not None or task.check_mode not in (None, False)
         ))
         self.emit(event, actual_host=host.get_name(), task=required, unsupported=unsupported)
 

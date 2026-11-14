@@ -10,15 +10,12 @@ from jinja2 import Environment, StrictUndefined
 import yaml
 
 from web.playback_status import PlaybackAgentConfig
+from deploymentfixtures import playbook, boolean
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAYBOOKS = ROOT / "ansible/playbooks"
 TEMPLATES = ROOT / "ansible/templates"
-
-
-def playbook(name):
-    return yaml.safe_load((PLAYBOOKS / name).read_text())[0]
 
 
 def all_tasks(tasks):
@@ -30,7 +27,7 @@ def all_tasks(tasks):
 
 def render(text, **variables):
     environment = Environment(undefined=StrictUndefined)
-    environment.filters["bool"] = bool
+    environment.filters["bool"] = boolean
     environment.filters["to_json"] = json.dumps
     return environment.from_string(text).render(**variables)
 

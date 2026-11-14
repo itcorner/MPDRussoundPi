@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from jinja2 import Environment, StrictUndefined
 import yaml
+from deploymentfixtures import playbook
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
 sys.path.insert(0, str(SCRIPTS))
@@ -88,7 +89,7 @@ class PlaybackEgressTests(unittest.TestCase):
         self.assertIn("PartOf=user@1000.service", unit)
         self.assertIn("--resolver 192.168.1.1", unit)
         self.assertIn("RemainAfterExit=yes", unit)
-        play = yaml.safe_load((root / "ansible/playbooks/deploy-playback-egress.yml").read_text())[0]
+        play = playbook("deploy-playback-egress.yml")
         self.assertFalse(play["vars"]["playback_egress_activate"])
         self.assertTrue(play["become"])
 

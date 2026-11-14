@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from tool.deployment_files import FileSafetyError, checked_directory
+
 
 SOURCE = "https://github.com/itcorner/MPDRussoundPi"
 REPOSITORIES = {name: f"itcornernet/mpdrussoundpi-{name}" for name in ("web", "ser2net")}
@@ -185,6 +187,8 @@ def validate_request(gateway: str, platform: str) -> None:
 
 def resolve(gateway: str, platform: str, registry: Registry | None = None) -> dict[str, Any]:
     validate_request(gateway, platform)
+    if gateway == "dummy":
+        raise SelectionError("Dummy deployments require a verified local web/dummy build bundle; no approved registry artifact")
     registry = registry or Registry()
     # Select one revision from web, then require both moving aliases and exact tags to agree.
     web_alias = inspect_image(registry, "web", "dev", platform)
@@ -212,6 +216,8 @@ def resolve(gateway: str, platform: str, registry: Registry | None = None) -> di
 
 def validate_selection(value: Any, gateway: str, platform: str) -> dict[str, Any]:
     validate_request(gateway, platform)
+    if gateway == "dummy":
+        raise SelectionError("Registry dummy candidates are unavailable; select a verified local web/dummy bundle")
     fields = {"schema_version", "kind", "channel", "gateway", "platform", "revision", "resolved_at", "images"}
     if (not isinstance(value, dict) or set(value) != fields
             or type(value["schema_version"]) is not int or value["schema_version"] != 1
@@ -243,17 +249,27 @@ def validate_selection(value: Any, gateway: str, platform: str) -> dict[str, Any
     return value
 
 
-def load_selection(path: Path, gateway: str, platform: str) -> dict[str, Any]:
+def selection_directory(path: Path) -> Path:
+    if not path.name or path.name in (".", "..") or path.parent.is_symlink():
+        raise SelectionError("Selection path must name a file through a real parent directory")
     try:
-        if path.is_symlink() or not path.is_file():
-            raise SelectionError("Selection must be an existing regular file, not a symlink")
-        with path.open("rb") as source:
-            content = source.read(MAX_METADATA + 1)
+        return path.parent.resolve(strict=True)
+    except OSError as error:
+        raise SelectionError("Selection parent directory is unavailable") from error
+
+
+def load_selection(path: Path, gateway: str, platform: str) -> dict[str, Any]:
+    from tool.deployment_inputs import InputError, read_file
+
+    try:
+        parent = selection_directory(path)
+        with checked_directory(parent, os.getuid(), private=False) as directory:
+            content, _ = read_file(directory, path.name, os.getuid(), (0o600,))
         if len(content) > MAX_METADATA:
             raise SelectionError("Image selection exceeds the size limit")
         return validate_selection(json_object(content, "Image selection file"), gateway, platform)
-    except OSError as error:
-        raise SelectionError("Cannot read the image selection file") from error
+    except (OSError, FileSafetyError, InputError) as error:
+        raise SelectionError("Cannot read a safe private image selection file") from error
 
 
 def verify(selection: dict[str, Any], registry: Registry | None = None) -> None:
@@ -279,14 +295,20 @@ def check_selection(selection: dict[str, Any], registry: Registry | None = None)
 
 
 def save_selection(path: Path, value: dict[str, Any]) -> None:
-    # Exclusive creation: a candidate never overwrites a previous selection or deployment pin.
+    from tool.deployment_inputs import InputError, write_file
+
     try:
-        with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb") as target:
-            target.write((json.dumps(value, indent=2) + "\n").encode())
-            target.flush()
-            os.fsync(target.fileno())
-    except OSError as error:
-        raise SelectionError("Cannot create candidate file; choose a new path and check permissions") from error
+        parent = selection_directory(path)
+        if not isinstance(value, dict):
+            raise SelectionError("Cannot save an invalid image selection")
+        validate_selection(value, value.get("gateway"), value.get("platform"))
+        raw = (json.dumps(value, indent=2) + "\n").encode()
+        if len(raw) > MAX_METADATA:
+            raise SelectionError("Image selection exceeds the size limit")
+        with checked_directory(parent, os.getuid(), private=False) as directory:
+            write_file(directory, path.name, raw, owner=os.getuid(), group=os.getgid(), mode=0o600)
+    except (OSError, FileSafetyError, InputError) as error:
+        raise SelectionError("Cannot create a private candidate file; choose a new path and check permissions") from error
 
 
 def main() -> int:

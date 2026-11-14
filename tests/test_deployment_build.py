@@ -51,7 +51,7 @@ def fixture_bundle(parent, gateway="external", platform="linux/arm64"):
     bundle.mkdir(mode=0o700)
     revision = "a" * 40
     images = {}
-    for name in (("web", "ser2net") if gateway == "managed" else ("web",)):
+    for name in builds.components(gateway):
         archive = bundle / (name + ".tar")
         tag = f"mpdrussoundpi-local/{name}:{operation}"
         reference = image_archive(archive, tag, revision, platform)
@@ -422,7 +422,6 @@ class LocalBuildPreviewTests(unittest.TestCase):
                     "russound_gateway": gateway, "russound_data_dir": "/tmp/build-preview",
                     **({"russound_backend_host": "gateway.example"} if gateway == "external" else {}),
                     **({"russound_serial_gid": 20} if gateway == "managed" else {}),
-                    **({"russound_dummy_image": "sha256:" + "c" * 64} if gateway == "dummy" else {}),
                 }
                 inventory = root / "inventory.yml"
                 inventory.write_text(yaml.safe_dump({"all": {"hosts": {"preview": variables}}}))

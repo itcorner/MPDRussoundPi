@@ -1,4 +1,9 @@
 ---
+- name: Validate playback inputs using the shared deployment contract
+  ansible.builtin.import_role:
+    name: "{{ playbook_dir }}/../roles/deployment_inputs"
+    tasks_from: web_agents
+
 - name: Validate and render the development preview on the controller
   delegate_to: localhost
   block:
@@ -37,7 +42,7 @@
           - russound_gateway != 'managed' or (russound_web_image == '') == (russound_ser2net_image == '')
           - russound_image_selection_file == '' or (russound_web_image == '' and russound_ser2net_image == '')
           - >-
-            russound_gateway != 'dummy' or
+            russound_gateway != 'dummy' or russound_image_source == 'local-build' or
             (russound_dummy_image is string and russound_dummy_image is match('^sha256:[a-f0-9]{64}$'))
           - >-
             russound_gateway != 'external' or
@@ -53,8 +58,8 @@
           - (russound_uid | string) is match('^[0-9]+$')
           - (russound_gid | string) is match('^[0-9]+$')
           - russound_gateway != 'managed' or (russound_serial_gid | string) is match('^[0-9]+$')
-          - russound_playback_agents == []
-        fail_msg: "Select a supported gateway, absolute data directory and valid numeric ports/IDs. Choose either Hub selection/digests or a verified local bundle with its separately retained manifest SHA-256, never a mixture. This preview supports no playback agents; provisioning trust and credentials is not implemented."
+          - russound_image_source != 'local-build' or russound_dummy_image == ''
+        fail_msg: "Select a supported gateway, absolute data directory and valid numeric ports/IDs. Choose either Hub selection/digests or a verified local bundle with its separately retained manifest SHA-256, never a mixture. Playback references must already be provisioned; this preview never copies credentials."
         quiet: true
 
     - name: Reject unsupported legacy source and mode switches
@@ -113,6 +118,9 @@
               russound_ser2net_image if russound_ser2net_image != '' else
               (russound_image_selection.stdout | from_json).images.ser2net.reference)
              if russound_gateway == 'managed' else '' }}
+        russound_selected_dummy_image: >-
+          {{ ((russound_local_selection.stdout | from_json).images.dummy if russound_image_source == 'local-build'
+              else russound_dummy_image) if russound_gateway == 'dummy' else '' }}
 
     - name: Select ordered Compose files and the complete interpolation environment
       ansible.builtin.set_fact:
@@ -125,7 +133,7 @@
           COMPOSE_PROFILES: ""
           RUSSOUND_WEB_IMAGE: "{{ russound_selected_web_image }}"
           RUSSOUND_SER2NET_IMAGE: "{{ russound_selected_gateway_image }}"
-          RUSSOUND_DUMMY_IMAGE: "{{ russound_dummy_image }}"
+          RUSSOUND_DUMMY_IMAGE: "{{ russound_selected_dummy_image }}"
           RUSSOUND_PLATFORM: "{{ russound_platform }}"
           RUSSOUND_DATA_DIR: "{{ russound_data_dir }}"
           RUSSOUND_UID: "{{ russound_uid | string }}"
@@ -137,7 +145,7 @@
           RUSSOUND_SERIAL_DEVICE: "{{ russound_serial_device }}"
           RUSSOUND_SERIAL_GID: "{{ russound_serial_gid | string }}"
           RUSSOUND_SERIAL_OPTIONS: "{{ russound_serial_options }}"
-          RUSSOUND_PLAYBACK_AGENTS: ""
+          RUSSOUND_PLAYBACK_AGENTS: "{{ russound_playback_agents | deployment_agents }}"
           RUSSOUND_ALLOWED_HOSTS: ""
           RUSSOUND_ALLOWED_ORIGINS: ""
           RUSSOUND_TRUSTED_PROXY_COUNT: "0"
@@ -170,7 +178,7 @@
           web_image: "{{ russound_selected_web_image }}"
           image_source: "{{ russound_image_source }}"
           gateway_image: "{{ russound_selected_gateway_image if russound_gateway == 'managed' else 'not-managed' }}"
-          playback: untouched
+          playback: "{{ 'existing-protected-references-only' if russound_playback_agents | length > 0 else 'disabled' }}"
           target_checks: not-run
           image_identity_verification: >-
             {{ 'local-archive-source-platform-checksum' if russound_image_source == 'local-build' else
@@ -178,7 +186,7 @@
                'candidate-schema-only-offline' if russound_image_selection_file != '' else
                'registry-index-platform-config-metadata' }}
           candidate_loaded_from_file: "{{ russound_image_selection_file != '' }}"
-          apply: blocked-until-safety-runner-is-implemented
+          apply: use-reviewed-deployment-operator
 
 - name: Discover the target Python interpreter using normal Ansible configuration
   ansible.builtin.setup:

@@ -1,0 +1,53 @@
+---
+- name: Validate component boolean inputs before changing the target
+  ansible.builtin.set_fact:
+    "{{ item }}": "{{ lookup('ansible.builtin.vars', item) | deployment_bool }}"
+  loop: "{{ deployment_boolean_inputs }}"
+  changed_when: false
+  tags: always
+
+- name: Validate component port inputs before changing the target
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.vars', item) | deployment_port >= 1
+    quiet: true
+  loop: "{{ deployment_port_inputs }}"
+  tags: always
+
+- name: Normalize validated component ports to integers
+  ansible.builtin.set_fact:
+    "{{ item }}": "{{ lookup('ansible.builtin.vars', item) | deployment_port }}"
+  loop: "{{ deployment_port_inputs }}"
+  changed_when: false
+  tags: always
+
+- name: Validate web playback registry before changing the target
+  ansible.builtin.import_tasks: web_agents.yml
+  when: deployment_component in ['web', 'docker']
+  tags: always
+
+- name: Validate additional proxy CIDRs input type before changing the target
+  ansible.builtin.assert:
+    that:
+      - playback_proxy_additional_allowed_cidrs is not string
+      - playback_proxy_additional_allowed_cidrs is not mapping
+    quiet: true
+  when: deployment_component == 'proxy'
+  tags: always
+
+- name: Validate proxy trust addresses and hostname before changing the target
+  ansible.builtin.assert:
+    that:
+      - (playback_proxy_hostname | deployment_hostname) is string
+      - ([playback_proxy_allowed_cidr] + playback_proxy_additional_allowed_cidrs) | deployment_addresses(network=true) | length > 0
+    quiet: true
+  when: deployment_component == 'proxy'
+  tags: always
+
+- name: Validate exact resolver IP literals before changing the target
+  ansible.builtin.assert:
+    that:
+      - playback_egress_resolvers | deployment_addresses | length > 0
+    quiet: true
+  when: deployment_component == 'egress'
+  tags: always

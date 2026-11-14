@@ -18,7 +18,7 @@ https://{{ playback_proxy_hostname }}:{{ playback_proxy_port }} {
 		handle @read_api {
 			reverse_proxy 127.0.0.1:{{ playback_agent_port }}
 		}
-{% if playback_proxy_enable_operations | default(false) %}
+{% if playback_proxy_enable_operations | default(false) | bool %}
 		@write_api {
 			path /v1/outputs/*/operations /v1/favorites/operations
 			method POST

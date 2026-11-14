@@ -88,6 +88,8 @@ def main() -> None:
     parser.add_argument("--uid", type=int)
     parser.add_argument("--resolver", action="append", default=[])
     args = parser.parse_args()
+    if args.wait and (args.user is not None or args.uid is not None or args.resolver):
+        parser.error("--wait cannot be combined with filter installation arguments")
     if args.wait:
         wait_for_filter()
         return

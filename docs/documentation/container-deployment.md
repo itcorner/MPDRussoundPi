@@ -138,7 +138,10 @@ Only metadata is downloaded, not image layers. This verifies registry metadata,
 not a signature, release approval, layer availability or hardware behavior.
 
 The output is a **candidate**, not a committed target deployment record.
-New files are private and never overwrite an existing selection.
+New files are created with owner-only `0600` permissions, are never hard-linked,
+and never overwrite an existing selection. Reuse also requires an owner-owned,
+single-link `0600` regular file opened without following symlinks, under a
+validated directory path.
 Reuse that file on subsequent previews rather than resolving `dev` again:
 
 ```sh
@@ -763,12 +766,13 @@ deployment by itself nor dispatches finalization.
 
 This first validator accepts only unconditional, synchronous required tasks;
 required handlers must actually run. Loops, retries, asynchronous work,
-conditional required tasks, skips and missing handlers block completion rather
-than receiving guessed outcomes. These restrictions apply to the internal
-runner, not to legacy playbooks. Invocation has a ten-minute deadline; timeout
-does not prove target-side work stopped. Pending state and evidence must remain
-blocked for investigation. Support for richer patterns remains gated on their
-event mapping and tests.
+conditional required tasks, failure/unreachable overrides, delegated required
+tasks, forced check-mode tasks, skips and missing handlers block completion
+rather than receiving guessed outcomes. These restrictions apply to the
+internal runner, not to legacy playbooks. Invocation has a ten-minute deadline;
+timeout does not prove target-side work stopped. Pending state and evidence
+must remain blocked for investigation. Support for richer patterns remains
+gated on their event mapping and tests.
 
 ### Internal target-local transaction runner
 
@@ -895,6 +899,30 @@ state paths or ordered file lists with the new workflow. Legacy Docker
 provisioning can build on the target and stop native services; play-level
 defaults also override inventory. Native web still uses a separate venv and
 persistent native config/state and optionally manages native ser2net.
+This compatibility surface is temporary in the repository plan: the final
+cleanup step retires superseded deployment scripts and examples after the
+replacement paths and migration/recovery acceptance are complete. It does not
+authorize deleting target data, backups, local-only images or recovery
+evidence.
+
+For source-only native web candidate staging, use
+[`stage-russound-web.yml`](../../ansible/playbooks/stage-russound-web.yml):
+
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/stage-russound-web.yml \
+  --tags stage \
+  -e russound_web_revision=FULL_40_OR_64_CHARACTER_COMMIT_SHA
+```
+
+This stages a clean, exact checkout and isolated dependency environment under
+the deployment user's private candidate directory. It validates existing web
+configuration but does not touch the active checkout, persistent state,
+credentials, system packages, systemd units or running services. Candidate
+staging requires Git, Python venv support and package-index access from the Pi.
+An existing revision candidate is never overwritten; a partial candidate must
+be inspected and a fresh revision selected. It is not an activation or
+recovery workflow.
 
 The Pi's extra Compose override and local-only web image need explicit
 preservation. Continue to treat adoption as a separately approved migration.

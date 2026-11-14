@@ -95,15 +95,56 @@ class OperatorContractTests(unittest.TestCase):
         self.assertFalse(any(self.storage["state"].glob("reservation")))
 
     def test_explicit_adoption_acceptance_and_no_hidden_dummy_build(self):
-        for key, value in (("adopt", "yes"), ("require_playback", None), ("gateway", "dummy"),
+        for key, value in (("adopt", "yes"), ("require_playback", None),
                            ("data_dir", "/"), ("compose", "../compose.json")):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 specification({**self.spec, key: value})
+        with self.assertRaisesRegex(ValueError, "Dummy acceptance"):
+            specification({**self.spec, "gateway": "dummy"})
         config = copy.deepcopy(self.config)
         config["services"]["russound-web"]["environment"] = {"RUSSOUND_PLAYBACK_AGENTS": "private"}
         self.compose.write_bytes(encoded(config))
         with self.assertRaisesRegex(ComposeError, "playback requires acceptance"):
             self.target()
+
+    def test_dummy_requires_verified_local_image_and_isolated_headless_route(self):
+        spec = {**self.spec, "gateway": "dummy", "require_controller": True}
+        bundle, checksum, _ = fixture_bundle(self.root, "dummy")
+        selection = select_bundle(bundle, checksum, "dummy", "linux/arm64")
+        web_image = selection["manifest"]["images"]["web"]["reference"]
+        dummy_image = selection["manifest"]["images"]["dummy"]["reference"]
+        config = compose_fixture(spec, web_image)
+        web = config["services"]["russound-web"]
+        web["environment"] = {"RUSSOUND_BACKEND_HOST": "russound-dummy",
+                              "RUSSOUND_BACKEND_PORT": "6666", "RUSSOUND_PLAYBACK_AGENTS": ""}
+        web["depends_on"] = {"russound-dummy": {"condition": "service_healthy"}}
+        web["volumes"] = [dict(mount, source=str(Path(spec["data_dir"]) / child))
+                          for mount, child in zip(web["volumes"], ("config", "data", "logs", "secrets"))]
+        config["services"]["russound-dummy"] = {
+            "image": dummy_image, "platform": spec["platform"], "user": f'{spec["uid"]}:{spec["gid"]}',
+            "volumes": [{"type": "bind", "source": str(Path(spec["data_dir"]) / "dummy-data"),
+                         "target": "/data", "read_only": False,
+                         "bind": {"create_host_path": False}}],
+            "environment": {"RUSSOUND_DUMMY_TUI": "false"},
+            "healthcheck": {"test": ["CMD", "python", "-c", "pass"]},
+            "init": True, "tty": True,
+        }
+        self.compose.write_bytes(encoded(config))
+        with patch("tool.deployment_compose.local_engine", return_value="default"):
+            target = ComposeDeployment(spec, selection, self.storage)
+        self.assertEqual(target.services, {"russound-web": "web", "russound-dummy": "dummy"})
+        for service_name, mutation in (
+            ("russound-dummy", {"environment": {"RUSSOUND_DUMMY_TUI": "true"}}),
+            ("russound-dummy", {"ports": [{"target": 6666, "published": "6666"}]}),
+            ("russound-dummy", {"devices": ["/dev/ttyUSB0:/dev/ttyUSB0"]}),
+            ("russound-web", {"depends_on": {}}),
+        ):
+            invalid = copy.deepcopy(config)
+            invalid["services"][service_name].update(mutation)
+            self.compose.write_bytes(encoded(invalid))
+            with self.subTest(service=service_name, mutation=mutation), self.assertRaises(ComposeError):
+                with patch("tool.deployment_compose.local_engine", return_value="default"):
+                    ComposeDeployment(spec, selection, self.storage)
 
     def test_compose_null_image_defaults_are_preserved_but_overrides_are_rejected(self):
         service = self.config["services"]["russound-web"]
@@ -311,6 +352,11 @@ class ActualDevelopmentWorkflowTests(unittest.TestCase):
         runtime_image = os.environ["RUSSOUND_TEST_WEB_IMAGE"]
         cached = json.loads(builds.command(docker + ["image", "inspect", runtime_image]))[0]
         platform = cached["Os"] + "/" + cached["Architecture"]
+        with tempfile.TemporaryFile() as archive:
+            builds.command(docker + ["image", "save", runtime_image], log=archive, timeout=600)
+            archive.seek(0)
+            builds.archive_identity(
+                archive, {"tag": runtime_image, "reference": cached["Id"]}, platform, None)
         unique = uuid4().hex[:12]
         project = "deploy-fixture-" + unique
         network, volume, peer = project + "-net", project + "-data", project + "-gateway"

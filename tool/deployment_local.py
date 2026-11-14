@@ -12,6 +12,12 @@ MAX_ARCHIVE = 8 * 1024**3
 LOCAL_CANDIDATE = "local-development-image-candidate"
 
 
+def components(gateway: str) -> tuple[str, ...]:
+    if gateway not in ("managed", "external", "dummy"):
+        raise SelectionError("Unsupported local gateway layout")
+    return ("web", "ser2net") if gateway == "managed" else ("web", "dummy") if gateway == "dummy" else ("web",)
+
+
 def validate_manifest(value: Any, gateway: str, platform: str) -> dict[str, Any]:
     validate_request(gateway, platform)
     fields = {"schema_version", "kind", "operation", "revision", "tree", "gateway",
@@ -31,7 +37,7 @@ def validate_manifest(value: Any, gateway: str, platform: str) -> dict[str, Any]
             raise ValueError
     except ValueError:
         raise SelectionError("Invalid local build operation or timestamp") from None
-    names = {"web", "ser2net"} if gateway == "managed" else {"web"}
+    names = set(components(gateway))
     if not is_mapping(value["images"]) or set(value["images"]) != names:
         raise SelectionError("Local image component set mismatch")
     for name, image in value["images"].items():

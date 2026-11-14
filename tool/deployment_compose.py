@@ -73,11 +73,11 @@ def specification(value: Any) -> dict[str, Any]:
         "project", "data_dir", "uid", "gid", "gateway", "platform", "publish_host",
         "publish_port", "serial_device", "serial_gid")})
     identity(value["deployment"])
-    if value["gateway"] == "dummy":
-        raise ComposeError("Automated dummy deployment needs a pinned dummy artifact; use the isolated test layout")
     for key in ("require_controller", "require_playback", "adopt"):
         if type(value[key]) is not bool:
             raise ComposeError("Acceptance and adoption choices must be explicit booleans")
+    if value["gateway"] == "dummy" and not value["require_controller"]:
+        raise ComposeError("Dummy acceptance must require a connected backend route")
     path = Path(value["compose"]) if isinstance(value["compose"], str) else Path()
     if not path.is_absolute() or ".." in path.parts or path == Path("/"):
         raise ComposeError("Compose input must be an explicit absolute private file")
@@ -110,6 +110,10 @@ class ComposeDeployment:
         self.services = {"russound-web": "web"}
         if spec["gateway"] == "managed":
             self.services["russound-ser2net"] = "ser2net"
+        elif spec["gateway"] == "dummy":
+            if selection["kind"] != LOCAL_CANDIDATE:
+                raise ComposeError("Dummy requires a pinned local web/dummy image bundle")
+            self.services["russound-dummy"] = "dummy"
         self.committed = self.store.status()["deployments"].get(spec["deployment"], {}).get("committed")
         if self.committed is not None:
             previous_operation = self.committed["selection"]["operation"]
@@ -181,7 +185,7 @@ class ComposeDeployment:
             fields = {
                 "image", "platform", "restart", "stop_grace_period", "user", "ports", "environment",
                 "volumes", "logging", "healthcheck", "networks", "depends_on", "devices", "group_add",
-                "extra_hosts", "command", "entrypoint",
+                "extra_hosts", "command", "entrypoint", "init", "tty",
             }
             if (not is_mapping(service) or "build" in service or service.get("privileged")
                     or set(service) - fields
@@ -195,6 +199,9 @@ class ComposeDeployment:
                 raise ComposeError("Unsupported build, privilege, identity, platform or disabled healthcheck")
             if name == "russound-web" and (service.get("devices") or service.get("group_add")):
                 raise ComposeError("Web scope must not acquire gateway hardware permissions")
+            if name == "russound-dummy" and (service.get("devices") or service.get("group_add")
+                                            or service.get("environment", {}).get("RUSSOUND_DUMMY_TUI") != "false"):
+                raise ComposeError("Automated dummy must be headless without serial device permissions")
             mounts_value: list[dict[str, Any]] = service.get("volumes", [])
             for mount in mounts_value:
                 if (mount.get("type") != "bind" or not Path(mount.get("source", "")).is_absolute()
@@ -232,6 +239,19 @@ class ComposeDeployment:
                     or devices[0].get("target") != spec["serial_device"]
                     or str(spec["serial_gid"]) not in [str(item) for item in gateway.get("group_add", [])]):
                 raise ComposeError("Managed serial device/group differs from reviewed hardware")
+        elif spec["gateway"] == "dummy":
+            dummy = config["services"]["russound-dummy"]
+            volumes = dummy.get("volumes", [])
+            dependencies = web.get("depends_on")
+            if (len(volumes) != 1 or volumes[0].get("target") != "/data"
+                    or volumes[0].get("read_only") or Path(volumes[0]["source"]) != Path(spec["data_dir"]) / "dummy-data"
+                    or web.get("environment", {}).get("RUSSOUND_BACKEND_HOST") != "russound-dummy"
+                    or str(web.get("environment", {}).get("RUSSOUND_BACKEND_PORT")) != "6666"
+                    or dummy.get("ports")
+                    or not is_mapping(dependencies)
+                    or not is_mapping(dependencies.get("russound-dummy"))
+                    or dependencies["russound-dummy"].get("condition") != "service_healthy"):
+                raise ComposeError("Dummy requires its isolated writable state bind and web-to-dummy route")
 
     def current_signature(self, containers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted([{
@@ -463,7 +483,7 @@ def validate_runtime_files(spec: dict[str, Any], environment: dict[str, Any]) ->
     finally:
         os.close(fd)
     count = 0
-    for folder in ("config", "data", "logs", "secrets"):
+    for folder in ("config", "data", "logs", "secrets") + (("dummy-data",) if spec["gateway"] == "dummy" else ()):
         for path in chain((root / folder,), (root / folder).rglob("*")):
             count += 1
             info = safe_path(path)
@@ -544,7 +564,7 @@ def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[st
 def apply(path: Path, images: dict[str, str]) -> None:
     """Fixed Ansible consumer: replace images only, never build/pull/change data."""
     value: dict[str, Any] = json.loads(private_read(path))
-    components = {"russound-web": "web", "russound-ser2net": "ser2net"}
+    components = {"russound-web": "web", "russound-ser2net": "ser2net", "russound-dummy": "dummy"}
     if (not is_mapping(images) or set(images) != {components[name] for name in value["services"]}
             or any(not isinstance(image, str) or not DIGEST.fullmatch(image) for image in images.values())):
         raise ComposeError("Apply requires the exact verified target image-ID set")

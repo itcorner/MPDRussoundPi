@@ -224,15 +224,25 @@ class ActualAnsibleCompletionTests(unittest.TestCase):
             {"loop": ["secret-item-one", "secret-item-two"]},
             {"when": "false"},
             {"async": 10, "poll": 1},
+            {"failed_when": False},
+            {"ignore_unreachable": True},
+            {"delegate_to": "localhost"},
+            {"check_mode": True},
         ):
             with self.subTest(pattern=pattern):
                 if self.path.exists():
                     self.path.unlink()
-                task = {"ansible.builtin.command": {"argv": ["/usr/bin/true"]},
-                        "tags": ["deployment_required_apply"], **pattern}
+                if pattern.get("failed_when") is False:
+                    action = {"ansible.builtin.fail": {"msg": "secret-failure-override"}}
+                elif pattern.get("check_mode") is True:
+                    action = {"ansible.builtin.debug": {"msg": "check-mode"}}
+                else:
+                    action = {"ansible.builtin.command": {"argv": ["/usr/bin/true"]}}
+                task = {**action, "tags": ["deployment_required_apply"], **pattern}
                 with self.assertRaises(StateError):
                     self.invoke([task])
                 self.assertNotIn("secret-item", self.path.read_text())
+                self.assertNotIn("secret-failure-override", self.path.read_text())
 
     def test_missing_required_handler_is_not_success(self):
         tasks = [{"ansible.builtin.debug": {"msg": "unchanged"},

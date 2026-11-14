@@ -86,12 +86,15 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertTrue(all(resource.startswith(("manifests/", "blobs/")) for _, resource in registry.requests))
         self.assertEqual(set(registry.alias_reads.values()), {2})
 
-    def test_external_and_dummy_do_not_resolve_gateway(self):
-        for gateway in ("external", "dummy"):
-            registry = FixtureRegistry()
-            selection = images.resolve(gateway, "linux/arm64", registry)
-            self.assertEqual(set(selection["images"]), {"web"})
-            self.assertTrue(all(repository == images.REPOSITORIES["web"] for repository, _ in registry.requests))
+    def test_external_does_not_resolve_gateway_and_dummy_requires_a_pinned_local_pair(self):
+        registry = FixtureRegistry()
+        selection = images.resolve("external", "linux/arm64", registry)
+        self.assertEqual(set(selection["images"]), {"web"})
+        self.assertTrue(all(repository == images.REPOSITORIES["web"] for repository, _ in registry.requests))
+        registry = FixtureRegistry()
+        with self.assertRaisesRegex(images.SelectionError, "verified local"):
+            images.resolve("dummy", "linux/arm64", registry)
+        self.assertEqual(registry.requests, [])
 
     def test_selects_amd64_without_using_arm64_metadata(self):
         registry = FixtureRegistry()
@@ -160,6 +163,45 @@ class DeploymentImageTests(unittest.TestCase):
             symlink.symlink_to(path)
             with self.assertRaises(images.SelectionError):
                 images.load_selection(symlink, "external", "linux/arm64")
+
+    def test_selection_load_requires_private_single_link_file_and_safe_parent(self):
+        selection = images.resolve("external", "linux/arm64", FixtureRegistry())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "selection.json"
+            images.save_selection(path, selection)
+
+            path.chmod(0o644)
+            with self.assertRaisesRegex(images.SelectionError, "safe private"):
+                images.load_selection(path, "external", "linux/arm64")
+            path.chmod(0o600)
+
+            alias = root / "alias.json"
+            alias.hardlink_to(path)
+            with self.assertRaisesRegex(images.SelectionError, "safe private"):
+                images.load_selection(path, "external", "linux/arm64")
+            alias.unlink()
+            self.assertEqual(images.load_selection(path, "external", "linux/arm64"), selection)
+
+            parent_link = root / "parent-link"
+            parent_link.symlink_to(root, target_is_directory=True)
+            with self.assertRaisesRegex(images.SelectionError, "real parent"):
+                images.load_selection(parent_link / path.name, "external", "linux/arm64")
+            with self.assertRaisesRegex(images.SelectionError, "real parent"):
+                images.save_selection(parent_link / "new.json", selection)
+
+    def test_selection_save_validates_schema_and_never_partially_overwrites(self):
+        selection = images.resolve("external", "linux/arm64", FixtureRegistry())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "candidate.json"
+            with self.assertRaises(images.SelectionError):
+                images.save_selection(path, {**selection, "gateway": "dummy"})
+            self.assertFalse(path.exists())
+            images.save_selection(path, selection)
+            original = path.read_bytes()
+            with self.assertRaises(images.SelectionError):
+                images.save_selection(path, selection)
+            self.assertEqual(path.read_bytes(), original)
 
     def test_selection_rejects_malformed_or_wrong_scope_without_fallback(self):
         selected = images.resolve("external", "linux/arm64", FixtureRegistry())
@@ -237,6 +279,7 @@ class DeploymentImageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "selection.json"
             path.write_text("{invalid")
+            path.chmod(0o600)
             with self.assertRaisesRegex(images.SelectionError, "Image selection file must be valid JSON"):
                 images.load_selection(path, "external", "linux/arm64")
 

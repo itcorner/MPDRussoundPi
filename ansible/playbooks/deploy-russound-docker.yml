@@ -3,28 +3,14 @@
 - name: Set up a Raspberry Pi to run the Russound web interface in Docker
   hosts: musicpi
   become: true
-  vars:
-    deploy_user: "{{ ansible_user | default('musicpi') }}"
-    app_dir: "/home/{{ ansible_user | default('musicpi') }}/MPDRussoundPi"
-    repo_url: https://github.com/itcorner/MPDRussoundPi.git
-    repo_version: main
-    russound_publish_port: 8000
-    russound_serial_device: /dev/ttyUSB0
-    russound_serial_options: 19200n81
-    russound_ser2net_bind: 0.0.0.0
-    russound_manage_serial_gateway: true
-    # Defaults to the ser2net container of the stack; override when using an external gateway.
-    russound_backend_host: russound-ser2net
-    russound_backend_port: 6666
-    russound_debug: false
-    russound_playback_agents: []
-    russound_verify_backend: false
-    russound_use_published_images: false
-    russound_published_pull_policy: always
-    russound_web_image: ""
-    russound_ser2net_image: ""
-    russound_registry_override_dir: "/home/{{ ansible_user | default('musicpi') }}/.config/mpdrussoundpi-deploy"
-    ansible_python_interpreter: /usr/bin/python3
+  pre_tasks:
+    - name: Validate Docker web inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: docker
+      tags: always
+  roles:
+    - role: ../roles/deployment_account
 
   tasks:
     - name: Require an explicit external endpoint when not managing the serial gateway
@@ -148,7 +134,7 @@
         path: "{{ app_dir }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0755"
 
     - name: Clone or update the repository
@@ -165,7 +151,7 @@
         path: "{{ app_dir }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         recurse: true
 
     - name: Ensure the bind-mounted directories exist
@@ -173,7 +159,7 @@
         path: "{{ app_dir }}/docker/{{ item }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0755"
       loop:
         - config
@@ -185,7 +171,7 @@
         path: "{{ app_dir }}/docker/secrets"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0700"
 
     - name: Seed the configuration file when it does not exist yet
@@ -194,7 +180,7 @@
         dest: "{{ app_dir }}/docker/config/russound_config.json"
         remote_src: true
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0644"
         force: false
 
@@ -220,7 +206,7 @@
         src: ../templates/russound-docker.env.j2
         dest: "{{ app_dir }}/.env"
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0640"
       no_log: true
       diff: false
@@ -230,7 +216,7 @@
         path: "{{ russound_registry_override_dir }}"
         state: directory
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0700"
       when: russound_use_published_images | bool
 
@@ -239,7 +225,7 @@
         src: ../templates/russound-registry-compose.yml.j2
         dest: "{{ russound_registry_override_dir }}/docker-compose.yml"
         owner: "{{ deploy_user }}"
-        group: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0600"
       when: russound_use_published_images | bool
 

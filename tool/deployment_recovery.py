@@ -19,6 +19,7 @@ from tool.deployment_compose import (
 from tool.deployment_files import checked_directory
 from tool.deployment_state import StateStore, operation_id
 from tool.deployment_images import DIGEST
+from tool.deployment_local import components
 
 
 def recovery_assets(path: Path, operation: str, checksum: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -32,10 +33,10 @@ def recovery_assets(path: Path, operation: str, checksum: str) -> tuple[dict[str
     spec = specification(value("deployment/spec.json"))
     images = value("deployment/images.json")
     baseline = json.loads((path / entries["deployment/baseline.json"]["blob"]).read_bytes())
-    expected = {"web", "ser2net"} if spec["gateway"] == "managed" else {"web"}
+    expected = set(components(spec["gateway"]))
     if bool(images) != bool(baseline) or (images and set(images) != expected):
         raise ComposeError("Recovery image pair is incomplete")
-    services = {"russound-web": "web", "russound-ser2net": "ser2net"}
+    services = {"russound-web": "web", "russound-ser2net": "ser2net", "russound-dummy": "dummy"}
     original = {services[item["config"]["Labels"]["com.docker.compose.service"]]: item["image"] for item in baseline}
     for name, image in images.items():
         if set(image) != {"tag", "reference", "config", "sha256", "bytes", "archive"}:

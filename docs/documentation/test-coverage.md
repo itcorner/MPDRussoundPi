@@ -34,10 +34,17 @@ Agent deployment checks verify the private read-only local credential preflight
 uses the same parser; supervisor tests retain real error-log assertions while
 mocking only entry-point logging initialization.
 
-Full local Python regression: **831 tests, OK, 11 skipped**. Node:
-**112 tests, 102 passed, 10 skipped, no failures**. Both changed Ansible plays
-passed syntax checks without target execution. A fresh isolated audio venv
-installed bounded python-mpd2 3.1.1, passed `pip check`/backend imports and had
+Full local Python regression after the local S4 implementation slice:
+**854 tests, OK, 11 skipped**. Node:
+**112 tests, 102 passed, 10 skipped, no failures**. All seven changed or new
+Ansible plays passed syntax checks without target execution. Shared Ansible
+input filters, MPD ownership checks, dummy Compose routing, and audio, agent
+and native web candidate staging have focused regression coverage. The agent
+playbook is candidate-only and does not install credentials or touch active
+services. The legacy `init,new` audio tags were verified to fail before
+mutation. Candidate staging itself was not executed on a Pi. An earlier isolated
+audio venv installed bounded python-mpd2 3.1.1, passed
+`pip check`/backend imports and had
 no Flask dependency. The actual web image passed nonroot/read-only,
 network-isolated startup/API/metadata/SIGTERM checks on Python 3.12.15 with
 Flask 3.1.3 and Waitress 3.0.2. Python regression/audio-env checks used local
@@ -638,10 +645,12 @@ PYTHONPATH=tests .venv/bin/python -m unittest \
 ```
 
 The cached image must contain the actual compatible web app for the daemon
-platform. The fixture derives uniquely labelled clean Git-revision images from
-it; it does not certify a newly published release's source content. Only exact
-fixture processes, containers, network, volume and operation-owned image tags
-are removed. The dependency image remains cached for reuse.
+platform, and its Docker-save archive must verify against the daemon's inspected
+image identity before the fixture creates any resources. The fixture derives
+uniquely labelled clean Git-revision images from it; it does not certify a
+newly published release's source content. Only exact fixture processes,
+containers, network, volume and operation-owned image tags are removed. The
+dependency image remains cached for reuse.
 
 Full suite with local-build, SSH-transfer and workflow opt-ins:
 **818 tests, 812 passing, six skipped**. Changed production Python modules have

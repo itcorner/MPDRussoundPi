@@ -1,19 +1,162 @@
 ---
 - hosts: musicpi
-  vars:
-    mpd_russoundpi_repo: "https://github.com/itcorner/MPDRussoundPi.git"
-    mpd_russoundpi_dest: "{{ ansible_facts['user_dir'] }}/MPDRussoundPi"
-    mpd_russoundpi_scripts: "{{ mpd_russoundpi_dest }}/mpdrussoundpi/russound"
-    mpd_russoundpi_config: "{{ ansible_facts['user_dir'] }}/.config/mpdrussoundpi/config.json"
-    venv_dir: "{{ ansible_facts['user_dir'] }}/russound-venv"
-    mpd_russoundpi_update_repo: true
-    mpd_russoundpi_start_playback: true
+  pre_tasks:
+    - name: Validate playback host inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: audio
+      tags: always
+    - name: Require immutable candidate identity and explicit supported mode
+      ansible.builtin.assert:
+        that:
+          - mpd_russoundpi_mode in ['stage', 'activate']
+          - mpd_russoundpi_mode != 'stage' or mpd_russoundpi_revision is match('^[a-f0-9]{40,64}$')
+          - mpd_russoundpi_mode != 'activate'
+          - mpd_russoundpi_mode != 'stage' or 'stage' in ansible_run_tags
+          - ansible_run_tags | difference(['all', 'stage']) | length == 0
+        fail_msg: >-
+          setup-musicpi.yml currently supports only isolated staging. Activate a candidate
+          only through a separately reviewed native transaction with verified recovery backup;
+          this legacy in-place activation path is intentionally disabled.
+        quiet: true
+      tags: always
+    - name: Inspect immutable audio candidate path
+      ansible.builtin.stat:
+        path: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}"
+      register: mpd_audio_candidate
+      when: mpd_russoundpi_mode == 'stage'
+      tags: always
+    - name: Inspect candidate storage root without following a symlink
+      ansible.builtin.stat:
+        path: "{{ mpd_russoundpi_candidate_root }}"
+        follow: false
+      register: mpd_audio_candidate_root
+      when: mpd_russoundpi_mode == 'stage'
+      tags: always
+    - name: Inspect persistent operational audio configuration
+      ansible.builtin.stat:
+        path: "{{ mpd_russoundpi_config }}"
+      register: mpd_audio_operational_config
+      when: mpd_russoundpi_mode == 'stage'
+      tags: always
+    - name: Refuse to reuse a pre-existing candidate path without inspection
+      ansible.builtin.assert:
+        that:
+          - not (mpd_audio_candidate.stat.exists | default(false))
+          - not (mpd_audio_candidate.stat.islnk | default(false))
+          - not (mpd_audio_candidate_root.stat.islnk | default(false))
+          - >-
+            mpd_russoundpi_candidate_root ==
+            ansible_facts['user_dir'] + '/.local/share/mpdrussoundpi/audio-candidates'
+        fail_msg: "Candidate revision path already exists; inspect it and select a fresh, reviewed staging path."
+        quiet: true
+      when: mpd_russoundpi_mode == 'stage'
+      tags: always
   tasks:
+    - name: Create private immutable audio candidate parent
+      ansible.builtin.file:
+        path: "{{ mpd_russoundpi_candidate_root }}"
+        state: directory
+        mode: "0700"
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Clone the exact audio candidate commit without touching the active checkout
+      ansible.builtin.git:
+        repo: "{{ mpd_russoundpi_repo }}"
+        dest: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source"
+        version: "{{ mpd_russoundpi_revision }}"
+        update: false
+        force: false
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Create an isolated audio candidate virtual environment
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -m
+          - venv
+          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv"
+        creates: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv/bin/python"
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Install only bounded audio dependencies in the candidate environment
+      ansible.builtin.pip:
+        requirements: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source/mpdrussoundpi/russound/requirements-audio.txt"
+        virtualenv: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv"
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Verify the staged source revision and clean checkout
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/git
+          - -C
+          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source"
+          - status
+          - --porcelain=v1
+          - --untracked-files=all
+      register: mpd_audio_candidate_status
+      changed_when: false
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Verify the candidate checkout has the selected exact commit
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/git
+          - -C
+          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source"
+          - rev-parse
+          - HEAD
+      register: mpd_audio_candidate_head
+      changed_when: false
+      failed_when: >-
+        mpd_audio_candidate_status.stdout | trim != '' or
+        mpd_audio_candidate_head.stdout | trim != mpd_russoundpi_revision
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Validate the existing operational audio config against candidate code
+      ansible.builtin.command:
+        argv:
+          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv/bin/python"
+          - -c
+          - >-
+            import pathlib,sys;
+            sys.path.insert(0,sys.argv[1]);
+            from lib.outputconfig import parse_configuration;
+            config=parse_configuration(pathlib.Path(sys.argv[2]).read_bytes());
+            print(len(config.outputs))
+          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source/mpdrussoundpi/russound"
+          - "{{ mpd_russoundpi_config }}"
+      register: mpd_audio_candidate_config
+      changed_when: false
+      when:
+        - mpd_russoundpi_mode == 'stage'
+        - mpd_audio_operational_config.stat.exists
+      tags: stage
+
+    - name: Report staged candidate without activating audio services
+      ansible.builtin.debug:
+        msg:
+          revision: "{{ mpd_russoundpi_revision }}"
+          source: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source"
+          environment: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv"
+          config_outputs_validated: "{{ mpd_audio_candidate_config.stdout | default('operational config not present') }}"
+          activation: not-performed
+          services: untouched
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
     - name: Upgrade OS packages only when explicitly requested
       include_tasks:
         file: ../tasks/update.yml
         apply:
           tags: update
+      when: mpd_russoundpi_mode == 'activate'
       tags:
         - never
         - update
@@ -29,7 +172,6 @@
         - python3
         - python3-pip
         - python3-venv
-        - ser2net
         - mpd
         - mpc
         - pipewire
@@ -40,7 +182,18 @@
       tags:
         - init
         - new
+      when: mpd_russoundpi_mode == 'activate'
 
+
+    - name: Install a separately selected native serial gateway
+      become: true
+      ansible.builtin.apt:
+        name: ser2net
+        state: present
+      when:
+        - mpd_russoundpi_mode == 'activate'
+        - mpd_russoundpi_manage_serial_gateway | bool
+      tags: init
 
     - name: Copy ser2net configuration file
       become: true
@@ -48,6 +201,9 @@
         dest: /etc/
         src: ../../mpdrussoundpi/ser2net/ser2net.yaml
       notify: Restart ser2net
+      when:
+        - mpd_russoundpi_mode == 'activate'
+        - mpd_russoundpi_manage_serial_gateway | bool
       tags:
         - init
 
@@ -57,6 +213,9 @@
         name: ser2net
         state: started
         enabled: yes
+      when:
+        - mpd_russoundpi_mode == 'activate'
+        - mpd_russoundpi_manage_serial_gateway | bool
       tags:
         - init
 
@@ -78,13 +237,16 @@
       tags:
         - init
         - new
+      when: mpd_russoundpi_mode == 'activate'
 
     - name: Clone/update MPDRussoundPi Repository
       ansible.builtin.git:
         repo: "{{ mpd_russoundpi_repo }}"
         dest: "{{ mpd_russoundpi_dest }}"
         update: true
-      when: mpd_russoundpi_update_repo | bool
+      when:
+        - mpd_russoundpi_mode == 'activate'
+        - mpd_russoundpi_update_repo | bool
       tags:
         - new
 
@@ -212,6 +374,7 @@
         DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['user_uid'] }}/bus"
       tags:
         - new
+      when: mpd_russoundpi_mode == 'activate'
 
   handlers:
     - name: Restart ser2net

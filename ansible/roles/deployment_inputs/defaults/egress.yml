@@ -1,0 +1,9 @@
+---
+deployment_component: egress
+deployment_boolean_inputs: [playback_egress_activate]
+deployment_port_inputs: []
+playback_egress_user: musicpi
+playback_egress_install: /usr/local/lib/mpdrussoundpi-egress
+playback_egress_source: "{{ playbook_dir }}/../../mpdrussoundpi/russound"
+playback_egress_activate: false
+playback_egress_config: "{{ playback_egress_home }}/.config/mpdrussoundpi/config.json"

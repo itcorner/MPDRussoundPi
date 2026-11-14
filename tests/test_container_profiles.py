@@ -111,7 +111,7 @@ class ContainerProfileTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("inventory-choice", result.stdout)
             self.assertIn("changed=0", result.stdout)
-            self.assertIn("blocked-until-safety-runner", result.stdout)
+            self.assertIn("use-reviewed-deployment-operator", result.stdout)
             self.assertNotIn("ambient-wrong", result.stdout)
             rejected = subprocess.run(argv + ["-e", "russound_action=apply"],
                                       capture_output=True, text=True, env=env)
@@ -151,7 +151,7 @@ class ContainerProfileTests(unittest.TestCase):
             }
             inventory.write_text(yaml.safe_dump({"all": {"hosts": {"preview": variables}}}))
             argv = [str(ANSIBLE), "-i", str(inventory), str(ROOT / "ansible/playbooks/deploy-dev.yml")]
-            for mode in ("external", "managed", "dummy"):
+            for mode in ("external", "managed"):
                 with self.subTest(mode=mode):
                     candidate = deployment_images.resolve(mode, "linux/arm64", FixtureRegistry())
                     path = Path(directory) / f"{mode}.json"

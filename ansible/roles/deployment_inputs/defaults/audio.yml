@@ -1,0 +1,15 @@
+---
+deployment_component: audio
+deployment_boolean_inputs: [mpd_russoundpi_update_repo, mpd_russoundpi_start_playback, mpd_russoundpi_manage_serial_gateway]
+deployment_port_inputs: []
+mpd_russoundpi_mode: stage
+mpd_russoundpi_revision: ""
+mpd_russoundpi_repo: https://github.com/itcorner/MPDRussoundPi.git
+mpd_russoundpi_dest: "{{ ansible_facts['user_dir'] }}/MPDRussoundPi"
+mpd_russoundpi_scripts: "{{ mpd_russoundpi_dest }}/mpdrussoundpi/russound"
+mpd_russoundpi_config: "{{ ansible_facts['user_dir'] }}/.config/mpdrussoundpi/config.json"
+venv_dir: "{{ ansible_facts['user_dir'] }}/russound-venv"
+mpd_russoundpi_candidate_root: "{{ ansible_facts['user_dir'] }}/.local/share/mpdrussoundpi/audio-candidates"
+mpd_russoundpi_update_repo: true
+mpd_russoundpi_start_playback: true
+mpd_russoundpi_manage_serial_gateway: false

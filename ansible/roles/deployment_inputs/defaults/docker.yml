@@ -1,0 +1,24 @@
+---
+deployment_component: docker
+deployment_boolean_inputs: [russound_manage_serial_gateway, russound_debug, russound_verify_backend, russound_use_published_images]
+deployment_port_inputs: [russound_publish_port, russound_backend_port]
+deploy_user: "{{ ansible_user | default('musicpi') }}"
+app_dir: "{{ deploy_home }}/MPDRussoundPi"
+repo_url: https://github.com/itcorner/MPDRussoundPi.git
+repo_version: main
+russound_publish_port: 8000
+russound_serial_device: /dev/ttyUSB0
+russound_serial_options: 19200n81
+russound_ser2net_bind: "0.0.0.0"
+russound_manage_serial_gateway: true
+russound_backend_host: russound-ser2net
+russound_backend_port: 6666
+russound_debug: false
+russound_playback_agents: []
+russound_verify_backend: false
+russound_use_published_images: false
+russound_published_pull_policy: always
+russound_web_image: ""
+russound_ser2net_image: ""
+russound_registry_override_dir: "{{ deploy_home }}/.config/mpdrussoundpi-deploy"
+ansible_python_interpreter: /usr/bin/python3

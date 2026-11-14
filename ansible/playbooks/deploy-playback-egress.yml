@@ -2,11 +2,12 @@
 - name: Enforce public-only outbound MPD stream destinations
   hosts: musicpi
   become: true
-  vars:
-    playback_egress_user: musicpi
-    playback_egress_install: /usr/local/lib/mpdrussoundpi-egress
-    playback_egress_source: "{{ playbook_dir }}/../../mpdrussoundpi/russound"
-    playback_egress_activate: false
+  pre_tasks:
+    - name: Validate playback egress inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: egress
+      tags: always
   tasks:
     - name: Require explicit activation approval and resolver addresses
       ansible.builtin.assert:
@@ -39,6 +40,41 @@
           - playback_egress_uid | int > 0
         fail_msg: "Install nftables and select a non-root playback user first."
 
+    - name: Verify configured unit ownership in disposable preflight storage
+      become_user: "{{ playback_egress_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ playback_egress_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ playback_egress_uid }}/bus"
+      block:
+        - name: Allocate private ownership preflight directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: mpdrussoundpi-ownership-
+          register: playback_egress_preflight
+
+        - name: Stage shared ownership validator without changing playback sources
+          ansible.builtin.copy:
+            src: "{{ playback_egress_source }}/lib/"
+            dest: "{{ playback_egress_preflight.path }}/lib/"
+            mode: "0700"
+
+        - name: Validate configured outputs and effective owned unit paths
+          ansible.builtin.command:
+            argv: [/usr/bin/python3, -m, lib.mpdownership, --config, "{{ playback_egress_config }}"]
+            chdir: "{{ playback_egress_preflight.path }}"
+          register: playback_egress_selection
+          changed_when: false
+
+        - name: Select only preflighted configured units
+          ansible.builtin.set_fact:
+            playback_egress_units: "{{ playback_egress_selection.stdout | from_json }}"
+      always:
+        - name: Remove only the allocated ownership preflight directory
+          ansible.builtin.file:
+            path: "{{ playback_egress_preflight.path }}"
+            state: absent
+          when: playback_egress_preflight.path is defined
+
     - name: Create root-owned filter source directory
       ansible.builtin.file:
         path: "{{ playback_egress_install }}/lib"
@@ -62,21 +98,10 @@
         owner: "{{ playback_egress_user }}"
         mode: "0644"
         content: |
+          # Managed by MPDRussoundPi; component=egress; schema=1
           [Unit]
           Description=Public-only MPD stream processes
           [Slice]
-
-    - name: Discover the existing MPD instance units
-      ansible.builtin.find:
-        paths: "{{ playback_egress_home }}/.config/systemd/user"
-        patterns: "mpd_*.service"
-        contains: 'ExecStart=/usr/bin/mpd .*'
-      register: playback_egress_units
-
-    - name: Require configured MPD instances
-      ansible.builtin.assert:
-        that:
-          - playback_egress_units.matched | int > 0
 
     - name: Create MPD drop-in directories
       ansible.builtin.file:
@@ -84,7 +109,7 @@
         state: directory
         owner: "{{ playback_egress_user }}"
         mode: "0755"
-      loop: "{{ playback_egress_units.files }}"
+      loop: "{{ playback_egress_units }}"
 
     - name: Scope MPD to the protected slice and gate process startup
       ansible.builtin.copy:
@@ -92,10 +117,11 @@
         owner: "{{ playback_egress_user }}"
         mode: "0644"
         content: |
+          # Managed by MPDRussoundPi; component=egress; schema=1
           [Service]
           Slice=mpdstreams.slice
           ExecStartPre=/usr/bin/python3 {{ playback_egress_install }}/playbackegress.py --wait
-      loop: "{{ playback_egress_units.files }}"
+      loop: "{{ playback_egress_units }}"
 
     - name: Install root-managed enforcement service
       ansible.builtin.template:
@@ -137,5 +163,5 @@
           - "--machine={{ playback_egress_user }}@.host"
           - restart
           - "{{ item.path | basename }}"
-      loop: "{{ playback_egress_units.files }}"
+      loop: "{{ playback_egress_units }}"
       changed_when: true
