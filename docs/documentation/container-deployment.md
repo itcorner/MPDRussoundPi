@@ -482,9 +482,49 @@ The inventory must select `musicpi`. This play installs only the exact tooling
 checkout at `/opt/mpdrussoundpi-deploy`, its isolated dependency environment,
 and private control roots. It never deploys/restarts application services.
 An existing or partial tooling destination is rejected rather than overwritten.
-Target package installation, existing-tooling upgrades and dirty/unpublished
-controller changes are not silently handled. Keep the approved tooling revision
-available for recovery.
+Target package installation and dirty/unpublished controller changes are not
+silently handled. Keep the approved tooling revision available for recovery.
+
+### Upgrade or restore trusted tooling
+
+Use the separate upgrade play for an existing installation. It requires the
+exact current commit and an exact reviewed target commit; it rejects dirty
+checkouts, existing stage paths, blocked deployment state and systems without
+atomic Linux directory exchange. It reserves the host against deployment while
+staging and switching, preserves the old checkout, recreates the virtual
+environment at its fixed path, and verifies dependencies and the operator
+entry point before releasing the reservation:
+
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/upgrade-deployment.yml \
+  -e deployment_tools_expected_revision=CURRENT_40_CHARACTER_COMMIT \
+  -e deployment_tools_revision=REVIEWED_40_CHARACTER_COMMIT
+```
+
+The previous checkout remains at
+`/opt/mpdrussoundpi-deploy.upgrade-REVIEWED_40_CHARACTER_COMMIT`. No application
+service, configuration, credential, image or deployment data is changed. A
+failed upgrade attempts to restore the prior checkout; uncertain outcomes keep
+the host reservation and both trees for inspection. Do not remove the
+reservation or either tree to force a retry. The retained virtual environment
+uses the fixed active path and is usable again after the checkout is restored;
+do not invoke it directly from the retained sibling.
+
+To deliberately restore the retained checkout, identify both exact commits and
+use:
+
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/restore-deployment-tools.yml \
+  -e deployment_tools_active_revision=ACTIVE_40_CHARACTER_COMMIT \
+  -e deployment_tools_restore_revision=RETAINED_40_CHARACTER_COMMIT
+```
+
+Restore changes only the tooling checkout and verifies its existing dependency
+environment. The newer checkout remains retained under its upgrade path.
+Interrupted restore or uncertain state requires inspection before any retry;
+neither playbook removes old or partial trees automatically.
 
 ### Explicit target specification
 
