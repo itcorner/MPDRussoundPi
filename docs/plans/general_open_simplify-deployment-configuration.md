@@ -3467,6 +3467,19 @@ sequence before combining them with the primary CIDR. Real Ansible regressions
 reject strings, numbers, booleans, null and mappings at the shared preflight,
 before address parsing or any mutation.
 
+**Verified corrected audio staging on Pi:** at published revision
+`dcbf35ed30f710e8c451b13a6256fad4e99730dd`, the fresh audio candidate staged
+successfully under
+`~/.local/share/mpdrussoundpi/audio-candidates/dcbf35ed30f710e8c451b13a6256fad4e99730dd/`.
+The candidate parent and revision directory are both owned by `musicpi` with
+mode `0700`; the source checkout is clean at the exact revision and its
+isolated environment passes `pip check`. The existing audio configuration
+validated for three outputs. The play reported activation not performed and
+services untouched; a subsequent read-only check found the web/ser2net
+containers and playback/audio user services active. This validates fresh
+candidate directory creation only, not native activation or physical audio
+acceptance.
+
 ### Isolated S3 Pi deployment and background observation (2026-11-14)
 
 Following explicit operator approval, committed S3 separately as
