@@ -18,14 +18,51 @@
     russound_backend_port: 6666
     russound_debug: false
     russound_playback_agents: []
+    russound_verify_backend: false
+    russound_use_published_images: false
+    russound_published_pull_policy: always
+    russound_web_image: ""
+    russound_ser2net_image: ""
+    russound_registry_override_dir: "/home/{{ ansible_user | default('musicpi') }}/.config/mpdrussoundpi-deploy"
     ansible_python_interpreter: /usr/bin/python3
 
   tasks:
     - name: Require an explicit external endpoint when not managing the serial gateway
       ansible.builtin.assert:
         that:
-          - russound_manage_serial_gateway | bool or russound_backend_host != 'russound-ser2net'
-        fail_msg: "Set russound_backend_host to the existing gateway when russound_manage_serial_gateway=false."
+          - >-
+            russound_manage_serial_gateway | bool or
+            (russound_backend_host is string and russound_backend_host | trim | length > 0 and
+             russound_backend_host == (russound_backend_host | trim) and russound_backend_host != 'russound-ser2net')
+        fail_msg: "Set russound_backend_host to a nonblank existing gateway host without surrounding whitespace when russound_manage_serial_gateway=false."
+
+    - name: Require explicit published image references
+      ansible.builtin.assert:
+        that:
+          - >-
+            not (russound_use_published_images | bool) or
+            (russound_web_image is string and russound_web_image | trim | length > 0 and
+             russound_web_image == (russound_web_image | trim))
+          - >-
+            not (russound_use_published_images | bool) or not (russound_manage_serial_gateway | bool) or
+            (russound_ser2net_image is string and russound_ser2net_image | trim | length > 0 and
+             russound_ser2net_image == (russound_ser2net_image | trim))
+          - russound_published_pull_policy in ['always', 'missing', 'never']
+        fail_msg: "Set nonblank web and managed serial gateway image references without surrounding whitespace when using published images."
+
+    - name: Check whether the serial device is present
+      ansible.builtin.stat:
+        path: "{{ russound_serial_device }}"
+      register: serial_device
+      when: russound_manage_serial_gateway | bool
+
+    - name: Require the serial device before changing services
+      ansible.builtin.assert:
+        that:
+          - serial_device.stat.exists
+          - serial_device.stat.ischr | default(false)
+        fail_msg: "{{ russound_serial_device }} is not a present character device. Attach the adapter before deployment."
+      when: russound_manage_serial_gateway | bool
 
     - name: Install base packages
       ansible.builtin.apt:
@@ -172,26 +209,11 @@
         key: dialout
       when: russound_manage_serial_gateway | bool
 
-    - name: Check whether the serial device is present
-      ansible.builtin.stat:
-        path: "{{ russound_serial_device }}"
-      register: serial_device
-      when: russound_manage_serial_gateway | bool
-
     - name: Resolve container user and serial device ids
       ansible.builtin.set_fact:
         russound_uid: "{{ ansible_facts.getent_passwd[deploy_user][1] }}"
         russound_gid: "{{ ansible_facts.getent_passwd[deploy_user][2] }}"
-        russound_serial_gid: "{{ (serial_device.stat.gid if serial_device.stat.exists else ansible_facts.getent_group['dialout'][1]) if russound_manage_serial_gateway | bool else 20 }}"
-
-    - name: Warn when the serial device is missing
-      ansible.builtin.debug:
-        msg: >-
-          {{ russound_serial_device }} was not found. Attach the USB serial adapter and re-run,
-          or set russound_backend_host to an external gateway.
-      when:
-        - russound_manage_serial_gateway | bool
-        - not serial_device.stat.exists
+        russound_serial_gid: "{{ serial_device.stat.gid if russound_manage_serial_gateway | bool else 20 }}"
 
     - name: Write the compose environment file
       ansible.builtin.template:
@@ -203,12 +225,46 @@
       no_log: true
       diff: false
 
+    - name: Create the published image override directory
+      ansible.builtin.file:
+        path: "{{ russound_registry_override_dir }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0700"
+      when: russound_use_published_images | bool
+
+    - name: Write the published image compose override
+      ansible.builtin.template:
+        src: ../templates/russound-registry-compose.yml.j2
+        dest: "{{ russound_registry_override_dir }}/docker-compose.yml"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: "0600"
+      when: russound_use_published_images | bool
+
+    - name: Pull and start the published containers
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'compose', '--project-directory', app_dir,
+             '-f', app_dir + '/docker-compose.yml',
+             '-f', russound_registry_override_dir + '/docker-compose.yml',
+             'up', '-d', '--pull', russound_published_pull_policy, '--no-build'] +
+            ([] if russound_manage_serial_gateway | bool else ['--no-deps', 'russound-web'])
+          }}
+        chdir: "{{ app_dir }}"
+      register: registry_compose_up
+      changed_when: "'Started' in registry_compose_up.stderr or 'Created' in registry_compose_up.stderr or 'Recreated' in registry_compose_up.stderr or 'Pulled' in registry_compose_up.stderr"
+      when: russound_use_published_images | bool
+
     - name: Build and start the containers
       ansible.builtin.command:
         cmd: "docker compose -f docker-compose.yml up -d --build {{ '' if russound_manage_serial_gateway | bool else '--no-deps russound-web' }}"
         chdir: "{{ app_dir }}"
       register: compose_up
       changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr or 'Recreated' in compose_up.stderr"
+      when: not (russound_use_published_images | bool)
 
     - name: Wait for the web interface to answer
       ansible.builtin.uri:
@@ -218,6 +274,16 @@
       retries: 30
       delay: 2
       until: web_check.status == 200
+
+    - name: Verify the Russound controller responds
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ russound_publish_port }}/api/rooms"
+        status_code: 200
+      register: russound_backend_check
+      retries: 12
+      delay: 5
+      until: russound_backend_check.json.backend_status.connected | default(false)
+      when: russound_verify_backend | bool
 
     - name: Report the service address
       ansible.builtin.debug:

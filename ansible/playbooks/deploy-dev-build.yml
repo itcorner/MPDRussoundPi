@@ -1,0 +1,16 @@
+---
+- name: Preview verified controller-built development images or inspect target prerequisites
+  hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    russound_image_source: local-build
+  pre_tasks:
+    - name: Require explicit local artifacts for the local-build entry point
+      ansible.builtin.assert:
+        that:
+          - russound_image_source == 'local-build'
+        fail_msg: "deploy-dev-build.yml accepts local-build artifacts only; use deploy-dev.yml for Hub images."
+      delegate_to: localhost
+  roles:
+    - role: ../roles/container_dev

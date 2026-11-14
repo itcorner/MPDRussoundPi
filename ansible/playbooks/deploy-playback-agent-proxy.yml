@@ -12,6 +12,7 @@
     playback_proxy_private_key: /etc/caddy/certs/mpdrussoundpi-playback-agent.key
     playback_proxy_start: false
     playback_proxy_enable_operations: false
+    playback_proxy_additional_allowed_cidrs: []
   tasks:
     - name: Require a DNS name or IPv4 address, a Docker source CIDR and proxy startup approval
       ansible.builtin.assert:
@@ -22,6 +23,9 @@
           - "'..' not in playback_proxy_hostname"
           - playback_proxy_allowed_cidr is defined
           - playback_proxy_allowed_cidr is match('^[0-9A-Fa-f.:/]+$')
+          - playback_proxy_additional_allowed_cidrs is sequence
+          - playback_proxy_additional_allowed_cidrs is not string
+          - playback_proxy_additional_allowed_cidrs | select('match', '^[0-9A-Fa-f.:/]+$') | list | length == playback_proxy_additional_allowed_cidrs | length
           - playback_agent_port | int > 0
           - playback_agent_port | int < 65536
           - playback_proxy_port | int >= 1024
@@ -230,6 +234,7 @@
         owner: root
         group: caddy
         mode: "0640"
+        validate: "{{ playback_proxy_caddy_binary }} validate --config %s --adapter caddyfile"
       register: playback_proxy_configuration
 
     - name: Install the dedicated Caddy system service

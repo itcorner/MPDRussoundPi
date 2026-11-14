@@ -19,6 +19,16 @@ class PlaybackEgressTests(unittest.TestCase):
         self.assertIn("ct direction reply return", rules)
         self.assertIn("ip daddr 192.168.1.1 udp dport 53 counter return", rules)
         self.assertIn("ip6 daddr fd00::53 udp dport 53 counter return", rules)
+        self.assertIn("ip daddr 192.168.1.1 tcp dport 53 counter return", rules)
+        self.assertIn("ip6 daddr fd00::53 tcp dport 53 counter return", rules)
+        self.assertLess(rules.index("ip daddr 192.168.1.1 tcp dport 53"), rules.index("ip daddr @blocked4"))
+        self.assertLess(rules.index("ip6 daddr fd00::53 tcp dport 53"), rules.index("ip6 daddr @blocked6"))
+        dns_rules = {line.strip() for line in rules.splitlines() if "dport 53 counter return" in line}
+        self.assertEqual(dns_rules, {
+            f"{family} daddr {address} {protocol} dport 53 counter return"
+            for family, address in (("ip", "192.168.1.1"), ("ip6", "fd00::53"))
+            for protocol in ("udp", "tcp")
+        })
         self.assertIn("ip daddr @blocked4 counter reject", rules)
         self.assertIn("ip6 daddr @blocked6 counter reject", rules)
         self.assertNotIn("ct state established", rules)

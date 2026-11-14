@@ -42,6 +42,12 @@ runtime state, user/system units, source revision and agent credentials. Stop
 writers before copying the operation SQLite database, or use SQLite's backup
 API. Full audio deployment and egress activation interrupt playback.
 
+The current plays define many defaults at play level, which overrides
+same-named host inventory variables. Use explicit `-e` values as in the
+commands below rather than relying on inventory for those settings. In
+particular, an inventory-only `mpd_russoundpi_start_playback=false` does not
+override the audio play's `true` default; use the staging command below.
+
 ## 1. Prepare the Pi audio stack
 
 Review the seed's USB hardware selector, profile, sinks, output IDs/ports,
@@ -62,6 +68,9 @@ runtime defaults. It leaves MPD/supervision stopped and their meta/supervisor
 autostart disabled so egress can be installed
 before streams start. If audio-group membership was newly added to an already
 running user manager, reboot in a maintenance window before continuing.
+The `init` tag starts native ser2net and can replace its configuration and
+restart it. On a host using a containerized or external gateway, review that
+conflict before running the command; staging playback does not suppress it.
 
 Runtime defaults: an output with `default_station` initially intends to play;
 without it, it stays silent/stopped. Missing `default_gain_db` means 0 dB.
@@ -71,7 +80,10 @@ Existing runtime station/gain/intention/favorites are preserved. Do not delete
 ## 2. Install public-only stream enforcement
 
 Inspect the Pi's DNS resolver addresses (`cat /etc/resolv.conf`). Supply exact
-resolver IP literals, not names:
+resolver IP literals, not names, as a typed JSON list as shown below. Do not
+pass a single resolver using `-e playback_egress_resolvers=192.168.1.1`: the
+current play accepts that nonempty string and its unit template iterates over
+individual characters instead of one address.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -81,10 +93,13 @@ ansible-playbook -i ansible/inventory.yaml \
 ```
 
 The play installs root-owned helpers, `mpdrussoundpi-egress.service`, the user
-`mpdstreams.slice` and per-MPD `50-egress.conf` drop-ins, then restarts configured
-MPD instances into the protected slice. It leaves existing host firewall tables
-unchanged. UDP DNS is excepted only to the supplied resolver IPs on port 53;
-HTTP streams to those IPs remain blocked.
+`mpdstreams.slice` and per-MPD `50-egress.conf` drop-ins, then restarts
+matching MPD instances into the protected slice. The current play discovers
+matching `mpd_*.service` files, not just configured outputs; inspect those
+units before activation because unrelated matches may be modified or restarted.
+It leaves existing host firewall tables unchanged. UDP and TCP DNS are
+excepted only to the supplied resolver IPs on port 53; HTTP streams to those
+IPs remain blocked.
 
 MPD startup fails if the root service is unavailable or its recorded cgroup
 inode no longer matches. Restart the root service after recreating the slice.
@@ -113,7 +128,10 @@ install -d -m 700 "$HOME/.config/mpdrussoundpi-deploy"
 ```
 
 Do not rerun generation over an existing token. Keep its contents out of shell
-arguments, inventory, logs and browser code. Activate:
+arguments, inventory, logs and browser code. The example creates a 64-character
+token; avoid oversized tokens, because the web client rejects stripped tokens
+longer than 4096 characters even though the current agent play accepts them.
+Activate:
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -126,15 +144,30 @@ ansible-playbook -i ansible/inventory.yaml \
 Omit `playback_agent_enable_operations=true` for a read-only agent. TuneIn
 selection defaults on with manual operations; use
 `playback_agent_enable_tunein_selection=false` to disable new TuneIn selections.
+**Important:** Do not use `-e playback_agent_enable_operations=false` or
+`-e playback_proxy_enable_operations=false` to disable operations: the
+current templates treat the nonempty string `false` as true. Omit those
+variables for their read-only defaults, or use typed JSON values:
+`-e '{"playback_agent_enable_operations":false,"playback_proxy_enable_operations":false}'`.
+If services are already running, verify their active configuration and plan
+any necessary restart; rendering a new file does not itself update a running
+process.
 The agent-only play does not regenerate or restart MPD/audio and requires an
 existing user manager. Without `playback_agent_start=true`, it installs files
-but does not activate/reload a running process.
+but does not activate/reload a running process. It can still replace the
+installed source, dependencies and token. If an agent is already running,
+that process can retain the old in-memory token until it restarts. Do not use
+this as a staging or credential-rotation procedure; coordinate any token
+change with web and plan the interruption explicitly.
 
 ## 4. Activate the TLS proxy
 
 Choose a DNS name or IPv4 address reachable from the web host and a source CIDR
 that matches traffic as the Pi actually sees it (Docker/NAT may change it).
 Prefer an exact host `/32`; broaden only intentionally.
+When the web container runs on the Pi, also allow its Docker network's actual
+source CIDR using `playback_proxy_additional_allowed_cidrs`. Keep the existing
+allowed CIDR during migration if the previous web host still needs access.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
@@ -179,23 +212,35 @@ Persist the resulting numeric `RUSSOUND_UID`/`RUSSOUND_GID` values in the local
 `.env` for later Compose runs. In an Ansible-managed Docker deployment, the play
 sets them to the deployment user's IDs.
 
-Add this single line to the web host's private `.env`:
+For a manually managed Docker deployment, add this single line to the web
+host's private `.env`:
 
 ```dotenv
 RUSSOUND_PLAYBACK_AGENTS=[{"agent_id":"musicpi","url":"https://192.168.1.105:8443","token_file":"/run/secrets/musicpi-playback-token","tls_ca_file":"/run/secrets/musicpi-proxy.crt"}]
 ```
 
 The URL host must match the certificate SAN. Never disable TLS verification.
-For native web, set `RUSSOUND_PLAYBACK_AGENTS` with absolute local token/cert
-paths, or use the `russound_playback_agents` Ansible variable.
+Changing Docker projects may change the web container's source subnet. Verify
+the proxy's explicit allowed CIDRs against the new network before cutover;
+HTTP 403 can indicate source authorization failure, not a bad token or CA.
+Back up and validate proxy changes before applying them. Existing installations
+whose proxy unit lacks `ExecReload` can use Caddy's direct reload command with
+the configured admin endpoint `127.0.0.1:2020`; do not assume `systemctl reload`
+is supported until the unit has been updated.
+For an Ansible-managed Docker deployment, supply the agent list through
+`russound_playback_agents` instead: the play rewrites `.env` on rerun.
+For a manually launched native web process, set `RUSSOUND_PLAYBACK_AGENTS`
+with absolute local token/cert paths. For the Ansible-managed native systemd
+service, use the `russound_playback_agents` Ansible variable: its generated
+unit sets this environment value explicitly, so changing a shell environment
+does not update the service.
 `.env`, private tokens, runtime config/state and TLS private keys stay outside Git.
 
-Rebuild/recreate only the web service when using an existing external gateway:
-
-```sh
-docker compose build russound-web
-docker compose up -d --no-deps --no-build russound-web
-```
+For a new isolated container installation, follow the
+[container guide](container-deployment.md) and use only its external-gateway
+web profile. For an existing installation, retain its actual ordered Compose
+files and image selection; do not rebuild or switch layouts simply to add an
+agent. The new Ansible preview does not provision playback credentials.
 
 Open `http://<web-host>:8000/playback`. A stream's Config dialog contains
 transport controls, station favorites/search and calibration gain. Favorites

@@ -49,7 +49,7 @@ selecting a persistence design.
 - Backups, restoration and preview must be permission-aware and redact secrets;
   a restore is an explicit validated change with conflict handling, not a
   silent overwrite. Coordinate with the
-  [deployment migration and rollback](./general_idea_simplify-deployment-configuration.md)
+  [deployment migration and rollback](./general_open_simplify-deployment-configuration.md)
   design and [guided setup](./general_idea_guided-first-time-setup.md).
 
 ## Decisions and acceptance

@@ -57,7 +57,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Deployment and runtime configuration overview](./plans/general_idea_deployment-status-overview.md) | Idea, not scheduled; scope and disclosure decisions needed |
 | [Effective configuration and environment overrides](./plans/web_idea_effective-config-overrides.md) | Idea, not scheduled; precedence and save semantics need design |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
-| [Simplify deployment and configuration](./plans/general_idea_simplify-deployment-configuration.md) | Idea, not scheduled; deployment modes and precedence need design |
+| [Simplify deployment and configuration](./plans/general_open_simplify-deployment-configuration.md) | Open; initial inventory started, deployment contract and staged implementation pending |
 | [Guided first-time setup](./plans/general_idea_guided-first-time-setup.md) | Idea, not scheduled; setup and example-data migration need design |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_idea_safe-configuration-changes.md) | Idea, not scheduled; concurrency and save recovery need design |

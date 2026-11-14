@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from http.client import HTTPException
 import ipaddress
 import json
-import logging
 import math
 import re
 import ssl
@@ -118,7 +117,10 @@ class PlaybackAgentConfig:
 
     @classmethod
     def from_environment(cls) -> tuple[PlaybackAgentConfig, ...] | None:
-        raw_value = env_str("RUSSOUND_PLAYBACK_AGENTS")
+        return cls.from_json(env_str("RUSSOUND_PLAYBACK_AGENTS"))
+
+    @classmethod
+    def from_json(cls, raw_value: str | None) -> tuple[PlaybackAgentConfig, ...] | None:
         if raw_value is None:
             return None
         try:
@@ -211,6 +213,8 @@ class PlaybackStatusClient:
             }
 
     def poll_once(self) -> bool:
+        if self._stop.is_set():
+            return False
         attempted = _timestamp()
         with self._lock:
             self._last_attempt_at = attempted
@@ -219,15 +223,21 @@ class PlaybackStatusClient:
             _validate_identity(health, self._config.agent_id)
             if health.get("status") != "alive":
                 raise ValueError("agent_not_alive")
+            if self._stop.is_set():
+                return False
             capabilities = self._get_json("/v1/capabilities")
             _validate_identity(capabilities, self._config.agent_id)
             writes = _write_capabilities(capabilities.get("write_operations"))
+            if self._stop.is_set():
+                return False
             inventory = self._get_json("/v1/outputs")
             _validate_identity(inventory, self._config.agent_id)
             if not isinstance(inventory.get("outputs"), list):
                 raise ValueError("invalid_agent_response")
             for output in inventory["outputs"]:
                 _validate_output(output)
+            if self._stop.is_set():
+                return False
             snapshot = {
                 key: inventory[key]
                 for key in ("api_version", "agent_id", "epoch", "revision", "config_revision", "snapshot_at", "snapshot_age_ms", "stale", "outputs")
@@ -285,12 +295,16 @@ class PlaybackStatusClient:
         if self._on_change_callback is not None:
             self._on_change_callback()
 
-    def close(self) -> None:
+    def request_stop(self) -> None:
+        """Stop after the active request, without dispatching another poll request."""
         self._stop.set()
+
+    def close(self) -> None:
+        self.request_stop()
         if self._thread is not None:
             self._thread.join(timeout=REQUEST_TIMEOUT_SECONDS * 4)
             if self._thread.is_alive():
-                logging.error("Playback status poller did not stop within its timeout")
+                raise RuntimeError("Playback status poller did not stop within its timeout")
 
     def _favorites(self) -> dict[str, Any] | None:
         """Favorites are optional: before the agent's first observation they are unavailable."""

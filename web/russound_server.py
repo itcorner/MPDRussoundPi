@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 import importlib
 import json
@@ -10,11 +11,13 @@ import os
 from pathlib import Path
 from queue import Empty, Queue
 import secrets
+import signal
 import socket
 import sys
 import threading
 import time
-from typing import Any, cast
+from types import FrameType
+from typing import Any, Generator, cast
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -52,6 +55,8 @@ ZONE_REFRESH_DEBOUNCE_SECONDS = 0.5
 # Upper bound for how long a dropped gateway connection stays unnoticed by the watcher.
 UPDATE_LISTENER_CHECK_SECONDS = 5.0
 MAX_RECONNECT_DELAY_SECONDS = 60.0
+SHUTDOWN_POLL_SECONDS = 0.5
+BACKGROUND_SHUTDOWN_SECONDS = 10.0
 
 
 class RussoundRequestHandler:
@@ -190,6 +195,9 @@ class RussoundHTTPServer:
             client.set_on_change_callback(self.broadcast_playback_change)
         self._backend_watcher_lock = threading.Lock()
         self._backend_watcher_started = False
+        self._backend_watcher_thread: threading.Thread | None = None
+        self._shutdown_requested = threading.Event()
+        self._closed = False
         self._event_backend: RussoundBackend | None = None
         self._event_backend_lock = threading.Lock()
         self._backend_reconfiguring = threading.Event()
@@ -217,6 +225,8 @@ class RussoundHTTPServer:
 
         @app.before_request
         def _guard_requests():
+            if self._shutdown_requested.is_set():
+                return jsonify({"error": "Server is shutting down"}), 503
             if self._allowed_hosts and _hostname(request.host) not in self._allowed_hosts:
                 logging.warning("Rejected request with untrusted Host header %r from %s", request.host, request.remote_addr)
                 return jsonify({"error": "Host not allowed"}), 400
@@ -529,39 +539,91 @@ class RussoundHTTPServer:
         thread_count = max(RESERVED_REQUEST_THREADS + 1, waitress_threads)
         stream_limit = thread_count - RESERVED_REQUEST_THREADS
         self._max_event_streams = stream_limit if self._max_event_streams is None else min(self._max_event_streams, stream_limit)
-        self._start_backend_change_watcher()
-        if debug:
+        if self._shutdown_requested.is_set():
+            raise RuntimeError("A stopped Russound server cannot be restarted")
+        with self._termination_signals():
+            server = None
             try:
-                self.app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
+                try:
+                    waitress_module = importlib.import_module("waitress")
+                except ModuleNotFoundError as exc:
+                    raise RuntimeError("waitress is required to run the web server. Install it with 'pip install waitress'.") from exc
+                create_server = getattr(waitress_module, "create_server")
+                server = create_server(self.app, host=host, port=port, threads=thread_count)
+                # Waitress applies these options to every accepted connection.
+                server.adj.socket_options = _connection_socket_options(tcp_user_timeout_seconds)
+                self._start_backend_change_watcher()
+                if debug:
+                    logging.debug("Starting Waitress with %d worker threads", thread_count)
+                server.run()
             finally:
-                for playback_client in self._playback_clients:
-                    playback_client.close()
+                self._shutdown_requested.set()
+                try:
+                    if server is not None:
+                        server.close()
+                        server.task_dispatcher.shutdown()
+                        if server.task_dispatcher.threads:
+                            raise RuntimeError("HTTP workers did not stop; shutdown is incomplete")
+                finally:
+                    self.server_close()
+
+    @contextmanager
+    def _termination_signals(self) -> Generator[None, None, None]:
+        if threading.current_thread() is not threading.main_thread():
+            yield
             return
 
-        try:
-            waitress_module = importlib.import_module("waitress")
-        except ModuleNotFoundError as exc:
-            raise RuntimeError("waitress is required when debug mode is disabled. Install it with 'pip install waitress'.") from exc
+        def terminate(_signum: int, _frame: FrameType | None) -> None:
+            if not self._shutdown_requested.is_set():
+                self._shutdown_requested.set()
+                # Waitress catches KeyboardInterrupt and drains its dispatcher.
+                raise KeyboardInterrupt
 
-        create_server = getattr(waitress_module, "create_server")
-        server = create_server(self.app, host=host, port=port, threads=thread_count)
-        # Waitress has no serve() argument for this; it applies adj.socket_options to every accepted connection.
-        server.adj.socket_options = _connection_socket_options(tcp_user_timeout_seconds)
+        previous = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)}
         try:
-            server.run()
+            for number in previous:
+                signal.signal(number, terminate)
+            yield
         finally:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
+
+    def server_close(self) -> None:
+        """Stop background writers and release their connections after HTTP drain."""
+        if self._closed:
+            return
+        self._shutdown_requested.set()
+        self._zone_refresh_requested.set()
+        watcher = self._backend_watcher_thread
+        for playback_client in self._playback_clients:
+            playback_client.request_stop()
+        with ExitStack() as cleanup:
             for playback_client in self._playback_clients:
-                playback_client.close()
+                cleanup.callback(playback_client.close)
+            if watcher is not None:
+                watcher.join(timeout=BACKGROUND_SHUTDOWN_SECONDS)
+            with self._event_backend_lock:
+                backend = self._event_backend
+                self._event_backend = None
+            if backend is not None:
+                cleanup.callback(backend.close)
+                self.controller.set_shared_backend(None)
+            if watcher is not None and watcher.is_alive():
+                raise RuntimeError("Backend watcher did not stop; shutdown is incomplete")
+        self._closed = True
 
     def _start_backend_change_watcher(self) -> None:
         with self._backend_watcher_lock:
             if self._backend_watcher_started:
                 return
+            if self._shutdown_requested.is_set():
+                raise RuntimeError("Cannot start background workers during shutdown")
             for playback_client in self._playback_clients:
                 playback_client.start()
             self._start_unsolicited_update_listener()
-            watcher = threading.Thread(target=self._backend_change_watcher_loop, daemon=True, name="backend-change-watcher")
-            watcher.start()
+            self._backend_watcher_thread = threading.Thread(
+                target=self._backend_change_watcher_loop, daemon=True, name="backend-change-watcher")
+            self._backend_watcher_thread.start()
             self._backend_watcher_started = True
 
     def _start_unsolicited_update_listener(self) -> None:
@@ -578,7 +640,7 @@ class RussoundHTTPServer:
 
     def _ensure_update_listener(self) -> None:
         with self.state_lock:
-            if self._backend_reconfiguring.is_set():
+            if self._shutdown_requested.is_set() or self._backend_reconfiguring.is_set():
                 return
             self._ensure_update_listener_locked()
 
@@ -609,6 +671,8 @@ class RussoundHTTPServer:
         self._reconnect_delay_seconds = min(self._reconnect_delay_seconds * 2, MAX_RECONNECT_DELAY_SECONDS)
 
     def _handle_unsolicited_zone_update(self, update: dict[str, Any], generation: int | None = None) -> None:
+        if self._shutdown_requested.is_set():
+            return
         if generation is not None and generation != self._backend_generation:
             return
         controller_id = update.get("controller")
@@ -676,14 +740,17 @@ class RussoundHTTPServer:
 
     def _backend_change_watcher_loop(self) -> None:
         next_full_poll_at = time.monotonic()
-        while True:
+        while not self._shutdown_requested.is_set():
             self._ensure_update_listener()
             wait_seconds = min(max(0.0, next_full_poll_at - time.monotonic()), UPDATE_LISTENER_CHECK_SECONDS)
             woken = self._zone_refresh_requested.wait(wait_seconds)
+            if self._shutdown_requested.is_set():
+                return
             if not woken and time.monotonic() < next_full_poll_at:
                 continue
             if woken and not self._full_poll_requested.is_set():
-                time.sleep(ZONE_REFRESH_DEBOUNCE_SECONDS)
+                if self._shutdown_requested.wait(ZONE_REFRESH_DEBOUNCE_SECONDS):
+                    return
                 try:
                     if self._refresh_zones_if_changed(self._take_zone_refresh_addresses()):
                         logging.debug("Keypad-triggered zone refresh detected a change; broadcasting SSE update")
@@ -851,16 +918,20 @@ class RussoundHTTPServer:
         def event_stream():
             try:
                 yield f"retry: {EVENT_STREAM_RETRY_MS}\n: connected\n\n"
-                while True:
+                next_ping_at = time.monotonic() + EVENT_STREAM_PING_SECONDS
+                while not self._shutdown_requested.is_set():
                     remaining_seconds = stream_deadline - time.monotonic()
                     if remaining_seconds <= 0:
                         # The browser reconnects after the retry delay and resyncs on open.
                         return
                     try:
-                        event_text = event_queue.get(timeout=min(EVENT_STREAM_PING_SECONDS, remaining_seconds))
+                        event_text = event_queue.get(timeout=min(SHUTDOWN_POLL_SECONDS, remaining_seconds))
                     except Empty:
-                        yield ": ping\n\n"
+                        if time.monotonic() >= next_ping_at:
+                            yield ": ping\n\n"
+                            next_ping_at = time.monotonic() + EVENT_STREAM_PING_SECONDS
                         continue
+                    next_ping_at = time.monotonic() + EVENT_STREAM_PING_SECONDS
                     event_type = json.loads(event_text).get("event", "state-change")
                     if event_type == "playback-change":
                         with self._event_clients_lock:
@@ -892,7 +963,8 @@ class RussoundHTTPServer:
         """Register one SSE stream; returns None when the stream limit is reached."""
         event_queue: Queue[str] = Queue(maxsize=EVENT_QUEUE_MAXSIZE)
         with self._event_clients_lock:
-            if self._max_event_streams is not None and len(self._event_clients) >= self._max_event_streams:
+            if self._shutdown_requested.is_set() or (
+                    self._max_event_streams is not None and len(self._event_clients) >= self._max_event_streams):
                 return None
             self._event_client_id += 1
             client_id = self._event_client_id
@@ -1220,7 +1292,7 @@ def main() -> None:
     parser.add_argument("--config", default=env_str("RUSSOUND_CONFIG"))
     parser.add_argument("--state", default=env_str("RUSSOUND_STATE") or str(WEB_ROOT / "russound_state.json"))
     parser.add_argument("--daemon", action="store_true", help="Run the server in the background")
-    parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging to the terminal")
+    parser.add_argument("--debug", action="store_true", default=_env_flag("RUSSOUND_DEBUG"), help="Enable debug logging (the server still uses Waitress)")
     parser.add_argument(
         "--waitress-threads",
         type=int,

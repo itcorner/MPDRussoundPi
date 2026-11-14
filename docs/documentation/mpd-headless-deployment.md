@@ -15,9 +15,17 @@ ansible-playbook -i ansible/inventory.yaml ansible/playbooks/setup-musicpi.yml \
   --tags init,new -e mpd_russoundpi_start_playback=false
 ```
 
+The play-level default for `mpd_russoundpi_start_playback` overrides a
+same-named host inventory value. Pass `false` with `-e` as shown; an
+inventory-only value does not select staging.
+
 The staging option leaves MPD and supervision stopped, but still prepares and
 restarts audio services. `--tags update` explicitly requests an OS package
 upgrade; it is not part of the normal `init,new` procedure.
+The `init` tag also installs and starts native ser2net and may restart it after
+changing `/etc/ser2net.yaml`. Do not run this command on a host using a
+containerized or external gateway without first reviewing that conflict; the
+play does not currently have a gateway-management switch.
 
 It enables lingering, starts the persistent user manager, grants audio-group
 access without a graphical seat, and supplies the user runtime directory and
@@ -186,6 +194,10 @@ keep trying to restore outputs whose virtual sinks you are removing:
 python mpdsetup.py --stop ~/.config/mpdrussoundpi/config.json
 python audiosetup.py --cleanup --audio-processor pipewire
 ```
+
+The MPD stop command discovers user units named `mpd_*.service`, not only
+outputs in the supplied JSON. Review those units before running it: unrelated
+or stale units with that naming pattern can also be stopped.
 
 Cleanup requires no JSON file or running audio server. Omitting
 `--audio-processor` checks both backends. It uses the audio setup lock and

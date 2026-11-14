@@ -330,10 +330,12 @@ are never the source of a desired state.
 
 ## 7. Development and test setup
 
-- `docker-compose.yml` runs `russound-ser2net` and `russound-web`, and
-  `docker-compose.dummy.yml` replaces the serial gateway with the dummy backend.
-  The container bind-mounts `docker/config`, `docker/data`, `docker/logs` and
-  `docker/secrets`.
+- `compose.dev.yml` defines web only; add `compose.gateway.yml` for a managed
+  serial gateway or `compose.dummy.yml` for hardware-free development.
+  `compose.prod.yml` defines the production logging layout, not an available
+  release workflow. The new bind mounts use one explicit deployment data root.
+  See the [container guide](container-deployment.md) for available operations
+  and limitations. The older `docker-compose*.yml` files remain legacy layouts.
 - Python tests in [tests/](../../tests/) cover the connector, backend,
   controller, server routes, the playback client and the Pi libraries. The
   JavaScript tests (`node --test tests/*.js`) cover the page rendering logic.

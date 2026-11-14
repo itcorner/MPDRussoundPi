@@ -10,6 +10,7 @@ User=caddy
 Group=caddy
 Environment=XDG_DATA_HOME=/var/lib/caddy/playback-agent
 ExecStart={{ playback_proxy_caddy_binary }} run --config {{ playback_proxy_caddyfile }} --adapter caddyfile
+ExecReload={{ playback_proxy_caddy_binary }} reload --config {{ playback_proxy_caddyfile }} --adapter caddyfile --address 127.0.0.1:2020
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

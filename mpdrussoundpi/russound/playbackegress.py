@@ -52,7 +52,8 @@ def ruleset(uid: int, resolvers: list[str]) -> str:
     for resolver in resolvers:
         address = ipaddress.ip_address(resolver)
         family = "ip" if address.version == 4 else "ip6"
-        lines.append(f"    {family} daddr {address} udp dport 53 counter return")
+        for protocol in ("udp", "tcp"):
+            lines.append(f"    {family} daddr {address} {protocol} dport 53 counter return")
     lines.extend([
         "    ip daddr @blocked4 counter reject",
         "    ip6 daddr @blocked6 counter reject",

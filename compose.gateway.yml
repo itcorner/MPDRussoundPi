@@ -1,0 +1,28 @@
+services:
+  russound-web:
+    environment:
+      RUSSOUND_BACKEND_HOST: russound-ser2net
+      RUSSOUND_BACKEND_PORT: "6666"
+    depends_on:
+      russound-ser2net:
+        condition: service_healthy
+
+  russound-ser2net:
+    image: "${RUSSOUND_SER2NET_IMAGE:?Set an exact gateway image digest}"
+    platform: "${RUSSOUND_PLATFORM:?Set the target platform}"
+    restart: unless-stopped
+    user: "${RUSSOUND_UID:-10001}:${RUSSOUND_GID:-10001}"
+    group_add:
+      - "${RUSSOUND_SERIAL_GID:?Set the serial device group ID}"
+    devices:
+      - "${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}:${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}"
+    environment:
+      RUSSOUND_SERIAL_DEVICE: "${RUSSOUND_SERIAL_DEVICE:-/dev/ttyUSB0}"
+      RUSSOUND_SERIAL_OPTIONS: "${RUSSOUND_SERIAL_OPTIONS:-19200n81}"
+      RUSSOUND_SER2NET_BIND: "0.0.0.0"
+      RUSSOUND_SER2NET_PORT: "6666"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

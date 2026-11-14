@@ -9,7 +9,7 @@
 https://{{ playback_proxy_hostname }}:{{ playback_proxy_port }} {
 	tls {{ playback_proxy_certificate }} {{ playback_proxy_private_key }}
 
-	@docker_host remote_ip {{ playback_proxy_allowed_cidr }}
+	@docker_host remote_ip {{ ([playback_proxy_allowed_cidr] + (playback_proxy_additional_allowed_cidrs | default([]))) | join(' ') }}
 	handle @docker_host {
 		@read_api {
 			path /v1/health /v1/capabilities /v1/outputs /v1/outputs/* /v1/favorites

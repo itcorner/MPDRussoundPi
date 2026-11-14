@@ -4,6 +4,9 @@ This directory contains a small TCP server that emulates the Russound RNET proto
 
 It is intended for local testing without RS-232 hardware. The server listens on TCP, accepts the same request packets the Russound client library sends, and returns protocol-shaped responses for zone reads.
 
+For containers, use the [container deployment guide](../../docs/documentation/container-deployment.md#dummy-no-hardware);
+the commands below describe standalone source execution, not deployment.
+
 ## Run
 
 ```bash
