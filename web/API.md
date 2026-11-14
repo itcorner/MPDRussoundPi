@@ -183,7 +183,12 @@ For example:
 Plain HTTP is accepted only for loopback URLs; remote agents require HTTPS.
 The token-file path is a secret reference and the token value is never included
 in an API response or browser code. Invalid/partial entries, duplicate agent
-identities, or unreadable/invalid token files are startup errors. The web
+identities, or unreadable/invalid token files are startup errors.
+Web and native agent use the same token contract: 32-4096 printable ASCII
+characters (bytes 33-126), without whitespace or control characters. A token
+file may end with one LF or CRLF; other leading/trailing whitespace, extra
+newlines and oversized files are rejected, not stripped into a different
+credential. Validation errors omit token contents and protected file paths.
 The TLS file is used as a trust anchor with normal certificate and hostname
 validation; it is not an insecure verification bypass. The hostname in `url`
 must resolve from Docker and match the certificate's subject alternative name.
@@ -320,7 +325,8 @@ as `/api/rooms`.
 
 - Response type: JSON.
 - Returns `config_required`, `backend_status`, `backend` (the saved backend
-  settings), visible `zones` with their advanced sound values (`bass`,
+  settings), `effective_backend` (the same metadata as `/api/config`), visible
+  `zones` with their advanced sound values (`bass`,
   `treble`, `balance`, `loudness`, `turn_on_volume`), `resolved_inputs`,
   `revision` and `epoch`.
 
@@ -445,6 +451,24 @@ Returns the editable zone-configuration payload used by the configuration page.
   OS permission check; save errors describe filesystem/permission failures.
 - `backend_overrides` lists non-empty `RUSSOUND_BACKEND_HOST` and
   `RUSSOUND_BACKEND_PORT` values. Environment overrides take precedence over saved settings.
+- `effective_backend` is additive, allowlisted runtime metadata from the actual
+  endpoint resolver, also returned by successful saves and `/api/config/state`:
+  `mode`, `host` and `port` each contain `value`, `source`
+  (`environment`, `saved`, `default`) and `overridden` (true only for an
+  environment source). `mode.value` is `tcp` or `serial`. No serial-device,
+  credential, CA or arbitrary environment paths are included in this metadata.
+  `configured` is false while application configuration is missing/invalid;
+  otherwise it describes a resolvable endpoint, **not connectivity**.
+  Saved configurations without an endpoint retain the loopback TCP default.
+- Host and port overrides are independent. Either selects TCP over a saved
+  serial device; a port-only serial override uses default host `127.0.0.1`.
+  Blank/whitespace overrides are unset. Malformed or out-of-range nonblank
+  ports now fail startup explicitly instead of being logged and ignored.
+  TCP ports must contain 1-5 decimal ASCII digits and be in `1..65535`.
+- The editor still edits **saved** settings and shows an effective runtime
+  summary; reading/saving does not persist environment values or erase a saved
+  serial endpoint. Full inline read-only effective fields remain a separate
+  [UI idea](../docs/plans/web_idea_effective-config-overrides.md).
 - Read `/api/config/state.backend_status` for recorded backend connectivity independently of configuration validity.
 
 Response shape:

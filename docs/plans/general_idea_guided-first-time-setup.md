@@ -23,6 +23,22 @@ Propose a guided layer over those existing capabilities, not a second source
 of configuration. It should work with a new deployment, and offer an explicit
 opt-in revisit for an existing configuration without resetting it.
 
+## Future gateway discovery
+
+For split web/gateway deployments, provide an mDNS service announcement for
+the gateway. When no configuration overlay is supplied, the web backend
+should discover announced gateways and suggest the instances it finds during
+first-time setup. The operator selects and confirms an endpoint; discovery must
+not silently replace existing configuration or override an explicitly supplied
+endpoint. Allow manual entry when discovery is unavailable.
+
+This is a future setup feature, not part of the current deployment
+streamlining implementation. Define the service identity, advertisement
+ownership, timeouts, supported networks and Docker/native routing before
+implementation. Treat discovery results as untrusted suggestions, not proof
+that a gateway or physical controller is functional; keep connectivity and
+controller verification separate.
+
 ## Candidate flow
 
 1. Explain the chosen deployment and whether a gateway, controller and
@@ -60,5 +76,8 @@ The setup UI must not expose secret-file paths or credential contents.
 - [ ] Test missing/invalid config, sample config, existing config, env overrides,
   silent controller, absent gateway/agent, multiple agents, retries and later
   recovery. Confirm no unintended data overwrite or playback change.
+- [ ] Test mDNS discovery with zero, one and multiple gateway announcements,
+  unavailable or isolated networks, manual entry and explicit overlays; verify
+  suggestions never automatically overwrite existing or explicit settings.
 - [ ] Validate with representative Docker and native deployments; report
   unavailable hardware as unverified, not successful.

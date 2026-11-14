@@ -1,6 +1,5 @@
-# UNTESTED: this image has not been built or run yet.
-# Dummy Russound backend container: same web stack payload as Dockerfile, but the
-# serial bridge (ser2net) is replaced by the in-repo TCP dummy backend.
+# Hardware-free TCP backend. Headless routing is covered by the opt-in local
+# container integration test; interactive tmux/TUI behavior needs manual testing.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

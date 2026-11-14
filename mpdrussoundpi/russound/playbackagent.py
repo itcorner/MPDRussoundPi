@@ -1,6 +1,6 @@
 import argparse
 import logging
-from pathlib import Path
+import re
 import signal
 from types import FrameType
 
@@ -9,6 +9,8 @@ from waitress.server import create_server
 from lib.playbackagent import AgentObserver, create_app
 from lib.mpdbackend import MPDBackend
 from lib.playbackoperations import OperationManager
+from lib.servicecredentials import read_service_token
+from lib.runtimelogging import configure_console
 
 
 def main() -> None:
@@ -24,6 +26,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--allow-remote", action="store_true",
                         help="Permit non-loopback binding only behind provisioned secure transport")
+    parser.add_argument("--debug", action="store_true", help="Enable diagnostic logging")
     args = parser.parse_args()
     if args.host not in ("127.0.0.1", "::1", "localhost") and not args.allow_remote:
         parser.error("Remote binding requires --allow-remote and provisioned secure transport")
@@ -31,7 +34,13 @@ def main() -> None:
         parser.error("Port must be between 1 and 65535")
     if args.enable_tunein_selection and args.disable_tunein_selection:
         parser.error("--enable-tunein-selection conflicts with --disable-tunein-selection")
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+    try:
+        token = read_service_token(args.token_file)
+        if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", args.agent_id) is None:
+            raise ValueError("Invalid agent identity")
+    except ValueError:
+        parser.error("Invalid agent identity or service token file")
+    configure_console(args.debug)
     logging.getLogger("mpd").setLevel(logging.WARNING)
     backend = MPDBackend(args.json) if args.operations_db else None
     operations = OperationManager(
@@ -39,7 +48,6 @@ def main() -> None:
     ) if backend is not None else None
     observer = AgentObserver(args.json, backend=backend, controls_enabled=operations is not None)
     try:
-        token = Path(args.token_file).read_text(encoding="ascii").strip()
         app = create_app(observer, args.agent_id, token, operations)
     except (OSError, ValueError):
         if operations is not None:

@@ -1,33 +1,35 @@
 # Headless MPD deployment and recovery
 
-The [setup playbook](../../ansible/playbooks/setup-musicpi.yml) provisions
-PipeWire, its Pulse server, WirePlumber, FFmpeg and python-mpd2. Run it as the
-audio-owning user with passwordless sudo:
+The [setup playbook](../../ansible/playbooks/setup-musicpi.yml) stages a
+revision-pinned audio source tree and isolated candidate virtual environment.
+It does not activate or modify the current checkout, audio configuration,
+native gateway, MPD/PipeWire services or playback state.
 
-For a fresh network-enabled playback installation, follow the ordered
-[deployment guide](./playback-agent-deployment.md): stage units without playback,
-install public-only egress enforcement, then start/reconcile. The audio-only
-play can regenerate and restart running services; it is not a web or agent
-update command.
+Legacy in-place audio activation is intentionally blocked in this playbook.
+An approved native transaction must supply verified recovery and explicit
+activation before the staged candidate can replace an active audio runtime.
+The [deployment guide](./playback-agent-deployment.md) describes the related
+component boundaries.
 
 ```sh
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/setup-musicpi.yml \
-  --tags init,new -e mpd_russoundpi_start_playback=false
+  --tags stage -e mpd_russoundpi_revision=<full-40-or-64-character-commit>
 ```
 
-The staging option leaves MPD and supervision stopped, but still prepares and
-restarts audio services. `--tags update` explicitly requests an OS package
-upgrade; it is not part of the normal `init,new` procedure.
+The play checks out the exact requested commit into a new private candidate
+directory, installs only its bounded audio dependencies into a separate
+virtual environment, and validates the existing operational config if present.
+The candidate parent and each revision directory are owner-private mode `0700`;
+the play atomically reserves a new revision directory and refuses to reuse it.
+Inspect any previous candidate separately.
+It reports the candidate revision and explicitly reports `activation:
+not-performed`. `--tags init,new` is the retired in-place path and must not be
+used for native activation. No audio service is stopped, restarted, enabled,
+or disabled by the `stage` tag.
 
-It enables lingering, starts the persistent user manager, grants audio-group
-access without a graphical seat, and supplies the user runtime directory and
-D-Bus address. The distribution-wide MPD service is disabled. If audio-group
-membership is newly added to an already running manager, reboot so its
-supplementary groups are refreshed.
-
-The first deployment copies the repository seed into
-`~/.config/mpdrussoundpi/config.json`. Redeployment preserves that file and
-the runtime state `~/.local/state/mpdrussoundpi/playback.json`.
+Operational configuration is not copied or rewritten by candidate staging.
+The existing runtime state `~/.local/state/mpdrussoundpi/playback.json` is
+also untouched.
 
 ## Configuration: `config.json` (admin-owned)
 
@@ -110,6 +112,35 @@ defaults.
 `streamlevels.py` measures each output's current (or default) station and
 `--output-config` writes the recommendations as `default_gain_db`.
 
+### Isolated audio dependencies
+
+The audio/control/supervisor dependency manifest is
+[`requirements-audio.txt`](../../mpdrussoundpi/russound/requirements-audio.txt)
+(`python-mpd2>=3.1,<4`), separate from Flask/Waitress and Ansible.
+The setup play installs this bounded manifest without an unconditional upgrade.
+It still targets its configured environment; **do not run it against a working
+installation merely to prepare an environment**.
+
+For a candidate, choose a new unused path and leave existing service units and
+`~/russound-venv` untouched. From a reviewed checkout on the intended host:
+
+```sh
+test ! -e "$HOME/russound-audio-candidate" &&
+python3 -m venv "$HOME/russound-audio-candidate" &&
+"$HOME/russound-audio-candidate/bin/python" -m pip install \
+  -r mpdrussoundpi/russound/requirements-audio.txt &&
+"$HOME/russound-audio-candidate/bin/python" -m pip check &&
+"$HOME/russound-audio-candidate/bin/python" -I -c 'import mpd; print("Audio dependency import OK")'
+```
+
+Stop if any command fails; do not proceed using a pre-existing candidate.
+Also check the target Python/system packages, repository imports, generated
+audio assets and existing configuration before requesting a maintenance-window
+switch. Do not run audio setup, change units or restart playback during this
+preparation. Keep the old environment and backed-up units/config/state for an
+explicitly approved switch/recovery. Local clean-environment import tests are
+not Pi hardware acceptance.
+
 Use the operational configuration for **all** control and calibration commands:
 
 Run the following commands on the Pi as the audio user, from the script
@@ -155,15 +186,13 @@ are tunable through the optional `watchdog` section in `config.json`; design
 background is in the
 [stall watchdog plan](../plans/mpd_done_playback-stall-watchdog.md).
 
-With `mpd_russoundpi_start_playback=true` (the audio play's default),
-deployment stops an existing supervisor, regenerates/restarts audio and MPD,
-then runs one reconciliation/verification pass before enabling supervision.
-Failures stop deployment with diagnostics. Review a failed deployment before
-re-enabling the supervisor; it is intentionally not started after unsuccessful
-configuration changes. Git updates can be skipped for an explicitly staged
-local deployment with `-e mpd_russoundpi_update_repo=false`; normally keep this
-enabled. No `force` checkout/reset is used. For new outputs, stage with playback
-disabled and rerun the egress play before allowing them to start.
+The former `init,new` in-place deployment sequence has been disabled because
+it stopped services and rewrote active unit/configuration paths without the
+shared reservation, off-host backup and recovery contract. Candidate staging
+does not run `mpdsetup.py`, `audiosetup.py` or the supervisor. For any
+previously provisioned host, do not use `mpd_russoundpi_start_playback` as an
+activation control; a separately reviewed native activation runner is still
+required.
 
 ```sh
 loginctl show-user "$USER" -p Linger
@@ -186,6 +215,11 @@ keep trying to restore outputs whose virtual sinks you are removing:
 python mpdsetup.py --stop ~/.config/mpdrussoundpi/config.json
 python audiosetup.py --cleanup --audio-processor pipewire
 ```
+
+The MPD stop command selects exact output IDs from the supplied config and
+requires MPDRussoundPi ownership markers and matching effective systemd
+fragment/drop-in paths. Legacy or overridden units are refused for explicit
+migration; unrelated/stale matching units are reported and left unchanged.
 
 Cleanup requires no JSON file or running audio server. Omitting
 `--audio-processor` checks both backends. It uses the audio setup lock and

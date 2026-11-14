@@ -1,0 +1,23 @@
+---
+russound_action: preview
+russound_gateway: managed
+russound_project: russound-dev
+russound_platform: linux/arm64
+russound_data_dir: ""
+russound_web_image: ""
+russound_ser2net_image: ""
+russound_image_selection_file: ""
+russound_image_source: hub
+russound_local_bundle: ""
+russound_local_manifest_sha256: ""
+russound_dummy_image: ""
+russound_backend_host: ""
+russound_backend_port: 6666
+russound_publish_host: "0.0.0.0"
+russound_publish_port: 8000
+russound_uid: 10001
+russound_gid: 10001
+russound_serial_device: /dev/ttyUSB0
+russound_serial_gid: ""
+russound_serial_options: 19200n81
+russound_playback_agents: []

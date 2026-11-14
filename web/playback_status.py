@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from http.client import HTTPException
 import ipaddress
 import json
-import logging
 import math
 import re
 import ssl
@@ -16,6 +15,7 @@ from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_ope
 
 from mpdrussoundpi.russound.lib.tunein import TuneInCatalog
 from web.config_types import env_str
+from mpdrussoundpi.russound.lib.servicecredentials import read_service_token
 
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
@@ -118,7 +118,10 @@ class PlaybackAgentConfig:
 
     @classmethod
     def from_environment(cls) -> tuple[PlaybackAgentConfig, ...] | None:
-        raw_value = env_str("RUSSOUND_PLAYBACK_AGENTS")
+        return cls.from_json(env_str("RUSSOUND_PLAYBACK_AGENTS"))
+
+    @classmethod
+    def from_json(cls, raw_value: str | None) -> tuple[PlaybackAgentConfig, ...] | None:
         if raw_value is None:
             return None
         try:
@@ -160,18 +163,16 @@ class PlaybackStatusClient:
     """One read-only polling/cache worker for the configured playback agent."""
 
     def __init__(self, config: PlaybackAgentConfig, on_change: Callable[[], None] | None = None) -> None:
-        with open(config.token_file, encoding="utf-8") as token_file:
-            token = token_file.read(4097).strip()
-        if len(token) > 4096:
-            raise ValueError("Playback token file exceeds the supported size")
-        if not token or "\n" in token or "\r" in token:
-            raise ValueError("Playback token file must contain one non-empty token")
+        token = read_service_token(config.token_file)
         self._config = config
-        self._ssl_context = (
-            ssl.create_default_context(cafile=config.tls_ca_file)
-            if config.tls_ca_file is not None
-            else ssl.create_default_context()
-        )
+        try:
+            self._ssl_context = (
+                ssl.create_default_context(cafile=config.tls_ca_file)
+                if config.tls_ca_file is not None
+                else ssl.create_default_context()
+            )
+        except (OSError, ValueError):
+            raise ValueError("Cannot load playback TLS trust; check the protected CA file") from None
         self._on_change_callback = on_change
         self._token = token
         self._lock = threading.Lock()
@@ -211,6 +212,8 @@ class PlaybackStatusClient:
             }
 
     def poll_once(self) -> bool:
+        if self._stop.is_set():
+            return False
         attempted = _timestamp()
         with self._lock:
             self._last_attempt_at = attempted
@@ -219,15 +222,21 @@ class PlaybackStatusClient:
             _validate_identity(health, self._config.agent_id)
             if health.get("status") != "alive":
                 raise ValueError("agent_not_alive")
+            if self._stop.is_set():
+                return False
             capabilities = self._get_json("/v1/capabilities")
             _validate_identity(capabilities, self._config.agent_id)
             writes = _write_capabilities(capabilities.get("write_operations"))
+            if self._stop.is_set():
+                return False
             inventory = self._get_json("/v1/outputs")
             _validate_identity(inventory, self._config.agent_id)
             if not isinstance(inventory.get("outputs"), list):
                 raise ValueError("invalid_agent_response")
             for output in inventory["outputs"]:
                 _validate_output(output)
+            if self._stop.is_set():
+                return False
             snapshot = {
                 key: inventory[key]
                 for key in ("api_version", "agent_id", "epoch", "revision", "config_revision", "snapshot_at", "snapshot_age_ms", "stale", "outputs")
@@ -285,12 +294,16 @@ class PlaybackStatusClient:
         if self._on_change_callback is not None:
             self._on_change_callback()
 
-    def close(self) -> None:
+    def request_stop(self) -> None:
+        """Stop after the active request, without dispatching another poll request."""
         self._stop.set()
+
+    def close(self) -> None:
+        self.request_stop()
         if self._thread is not None:
             self._thread.join(timeout=REQUEST_TIMEOUT_SECONDS * 4)
             if self._thread.is_alive():
-                logging.error("Playback status poller did not stop within its timeout")
+                raise RuntimeError("Playback status poller did not stop within its timeout")
 
     def _favorites(self) -> dict[str, Any] | None:
         """Favorites are optional: before the agent's first observation they are unavailable."""

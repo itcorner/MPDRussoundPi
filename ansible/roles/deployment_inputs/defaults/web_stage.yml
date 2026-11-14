@@ -1,0 +1,13 @@
+---
+deployment_component: web
+deployment_boolean_inputs: []
+deployment_port_inputs: []
+ansible_python_interpreter: /usr/bin/python3
+deploy_user: "{{ ansible_user | default('musicpi') }}"
+repo_url: https://github.com/itcorner/MPDRussoundPi.git
+russound_host: "0.0.0.0"
+russound_port: 8000
+russound_playback_agents: []
+russound_web_revision: ""
+russound_web_candidate_root: "{{ deploy_home }}/.local/share/russound-web/candidates"
+russound_config_file: "{{ deploy_home }}/.config/russound-web/russound_config.json"

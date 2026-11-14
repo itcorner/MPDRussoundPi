@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
-from .config_types import env_str, validate_russound_config
+from .config_types import backend_endpoint_metadata, coerce_russound_config, env_str, validate_russound_config
 from .russound_backend import RussoundBackend
 from .russound_state import RussoundState
 from .zone import Zone
@@ -107,6 +107,7 @@ class RussoundController:
             "config_required": config_required,
             "message": self.config_error if config_required else "",
             "config_writable": self.config_path is not None,
+            "effective_backend": backend_endpoint_metadata(None if config_required else coerce_russound_config(config)),
             "backend_overrides": {
                 name: value for name in ("RUSSOUND_BACKEND_HOST", "RUSSOUND_BACKEND_PORT")
                 if (value := env_str(name))

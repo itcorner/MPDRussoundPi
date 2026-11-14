@@ -1,3 +1,5 @@
+# Legacy build-oriented stack; new layouts: docs/documentation/container-deployment.md.
+# This file is retained for existing installations, not used by deploy-dev.yml.
 # UNTESTED: this stack has not been started against real Russound hardware yet.
 # Serial device passthrough and the RUSSOUND_SERIAL_GID default are unverified.
 # Hardware stack: web application + ser2net serial gateway, one container each.

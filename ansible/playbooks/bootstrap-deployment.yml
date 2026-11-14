@@ -1,0 +1,58 @@
+---
+- name: Install trusted deployment tooling only
+  hosts: musicpi
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require an explicitly approved immutable tooling revision
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_revision is defined
+          - deployment_tools_revision is match('^[a-f0-9]{40}$')
+        fail_msg: Supply a reviewed committed tooling revision; this play never deploys application services.
+    - name: Inspect the fixed tooling destination
+      ansible.builtin.stat:
+        path: /opt/mpdrussoundpi-deploy
+      register: deployment_tools_destination
+    - name: Refuse implicit replacement of existing trusted tooling
+      ansible.builtin.assert:
+        that:
+          - not deployment_tools_destination.stat.exists
+          - not deployment_tools_destination.stat.islnk | default(false)
+        fail_msg: Existing or partial tooling requires separate administrative review; no replacement or cleanup is automatic.
+  tasks:
+    - name: Require target Python suitable for the deployment Ansible controller
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - "import sys; assert sys.version_info >= (3, 11), 'Deployment tooling requires Python 3.11+'"
+      changed_when: false
+    - name: Fetch only the approved tooling commit
+      ansible.builtin.git:
+        repo: https://github.com/itcorner/MPDRussoundPi.git
+        dest: /opt/mpdrussoundpi-deploy
+        version: "{{ deployment_tools_revision }}"
+        force: false
+        update: false
+    - name: Set trusted checkout ownership without changing application data
+      ansible.builtin.file:
+        path: /opt/mpdrussoundpi-deploy
+        owner: root
+        group: root
+        recurse: true
+    - name: Create the isolated deployment tooling environment
+      ansible.builtin.pip:
+        requirements: /opt/mpdrussoundpi-deploy/ansible/requirements-deployment.txt
+        virtualenv: /opt/mpdrussoundpi-deploy/.venv
+        virtualenv_command: /usr/bin/python3 -m venv
+    - name: Prepare private deployment control roots only
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - /var/lib/mpdrussoundpi-deploy
+        - /var/lib/mpdrussoundpi-operations

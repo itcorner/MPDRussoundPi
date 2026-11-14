@@ -23,7 +23,9 @@ class MPDSetupTests(unittest.TestCase):
             with patch.object(sys, "argv", ["mpdsetup.py", option, config]):
                 with patch.dict(os.environ, {"HOME": home, "XDG_RUNTIME_DIR": runtime}):
                     with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
-                        with patch("subprocess.run", side_effect=run), patch("time.sleep"):
+                        with patch("subprocess.run", side_effect=run), patch("time.sleep"), patch(
+                            "lib.mpdownership.preflight", return_value=["mpd_stereo_front.service"]
+                        ):
                             runpy.run_path(str(SCRIPTS_DIR / "mpdsetup.py"), run_name="__main__")
 
     def test_mpd_lock_contention_release_and_audio_independence(self):
@@ -91,8 +93,10 @@ class MPDSetupTests(unittest.TestCase):
             return Mock(returncode=0)
 
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as runtime:
+            config = Path(home) / "config.json"
+            config.write_text((SCRIPTS_DIR / "config.json").read_text())
             with self.assertRaises(SystemExit) as error:
-                self.run_cli("--cleanup", home, runtime, command)
+                self.run_cli("--cleanup", home, runtime, command, str(config))
             self.assertEqual(error.exception.code, 0)
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
                 with mpdsetup.setup_lock("mpd_setup.lock"):
@@ -129,7 +133,8 @@ class MPDSetupTests(unittest.TestCase):
             with patch.object(mpdsetup, "SYSTEMD_USER_CONFIG_DIR", directory):
                 mpdsetup.create_mpd_systemd_service(instance, "/home/user/audio config.json")
                 mpdsetup.create_supervisor_service("/home/user/audio config.json")
-                available = mpdsetup.get_available_systemd_mpd_services()
+                with patch.object(mpdsetup, "SELECTED_SERVICES", ["mpd_stereo_front.service"]):
+                    available = mpdsetup.get_available_systemd_mpd_services()
             unit = (Path(directory) / "mpd_stereo_front.service").read_text()
             supervisor = (Path(directory) / mpdsetup.SYSTEMD_MPD_SUPERVISOR).read_text()
         for dependency in ("pipewire.service", "pipewire-pulse.service", "wireplumber.service"):
