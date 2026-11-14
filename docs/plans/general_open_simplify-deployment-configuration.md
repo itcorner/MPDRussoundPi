@@ -3430,14 +3430,89 @@ failed sample, records named failures and performs no automatic remediation.
 Three synthetic observer tests verify named failure reporting, identity-drift
 detection and persisted unsuccessful early completion.
 
-**At handoff: running, first full sample passed, zero failures.** This is not
-yet a completed 30-minute pass. Private baselines, check reports, append-only
+**Superseded by operator direction at 18:25 CET:** stopped this observer and
+its dummy/web Compose project to test the real deployment instead. The last
+record had **22 samples, zero failures**; this interrupted run is **not**
+a completed 30-minute pass. Private baselines, check reports, append-only
 observation records and atomic status reside on the Pi under
 `~/.local/state/mpdrussoundpi-s3-test-b973cbd-20261114/`.
-The original live deployment remains active. Test containers/private credential
-copies remain isolated for observation and require explicit scoped cleanup
-after the result is reviewed. No six-hour rerun or live S3 replacement has
-been started.
+Test containers/network were removed with the isolated project's Compose down;
+private evidence/data/credential copies were retained. No six-hour run was
+started. The real S3 update below supersedes the earlier no-live-change boundary.
+
+### Approved real S3 deployment and observation (2026-11-14)
+
+The operator confirmed the Pi is not in production use and explicitly requested
+stopping the dummy test, updating the real deployment and testing that instead.
+This authorizes this development rehearsal, not general unattended future
+updates or implicit credential/environment migration.
+
+1. **Real managed container pair:** built clean ARM64 web/ser2net from S3
+   revision `b973cbd74e6054fd77b5f8ace531901b15001246` on the controller.
+   The reviewed public operator transaction
+   `60fc23f4-f82e-448b-a825-1eb16cce359e` received the operator's exact approval
+   phrase, preserved the existing project/mounts/network/config/credentials,
+   stopped its writers, retained and independently verified an off-Pi recovery
+   backup including old images, then applied successfully. All required
+   `apply`, `containers`, `http`, `backend` and `playback` checks passed.
+   Final web image is
+   `sha256:981a345cdfe33ecebc6026f3275ff6521b2793368c1191b7f3fdea632cf9251b`;
+   ser2net is
+   `sha256:fc4a43a45b416870d7b0f6fe828de4862116b4f811ab90707a3fe2b829145dd4`.
+   The existing development logging profile was preserved, not silently changed
+   to production.
+2. **Scoped native S3 activation:** stopped only the agent and playback
+   supervisor, leaving PipeWire, WirePlumber and the three MPD processes
+   running. Captured original source, units, admin/runtime configuration,
+   credentials and consistent operation-ledger files; SQLite integrity passed.
+   Copied the 266240-byte/32-member native archive off the Pi and independently
+   verified its SHA256 and every member's content/size/ownership/mode before
+   acknowledging it and applying source changes. The native backup's SHA256 is
+   `c432a23fd788cd741c2d4db47e7658c78abeef0d6d644a00a7d377c2b80964f3`.
+   Retained this backup privately alongside the container recovery material.
+3. Installed exactly eight source/manifest files from the tested S3 staging:
+   agent entry point, observer helper, shared credential/logging helpers and
+   bounded agent manifest; supervisor entry point, shared logging helper and
+   audio manifest in its existing checkout. Verified every installed source
+   checksum, retained existing units/configuration/credentials and started
+   supervisor then agent. This intentionally modifies the existing native
+   checkout without resetting its unrelated untracked files. No Git pull,
+   dependency installation, venv switch, audio regeneration, credential
+   replacement, proxy change or global journal-retention change occurred.
+   Both native environments already contained compatible python-mpd2 3.1.1;
+   imports were checked before activation. Agent PID became 764242 and
+   supervisor PID 764240; automatic restart counters remained zero.
+4. **Real acceptance before timing:** actual controller responses, direct
+   web-to-ser2net TCP, CA/hostname-verified authenticated agent TLS, consistent
+   effective endpoint API metadata and fresh readiness/correct routes on all
+   three outputs passed. The first cold native-agent sample included pending
+   routes; this was observed during startup, not counted as a timed pass.
+   Timing began only after complete warmup. An unchanged real Compose rerun
+   preserved exact container IDs/start times/images/mounts/networks. Protected
+   web config/credentials and native units/admin config/token matched their
+   pre-update hashes. MPD/PipeWire/WirePlumber PIDs were unchanged.
+
+**Real background observation:** user service
+`russound-s3-live-b973cbd-observation.service`, timed start **18:32:10 CET**,
+duration **1800 seconds**, expected completion about **19:02:10 CET**.
+Every 10 seconds it checks real web/controller/playback health, exact output
+set, audio readiness/route status, stale flags/ages and effective endpoint
+metadata. About once a minute it additionally checks container identity/health/
+restarts, protected files, installed native sources, native service PIDs/
+restarts, direct gateway TCP and authenticated TLS. It stops on the first
+failure, records the named failure and performs no automatic remediation.
+The installed helper still refreshes audio every 20 seconds; the independent
+stale threshold remains 30 seconds.
+
+**At handoff: active, first full sample passed, zero failures.** The 30-minute
+result remains pending, not an already-earned pass or a six-hour acceptance.
+Durable private records reside under
+`~/.local/state/mpdrussoundpi-s3-live-b973cbd-20261114/` on the Pi; native and
+container backups/check evidence also have independently verified controller
+copies. The real UI remains at `http://192.168.1.105:8000/`. Only the real
+web/ser2net containers remain running; no dummy deployment or dummy observer
+is active. Remaining S4/S5 layout/refactoring/migration work is not closed by
+this scoped manual native activation and real managed-layout rehearsal.
 
 ## Acceptance and verification
 

@@ -51,10 +51,23 @@ effective-config and runtime-input checks, production/DEBUG logging and
 unchanged redeployment. Isolated native-source contract/liveness checks ran
 without package installation, MPD access or activation of live native services.
 Original live identities/protected files remained unchanged. A durable
-30-minute read-only observer began at 18:21:28 CET on 2026-11-14; its first full
-sample passed, but completion was still pending at handoff. This does not
+30-minute read-only observer began at 18:21:28 CET on 2026-11-14; the operator
+subsequently stopped it after 22 passing samples, before completion, to test
+the real deployment instead. This does not
 certify live S3 activation or the unfinished S4 operator/dummy path. See the
 [rehearsal record](../plans/general_open_simplify-deployment-configuration.md#isolated-s3-pi-deployment-and-background-observation-2026-11-14).
+
+**Approved real S3 activation:** the public reviewed operator updated the real
+ARM64 web/managed-gateway pair after independently verified off-Pi backup.
+Scoped native agent/supervisor S3 source changes were activated only after a
+separate consistent native backup and independent verification of all 32
+archive members; no dependency/venv/credential migration or MPD/audio daemon
+restart occurred. Real controller/TCP/authenticated TLS, effective metadata,
+fresh audio on all outputs and an unchanged Compose rerun passed. A fresh
+30-minute observer began at **18:32:10 CET**, expected to finish about
+**19:02:10 CET**; first full sample passed, final result pending at handoff.
+Startup pending-route samples precede timing and are not represented as a
+completed pass. See the [real deployment record](../plans/general_open_simplify-deployment-configuration.md#approved-real-s3-deployment-and-observation-2026-11-14).
 
 ## Blind Spots
 
