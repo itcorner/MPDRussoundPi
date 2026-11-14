@@ -23,6 +23,7 @@
     - name: Inspect immutable audio candidate path
       ansible.builtin.stat:
         path: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}"
+        follow: false
       register: mpd_audio_candidate
       when: mpd_russoundpi_mode == 'stage'
       tags: always
@@ -46,6 +47,11 @@
           - not (mpd_audio_candidate.stat.islnk | default(false))
           - not (mpd_audio_candidate_root.stat.islnk | default(false))
           - >-
+            not (mpd_audio_candidate_root.stat.exists | default(false)) or
+            ((mpd_audio_candidate_root.stat.isdir | default(false)) and
+             mpd_audio_candidate_root.stat.uid | default(-1) == ansible_facts['user_uid'] | int and
+             mpd_audio_candidate_root.stat.mode | default('') == '0700')
+          - >-
             mpd_russoundpi_candidate_root ==
             ansible_facts['user_dir'] + '/.local/share/mpdrussoundpi/audio-candidates'
         fail_msg: "Candidate revision path already exists; inspect it and select a fresh, reviewed staging path."
@@ -58,6 +64,18 @@
         path: "{{ mpd_russoundpi_candidate_root }}"
         state: directory
         mode: "0700"
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Atomically reserve the new private audio candidate revision path
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/mkdir
+          - -m
+          - "0700"
+          - --
+          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}"
+      changed_when: true
       when: mpd_russoundpi_mode == 'stage'
       tags: stage
 

@@ -19,7 +19,9 @@ ansible-playbook -i ansible/inventory.yaml ansible/playbooks/setup-musicpi.yml \
 The play checks out the exact requested commit into a new private candidate
 directory, installs only its bounded audio dependencies into a separate
 virtual environment, and validates the existing operational config if present.
-The path must not already exist; inspect any previous candidate separately.
+The candidate parent and each revision directory are owner-private mode `0700`;
+the play atomically reserves a new revision directory and refuses to reuse it.
+Inspect any previous candidate separately.
 It reports the candidate revision and explicitly reports `activation:
 not-performed`. `--tags init,new` is the retired in-place path and must not be
 used for native activation. No audio service is stopped, restarted, enabled,

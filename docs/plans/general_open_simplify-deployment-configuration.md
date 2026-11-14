@@ -3454,6 +3454,14 @@ deployment-workflow and agent/proxy suites. All seven plays using the shared
 input role passed Ansible syntax checks. No target connection or mutation was
 performed.
 
+**Candidate-directory permission correction:** the approved Pi staging run
+showed that the audio revision directory inherited mode `0775` from the target
+umask, unlike the web and agent candidates. Audio staging now validates the
+existing candidate root's owner/mode, refuses symlinks, and atomically reserves
+each new revision directory as `0700` before cloning. A focused regression
+checks the ordering and exact mode. Existing staged revisions are deliberately
+not rewritten or reused; this correction applies only to fresh candidate paths.
+
 ### Isolated S3 Pi deployment and background observation (2026-11-14)
 
 Following explicit operator approval, committed S3 separately as

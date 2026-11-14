@@ -18,10 +18,28 @@ class AudioCandidateStagingTests(unittest.TestCase):
         self.assertEqual(git["ansible.builtin.git"]["version"], "{{ mpd_russoundpi_revision }}")
         self.assertFalse(git["ansible.builtin.git"]["update"])
         self.assertFalse(git["ansible.builtin.git"]["force"])
+        reserve = next(task for task in self.stage_tasks if "Atomically reserve" in task["name"])
+        self.assertEqual(reserve["ansible.builtin.command"]["argv"][:4],
+                         ["/usr/bin/mkdir", "-m", "0700", "--"])
+        self.assertIn("{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}",
+                      reserve["ansible.builtin.command"]["argv"][4])
+        self.assertLess(self.stage_tasks.index(reserve), self.stage_tasks.index(git))
         venv = next(task for task in self.stage_tasks if "isolated audio candidate virtual" in task["name"])
         self.assertIn("audio-candidates", playbook("setup-musicpi.yml")["vars"]["mpd_russoundpi_candidate_root"])
         validate = next(task for task in self.stage_tasks if "operational audio config" in task["name"])
         self.assertIn("parse_configuration", validate["ansible.builtin.command"]["argv"][2])
+
+    def test_existing_candidate_storage_must_be_owned_and_private(self):
+        preflight = self.play["pre_tasks"]
+        candidate = next(task for task in preflight if task["name"] == "Inspect immutable audio candidate path")
+        self.assertFalse(candidate["ansible.builtin.stat"]["follow"])
+        root = next(task for task in preflight if task["name"] == "Inspect candidate storage root without following a symlink")
+        self.assertFalse(root["ansible.builtin.stat"]["follow"])
+        guard = next(task for task in preflight if task["name"].startswith("Refuse to reuse"))
+        assertions = guard["ansible.builtin.assert"]["that"]
+        self.assertTrue(any("mpd_audio_candidate_root.stat.uid" in value and
+                            "mpd_audio_candidate_root.stat.mode" in value
+                            for value in assertions))
 
     def test_stage_tag_cannot_manage_services_or_active_paths(self):
         names = [task["name"] for task in self.stage_tasks]
