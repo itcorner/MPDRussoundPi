@@ -1,0 +1,192 @@
+---
+- name: Safely upgrade trusted deployment tooling only
+  hosts: musicpi
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require immutable current and target tooling revisions
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_expected_revision is defined
+          - deployment_tools_expected_revision is match('^[a-f0-9]{40}$')
+          - deployment_tools_revision is defined
+          - deployment_tools_revision is match('^[a-f0-9]{40}$')
+          - deployment_tools_expected_revision != deployment_tools_revision
+        fail_msg: Supply distinct, reviewed full commit IDs for the current and target tooling.
+    - name: Inspect the existing trusted tooling checkout
+      ansible.builtin.stat:
+        path: /opt/mpdrussoundpi-deploy
+      register: deployment_tools_current
+    - name: Require an owned real checkout at the fixed path
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_current.stat.isdir | default(false)
+          - not deployment_tools_current.stat.islnk | default(false)
+          - deployment_tools_current.stat.pw_name | default('') == 'root'
+          - deployment_tools_current.stat.gr_name | default('') == 'root'
+        fail_msg: Existing tooling must be reviewed as a root-owned real directory before upgrade.
+    - name: Read current tooling revision
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - /opt/mpdrussoundpi-deploy
+          - rev-parse
+          - --verify
+          - HEAD
+      register: deployment_tools_current_revision
+      changed_when: false
+    - name: Require the reviewed expected current revision
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_current_revision.stdout == deployment_tools_expected_revision
+        fail_msg: Installed tooling differs from the explicitly reviewed starting revision.
+    - name: Refuse to replace a dirty tooling checkout
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - /opt/mpdrussoundpi-deploy
+          - status
+          - --porcelain
+          - --untracked-files=all
+      register: deployment_tools_current_status
+      changed_when: false
+    - name: Require the installed tooling checkout to be clean
+      ansible.builtin.assert:
+        that:
+          - deployment_tools_current_status.stdout == ''
+        fail_msg: Existing tooling has local changes; preserve and inspect them before upgrade.
+    - name: Define the unique staged and retained-checkout path
+      ansible.builtin.set_fact:
+        deployment_tools_stage: "/opt/mpdrussoundpi-deploy.upgrade-{{ deployment_tools_revision }}"
+    - name: Inspect the unique staged-checkout path
+      ansible.builtin.stat:
+        path: "{{ deployment_tools_stage }}"
+      register: deployment_tools_stage_stat
+    - name: Refuse to reuse a staged or retained checkout
+      ansible.builtin.assert:
+        that:
+          - not deployment_tools_stage_stat.stat.exists
+        fail_msg: The unique tooling stage/retained path already exists; inspect it before proceeding.
+    - name: Confirm state and atomic-swap prerequisites without mutation
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/../../tool/deployment_tool_upgrade.py preflight"
+        executable: /usr/bin/python3
+      changed_when: false
+    - name: Acquire the host-wide deployment reservation for the tooling update
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/../../tool/deployment_tool_upgrade.py acquire"
+        executable: /usr/bin/python3
+      register: deployment_tools_lock
+    - name: Record the tooling operation identity for recovery
+      ansible.builtin.set_fact:
+        deployment_tools_operation: "{{ (deployment_tools_lock.stdout | from_json).operation }}"
+  tasks:
+    - name: Stage, validate, and atomically activate the reviewed tooling
+      block:
+        - name: Fetch only the approved tooling commit into a new sibling
+          ansible.builtin.git:
+            repo: https://github.com/itcorner/MPDRussoundPi.git
+            dest: "{{ deployment_tools_stage }}"
+            version: "{{ deployment_tools_revision }}"
+            force: false
+            update: false
+        - name: Set staged checkout ownership without touching application data
+          ansible.builtin.file:
+            path: "{{ deployment_tools_stage }}"
+            owner: root
+            group: root
+            recurse: true
+        - name: Verify the staged source revision
+          ansible.builtin.command:
+            argv:
+              - git
+              - -C
+              - "{{ deployment_tools_stage }}"
+              - rev-parse
+              - --verify
+              - HEAD
+          register: deployment_tools_staged_revision
+          changed_when: false
+        - name: Require an exact clean staged checkout
+          ansible.builtin.command:
+            argv:
+              - git
+              - -C
+              - "{{ deployment_tools_stage }}"
+              - status
+              - --porcelain
+              - --untracked-files=all
+          register: deployment_tools_staged_status
+          changed_when: false
+        - name: Validate staged source identity and cleanliness
+          ansible.builtin.assert:
+            that:
+              - deployment_tools_staged_revision.stdout == deployment_tools_revision
+              - deployment_tools_staged_status.stdout == ''
+            fail_msg: Staged tooling does not match the reviewed clean commit.
+        - name: Atomically exchange the live path with the staged checkout
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py exchange
+              --active-revision {{ deployment_tools_expected_revision }}
+              --staged-revision {{ deployment_tools_revision }}
+              --path-revision {{ deployment_tools_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+          register: deployment_tools_exchange
+        - name: Install isolated dependencies at the fixed active path
+          ansible.builtin.pip:
+            requirements: /opt/mpdrussoundpi-deploy/ansible/requirements-deployment.txt
+            virtualenv: /opt/mpdrussoundpi-deploy/.venv
+            virtualenv_command: /usr/bin/python3 -m venv
+        - name: Verify the upgraded tooling environment
+          ansible.builtin.command:
+            argv:
+              - /opt/mpdrussoundpi-deploy/.venv/bin/python
+              - -m
+              - pip
+              - check
+          changed_when: false
+        - name: Verify the reviewed deployment operator starts and exposes help
+          ansible.builtin.command:
+            argv:
+              - /opt/mpdrussoundpi-deploy/.venv/bin/python
+              - -m
+              - tool.deployment_operator
+              - --help
+            chdir: /opt/mpdrussoundpi-deploy
+          changed_when: false
+        - name: Verify the state reader under the tooling reservation
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py verify
+              --active-revision {{ deployment_tools_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+          changed_when: false
+        - name: Release the tooling reservation after verification
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py release
+              --active-revision {{ deployment_tools_revision }}
+              --staged-revision {{ deployment_tools_expected_revision }}
+              --path-revision {{ deployment_tools_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+      rescue:
+        - name: Restore the original checkout or release an unused reservation
+          ansible.builtin.script:
+            cmd: >-
+              {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py reconcile
+              --old-revision {{ deployment_tools_expected_revision }}
+              --new-revision {{ deployment_tools_revision }}
+              --operation {{ deployment_tools_operation }}
+            executable: /usr/bin/python3
+        - name: Report that the tooling upgrade did not complete
+          ansible.builtin.fail:
+            msg: >-
+              Tooling upgrade failed. The original checkout was retained or restored;
+              inspect the unique upgrade path and deployment state before retrying.

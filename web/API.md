@@ -460,15 +460,28 @@ Returns the editable zone-configuration payload used by the configuration page.
   `configured` is false while application configuration is missing/invalid;
   otherwise it describes a resolvable endpoint, **not connectivity**.
   Saved configurations without an endpoint retain the loopback TCP default.
+- The configuration page displays the effective backend mode, host and port
+  in their single corresponding fields. Environment and default sources have
+  inline badges; config-file badges are hidden. A paragraph below the fields
+  provides their accessible explanation. Environment-controlled values are
+  read-only; the unoverridden TCP field remains editable when the saved
+  endpoint is TCP.
+  Saving other fields does not copy an environment value into the saved config.
+  If an environment override forces TCP over a saved serial endpoint, the
+  serial endpoint is preserved and the effective TCP controls remain read-only.
+  An incomplete saved TCP endpoint is inactive; the editor displays runtime
+  defaults and retains that endpoint on unrelated saves. Changing the poll
+  interval requires completing the saved endpoint first.
+- CLI options do not override the backend endpoint fields. `--config` selects
+  which config file is loaded; it does not supply a backend host or port.
+  Other file-only editor settings keep their existing presentation. The
+  legacy `backend_overrides` response field remains for API compatibility;
+  the editor uses `effective_backend` as the source of truth.
 - Host and port overrides are independent. Either selects TCP over a saved
   serial device; a port-only serial override uses default host `127.0.0.1`.
   Blank/whitespace overrides are unset. Malformed or out-of-range nonblank
   ports now fail startup explicitly instead of being logged and ignored.
   TCP ports must contain 1-5 decimal ASCII digits and be in `1..65535`.
-- The editor still edits **saved** settings and shows an effective runtime
-  summary; reading/saving does not persist environment values or erase a saved
-  serial endpoint. Full inline read-only effective fields remain a separate
-  [UI idea](../docs/plans/web_idea_effective-config-overrides.md).
 - Read `/api/config/state.backend_status` for recorded backend connectivity independently of configuration validity.
 
 Response shape:

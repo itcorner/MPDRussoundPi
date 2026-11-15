@@ -249,6 +249,55 @@ class PlaybackAgentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.observer.start()
 
+    def test_audio_refresh_precedes_unchanged_freshness_deadline(self):
+        with patch.object(agent.time, "monotonic", return_value=100):
+            self.observer.tick()
+        self.assertEqual(agent.AUDIO_REFRESH_INTERVAL_SECONDS, 20)
+        self.assertEqual(self.observer._audio_due, 120)
+        first = replace(self.collector.outputs[0], readiness=status.Probe(
+            "ok", "fixture", status.TimedValue("fixture", 100.4, status.Readiness())))
+        self.collector.outputs = (first,)
+        self.collector.refresh.reset_mock()
+        with patch.object(agent.time, "monotonic", return_value=119.9):
+            self.observer.tick()
+        self.assertFalse(any(call.kwargs.get("audio") for call in self.collector.refresh.call_args_list))
+        with patch.object(agent.time, "monotonic", return_value=120.1):
+            self.observer.tick()
+        self.collector.refresh.assert_any_call(audio=True, playback=False)
+        self.assertAlmostEqual(self.observer._audio_due, 140.1)
+        self.assertFalse(self.observer.snapshot().outputs[0].to_dict(122)["audio"]["readiness"]["stale"])
+
+        refreshed = replace(first, readiness=status.Probe(
+            "ok", "fixture", status.TimedValue("fixture", 122, status.Readiness())))
+        self.collector.outputs = (refreshed,)
+        with patch.object(agent.time, "monotonic", return_value=122.1):
+            self.observer.tick()
+        report = self.observer.snapshot().outputs[0].to_dict(130.5)["audio"]["readiness"]
+        self.assertTrue(report["value"]["ready"])
+        self.assertFalse(report["stale"])
+
+    def test_scheduled_audio_refresh_does_not_extend_old_observation_freshness(self):
+        with patch.object(agent.time, "monotonic", return_value=100):
+            self.observer.tick()
+        self.collector.outputs = (replace(self.collector.outputs[0], readiness=status.Probe(
+            "ok", "fixture", status.TimedValue("fixture", 100, status.Readiness()))),)
+        with patch.object(agent.time, "monotonic", return_value=120):
+            self.observer.tick()
+        published = self.observer.snapshot().outputs[0]
+        self.assertFalse(published.to_dict(129.999)["audio"]["readiness"]["stale"])
+        self.assertTrue(published.to_dict(130)["audio"]["readiness"]["stale"])
+        self.assertTrue(published.to_dict(131)["audio"]["readiness"]["value"]["ready"])
+
+        self.collector.outputs = (replace(published, readiness=status.Probe(
+            "error", "fixture", last_known=published.readiness.current,
+            error=status.ObservationError("audio_unavailable", "Audio inspection failed."))),)
+        with patch.object(agent.time, "monotonic", return_value=131):
+            self.observer.tick()
+        failed = self.observer.snapshot().outputs[0].to_dict(131)["audio"]["readiness"]
+        self.assertTrue(failed["stale"])
+        self.assertEqual(failed["status"], "error")
+        self.assertIsNone(failed["value"])
+
     def test_unexpected_scheduler_failure_is_explicit_and_sanitized(self):
         with patch.object(self.observer, "tick", side_effect=TypeError("private")):
             with self.assertLogs(level="ERROR") as logs:

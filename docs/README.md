@@ -55,7 +55,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Hardware-driven playback automation](./plans/general_new_hardware-playback-automation.md) | Lower priority; former S10 and automation-specific acceptance, not implemented |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
 | [Deployment and runtime configuration overview](./plans/general_idea_deployment-status-overview.md) | Idea, not scheduled; scope and disclosure decisions needed |
-| [Effective configuration and environment overrides](./plans/web_idea_effective-config-overrides.md) | Idea, not scheduled; precedence and save semantics need design |
+| [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
 | [Simplify deployment and configuration](./plans/general_open_simplify-deployment-configuration.md) | Open; initial inventory started, deployment contract and staged implementation pending |
 | [Guided first-time setup](./plans/general_idea_guided-first-time-setup.md) | Idea, not scheduled; setup and example-data migration need design |

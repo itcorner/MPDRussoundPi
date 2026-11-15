@@ -40,7 +40,7 @@ selecting a persistence design.
   changes: endpoint/mode, removed zones or bindings, shortcuts affected,
   reconnection and potential loss of control. Preserve overridden saved values
   and explicitly distinguish effective vs. saved values using
-  [inline override metadata](./web_idea_effective-config-overrides.md).
+  [inline override metadata](./web_done_effective-config-overrides.md).
 - Design crash-safe, recoverable coordination of config and state writes,
   including partial failures and restarts. A pair of atomic renames alone is
   not an atomic transaction. Consider a journal or recovery protocol only
