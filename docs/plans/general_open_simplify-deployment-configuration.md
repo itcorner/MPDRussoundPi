@@ -160,7 +160,7 @@ hardware-free dummy layouts without mistaking the dummy for a physical gateway.
   CLI flags, Compose interpolation, Ansible variables, systemd units and
   agent/audio configuration. Some are deployment inputs or secret references,
   not interchangeable application settings. The
-  [effective-configuration idea](./web_idea_effective-config-overrides.md)
+  [effective-configuration idea](./web_done_effective-config-overrides.md)
   documents verified examples and depends on accurate source/precedence data.
 - `RUSSOUND_DEBUG` / `--debug` now control diagnostic logging while Waitress
   serves HTTP in both modes. Flask's development server and debugger are not
@@ -209,7 +209,7 @@ The [containerization plan](./mpd_new_agent-containerization.md) is separate.
 | Settings / owner | Current sources and examples | Inventory still needed |
 |---|---|---|
 | Web listener, paths and server | [Server CLI/environment](../../web/russound_server.py): explicit `--host`, `--port`, `--config`, `--state` override their environment defaults; Compose passes container paths and listener values; native systemd passes CLI options. | Enumerate all server options, defaults, invalid/empty handling and restart effects; include debug/server choice and Waitress options. |
-| Web backend and persisted UI config/state | [Endpoint resolver](../../web/config_types.py) and saved web config; nonempty host and valid port overrides can select TCP, including from serial. Invalid ports are currently logged and ignored; the [effective-config idea](./web_idea_effective-config-overrides.md) records a reporting mismatch. | Map every editor/API field, fallback, path, save behavior, consumer and compatibility requirement. Do not apply a blanket precedence claim. |
+| Web backend and persisted UI config/state | [Endpoint resolver](../../web/config_types.py) and saved web config; nonempty host and valid port overrides can select TCP, including from serial. This initial inventory predates the S3 validation changes recorded in the [effective-config plan](./web_done_effective-config-overrides.md). | Map every editor/API field, fallback, path, save behavior, consumer and compatibility requirement. Do not apply a blanket precedence claim. |
 | Agent connections and security | `RUSSOUND_PLAYBACK_AGENTS` supplies a JSON list; Compose mounts token/certificate files separately. Web host/origin and trusted-proxy settings are process environment. | Record validation, defaults, file ownership, non-secret provenance, restart/recreate requirements and which deployments pass each variable. |
 | Serial gateway | [Gateway entrypoint](../../docker/entrypoint-ser2net.sh) reads device, options, bind, port and optional connector from environment; native ser2net uses its configuration file. Compose supplies a subset plus host device/GID. | Map direct-entrypoint and Compose inputs separately, port exposure, ownership, validation and external-gateway behavior. |
 | Playback and audio | [Admin config and runtime state](../documentation/mpd-headless-deployment.md): output hardware, station seeds and watchdog settings in config; favorites, intentions, selections and gain in state. Agent CLI and generated systemd units add identity, token path, listener and operations switches. | Inventory every schema field and CLI flag, defaults, validators, XDG paths, systemd environment, generated MPD/PipeWire files and their readers/writers. |
@@ -783,7 +783,7 @@ finding remain open even if a related symptom has been fixed.
    the latest development pair does not make production deployment available.
 5. **F5 — reporting can disagree with resolution.** The configuration API
    lists nonblank invalid backend port overrides even when the resolver ignores
-   them; see the [effective-config idea](./web_idea_effective-config-overrides.md).
+   them; see the [effective-config idea](./web_done_effective-config-overrides.md).
 6. **F6 — the example turns on protocol audit.** Runtime omission disables
    audit logging, but the Docker play seeds
    [`web/config_example.json`](../../web/config_example.json), which includes
@@ -2310,7 +2310,7 @@ claiming a different effective value. Decide compatibility for existing
 variables and CLI invocations before changing behavior. Expose provenance to
 the configuration and deployment-status ideas without leaking secrets.
 Decide the target policy first, then share one effective-value/source contract
-with [inline overrides](./web_idea_effective-config-overrides.md) and the
+with [inline overrides](./web_done_effective-config-overrides.md) and the
 [deployment overview](./general_idea_deployment-status-overview.md); do not
 let those interfaces independently define precedence.
 
@@ -3317,7 +3317,7 @@ or the remaining S4/S5 deployment gates.
   saved settings. Offline saves preserve saved serial settings, and removing
   overrides restores their runtime selection. No secret/device path is
   included in the new metadata. Full inline read-only UI remains the separate
-  [effective-config idea](./web_idea_effective-config-overrides.md).
+  [effective-config idea](./web_done_effective-config-overrides.md).
 - **Credentials:** web and agent share a bounded file parser and validator,
   including exact 32/4096-byte boundaries, printable ASCII and the single
   optional LF/CRLF policy. Native CLI rejects invalid identity/token before

@@ -34,28 +34,37 @@
           <span id="backendSummaryStatus" class="backend-summary-status" data-state="unknown" role="status">Not checked yet</span>
         </summary>
         <div class="collapsible-body">
-        <p id="backendConnectionStatus" class="config-hint" role="status">Not checked yet</p>
-        <p id="backendOverrides" class="config-hint" hidden></p>
+        <p id="backendConnectionStatus" class="config-hint" role="status" hidden>Not checked yet</p>
         <div class="setup-fields">
-          <label class="field config-name-field">Connection
-            <select id="backendMode"><option value="tcp">TCP gateway</option><option value="serial">Serial device</option></select>
+          <label class="field config-name-field">
+            <span class="config-field-heading">Connection <span id="backendModeSource" class="config-source-badge" hidden></span></span>
+            <select id="backendMode" aria-describedby="backendSourceExplanation"><option value="tcp">TCP gateway</option><option value="serial">Serial device</option></select>
           </label>
-          <label id="backendHostField" class="field config-name-field">Gateway host
-            <input id="backendHost" type="text" autocomplete="off" placeholder="192.168.1.100" />
+          <label id="backendHostField" class="field config-name-field">
+            <span class="config-field-heading">Gateway host <span id="backendHostSource" class="config-source-badge" hidden></span></span>
+            <input id="backendHost" type="text" autocomplete="off" placeholder="192.168.1.100" aria-describedby="backendSourceExplanation" />
           </label>
-          <label id="backendPortField" class="field config-name-field">TCP port
-            <input id="backendPort" type="number" min="1" max="65535" value="6666" />
+          <label id="backendPortField" class="field config-name-field">
+            <span class="config-field-heading">TCP port <span id="backendPortSource" class="config-source-badge" hidden></span></span>
+            <input id="backendPort" type="number" min="1" max="65535" value="6666" aria-describedby="backendSourceExplanation" />
           </label>
-          <label id="backendDeviceField" class="field config-name-field" hidden>Serial device
+          <label id="backendDeviceField" class="field config-name-field" hidden>
+            <span class="config-field-heading">Serial device</span>
             <input id="backendDevice" type="text" placeholder="/dev/ttyUSB0" />
           </label>
-          <label id="backendBaudField" class="field config-name-field" hidden>Baud rate
+          <label id="backendBaudField" class="field config-name-field" hidden>
+            <span class="config-field-heading">Baud rate</span>
             <input id="backendBaud" type="number" min="1" max="4000000" value="19200" />
           </label>
-          <label class="field config-name-field">Poll interval (seconds)
+          <label class="field config-name-field">
+            <span class="config-field-heading">Poll interval (seconds)</span>
             <input id="backendPollInterval" type="number" min="1" step="any" value="2" />
           </label>
         </div>
+        <p id="backendSourceExplanation" class="config-source-explanation">
+          Source badges show where each value comes from. Environment overrides take precedence over saved configuration; change them in the deployment environment and restart the service. Config file and default values can be edited here and saved.
+          <span id="backendSourceDetail"></span>
+        </p>
         </div>
       </details>
 

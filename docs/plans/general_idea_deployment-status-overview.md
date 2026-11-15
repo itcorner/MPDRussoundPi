@@ -92,7 +92,7 @@ browser-to-agent access, or disable TLS verification merely for this feature.
 The existing agent contract excludes MPD ports and private paths; do not expose
 them until an explicit, compatible disclosure and authorization decision is
 made. Share effective configuration metadata with
-[inline overrides](./web_idea_effective-config-overrides.md), and share image
+[inline overrides](./web_done_effective-config-overrides.md), and share image
 identity and release-channel information with
 [update status](./general_idea_update-status-and-restarts.md).
 The complementary [guided diagnostics](./general_idea_guided-diagnostics.md)

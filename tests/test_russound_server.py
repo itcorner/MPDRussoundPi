@@ -24,6 +24,32 @@ def _close_server(server: RussoundHTTPServer) -> None:
 
 
 class RussoundServerTests(unittest.TestCase):
+    def test_save_without_backend_preserves_inactive_partial_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            config_path = Path(directory) / "config.json"
+            saved_backend = {"host": "inactive.gateway", "poll_interval_seconds": 2}
+            config_path.write_text(json.dumps({
+                "backend": saved_backend,
+                "controllers": [{"id": 1, "zone_count": 6}],
+                "zones": [], "inputs": [], "shortcuts": [],
+            }))
+            server = RussoundHTTPServer(config_path, Path(directory) / "state.json")
+            try:
+                client = server.app.test_client()
+                editor = client.get("/api/config").json
+                self.assertEqual(editor["effective_backend"]["host"]["value"], "127.0.0.1")
+                with patch("web.russound_controller.RussoundBackend.connect",
+                           side_effect=AssertionError("Save must not contact hardware")):
+                    response = client.post("/api/config", json={
+                        "controllers": editor["config"]["controllers"],
+                        "zone_slots": editor["zone_slots"], "source_slots": editor["source_slots"],
+                    })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(json.loads(config_path.read_text())["backend"], saved_backend)
+                self.assertEqual(response.json["effective_backend"]["host"]["value"], "127.0.0.1")
+            finally:
+                _close_server(server)
+
     def test_effective_endpoint_metadata_preserves_saved_serial_configuration(self):
         for overrides in ({"RUSSOUND_BACKEND_HOST": "gateway.local"},
                           {"RUSSOUND_BACKEND_PORT": "7000"}):
