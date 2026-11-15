@@ -11,6 +11,8 @@ import uuid
 
 import yaml
 
+from tool.deployment_build import image_identity, verify_bundle
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER = shutil.which("docker")
@@ -25,11 +27,21 @@ class ContainerRuntimeTests(unittest.TestCase):
         context = json.loads(subprocess.check_output([DOCKER, "context", "inspect"], text=True))[0]
         self.assertTrue(context["Endpoints"]["docker"]["Host"].startswith(("unix://", "npipe://")),
                         "A remote Docker endpoint must not be used")
-        web_ref = os.environ["RUSSOUND_TEST_WEB_IMAGE"]
-        dummy_ref = os.environ["RUSSOUND_TEST_DUMMY_IMAGE"]
+        local_bundle = os.environ.get("RUSSOUND_TEST_LOCAL_BUNDLE")
+        local = verify_bundle(
+            Path(local_bundle), os.environ["RUSSOUND_TEST_LOCAL_MANIFEST_SHA256"],
+            "dummy", "linux/arm64",
+        ) if local_bundle else None
+        web_ref = local["images"]["web"]["reference"] if local else os.environ["RUSSOUND_TEST_WEB_IMAGE"]
+        dummy_ref = local["images"]["dummy"]["reference"] if local else os.environ["RUSSOUND_TEST_DUMMY_IMAGE"]
         web = json.loads(subprocess.check_output([DOCKER, "image", "inspect", web_ref], text=True))[0]
         dummy = json.loads(subprocess.check_output([DOCKER, "image", "inspect", dummy_ref], text=True))[0]
-        self.assertIn("@sha256:", web_ref, "Select a cached published web digest, not a mutable tag")
+        if local is not None:
+            for name, metadata in (("web", web), ("dummy", dummy)):
+                image_identity(metadata, local["images"][name]["reference"],
+                               local["platform"], local["revision"])
+        else:
+            self.assertIn("@sha256:", web_ref, "Select a cached published web digest, not a mutable tag")
         self.assertEqual((web["Os"], web["Architecture"]), (dummy["Os"], dummy["Architecture"]))
         project = "russound-test-" + uuid.uuid4().hex[:12]
         with tempfile.TemporaryDirectory(prefix="russound-container-") as directory:
@@ -93,7 +105,16 @@ class ContainerRuntimeTests(unittest.TestCase):
                 self.fail(f"Dummy controller did not become ready: {last_result}")
 
             try:
+                # Start web alone so its initial hardware poll fails without an SSE client.
+                run(stack + ["up", "-d", "--no-build", "--pull", "never", "--no-deps",
+                             "--wait", "--wait-timeout", "60", "russound-web"])
+                web_id = run(stack + ["ps", "-q", "russound-web"])
+                initial = json.loads(run([DOCKER, "exec", web_id, "python", "-c",
+                                          "import urllib.request; print(urllib.request.urlopen("
+                                          "'http://127.0.0.1:8000/api/rooms', timeout=3).read().decode())"]))
+                self.assertFalse(initial["backend_status"]["connected"])
                 run(stack + ["up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "60"])
+                self.assertEqual(run(stack + ["ps", "-q", "russound-web"]), web_id)
                 self.assertFalse(wait_for_controller().get("config_required", True))
                 address = run(stack + ["port", "russound-web", "8000"])
                 with build_opener(ProxyHandler({})).open(f"http://{address}/api/rooms", timeout=5) as response:

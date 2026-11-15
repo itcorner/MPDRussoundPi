@@ -568,6 +568,8 @@ class RussoundServerTests(unittest.TestCase):
             with patch("web.russound_server.time.monotonic", return_value=200.0):
                 server._ensure_update_listener()
             self.assertEqual(backend.connect.call_count, 2)
+            self.assertTrue(server._full_poll_requested.is_set())
+            self.assertTrue(server._zone_refresh_requested.is_set())
         finally:
             _close_server(server)
 
@@ -1216,6 +1218,147 @@ class RussoundServerTests(unittest.TestCase):
         self.assertEqual(basic_config.call_args.kwargs["stream"], sys.stdout)
         self.assertGreater(get_logger.call_count, 1)
         self.assertIn(unittest.mock.call(logging.DEBUG), get_logger.return_value.setLevel.call_args_list)
+
+
+class UnattendedBackendRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        config_path = directory / "config.json"
+        config_path.write_text(json.dumps({
+            "backend": {"host": "gateway", "port": 6666},
+            "controllers": [{"id": 1, "zone_count": 6}],
+            "zones": [{"name": "Living Room", "controller": 1, "zone": 1}],
+            "inputs": [{"id": 1, "name": "Radio"}],
+        }))
+        self.server = RussoundHTTPServer(config_path, directory / "state.json")
+        self.addCleanup(self.server.server_close)
+        self.server._backend_poll_interval_seconds = 10.0
+        self.backend = Mock()
+        self.server._event_backend = self.backend
+        self.server.controller.set_shared_backend(self.backend)
+
+    def run_watcher(self, *, transport_ready=lambda now: True,
+                    hardware_ready=lambda now: True, duration=35.0):
+        clock = [0.0]
+        polls = []
+        waits = []
+        client = Mock()
+        client.is_connected.side_effect = lambda: transport_ready(clock[0])
+        self.backend.client = client if transport_ready(0.0) else None
+        self.backend.is_connected.side_effect = lambda: self.backend.client is not None
+
+        def connect():
+            connected = transport_ready(clock[0])
+            self.backend.client = client if connected else None
+            return connected
+
+        def read_zone(zone, inputs):
+            polls.append(clock[0])
+            if transport_ready(clock[0]) and hardware_ready(clock[0]):
+                return {"power": False, "source": 1, "volume": 20}
+            return None
+
+        def wait(timeout):
+            waits.append(timeout)
+            if self.server._zone_refresh_requested.is_set():
+                return True
+            clock[0] += timeout
+            if clock[0] >= duration:
+                self.server._shutdown_requested.set()
+            return False
+
+        self.backend.connect.side_effect = connect
+        self.backend.read_zone.side_effect = read_zone
+        with patch("web.russound_server.time.monotonic", side_effect=lambda: clock[0]), patch.object(
+            self.server._zone_refresh_requested, "wait", side_effect=wait
+        ):
+            self.server._backend_change_watcher_loop()
+        # Inspect the normal cached API snapshot, without issuing hardware reads.
+        payload = self.server._read_state_payload()
+        return polls, waits, payload["backend_status"]
+
+    def test_failed_startup_recovers_without_event_clients(self):
+        polls, waits, health = self.run_watcher(transport_ready=lambda now: now >= 10.0)
+        self.assertEqual(polls, [0.0, 10.0])
+        self.assertEqual(health, {"connected": True, "message": ""})
+        self.assertFalse(self.server._has_active_event_clients())
+        self.assertTrue(all(0 <= timeout <= 5 for timeout in waits))
+
+    def test_silent_controller_recovers_without_socket_reconnect_or_clients(self):
+        polls, _, health = self.run_watcher(hardware_ready=lambda now: now >= 20.0)
+        self.assertEqual(polls, [0.0, 10.0, 20.0])
+        self.assertEqual(health, {"connected": True, "message": ""})
+        self.assertIsNotNone(self.backend.client)
+
+    def test_persistent_silence_retries_only_at_poll_cadence(self):
+        polls, _, health = self.run_watcher(hardware_ready=lambda now: False)
+        self.assertEqual(polls, [0.0, 10.0, 20.0, 30.0])
+        self.assertEqual(health, {
+            "connected": False,
+            "message": "The Russound gateway is reachable, but the hardware is not responding.",
+        })
+
+    def test_persistent_transport_failure_remains_explicitly_unhealthy(self):
+        polls, _, health = self.run_watcher(transport_ready=lambda now: False)
+        self.assertEqual(polls, [0.0, 10.0, 20.0, 30.0])
+        self.assertEqual(health, {
+            "connected": False,
+            "message": "Communication with Russound hardware is currently unavailable.",
+        })
+
+    def test_healthy_headless_backend_stops_full_polling(self):
+        polls, _, health = self.run_watcher()
+        self.assertEqual(polls, [0.0])
+        self.assertEqual(health, {"connected": True, "message": ""})
+
+    def test_active_event_client_keeps_regular_polling(self):
+        self.server.register_event_client("127.0.0.1", "test")
+        polls, _, health = self.run_watcher()
+        self.assertEqual(polls, [0.0, 10.0, 20.0, 30.0])
+        self.assertEqual(health, {"connected": True, "message": ""})
+
+    def test_reconnect_rechecks_previously_successful_health_without_clients(self):
+        self.server.controller.set_backend_health_snapshot({"connected": True, "message": ""})
+        polls, _, health = self.run_watcher(
+            transport_ready=lambda now: now < 5.0 or now >= 20.0,
+            hardware_ready=lambda now: now >= 30.0,
+            duration=45.0,
+        )
+        self.assertEqual(polls, [20.0, 30.0])
+        self.assertEqual(health, {"connected": True, "message": ""})
+
+    def test_explicit_full_poll_is_honored_without_event_clients(self):
+        self.server.controller.set_backend_health_snapshot({"connected": True, "message": ""})
+        self.server._full_poll_requested.set()
+        self.server._zone_refresh_requested.set()
+        polls, _, health = self.run_watcher(hardware_ready=lambda now: now >= 10.0)
+        self.assertEqual(polls, [0.0, 10.0])
+        self.assertEqual(health, {"connected": True, "message": ""})
+
+    def test_recovery_poll_rejects_stale_generation_or_configuration(self):
+        unhealthy = {"connected": False, "message": "Previous failed hardware poll"}
+        self.server.controller.set_backend_health_snapshot(unhealthy)
+        config_path = self.server.controller.config_path
+        assert isinstance(config_path, Path)
+        original_config = config_path.read_text()
+
+        for change in ("generation", "configuration"):
+            with self.subTest(change=change):
+                def read_zone(zone, inputs):
+                    if change == "generation":
+                        self.server._backend_generation += 1
+                    else:
+                        config = json.loads(original_config)
+                        config["backend"]["host"] = "replacement-gateway"
+                        config_path.write_text(json.dumps(config))
+                    return {"power": True, "source": 1, "volume": 30}
+
+                self.backend.read_zone.side_effect = read_zone
+                with patch.object(self.server.controller, "persist_state") as persist:
+                    self.assertFalse(self.server._sync_backend_state_if_changed())
+                    persist.assert_not_called()
+                self.assertEqual(self.server.controller.backend_health_snapshot(), unhealthy)
+                config_path.write_text(original_config)
 
 
 if __name__ == "__main__":
