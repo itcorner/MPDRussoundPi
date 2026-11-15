@@ -3719,6 +3719,39 @@ operator's current content. These checks verify software/controller routing
 and playback telemetry, not that sound was audibly confirmed in the room.
 Six-hour observation remains deferred and unstarted.
 
+### Six-hour endurance and audible acceptance (2026-11-15)
+
+The subsequent read-only S5 observer completed successfully from **01:53:41
+to 07:53:43 CET**, with **350 samples and zero failed samples** over
+21602 seconds. It checked container identity/health/restarts, native service
+stability, protected configuration, gateway TCP and authenticated agent TLS,
+and playback readiness/freshness/routes. Its persisted completion reported
+`passed: true`; both containers remained healthy with zero restarts at the
+10:14 CET follow-up, and native playback/audio services were active.
+Private evidence remains on the Pi under
+`~/.local/state/mpdrussoundpi-s5-6h-20261115T0154/`.
+No automatic remediation or playback changes were performed by the observer.
+
+The operator then performed guided listening checks in **Living Room**
+(controller 1, zone 1), operating playback, source selection and comfortable
+listening volume themselves. They confirmed the physical connections and
+reported the correct station, clear and uninterrupted audio on all three:
+
+| Pi output | Russound input | Operator result |
+|---|---|---|
+| `stereo_front` | 1 (Radio) | Passed; channels reported normal |
+| `stereo_centerlfe` | 2 (TV) | Passed; all good |
+| `stereo_rear` | 3 (Bluetooth) | Passed; all good |
+
+These are operator-reported audible results, not an automated acoustic
+measurement. Other rooms were not audibly tested. No saved input mapping was
+edited; these connections were confirmed for the test only. The assistant
+issued no playback, power, source or volume mutations.
+
+This closes the deferred six-hour and representative audible acceptance
+items, not the remaining S5 migration/recovery, support-boundary,
+documentation and legacy-retirement gates.
+
 ## Acceptance and verification
 
 - Render Compose configurations for dev Hub, dev local build and production;
