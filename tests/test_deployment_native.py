@@ -383,6 +383,27 @@ class NativeTransactionTests(unittest.TestCase):
         self.assertEqual(self.events, ["preflight"])
         self.assertFalse(self.running)
 
+    def test_backup_capacity_stays_reviewed_during_bounded_live_log_growth(self):
+        for compose in (None, Mock(backup_estimate=100_000_000)):
+            with self.subTest(compose=compose is not None):
+                target = self.prepare()
+                target.backup_estimate = 0
+                target.compose = compose
+                target.check_backup_space(1000)
+                reviewed = target.backup_estimate
+                target.check_backup_space(2000)
+                if compose is not None:
+                    compose.backup_estimate += 1000
+                    target.check_backup_space(2000)
+                self.assertEqual(target.backup_estimate, reviewed)
+                with self.assertRaisesRegex(source.NativeError, "outgrew"):
+                    target.check_backup_space(reviewed)
+                self.assertFalse(self.store.status()["blocked"])
+                self.assertFalse(self.running)
+                with patch.object(native.shutil, "disk_usage", return_value=Mock(free=0)):
+                    with self.assertRaisesRegex(source.NativeError, "adequate backup space"):
+                        target.check_backup_space(2000)
+
     def test_input_or_runtime_drift_after_review_does_not_stop_writers(self):
         target = self.prepare()
         def drift(review):

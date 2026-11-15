@@ -255,6 +255,7 @@ class NativeDeployment:
         self.compose: ComposeDeployment | None = None
         self.previous_native: dict[str, Any] | None = None
         self.baseline: dict[str, Any] | None = None
+        self.backup_estimate = 0
         if self.previous is not None:
             old = self.previous["selection"]
             if old["candidate"]["kind"] == NATIVE_CANDIDATE:
@@ -356,11 +357,9 @@ class NativeDeployment:
         if self.previous_native:
             size += sum(path.stat().st_size for path in
                         (RELEASES / self.previous_native["selection"]["release"]).rglob("*") if path.is_file())
-        self.backup_estimate = max(3 * size + 64 * 1024**2,
-                                   self.compose.backup_estimate if self.compose else 0)
-        if (shutil.disk_usage(self.storage["backups"]).free < 3 * self.backup_estimate
-                or Path(spec["data_dir"]).parent.stat().st_dev != self.storage["restores"].stat().st_dev):
-            raise NativeError("Native recovery needs adequate backup space and a same-filesystem data restore")
+        self.check_backup_space(size)
+        if Path(spec["data_dir"]).parent.stat().st_dev != self.storage["restores"].stat().st_dev:
+            raise NativeError("Native recovery needs a same-filesystem data restore")
         if RELEASES.stat().st_dev != self.storage["restores"].stat().st_dev:
             raise NativeError("Native releases and isolated restoration must share a filesystem")
         if RUNTIME.exists():
@@ -371,6 +370,17 @@ class NativeDeployment:
             if RUNTIME.stat().st_dev != self.storage["restores"].stat().st_dev:
                 raise NativeError("Native runtime and isolated restoration must share a filesystem")
         command(["systemd-analyze", "verify", *[str(self.asset / name) for name in self.files]])
+
+    def check_backup_space(self, size: int) -> None:
+        margin = 64 * 1024**2
+        required = max(3 * size, self.compose.backup_estimate - margin if self.compose else 0)
+        if not self.backup_estimate:
+            self.backup_estimate = required + margin
+        elif required > self.backup_estimate:
+            raise NativeError("Recovery contents outgrew the reviewed backup capacity")
+        # Keep the reviewed capacity stable while live logs grow within its margin.
+        if shutil.disk_usage(self.storage["backups"]).free < 3 * self.backup_estimate:
+            raise NativeError("Native recovery needs adequate backup space")
 
     def check_containers(self) -> None:
         if shutil.which("docker") is None:

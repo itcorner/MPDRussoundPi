@@ -1263,6 +1263,9 @@ interactive approval are required. The review identifies source/environment,
 origin, account, serial framing/device, listeners, playback identities and
 interruption. `--update` is required when replacing an existing committed
 selection, including Docker-to-native cutover. It does not approve the review.
+The reviewed backup capacity includes a 64 MiB margin for ordinary live log
+growth during approval. Repeated preflight checks retain that capacity, reject
+growth beyond it, and recheck available target space before stopping writers.
 
 After approval, the shared host-wide reservation blocks other native/Compose
 deployments and tooling switches. Only the selected old web/gateway writers
