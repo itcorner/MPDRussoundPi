@@ -160,7 +160,7 @@ hardware-free dummy layouts without mistaking the dummy for a physical gateway.
   CLI flags, Compose interpolation, Ansible variables, systemd units and
   agent/audio configuration. Some are deployment inputs or secret references,
   not interchangeable application settings. The
-  [effective-configuration idea](./web_done_effective-config-overrides.md)
+  [effective-configuration plan](./web_done_effective-config-overrides.md)
   documents verified examples and depends on accurate source/precedence data.
 - `RUSSOUND_DEBUG` / `--debug` now control diagnostic logging while Waitress
   serves HTTP in both modes. Flask's development server and debugger are not
@@ -783,7 +783,7 @@ finding remain open even if a related symptom has been fixed.
    the latest development pair does not make production deployment available.
 5. **F5 — reporting can disagree with resolution.** The configuration API
    lists nonblank invalid backend port overrides even when the resolver ignores
-   them; see the [effective-config idea](./web_done_effective-config-overrides.md).
+   them; see the [effective-config plan](./web_done_effective-config-overrides.md).
 6. **F6 — the example turns on protocol audit.** Runtime omission disables
    audit logging, but the Docker play seeds
    [`web/config_example.json`](../../web/config_example.json), which includes
@@ -3317,7 +3317,7 @@ or the remaining S4/S5 deployment gates.
   saved settings. Offline saves preserve saved serial settings, and removing
   overrides restores their runtime selection. No secret/device path is
   included in the new metadata. Full inline read-only UI remains the separate
-  [effective-config idea](./web_done_effective-config-overrides.md).
+  [effective-config plan](./web_done_effective-config-overrides.md).
 - **Credentials:** web and agent share a bounded file parser and validator,
   including exact 32/4096-byte boundaries, printable ASCII and the single
   optional LF/CRLF policy. Native CLI rejects invalid identity/token before
