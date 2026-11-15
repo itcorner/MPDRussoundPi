@@ -4033,3 +4033,146 @@ and recovery have been separately approved.
   confirm the published docs expose only supported paths, while documenting
   unsupported layouts and the exact boundary of any remaining compatibility
   support.
+
+### Blocking bugfix: unattended controller-health recovery
+
+**Status: CLOSED for controller-health recovery.** Native deployment acceptance
+remains open; the latest reboot exposed a separate audio-readiness blocker.
+Scoped bugfix commit: `060084d936ae31578512756d3907b7e11dab008f`.
+This is shared application behavior,
+not a native-only deployment defect: Docker, native and split-host layouts
+using this watcher can retain a failed startup health result without an event
+client. A read-only native reproduction established this failure; the other
+layouts have not independently reproduced this failure.
+
+This fix and its acceptance evidence are prerequisites for closing the
+deployment plan. They do not replace the remaining native update/recovery,
+reboot, approved one-hour observation and audible acceptance requirements.
+
+#### 1. Reproduce in focused regression tests
+
+- [x] Reproduce failed initial connection followed by gateway availability,
+  with no SSE/browser client throughout. Assert that a real successful
+  hardware-read result, not TCP connection alone, publishes connected health.
+- [x] Cover an established gateway socket with initially silent hardware
+  that later answers, without a socket reconnect or event subscription.
+- [x] Cover loss and reconnection after a previously successful poll, including
+  reconnection when the cached health still says connected.
+- [x] Cover persistent unavailability, healthy idle behavior, active SSE
+  behavior, shutdown and stale-generation/configuration result rejection.
+  Use deterministic synchronization/clock control rather than long sleeps.
+
+#### 2. Fix the shared polling/reconnect producer
+
+- [x] Retry unknown or failed controller health without requiring event
+  clients, using the existing bounded polling cadence and transport backoff.
+  Do not add a busy loop, parallel polling worker or per-request hardware I/O.
+- [x] Ensure a successful gateway reconnect schedules a full hardware poll
+  even when the previous cached health was successful. Preserve the existing
+  healthy-idle optimization outside recovery; continuous headless liveness
+  monitoring is not added by this fix.
+- [x] Keep TCP reachability separate from verified controller responsiveness.
+  An unavailable or silent controller must remain explicitly unhealthy until
+  a successful hardware response; do not clear failure into optimistic health.
+- [x] Preserve state-lock boundaries, generation guards, listener lifecycle,
+  shutdown responsiveness and normal event-driven refresh behavior.
+
+#### 3. Validate locally and package the fix
+
+- [x] Run the failing regressions first, then the related server, controller
+  and connector suites and affected deployment/runtime checks. Verify retry
+  counts/cadence and exact health payloads, not just worker invocation.
+- [x] Update directly related runtime/deployment documentation with the
+  verified behavior and recovery bound. No deployment-specific workaround or
+  service ordering change substitutes for fixing shared application recovery.
+- [x] Once approved for release, produce the sealed native candidate and
+  corresponding container artifacts from the same corrected application
+  revision through the existing reviewed workflows.
+
+#### 4. Live acceptance, separately authorized
+
+- [x] On the Pi, deploy through the reviewed transaction workflow and repeat
+  unattended reboot acceptance with no browser/SSE client open. Require
+  confirmed controller health within the existing 60-second runtime-check
+  window; retain timestamps, service restart counts and controller responses.
+- [x] Exercise delayed gateway availability and recovery from an established
+  but initially nonresponsive controller using controlled test doubles first.
+  Any live service interruption, hardware disruption or additional reboot
+  requires explicit operator approval.
+- [x] Check the corrected container deployment path and routing as well as
+  native behavior; reuse shared application regressions across layouts, but
+  record live results only for the layouts actually exercised.
+- [x] Return the other native acceptance items to the parent plan, preserving
+  their approval boundaries. The one-hour observation remains paused, not
+  replaced by a six-hour test or implied by this bugfix closure.
+
+**Bugfix exit gate:** regression coverage proves autonomous recovery without
+event clients and the corrected deployment passes unattended controller-recovery
+acceptance. The parent deployment plan separately requires its remaining gates
+to have their own evidence.
+A browser-triggered refresh, healthy TCP socket or running service alone is
+not sufficient. Planning this fix authorizes no live mutation, reboot,
+observation, commit or push.
+
+**Implementation and local evidence:** six of the first eight deterministic
+watcher tests failed on the original code; all passed after the scheduling fix.
+The expanded targeted suite ran 217 tests with one opt-in container test skipped
+and no failures. The separately enabled real-container acceptance then passed
+using an immutable, verified Linux ARM64 web/dummy bundle built from `060084d`:
+web started before the dummy gateway with failed controller health, recovered
+without event clients or web replacement after the gateway appeared, and
+passed existing rerun, forced recreation and external-gateway routing checks.
+Production Pylance diagnostics contained no errors or warnings; changed tests
+passed syntax validation.
+
+The operator approved the scoped commit (no push), native update, one further
+unattended reboot and local container acceptance, but not a timed observation.
+Trusted tooling was upgraded by guarded atomic exchange to `060084d`, retaining
+the old checkout. The actual native staging play produced sealed release
+`5b2507b4-f5b1-4d00-807d-6a7c50f76959` with seal
+`b43fc6ce57b33dc33dc46c9ab9ffaa70f5e720f3b98ae7b5439dbc600171699c`.
+Reviewed same-layout update `0eb36b79-8003-4acc-9507-30a9ee37bc53` was approved
+with protected audio/agent/proxy scope unchanged and the off-Pi backup guard
+retained. It completed with all four native runtime checks passed, protected
+configuration/service identities unchanged, Docker writers stopped and no SSE
+clients. All three authenticated playback output/route probes passed after
+the update.
+
+**Measured live controller-recovery acceptance:** the first newly approved
+reboot recovered controller communication without an event client, but the
+session helper then incorrectly queried system rather than user services.
+Read-only correction verified the actual user services; the original elapsed
+samples were not retained, so that run was not used to certify the 60-second
+threshold. The operator separately approved one additional reboot and a
+temporary Pi-local test-only systemd probe.
+
+That probe measured hardware health **10.958475815 seconds after native web
+service activation**, within the required 60 seconds, with zero event clients.
+It used Pi monotonic timestamps and persisted samples independently of laptop
+or SSH delays; its own tests reject success arriving after the deadline and
+reject an active event client. Boot changed from
+`4163d139-21cc-49fd-acb6-606fa6e09c81` to
+`50e8c04a-26ed-4299-9934-f4917e813761`. Web and gateway were active with zero
+restarts. The temporary probe unit was disabled and removed afterward; no
+additional reboot or observation was performed. The corrected application and
+trusted tooling remain at `060084d`; no registry publication or Git push occurred.
+
+**Separate native acceptance blocker, not a controller bugfix failure:** after
+the final reboot, playback API connectivity was healthy but all three outputs
+reported `hardware_profile_unavailable` readiness errors and pending route
+observations. The three MPD output services were retrying startup with restart
+counts of one; PipeWire, WirePlumber, playback agent and supervisor were active
+with zero restarts. Protected configuration, secrets and unit file hashes were
+unchanged, and Docker writers remained stopped. The overall native reboot/audio
+acceptance is therefore **not passed**. Do not start the one-hour observation
+until audio readiness is diagnosed and corrected with appropriate approval.
+No audio configuration, profile, playback setting or protected service was
+manually changed during this bugfix acceptance.
+
+The session-only observer's user/system manager selection was corrected
+locally and its five synthetic tests passed. Its previously installed,
+never-started Pi copy must be refreshed and verified before any future
+observation. Four additional Pi-local probe tests passed. Off-Pi backup,
+container build/runtime, transaction, boot and correction receipts remain
+private session evidence; the first inferred reboot receipt is explicitly
+superseded by its timing correction and the measured Pi-local receipt.

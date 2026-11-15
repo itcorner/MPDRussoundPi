@@ -19,6 +19,14 @@ clients again avoids periodic full polls; this is recovery, not continuous
 headless hardware-liveness monitoring. Normal read APIs remain cached and do
 not perform hardware I/O.
 
+Live acceptance of revision `060084d` verified delayed gateway recovery in a
+Linux ARM64 container with no event client and measured native physical
+controller readiness 10.96 seconds after web service activation on reboot.
+This closes controller-health recovery, not full native acceptance: that
+reboot separately exposed USB-audio profile readiness errors. See the
+[deployment plan](../../plans/general_open_simplify-deployment-configuration.md)
+for remaining audio, rollback and observation gates.
+
 When run on the main thread, the server handles SIGTERM and SIGINT, including
 as container PID 1. Shutdown rejects new requests, closes SSE streams, drains
 HTTP workers, stops the backend watcher and playback pollers, and releases the
