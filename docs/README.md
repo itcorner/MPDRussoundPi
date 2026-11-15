@@ -13,6 +13,7 @@ record deployment acceptance in the plan it belongs to.
 
 **Guides**
 
+- [Container deployment and recovery](./documentation/container-deployment.md), including [separate web and prepared backend hosts](./documentation/container-deployment.md#split-host-deployment-on-prepared-hosts).
 - [Docker image preparation and release](./documentation/docker-image-release.md): build-only artifacts, image boundaries and publication prerequisites.
 - [Development and release workflow](./documentation/development-workflow.md): branch roles, feature PRs, release promotion and hotfix back-merges.
 - [Playback deployment](./documentation/playback-agent-deployment.md): install or update the Pi playback stack and connect it to the web dashboard.
@@ -57,7 +58,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Deployment and runtime configuration overview](./plans/general_idea_deployment-status-overview.md) | Idea, not scheduled; scope and disclosure decisions needed |
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
-| [Simplify deployment and configuration](./plans/general_open_simplify-deployment-configuration.md) | Open; initial inventory started, deployment contract and staged implementation pending |
+| [Simplify deployment and configuration](./plans/general_open_simplify-deployment-configuration.md) | S0-S4 implementation gates closed; S5 documentation, supported-layout acceptance and legacy retirement remain |
 | [Guided first-time setup](./plans/general_idea_guided-first-time-setup.md) | Idea, not scheduled; setup and example-data migration need design |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_idea_safe-configuration-changes.md) | Idea, not scheduled; concurrency and save recovery need design |

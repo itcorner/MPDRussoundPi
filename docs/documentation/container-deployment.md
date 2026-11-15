@@ -3,8 +3,8 @@
 This is the authoritative guide for the new container layouts. Use them for
 **new, isolated development deployments** or the explicitly reviewed
 [operator workflow](#reviewed-development-deployment-and-recovery) below.
-That workflow supports prepared Linux web/external-gateway or web/managed-gateway
-layouts, verified local images or pinned Hub candidates, same-layout adoption,
+That workflow supports prepared Linux web/external-gateway, web/managed-gateway
+and standalone gateway layouts, verified local images or pinned Hub candidates, same-layout adoption,
 ordinary pinned reruns, explicit updates, off-host recovery and approved
 restoration. It does not silently migrate legacy layouts, native services,
 networks, credentials or application schemas. Existing Ansible preview plays
@@ -21,13 +21,15 @@ That trial is not a validated migration procedure.
 |---|---|---|
 | Development, external gateway | `compose.dev.yml` | Published web digest |
 | Development, managed USB gateway | `compose.dev.yml`, `compose.gateway.yml` | Matching published web/gateway digests |
+| Development, separate prepared backend host | `compose.backend.yml` on backend; `compose.dev.yml` on web host | Gateway-only and web-only pins; see [split-host deployment](#split-host-deployment-on-prepared-hosts) |
 | Development, no hardware | `compose.dev.yml`, `compose.dummy.yml` | Published web digest and explicitly built local dummy |
 | Development, explicit local-build preview | Same development files for the selected gateway | Verified controller-built image archives; no target transfer/load/apply |
 | Production | `compose.prod.yml`, optional `compose.gateway.yml` | Layout only; blocked until approved stable images and deployment tooling exist |
 
 Include **one gateway overlay at most**. External mode has no gateway service,
-device requirement or hidden dependency. The backend containers are internal
-to the project network: port 6666 is not published. Web defaults to host port
+device requirement or hidden dependency. The same-host gateway and dummy are internal
+to the project network: port 6666 is not published. Only the explicit standalone
+backend layout publishes its gateway on a reviewed host address/port. Web defaults to host port
 8000. Different projects have separate networks and generated container names;
 they must also have separate data directories and non-conflicting host ports.
 
@@ -451,11 +453,11 @@ and finalization. There is no `--yes`, unattended update or automatic rollback.
   numeric service owner/group. No rootless/userns daemon or remote Docker endpoint.
 - Preserve the current Compose project, mounts, network and private environment.
   Supply a **fully rendered, self-contained private Compose JSON** matching the
-  existing installation, with explicit platform and numeric `user`, web bind
-  host/port, and config/data/logs/secrets binds. Render it using the exact current
+  existing installation, with explicit platform and numeric `user`, the
+  selected listener and (for web) config/data/logs/secrets binds. Render it using the exact current
   file order, project, working directory and environment; protect it with mode
   `0600` and root ownership on the target. For a first install, explicitly prepare
-  these same inputs and valid application configuration; no sample rooms,
+  these same inputs and valid web application configuration when deploying web; no sample rooms,
   credentials, proxy trust or audio mapping are generated.
 - Only ordinary bridge/reused networks and the documented service fields are
   accepted. Custom commands, build instructions, privileged/shared namespaces,
@@ -478,7 +480,9 @@ ansible-playbook -i /path/to/target-inventory.yml \
   -e deployment_tools_revision=FULL_40_CHARACTER_REVIEWED_COMMIT
 ```
 
-The inventory must select `musicpi`. This play installs only the exact tooling
+Select exactly one target using a dedicated inventory or `--limit HOST`.
+Bootstrap, upgrade and restore accept arbitrary inventory host names and reject
+multi-host selections before connecting or modifying tooling. This play installs only the exact tooling
 checkout at `/opt/mpdrussoundpi-deploy`, its isolated dependency environment,
 and private control roots. It never deploys/restarts application services.
 An existing or partial tooling destination is rejected rather than overwritten.
@@ -498,6 +502,7 @@ entry point before releasing the reservation:
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
   ansible/playbooks/upgrade-deployment.yml \
+  --limit musicpi \
   -e deployment_tools_expected_revision=CURRENT_40_CHARACTER_COMMIT \
   -e deployment_tools_revision=REVIEWED_40_CHARACTER_COMMIT
 ```
@@ -517,6 +522,7 @@ use:
 ```sh
 ansible-playbook -i ansible/inventory.yaml \
   ansible/playbooks/restore-deployment-tools.yml \
+  --limit musicpi \
   -e deployment_tools_active_revision=ACTIVE_40_CHARACTER_COMMIT \
   -e deployment_tools_restore_revision=RETAINED_40_CHARACTER_COMMIT
 ```
@@ -566,6 +572,180 @@ and TLS trust-file loading are checked without disclosing their contents.
 The deployment does not change proxy CIDRs, credentials or native playback.
 `require_controller: false` is an explicit no-hardware acceptance choice, not
 proof that a physical controller works.
+
+### Split-host deployment on prepared hosts
+
+The supported development split is:
+
+- **Web host:** web container only, `gateway: "external"`, using the backend's
+  reachable gateway address/port and HTTPS playback-agent endpoint.
+- **Prepared backend host:** ser2net container only, `gateway: "standalone"`.
+  The existing native agent, TLS proxy, supervisor, MPD and PipeWire/WirePlumber
+  remain installed, configured and managed separately. This workflow never
+  stages, activates, upgrades, stops or removes them.
+
+This is **two independent reviewed host transactions**, not an atomic
+multi-host rollout. Ordinary reruns, explicit image updates, off-host backups
+and failed-operation recovery use the same operator as same-host deployments.
+The backend transaction verifies container health and its published TCP
+listener. The web transaction must require controller and playback acceptance
+to establish the actual web-to-controller and web-to-agent paths. A TCP listener
+alone does not prove a controller reply, audio readiness or audible output.
+
+For representative runtime acceptance, a Mac with existing Docker Desktop can
+run the web container against a prepared Pi backend without installing native
+services or additional system-wide tools. A manual Mac-web/Pi-backend trial
+verified real controller responses, authenticated CA-verified agent HTTPS,
+fresh audio readiness/routes and reconnection after test-container recreation;
+see the [acceptance record](../plans/general_open_simplify-deployment-configuration.md#real-mac-web--pi-backend-acceptance-2026-11-15).
+Keep the Mac UI localhost-only and its data/credentials isolated, and remove
+the test project and copied credentials afterward. This validates cross-host
+runtime behavior, **not** the Linux-only root/Docker deployment operator on
+macOS or the full automated two-target recovery workflow.
+
+#### Prerequisites and network boundary
+
+Both hosts need prepared data/control directories, a local Linux Docker daemon
+and the approved trusted tooling revision described above. Keep their specs,
+committed pins, operation evidence and backups distinct. The gateway data root
+still has private `config`, `data`, `logs` and `secrets` subdirectories for the
+common backup/recovery contract; they can be empty, are not mounted into
+ser2net, and do not need a web configuration. **Do not point this root at native
+playback data or credentials.** No web container is created on the backend.
+
+Prepare these networking requirements explicitly before deployment:
+
+- Give the backend a stable LAN address. Bind the standalone gateway to that
+  specific address, not `0.0.0.0`, `::` or loopback. IPv4 and IPv6 are supported.
+  Supply a free explicit host TCP port (typically 6666).
+- Restrict the gateway port to the web host's actual source address using the
+  network firewall or Docker-aware host filtering. **ser2net TCP has no TLS or
+  authentication**: use only a trusted, restricted LAN/VPN, never a public
+  listener or router port-forward. Publishing Docker ports can bypass ordinary
+  host firewall rules such as UFW; verify the effective Docker forwarding rules.
+  Listener binding is not a substitute for source filtering.
+- Allow the web host's actual source address at the existing playback TLS proxy
+  (normally the web host LAN address after Docker NAT, not its private bridge
+  CIDR). Keep native agent and MPD listeners loopback-only.
+- Prepare matching token and trusted CA files beneath the web host's private
+  secrets bind, using the existing credential procedure. Use an HTTPS URL whose
+  hostname/IP matches the certificate. Do not copy the proxy private key to the
+  web host or disable certificate verification.
+
+Firewall/proxy changes, credentials and native service installation are separate
+administrative operations, not hidden side effects of a container update.
+An unreachable gateway, bad token, certificate/name mismatch or unhealthy
+configured playback prevents final web acceptance and leaves the operation
+pending for inspection; it is not reported as a successful split deployment.
+
+#### Select and preview each host
+
+Resolve each host's exact candidate, allowing different supported architectures:
+
+```sh
+python -m tool.deployment_images resolve --gateway standalone \
+  --platform linux/arm64 --output /absolute/private/backend-candidate.json
+python -m tool.deployment_images resolve --gateway external \
+  --platform linux/amd64 --output /absolute/private/web-candidate.json
+```
+
+Review their `revision` values together; use the same source revision for the
+initial pair. A moving alias between resolutions can produce different
+revisions: stop and resolve/review again rather than silently mixing them.
+Standalone resolution pulls no images and inspects only the ser2net repository;
+web-only resolution inspects only web. A verified local bundle built with
+`tool.deployment_build --gateway standalone` likewise contains only ser2net.
+Local bundles are built/verified on the controller, never on a deployment target.
+
+The existing Ansible preview also supports `russound_gateway: standalone`.
+In the backend host's inventory variables set:
+
+```yaml
+russound_gateway: standalone
+russound_project: russound-backend
+russound_platform: linux/arm64
+russound_data_dir: /srv/russound-backend
+russound_publish_host: "192.168.1.105"
+russound_publish_port: 6666
+russound_serial_device: /dev/ttyUSB0
+russound_serial_gid: 20  # Replace with the actual device group.
+russound_image_selection_file: /absolute/private/backend-candidate.json
+```
+
+Run `ansible/playbooks/deploy-dev.yml` with that inventory and `--limit` selecting
+only the backend. Preview is controller-only; `russound_action=preflight`
+explicitly inspects first-install prerequisites on the target without deploying.
+Neither action starts services. Do not supply web images or playback-agent
+inputs in standalone mode. Explicit gateway digest rendering and verified
+local bundles are supported with the existing mutually exclusive image inputs.
+
+For a protected, fully rendered target baseline, use **only**
+`compose.backend.yml`, not `compose.dev.yml` plus an overlay. It extends the
+same gateway definition used by the same-host layout, adding only the explicit
+published TCP listener. Set `RUSSOUND_SER2NET_IMAGE` to the candidate's exact
+reference, `RUSSOUND_PLATFORM`, `RUSSOUND_UID`, `RUSSOUND_GID`,
+`RUSSOUND_SERIAL_DEVICE`, `RUSSOUND_SERIAL_GID` and optional
+`RUSSOUND_SERIAL_OPTIONS`, plus these required listener variables:
+
+```sh
+export RUSSOUND_GATEWAY_PUBLISH_HOST=192.168.1.105
+export RUSSOUND_GATEWAY_PUBLISH_PORT=6666
+docker compose --env-file /dev/null -p russound-backend \
+  -f compose.backend.yml config --format json > /absolute/private/backend-baseline.json
+chmod 600 /absolute/private/backend-baseline.json
+```
+
+Use the protected target-baseline preparation procedure above to install these
+reviewed bytes on the backend. `COMPOSE_DISABLE_ENV_FILE=1` and a clean, explicit
+interpolation environment prevent accidental ambient settings; the Ansible
+preview supplies that complete environment automatically.
+
+#### Deploy, verify and recover independently
+
+Use the documented specification schema with these backend values:
+`deployment` and `project` set to `russound-backend`, `gateway: "standalone"`,
+the backend's target baseline/data paths, actual UID/GID/device/group/platform
+and the exact published host/port. Set **both** `require_controller` and
+`require_playback` to `false`: those checks run on the web host, not a nonexistent
+backend web API. The target rejects either flag being enabled in standalone
+mode. Set `adopt` only for an explicitly reviewed existing **gateway-only**
+project whose generated configuration matches the supplied baseline.
+
+Deploy the backend first, then the web host, using separate evidence directories:
+
+```sh
+python -m tool.deployment_operator deploy \
+  --host BACKEND_HOST --user BACKEND_USER --known-hosts /absolute/private/known_hosts \
+  --spec /absolute/private/backend-spec.json --evidence /absolute/private/backend-evidence \
+  --selection /absolute/private/backend-candidate.json
+python -m tool.deployment_operator deploy \
+  --host WEB_HOST --user WEB_USER --known-hosts /absolute/private/known_hosts \
+  --spec /absolute/private/web-spec.json --evidence /absolute/private/web-evidence \
+  --selection /absolute/private/web-candidate.json
+```
+
+The web spec uses `gateway: "external"`, `require_controller: true` and
+`require_playback: true`. Its rendered `compose.dev.yml` must contain the
+remote `RUSSOUND_BACKEND_HOST`/`RUSSOUND_BACKEND_PORT` and
+`RUSSOUND_PLAYBACK_AGENTS` references described above. Docker service names
+such as `russound-ser2net` do not resolve across hosts.
+
+Each command requires its own live approval. Backend success returns required
+checks `containers` and `gateway`; web success returns the existing container,
+HTTP, backend and playback checks. Record operator-reported audible acceptance
+separately. For updates add `--update` and the explicitly reviewed candidate;
+for unchanged reruns omit the candidate as usual. Recover or resume a failed
+operation against **that same host**, deployment ID and its own verified backup.
+Do not roll back a healthy peer automatically after failure on the other host.
+Preserve the prepared native services and all peer evidence.
+
+**Not included:** splitting an existing combined web/gateway Compose project,
+moving data between hosts, changing its network/credentials in place, or
+activating native candidates. Those are layout/native migrations and remain
+blocked by the existing layout checks. In particular, the currently working
+combined Pi project cannot be converted merely by applying this backend spec.
+Use a separately prepared backend or obtain a separate migration design and
+maintenance approval before a physical split-host trial.
 
 ### Deploy, rerun and update
 

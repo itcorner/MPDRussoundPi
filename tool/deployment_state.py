@@ -463,10 +463,9 @@ class StateStore:
         The caller must durably retain the original record and recovery evidence.
         This is not an unlock API and is deliberately absent from the state CLI.
         """
-        expected = {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"}
         absent = {"containers-absent": "passed", "prepared-data-restored": "passed"}
         if (set(receipt) != {"operation", "review_digest", "required"}
-                or receipt["operation"] != operation or receipt["required"] not in (expected, absent)
+                or receipt["operation"] != operation
                 or not isinstance(receipt["review_digest"], str)
                 or not DIGEST.fullmatch(receipt["review_digest"])):
             raise StateError("Recovery requires matching approval and all independent runtime checks")
@@ -476,6 +475,13 @@ class StateStore:
                     record = self._record(directory, deployment)
                     if record["pending"] is None or record["pending"]["operation"] != operation:
                         raise StateError("Recovery does not own the original pending operation")
+                    selection = record["pending"]["candidate"]
+                    metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
+                    expected = ({"containers": "passed", "gateway": "passed"}
+                                if metadata["gateway"] == "standalone" else
+                                {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"})
+                    if receipt["required"] not in (expected, absent):
+                        raise StateError("Recovery requires matching approval and all independent runtime checks")
                     self._write(reservation, "finalizing.json", receipt)
                     record["pending"] = None
                     if record["committed"] is None:

@@ -203,8 +203,8 @@ class ToolingUpgradePlaybookTests(unittest.TestCase):
         restore_play = yaml.safe_load(
             (ROOT / "ansible/playbooks/restore-deployment-tools.yml").read_text()
         )[0]
-        self.assertEqual(upgrade_play["hosts"], "musicpi")
-        self.assertEqual(restore_play["hosts"], "musicpi")
+        self.assertEqual(upgrade_play["hosts"], "all")
+        self.assertEqual(restore_play["hosts"], "all")
         self.assertTrue(upgrade_play["any_errors_fatal"])
         upgrade_tasks = str(upgrade_play)
         restore_tasks = str(restore_play)

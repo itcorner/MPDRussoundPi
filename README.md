@@ -164,6 +164,7 @@ An offline hardware warning is separate from web service health.
 | --- | --- |
 | Run locally from source | Quick start above |
 | New development container, external/managed/dummy gateway | [Container deployment guide](docs/documentation/container-deployment.md) |
+| Separate web host and prepared hybrid gateway/audio host | [Split-host development deployment](docs/documentation/container-deployment.md#split-host-deployment-on-prepared-hosts) |
 | Select matching published dev images without pulling or deploying | [Image selection](docs/documentation/container-deployment.md#select-published-development-images) |
 | Preview the new development layout without changing a host | [Ansible preview](docs/documentation/container-deployment.md#ansible-preview) |
 | Inspect prerequisites for a new Linux target without deploying | [Explicit target preflight](docs/documentation/container-deployment.md#explicit-target-preflight) |

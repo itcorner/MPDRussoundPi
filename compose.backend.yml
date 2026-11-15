@@ -1,0 +1,10 @@
+services:
+  russound-ser2net:
+    extends:
+      file: compose.gateway.yml
+      service: russound-ser2net
+    ports:
+      - target: 6666
+        published: "${RUSSOUND_GATEWAY_PUBLISH_PORT:?Set the explicit gateway port}"
+        host_ip: "${RUSSOUND_GATEWAY_PUBLISH_HOST:?Set the explicit backend LAN address}"
+        protocol: tcp

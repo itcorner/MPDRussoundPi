@@ -1,7 +1,7 @@
 # Plan: simplify deployment and configuration
 
-Status: **open for implementation; S0–S2 closed as a baseline with documented
-limitations** (2026-11-13). The Waitress/debug change below is authorized
+Status: **open; S0–S4 implementation gates closed, S5 and final legacy retirement
+in progress** (2026-11-15). The Waitress/debug change below is authorized
 separately; this plan does not authorize deployment, service restarts, hardware
 tests, or changes to a live installation.
 
@@ -23,8 +23,10 @@ offline local-build Ansible preview are also implemented;
 see the [container guide](../documentation/container-deployment.md) for actual
 commands and boundaries. Reviewed automated apply, committed image pins and
 explicit recovery now exist for prepared same-layout Linux development deployments.
-Production/native intents, other layout migrations and live acceptance remain
-outstanding. Local candidate state and
+Standalone gateways on prepared hybrid backend hosts now share that reviewed
+workflow; the separate web host uses external-gateway mode. Production/native
+intents, layout migrations and remaining live acceptance are not closed.
+Local candidate state and
 reserved target-local image loading and reviewed SSH artifact handoff are
 implemented internally; human approval/input custody and full apply
 integration across controller and target are implemented by the new operator
@@ -3751,6 +3753,123 @@ issued no playback, power, source or volume mutations.
 This closes the deferred six-hour and representative audible acceptance
 items, not the remaining S5 migration/recovery, support-boundary,
 documentation and legacy-retirement gates.
+
+### Prepared split-host development scope (2026-11-15)
+
+The operator explicitly chose **split-host deployment only**, deferring
+same-host ↔ split-host migration. They further chose a **prepared native
+backend**: manage the standalone ser2net container while preserving the existing
+native agent, TLS proxy, supervisor, MPD and audio services. Fresh native
+provisioning/activation/update/recovery is not part of this iteration.
+
+`compose.backend.yml` reuses the existing gateway definition without bringing
+up web. Its published TCP listener requires an explicit backend address and
+port. The operator validates a specific non-loopback LAN listener, exact
+serial device/group and gateway-only service scope. Registry selection and
+local bundles contain only ser2net; Ansible preview/preflight supports the same
+mode without a hidden target build or web dependency.
+
+Both hosts reuse the existing independent reviewed deployment transactions:
+explicit approval, off-host verified backup, pinned images, unchanged reruns,
+explicit updates and failed-operation recovery. Backend acceptance checks the
+gateway container and published TCP route; controller and playback acceptance
+must be required by the external-gateway web deployment. No cross-host atomic
+commit or automatic peer rollback is implied. Credentials, TLS trust and
+Docker-aware firewall/proxy source allowlists must already be prepared.
+See the authoritative
+[split-host procedure](../documentation/container-deployment.md#split-host-deployment-on-prepared-hosts).
+
+This replaces the need for a legacy in-place Docker play for a prepared
+split-host deployment, not the native installation/activation paths. Legacy
+retirement still requires an explicit inventory and retained-entry-point tests.
+The current combined live Pi project is not migrated by this implementation.
+Physical separate-host deployment acceptance remains distinct from synthetic
+controller/TLS routing tests and the prior same-host Pi endurance/audio results.
+
+Local validation:
+
+- Deployment regression discovery: **230 tests run, 220 passed and 10
+  opt-in/platform-dependent skips**. Coverage includes gateway-only registry
+  and local bundles, strict device/listener/service scope, controller-only
+  Ansible previews and layout-specific recovery receipts. The recovery-state
+  boundary now rejects web-only or incomplete receipts for a standalone
+  gateway, and gateway-only receipts for a web deployment.
+- Five retained playbooks passed Ansible syntax checks: development preview,
+  local-build preview, tooling bootstrap, tooling upgrade and tooling restore.
+  Tooling plays now select arbitrary inventory names, with a tested
+  single-host guard before connection instead of a hard-coded `musicpi` target.
+- The explicitly enabled isolated Docker routing test passed on local ARM64.
+  Web and synthetic backend/agent peers used separate Docker networks and
+  published host ports, not shared Docker DNS. It verified controller replies,
+  authenticated CA-verified HTTPS, rejection of untrusted CA/mismatched
+  certificate hostname/missing authentication, unchanged rerun identity,
+  recovery of routing after web recreation, unchanged backend identities and
+  preserved configuration/token bytes. The cached web image ran current
+  mounted source; the controller and audio status were synthetic fixtures,
+  not serial hardware, real native MPD/audio, or an image-release certification.
+- That routing test is wired into the amd64/arm64 container CI matrix; those
+  new GitHub jobs have not yet run for these unpushed changes.
+- No live Pi service, configuration, credential, firewall, proxy or layout was
+  changed during those local tests. The subsequent real-host trial below
+  supplies separate runtime evidence; legacy retirement and the existing native
+  activation/cross-layout migration gates are not closed by either test.
+
+### Real Mac-web / Pi-backend acceptance (2026-11-15)
+
+The operator approved using the existing Mac Docker installation as the
+separate web host and explicitly allowed Pi service interruptions. No additional
+system-wide tools or packages were installed on the Mac or Pi.
+
+The successful bounded trial ran **13:55:53–13:57:37 CET**:
+
+- Stopped the original Pi web and gateway containers, preserving their IDs,
+  images, configuration and project. Native playback services remained active.
+  A temporary gateway-only project used the actual `compose.backend.yml`,
+  existing accepted ARM64 gateway image, USB serial adapter and device group.
+- Published the standalone gateway on the Pi LAN address, TCP 16666, with a
+  temporary Docker-aware rule admitting only the Mac's measured source address
+  in the original connection direction. A Pi-container source was rejected.
+  No SSH tunnel or cross-host Docker DNS was used.
+- Started web on the Mac with `compose.dev.yml`, an isolated copy of the
+  stopped-writer configuration/state and protected credential/CA files, and
+  environment overrides selecting the real Pi gateway and HTTPS agent.
+  The test UI was bound only to `127.0.0.1:18080`. It used the cached accepted
+  ARM64 web image; selected runtime/UI file hashes matched current source.
+- **Ten successful readiness samples** verified real controller communication
+  and authenticated playback health. All three native outputs had fresh,
+  successful audio readiness and correct routes through the Mac web API.
+  This was telemetry verification, not another operator listening test.
+- Unchanged web and gateway reruns preserved their respective container IDs.
+  Explicitly recreating each test container changed its ID and recovered the
+  real controller/playback routes. Native service PIDs/restart counts remained
+  unchanged. No playback, source, volume or power mutation was requested.
+- CA-verified authenticated HTTPS succeeded. Missing authentication was rejected
+  with HTTP 401; missing CA trust failed certificate validation. A wrong TLS
+  server name was rejected at the handshake by the existing Caddy endpoint.
+
+Earlier attempts did not pass: the first temporary firewall rule also filtered
+reply-direction traffic and prevented gateway communication; after correction,
+the negative TLS probe initially expected a certificate-validation exception
+where Caddy instead rejected the wrong SNI during the handshake. Both attempts
+restored the original healthy installation before retrying. Neither failure was
+hidden or counted as a pass; no application workaround was required.
+
+After the successful test, removed the Mac test containers/network and Pi
+standalone project, removed the temporary firewall rule, cancelled the
+Pi-side timed restoration guard and restarted the **original container IDs**.
+Both original containers were healthy; controller and playback checks passed.
+Pi protected web configuration/secret contents and metadata, plus native service
+identities, matched baseline. Temporary copied configuration/state/credentials
+and transfer archives were removed from the Mac; private non-secret result and
+restoration receipts remain in the session evidence.
+
+This closes the representative **real separate-host runtime/routing acceptance**
+for the prepared hybrid scope. It does **not** certify the Linux-root
+deployment operator on macOS, a fresh image build/release, automated cross-layout
+migration, or the full reviewed two-Linux-host apply/failure-recovery lifecycle.
+The trial used explicit manual Compose operations and restored the original
+same-host Pi arrangement. The previously completed six-hour/audio acceptance
+remains separate evidence, not a new split-host endurance claim.
 
 ## Acceptance and verification
 

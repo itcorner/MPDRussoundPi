@@ -389,7 +389,7 @@ def build(source: Path, revision: str, parent: Path, gateway: str, platform: str
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("build", "verify"))
-    parser.add_argument("--gateway", choices=("managed", "external", "dummy"), default="managed")
+    parser.add_argument("--gateway", choices=("managed", "external", "dummy", "standalone"), default="managed")
     parser.add_argument("--platform", choices=("linux/arm64", "linux/amd64"), default="linux/arm64")
     parser.add_argument("--source", type=Path)
     parser.add_argument("--revision")
