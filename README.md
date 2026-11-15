@@ -401,7 +401,9 @@ it is never an ordinary redeploy. The old in-place
 `deploy-russound-web.yml` installer now fails without changing services.
 Fresh audio provisioning, legacy-native adoption, external-native gateways,
 OS upgrades and schema migration are not supported by this workflow.
-Live native cutover/rollback acceptance remains pending.
+Prepared-Pi native cutover, unchanged rerun and Docker rollback passed live
+acceptance. Native reboot/endurance and fresh-machine provisioning are not
+certified; the trial Pi was returned to Docker at the operator's request.
 
 ## Deployment Notes
 

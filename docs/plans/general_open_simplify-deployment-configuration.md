@@ -3922,12 +3922,58 @@ systemd loads it, as well as lost off-host verification and post-start failure.
 Service/Docker control in these local lifecycle tests is simulated; these are
 not substitutes for a real Pi cutover/rollback rehearsal.
 
-Still required before declaring native support accepted: commit/install the
-reviewed native tooling; explicitly approve a real Docker-to-native trial;
-exercise physical controller and authenticated playback routing, unchanged
-rerun, deliberate return to the captured Docker baseline and protected
-native-service/config preservation; then decide the retained layout and any
-native reboot/endurance checks. S5 and final legacy retirement remain open.
+### Prepared native live cutover and Docker recovery acceptance (2026-11-15)
+
+The user subsequently authorized committing and testing on the Docker Pi.
+Native implementation was committed as `3e922d8`; exact committed source was
+transferred by verified Git bundle and installed through the guarded tooling
+exchange, retaining prior checkouts. The actual Ansible native staging play
+created sealed release `42d2e3a0-5c9c-4805-b04f-d35601924945` from that commit.
+No global packages or playback/audio/proxy services were changed.
+
+The first reviewed activation safely refused before reservation or interruption:
+ordinary log growth changed the backup-size estimate during approval. Two real
+preflights reproduced growth from 273256848 to 273257506 bytes with otherwise
+identical review scope. Commit `1c574bd` fixes this by retaining a reviewed
+capacity with the existing 64 MiB margin, rejecting excess growth and rechecking
+free space. Focused native tests passed **28 tests**; the full regression passed
+**902 tests, 13 skipped, no failures**. The fix was separately installed with the
+same guarded exchange; no in-place tooling edits or safety-check bypasses were
+used.
+
+Reviewed native operation `76cf7990-eb40-4982-9e01-84b144e6ecbd` completed after
+the controller independently verified and retained the stopped-writer backup.
+Its manifest SHA256 is
+`0a5fab0b44b48b8407adc9d21e008244f7353366ab07ccc32e8284559f5c086a`.
+Both Docker writers stopped; the native units were enabled/active with zero
+restarts and UID/GID 1000. The dedicated gateway listened on `127.0.0.1:6666`,
+web remained on port 8000, and the real controller and authenticated TLS agent
+route passed. All three stereo outputs had fresh, successful readiness/route
+probes reporting ready/correct. This is not a new human audible confirmation.
+
+Same-candidate invocation `3d033f91-94da-41d2-b790-a0872e3c6774` returned
+`unchanged`: identical native unit PIDs/restart counts, no new backup and the
+original committed native operation retained. Deliberate approved recovery
+`fc023589-209d-4d4f-a969-0d1c9285c847` then restored the original Docker runtime
+from the independently held off-Pi backup. Both original container IDs/image
+IDs were healthy with zero restarts; the exact prior committed deployment
+record was restored, with no pending operation/reservation. Native managed
+units were removed/inactive and the native loopback listener was gone.
+Post-backup data was retained under the recovery's `.failed-UUID` tree.
+
+All seven existing audio/agent/supervisor service identities and twelve
+protected file hashes/owners/modes matched baseline before cutover, while
+native ran and after Docker restoration. Final controller/playback and all
+three output probes passed again. The operator explicitly selected **restore
+and retain Docker** as the final layout. Private backup, identity, approval and
+verification receipts remain off Pi; recovery assets and staged native release
+are retained. Named temporary source-bundle transfer files were removed.
+
+This closes the representative prepared-Pi native cutover/rerun/Docker-return
+trial. It does not certify fresh-machine provisioning, live native-to-native
+update/recovery, reboot, a native six-hour observation or new audible output.
+The earlier six-hour/audio acceptance remains Docker evidence only. Broader
+S5 gates and final legacy retirement are not marked complete by this trial.
 
 ## Acceptance and verification
 

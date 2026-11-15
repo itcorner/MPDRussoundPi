@@ -95,7 +95,7 @@ simulating service/Docker control; it verifies restoration of the original
 committed Docker record. Existing Compose recovery tests still cover the
 shared image-loading implementation.
 
-Full local Python regression: **901 tests, 13 skipped, no failures**. Both
+Full local Python regression: **902 tests, 13 skipped, no failures**. Both
 native entry points pass Ansible syntax checks. On the Pi, a disposable source
 and venv release imported as the nonroot service identity under umask 077;
 all 1454 backup entries restored with the exact release seal, and generated
@@ -103,8 +103,26 @@ units passed `systemd-analyze verify`. The real native ser2net binary also
 passed bidirectional TCP/PTY routing with generated configuration as nonroot,
 without using the real serial device or changing units. Protected live
 container/native playback identities were unchanged; temporary trees were
-removed. This does **not** certify live native cutover, rollback, physical
-playback, reboot or endurance. See the
+removed.
+
+A separately authorized live Pi trial then passed Ansible source/venv staging,
+reviewed Docker-to-native activation, physical controller routing and
+authenticated TLS playback health. All three output readiness/route probes were
+fresh, ready and correct. Both native units ran enabled as UID/GID 1000 with
+zero restarts; the gateway listened only on loopback. An identical-candidate
+rerun returned unchanged with the same PIDs, no new backup and no new committed
+selection. A real approval-time log-growth failure was reproduced before any
+runtime change, fixed and covered by bounded-growth/capacity-exhaustion tests.
+
+Explicit recovery from the independently retained off-Pi backup restored the
+original Docker container/image identities, healthy zero-restart services and
+exact prior committed record, with no pending reservation. Native web/gateway
+units were removed; post-backup data was preserved. All seven existing
+audio/agent/supervisor service identities and twelve protected file
+hashes/owners/modes matched baseline throughout. Docker remains active at the
+operator's request. These are routing/readiness checks, not a new audible
+confirmation. Native reboot/endurance and native-to-native live update/recovery
+remain unverified. See the
 [native support boundary](./container-deployment.md#prepared-native-web-and-gateway).
 
 ## Blind Spots

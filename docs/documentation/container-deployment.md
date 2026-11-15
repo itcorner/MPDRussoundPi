@@ -1147,8 +1147,10 @@ recovery workflow.
 
 ## Prepared native web and gateway
 
-**Implementation with local lifecycle tests and isolated Pi staging evidence;
-live native cutover, rollback, reboot and endurance acceptance remain pending.**
+**Prepared-Pi live acceptance passed (2026-11-15): Docker-to-native cutover,
+physical controller/authenticated playback routing, unchanged rerun and
+independently backed-up rollback to Docker. Native reboot and endurance remain
+unverified. The trial Pi was returned to Docker at the operator's request.**
 Use the reviewed tooling installation/upgrade procedure above to install these
 committed tools first. Never copy unfinished code into the live tooling checkout.
 This workflow manages only `russound-web.service` and the dedicated
