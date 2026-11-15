@@ -1,119 +1,21 @@
 ---
-- name: Deploy Russound web server
+- name: Refuse the retired in-place native web installer
   hosts: musicpi
-  become: true
+  become: false
+  gather_facts: false
   pre_tasks:
     - name: Validate native web inputs
       ansible.builtin.import_role:
         name: ../roles/deployment_inputs
         defaults_from: web
       tags: always
-  roles:
-    - role: ../roles/deployment_account
   tasks:
-    - name: Install base OS packages
-      apt:
-        name:
-          - git
-          - python3
-          - python3-pip
-          - python3-venv
-          - python3-dev
-          - build-essential
-        state: present
-        update_cache: true
-
-    - name: Install the native serial gateway when requested
-      ansible.builtin.apt:
-        name: ser2net
-        state: present
-      when: russound_manage_serial_gateway | bool
-
-    - name: Ensure target deployment directory exists
-      file:
-        path: "{{ app_dir }}"
-        state: directory
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
-        mode: "0755"
-
-    - name: Clone or update repository
-      become_user: "{{ deploy_user }}"
-      git:
-        repo: "{{ repo_url }}"
-        dest: "{{ app_dir }}"
-        version: "{{ repo_version }}"
-        force: false
-        update: true
-
-    - name: Ensure the application files are owned by the deployment user
-      file:
-        path: "{{ app_dir }}"
-        state: directory
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
-        recurse: true
-
-    - name: Create persistent web configuration, state and environment directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        owner: "{{ deploy_user }}"
-        group: "{{ deploy_group }}"
-        mode: "0700"
-      loop:
-        - "{{ russound_config_dir }}"
-        - "{{ russound_state_dir }}"
-        - "{{ venv_dir | dirname }}"
-
-    - name: Create Python virtual environment
-      become_user: "{{ deploy_user }}"
-      command: "{{ ansible_python_interpreter }} -m venv {{ venv_dir }}"
-      args:
-        creates: "{{ venv_dir }}/bin/python"
-
-    - name: Install Python dependencies
-      become_user: "{{ deploy_user }}"
-      pip:
-        requirements: "{{ app_dir }}/web/requirements.txt"
-        virtualenv: "{{ venv_dir }}"
-
-    - name: Copy ser2net configuration file
-      copy:
-        src: "{{ app_dir }}/mpdrussoundpi/ser2net/ser2net.yaml"
-        dest: /etc/ser2net.yaml
-        remote_src: true
-        mode: "0644"
-      when: russound_manage_serial_gateway | bool
-
-    - name: Install systemd service file
-      template:
-        src: ../templates/russound-web.service.j2
-        dest: /etc/systemd/system/russound-web.service
-        mode: "0644"
-
-    - name: Reload systemd daemon
-      systemd:
-        daemon_reload: true
-
-    - name: Enable and start ser2net
-      systemd:
-        name: ser2net
-        enabled: true
-        state: restarted
-      when: russound_manage_serial_gateway | bool
-
-    - name: Enable and start russound web service
-      systemd:
-        name: russound-web
-        enabled: true
-        state: restarted
-
-    - name: Verify the web service responds
-      ansible.builtin.uri:
-        url: "{{ russound_probe_url }}"
-        status_code: 200
-      register: russound_web_check
-      retries: 15
-      delay: 2
-      until: russound_web_check.status == 200
+    - name: Require reviewed native candidate activation and recovery
+      ansible.builtin.fail:
+        msg: >-
+          The in-place native installer is retired. Use stage-native-deployment.yml
+          and tool.deployment_operator native-deploy on a prepared Linux host.
+          Docker-to-native cutover requires an explicit matching from_compose
+          specification, reviewed interruption and verified off-host backup.
+          See docs/documentation/container-deployment.md. No services were changed.
+      tags: always

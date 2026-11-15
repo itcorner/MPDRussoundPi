@@ -19,11 +19,13 @@ from uuid import UUID
 from tool.deployment_images import DIGEST, MAX_METADATA, SelectionError, validate_selection
 from tool.deployment_files import FileSafetyError, checked_directory, directory_info, is_list, is_mapping
 from tool.deployment_local import LOCAL_CANDIDATE, validate_candidate, validate_loaded
+from tool.deployment_native_source import NATIVE_CANDIDATE, NativeError, validate_candidate as native_candidate
 
 
 STATE_ROOT = Path("/var/lib/mpdrussoundpi-deploy")
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 PHASES = ("prepared", "inputs-verified", "backup-complete", "apply-complete", "checks-complete")
+_UNSET = object()
 
 
 class StateError(ValueError):
@@ -46,6 +48,12 @@ def operation_id(value: Any) -> None:
 def candidate(value: Any) -> None:
     if not is_mapping(value):
         raise StateError("Invalid development image candidate")
+    if value.get("kind") == NATIVE_CANDIDATE:
+        try:
+            native_candidate(value)
+        except NativeError as error:
+            raise StateError(str(error)) from None
+        return
     if value.get("kind") == LOCAL_CANDIDATE:
         try:
             validate_candidate(value)
@@ -250,7 +258,7 @@ class StateStore:
             os.close(reservation)
 
     def begin(self, deployment: str, operation: str, selection: dict[str, Any],
-              intent_digest: str, required: list[str]) -> None:
+              intent_digest: str, required: list[str], *, expected_committed: object = _UNSET) -> None:
         identity(deployment)
         operation_id(operation)
         pending: dict[str, Any] = {
@@ -284,6 +292,8 @@ class StateStore:
                 record = records.get(deployment, {
                     "schema_version": 1, "deployment": deployment, "committed": None, "pending": None,
                 })
+                if expected_committed is not _UNSET and record["committed"] != expected_committed:
+                    raise StateError("Committed deployment changed after review; retain reservation and investigate")
                 record["pending"] = pending
                 self._write(directory, deployment + ".json", record, replace=deployment in records)
         except OSError:
@@ -457,7 +467,9 @@ class StateStore:
         except OSError:
             raise StateError("Finalization outcome is uncertain; reservation may be absent; do not retry") from None
 
-    def resolve_recovery(self, deployment: str, operation: str, receipt: dict[str, Any]) -> None:
+    def resolve_recovery(self, deployment: str, operation: str, receipt: dict[str, Any], *,
+                         restore_native: bool = False,
+                         native_previous: dict[str, Any] | None = None) -> None:
         """Internal boundary after approved restoration and independently checked runtime.
 
         The caller must durably retain the original record and recovery evidence.
@@ -476,12 +488,28 @@ class StateStore:
                     if record["pending"] is None or record["pending"]["operation"] != operation:
                         raise StateError("Recovery does not own the original pending operation")
                     selection = record["pending"]["candidate"]
-                    metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
-                    expected = ({"containers": "passed", "gateway": "passed"}
-                                if metadata["gateway"] == "standalone" else
-                                {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"})
-                    if receipt["required"] not in (expected, absent):
+                    native = selection["kind"] == NATIVE_CANDIDATE
+                    if native:
+                        expected = {"original-runtime": "passed", "matching-data": "passed"}
+                    else:
+                        metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
+                        expected = ({"containers": "passed", "gateway": "passed"}
+                                    if metadata["gateway"] == "standalone" else
+                                    {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"})
+                    if receipt["required"] != expected and (native or receipt["required"] != absent):
                         raise StateError("Recovery requires matching approval and all independent runtime checks")
+                    if restore_native:
+                        if not native:
+                            raise StateError("Only native recovery may restore its captured prior committed selection")
+                        if native_previous is not None:
+                            if set(native_previous) != {"selection", "completion"}:
+                                raise StateError("Invalid previous native deployment baseline")
+                            previous = native_previous["selection"]
+                            pending_record(previous)
+                            if previous["phase"] != "checks-complete":
+                                raise StateError("Previous native baseline was not committed")
+                            completion_record(native_previous["completion"], previous)
+                        record["committed"] = native_previous
                     self._write(reservation, "finalizing.json", receipt)
                     record["pending"] = None
                     if record["committed"] is None:

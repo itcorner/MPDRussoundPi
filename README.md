@@ -392,22 +392,16 @@ Compose override automatically.
 
 ### Native web deployment
 
-Use this instead of Docker, not alongside another web process on port 8000:
-
-```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-web.yml
-```
-
-The play installs a separate web venv under `~/.local/share/russound-web/venv`,
-starts native ser2net and installs `russound-web.service`. It retains configuration
-in `~/.config/russound-web/russound_config.json` and runtime state in
-`~/.local/state/russound-web/russound_state.json`, outside the Git checkout.
-On first launch, open `http://<pi>:8000/config` to configure the gateway/layout.
-Configure `russound_playback_agents` with native token/certificate paths when
-adding playback integration. Changing deployment type does not automatically
-copy a previous web config/state; back up and copy those files explicitly.
-For an external gateway, set `russound_manage_serial_gateway=false`; the native
-web play then leaves ser2net configuration and service state untouched.
+The [prepared native workflow](docs/documentation/container-deployment.md#prepared-native-web-and-gateway)
+stages sealed source/venv releases, then separately reviews activation,
+off-host backup and recovery. It manages native web and a loopback-only
+ser2net unit while preserving the Pi's existing native agent/audio/proxy stack.
+Docker-to-native cutover requires an explicit matching recorded deployment;
+it is never an ordinary redeploy. The old in-place
+`deploy-russound-web.yml` installer now fails without changing services.
+Fresh audio provisioning, legacy-native adoption, external-native gateways,
+OS upgrades and schema migration are not supported by this workflow.
+Live native cutover/rollback acceptance remains pending.
 
 ## Deployment Notes
 

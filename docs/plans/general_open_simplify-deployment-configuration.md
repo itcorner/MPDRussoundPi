@@ -3871,6 +3871,64 @@ The trial used explicit manual Compose operations and restored the original
 same-host Pi arrangement. The previously completed six-hour/audio acceptance
 remains separate evidence, not a new split-host endurance claim.
 
+### Prepared native web/gateway scope and implementation (2026-11-15)
+
+The user selected a bounded prepared-Pi native increment: native web and native
+ser2net, preserving the already working native agent, supervisor, MPD, audio,
+proxy and credentials. Fresh-machine/full-native-stack provisioning is not
+included. The scope selection itself did **not** authorize a live cutover.
+Split-host implementation/acceptance was committed separately as `0733d78`.
+
+The [native workflow](../documentation/container-deployment.md#prepared-native-web-and-gateway)
+now has source/venv candidate sealing, root-owned service-readable releases,
+explicit same-layout update and recorded Docker-to-native cutover scope,
+shared host reservation/state, stopped-writer backup, independent off-host
+verification before activation, exact unit/controller/playback checks,
+unchanged-candidate verification, pre-apply original-runtime restart and
+explicit recovery of failed or latest committed native operations. Recovery
+preserves post-backup trees and restores the prior committed selection only
+after checking the prior runtime. It does not change OS packages, the
+distribution ser2net unit/config or the native playback stack.
+
+The old in-place native installer is a non-mutating refusal, not an unsafe
+alternative activation path. Legacy-native adoption, external-native gateways,
+schema/settings/network migrations, OS upgrades and fresh-machine disaster
+recovery remain excluded. Native candidates require an unchanged prepared OS;
+the backup preserves application/environment bytes, not a bootable system.
+
+Local tests exercise approval refusal, shared reservations, candidate drift,
+canonical unit round-trips, off-host failure, explicit recovery, post-backup
+edit preservation, unchanged reruns, previous native environment restoration,
+source/environment byte/mode checks and host HTTP acceptance. Linux-only
+staging was also exercised on the Pi in disposable directories: a separate
+web venv imported successfully as the nonroot service account; all **1454**
+source/environment backup entries restored with the exact original seal;
+the final staging check also used private umask **077**. Generated units passed
+`systemd-analyze verify`; an isolated nonroot process using the actual Pi
+ser2net binary parsed the generated connection/options and passed bidirectional
+TCP-to-PTY byte checks without opening the real USB serial adapter.
+Original live Docker IDs,
+restart/health state and native playback service PIDs/restart counts remained
+unchanged. This used the existing trusted application's available revision,
+not an unpushed new application release. **No native unit was activated.**
+Disposable Pi staging/source/venv/backup/restore trees were removed after
+retaining the verification receipts off Pi.
+
+The full local Python regression passed **901 tests, 13 skipped, no failures**.
+Focused cutover coverage independently verifies archived Docker image identities
+under the native operation ID and restoration of the prior Docker deployment
+record. Failure injection covers partial native unit installation before
+systemd loads it, as well as lost off-host verification and post-start failure.
+Service/Docker control in these local lifecycle tests is simulated; these are
+not substitutes for a real Pi cutover/rollback rehearsal.
+
+Still required before declaring native support accepted: commit/install the
+reviewed native tooling; explicitly approve a real Docker-to-native trial;
+exercise physical controller and authenticated playback routing, unchanged
+rerun, deliberate return to the captured Docker baseline and protected
+native-service/config preservation; then decide the retained layout and any
+native reboot/endurance checks. S5 and final legacy retirement remain open.
+
 ## Acceptance and verification
 
 - Render Compose configurations for dev Hub, dev local build and production;

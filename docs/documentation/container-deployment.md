@@ -1112,13 +1112,14 @@ Do not use the internal Python APIs as a deployment shortcut.
 
 ## Existing installations and legacy entry points
 
-The old `docker-compose.yml`, `docker-compose.dummy.yml`,
-`deploy-russound-docker.yml` and `deploy-russound-web.yml` remain for compatibility;
+The old `docker-compose.yml`, `docker-compose.dummy.yml` and
+`deploy-russound-docker.yml` remain for compatibility;
 they are **not aliases** for the new files. Do not mix their variables,
 state paths or ordered file lists with the new workflow. Legacy Docker
 provisioning can build on the target and stop native services; play-level
-defaults also override inventory. Native web still uses a separate venv and
-persistent native config/state and optionally manages native ser2net.
+defaults also override inventory. The old `deploy-russound-web.yml` installer
+is now a non-mutating refusal with a link to the native workflow below; it no
+longer updates a checkout/venv or restarts services in place.
 This compatibility surface is temporary in the repository plan: the final
 cleanup step retires superseded deployment scripts and examples after the
 replacement paths and migration/recovery acceptance are complete. It does not
@@ -1143,6 +1144,185 @@ staging requires Git, Python venv support and package-index access from the Pi.
 An existing revision candidate is never overwritten; a partial candidate must
 be inspected and a fresh revision selected. It is not an activation or
 recovery workflow.
+
+## Prepared native web and gateway
+
+**Implementation with local lifecycle tests and isolated Pi staging evidence;
+live native cutover, rollback, reboot and endurance acceptance remain pending.**
+Use the reviewed tooling installation/upgrade procedure above to install these
+committed tools first. Never copy unfinished code into the live tooling checkout.
+This workflow manages only `russound-web.service` and the dedicated
+`mpdrussoundpi-serial.service`, running as the existing nonroot account. It does
+not modify the distribution `ser2net.service` or `/etc/ser2net.yaml`.
+That distribution service must already be inactive and disabled. Agent,
+supervisor, MPD, PipeWire, WirePlumber, proxy, credentials and OS packages are
+preserved, not provisioned or activated here.
+
+### Prerequisites and candidate staging
+
+- Prepared Linux ARM64/AMD64 host, root-reviewed deployment tooling, Git,
+  `/usr/bin/python3` with venv support and installed `/usr/sbin/ser2net`.
+  Application runtime requires Python 3.11+. The prepared host's Python binary,
+  version, architecture and ser2net binary are sealed into each candidate.
+  Recovery requires the same unchanged OS/stdlib/shared-library installation;
+  this is not fresh-machine or OS/package disaster recovery.
+- Existing numeric service UID/primary GID, serial character device/GID,
+  configured controller zones and working authenticated playback agents.
+- Existing private data tree with `config/russound_config.json`,
+  `data/russound_state.json`, `logs/` and `secrets/`. The same ownership,
+  permission, metadata and stopped-writer backup restrictions as Compose apply.
+  No application/schema conversion or credential generation is performed.
+- Release/runtime directories under `/opt` and the data restore area must
+  share a filesystem. Allow space for old releases, private stopped-writer
+  backups, independently retained controller copies and isolated recovery.
+  Nothing expires automatically.
+
+Stage a full application commit already available in the trusted tooling
+checkout (no target branch checkout/update):
+
+```sh
+ansible-playbook -i ansible/inventory.yaml \
+  ansible/playbooks/stage-native-deployment.yml --limit musicpi --tags stage \
+  -e native_application_revision=FULL_40_CHARACTER_COMMIT_SHA
+```
+
+Staging exports only committed web/runtime source, creates a new root-owned
+release under `/opt/mpdrussoundpi-native/UUID`, installs bounded web dependencies
+in a separate copied-Python venv, runs `pip check`/imports and seals every
+source/environment byte and mode. Public code/dependencies are service-readable
+even with umask 077; no credentials belong in a release. Links and unsupported
+metadata are refused rather than lost during backup. Staging never starts a
+service, changes active data, installs OS packages or overwrites an earlier
+release. Retain the emitted candidate JSON as a private mode-0400/0600 controller
+file. Failed/partial release directories remain for inspection; stage a new
+UUID rather than repairing one.
+
+### Explicit native specification and activation
+
+Create a private JSON specification with exactly these fields (example values
+must match the actual prepared host):
+
+```json
+{
+  "schema_version": 1,
+  "deployment": "russound-dev",
+  "data_dir": "/home/musicpi/.local/share/mpdrussoundpi/prepared/data",
+  "uid": 1000,
+  "gid": 1000,
+  "publish_host": "0.0.0.0",
+  "publish_port": 8000,
+  "serial_device": "/dev/ttyUSB0",
+  "serial_gid": 20,
+  "serial_options": "19200n81",
+  "backend_port": 6666,
+  "playback_agents": [{
+    "agent_id": "musicpi",
+    "url": "https://192.168.1.105:8443",
+    "token_file": "/run/secrets/musicpi-playback-token",
+    "tls_ca_file": "/run/secrets/musicpi-proxy.crt"
+  }],
+  "from_compose": null
+}
+```
+
+`from_compose: null` means a prepared first native installation with **no**
+unrecorded native units, or a same-layout update of an already recorded native
+installation. Existing legacy-native units require a separate migration.
+Listeners must be distinct unprivileged ports; the web binding is an explicit
+IPv4 address. Supported serial framing is `19200n81` or `9600n81`.
+The serial listener is always **127.0.0.1 only**. Native web overrides its
+backend host/port to that listener without rewriting saved configuration.
+
+For a **Docker-to-native cutover**, use the same deployment ID/data/account,
+and set `from_compose` to the complete JSON object of the already recorded,
+healthy managed-gateway Compose specification. This is an object, not a path.
+The supplied Compose file must still describe the actual runtime exactly.
+Web listener, data root, device/GID and serial framing must match; both
+controller and playback acceptance must be required. `restart: always` is
+refused because stopping those containers does not fence them across reboot.
+Unrecorded Docker adoption must be completed through the Compose workflow
+first. Do not edit Docker configuration, move state, relax TLS or rotate
+credentials to make a cutover pass.
+
+The playback registry deliberately retains `/run/secrets/...` identifiers in
+the specification. Validation uses the shared protected-bind parser; the
+native unit maps those identifiers to the same files beneath
+`data_dir/secrets/`. No tokens/certificates are copied or embedded in units.
+
+```sh
+.venv/bin/python -m tool.deployment_operator native-deploy \
+  --host 192.168.1.105 --user musicpi \
+  --known-hosts /absolute/private/known_hosts \
+  --evidence /absolute/private/native-evidence \
+  --spec /absolute/private/native-spec.json \
+  --selection /absolute/private/native-candidate.json --update
+```
+
+As with Compose, strict reviewed SSH trust, private controller evidence and
+interactive approval are required. The review identifies source/environment,
+origin, account, serial framing/device, listeners, playback identities and
+interruption. `--update` is required when replacing an existing committed
+selection, including Docker-to-native cutover. It does not approve the review.
+
+After approval, the shared host-wide reservation blocks other native/Compose
+deployments and tooling switches. Only the selected old web/gateway writers
+are stopped. A consistent backup captures data plus either the actual old
+Docker image archives or the complete previous native source/venv/runtime.
+The controller independently verifies and retains those bytes before the
+target installs units or starts a candidate. Controller-transfer failure
+leaves writers stopped and pending state intact, not a success or automatic
+rollback. Native units use the journal and bounded application defaults; no
+global journal/daemon retention changes occur.
+
+Independent checks require exact units/release/gateway configuration, enabled
+and active services without restarts, host HTTP routing, configured physical
+controller connectivity and healthy authenticated playback routing. They are
+not audible or all-room acceptance. Only then is native state committed.
+Use `from_compose: null` on subsequent native operations and keep all other
+settings unchanged. Rerunning the same candidate verifies health without
+restarting services or taking another backup. Settings/data/network/schema
+migrations are refused instead of being hidden in ordinary updates.
+
+### Explicit recovery and a reversible native trial
+
+For a failed operation **after a verified backup**, or to reverse the latest
+successful native trial, use its independently retained backup and separately
+retained manifest identity:
+
+```sh
+.venv/bin/python -m tool.deployment_operator native-recover \
+  --host 192.168.1.105 --user musicpi \
+  --known-hosts /absolute/private/known_hosts \
+  --evidence /absolute/private/native-recovery-evidence \
+  --deployment russound-dev --operation ORIGINAL_OPERATION_UUID \
+  --backup /absolute/private/native-evidence/ORIGINAL_OPERATION_UUID \
+  --backup-sha256 SEPARATELY_RETAINED_MANIFEST_SHA256
+```
+
+This needs fresh approval, matching pending/latest state and no outstanding
+orchestration. It restores to an isolated tree, preserves post-backup live
+trees as `.failed-RECOVERY_UUID`, restores matching old source/environment
+or Docker images plus data, verifies the original runtime, then restores its
+previous committed record. First-install recovery restores prepared data and
+the original absence of managed native units; it does not pretend an absent
+web server passed HTTP checks. A failed/interrupted recovery retains the
+reservation and one-attempt marker for investigation; do not delete locks,
+retry automatically or restore over newer data.
+
+For a **pre-apply** interruption such as lost off-host acknowledgement, when
+the original units/container identities are still verifiable, use
+`native-resume-original` with the same SSH/evidence/deployment/operation
+arguments, without backup arguments. This restarts only the verified original
+runtime, preserves current data/operator edits, and refuses after any native
+apply attempt. If identities changed, use reviewed backup recovery instead.
+Ordinary Compose apply cannot switch a committed native deployment back to
+Docker; only the explicit, latest-operation recovery described above covers
+the recorded cutover baseline.
+
+The earlier six-hour/audio acceptance belongs to the restored Docker layout.
+Neither it nor isolated native candidate tests certify native activation,
+reboot, physical playback or native endurance. Those remain explicit target
+acceptance gates in the implementation plan.
 
 The Pi's extra Compose override and local-only web image need explicit
 preservation. Continue to treat adoption as a separately approved migration.

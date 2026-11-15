@@ -59,6 +59,25 @@ def recovery_assets(path: Path, operation: str, checksum: str) -> tuple[dict[str
     return spec, images
 
 
+def load_recovery_images(target: ComposeDeployment, directory: Path,
+                         images: dict[str, Any]) -> dict[str, str]:
+    loaded: dict[str, str] = {}
+    for name, image in images.items():
+        archive = directory / image["archive"]
+        with archive.open("rb") as source:
+            archive_identity(source, image, target.spec["platform"], None)
+            source.seek(0)
+            result = subprocess.run(target.docker + ["image", "load"], stdin=source,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        if result.returncode:
+            raise ComposeError("Recovery image loading failed; keep all evidence and live services stopped")
+        actual = json.loads(target.command(["image", "inspect", image["tag"]]))[0]
+        if actual["Id"] not in (image["reference"], image["config"]):
+            raise ComposeError("Restored Docker image does not match previous root/config identity")
+        loaded[name] = actual["Id"]
+    return loaded
+
+
 def recover(storage: dict[str, Path], deployment: str, operation: str, backup_path: Path,
             checksum: str, approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
     """One explicit failed-operation recovery; never overwrite newer data in place.
@@ -114,20 +133,7 @@ def recover(storage: dict[str, Path], deployment: str, operation: str, backup_pa
     target.quiescent()
     backup = FileBackup(backup_path.parent, operation, checksum)
     backup.restore_new(restored, verify_quiescent=target.quiescent)
-    loaded: dict[str, str] = {}
-    for name, image in images.items():
-        archive = restored / "deployment" / image["archive"]
-        with archive.open("rb") as source:
-            archive_identity(source, image, spec["platform"], None)
-            source.seek(0)
-            result = subprocess.run(target.docker + ["image", "load"], stdin=source,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
-        if result.returncode:
-            raise ComposeError("Recovery image loading failed; keep all evidence and live services stopped")
-        actual = json.loads(target.command(["image", "inspect", image["tag"]]))[0]
-        if actual["Id"] not in (image["reference"], image["config"]):
-            raise ComposeError("Restored Docker image does not match previous root/config identity")
-        loaded[name] = actual["Id"]
+    loaded = load_recovery_images(target, restored / "deployment", images)
     target.quiescent()
     # Rename both trees without deleting or overlaying post-backup operator edits.
     live = Path(spec["data_dir"])

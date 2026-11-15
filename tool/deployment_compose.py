@@ -24,6 +24,7 @@ from tool.deployment_files import checked_directory, is_mapping
 from tool.deployment_images import DIGEST, components
 from tool.deployment_inputs import attributes, read_file, write_file
 from tool.deployment_local import LOCAL_CANDIDATE
+from tool.deployment_native_source import NATIVE_CANDIDATE
 from tool.deployment_preflight import check_data, check_port, check_serial, mode_access, overlap, safe_path
 from tool.deployment_runner import DevelopmentRun, RunHooks
 from tool.deployment_state import StateStore, candidate, identity, operation_id
@@ -89,9 +90,11 @@ def specification(value: Any) -> dict[str, Any]:
 
 class ComposeDeployment:
     def __init__(self, spec: dict[str, Any], selection: dict[str, Any], storage: dict[str, Path],
-                 *, operation: str | None = None):
+                 *, operation: str | None = None, restoring_native: bool = False):
         self.spec = specification(spec)
         candidate(selection)
+        if selection["kind"] == NATIVE_CANDIDATE:
+            raise ComposeError("Native source candidates require the native deployment workflow")
         self.selection = copy.deepcopy(selection)
         metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
         if any(metadata[key] != spec[key] for key in ("gateway", "platform")):
@@ -116,7 +119,18 @@ class ComposeDeployment:
             if selection["kind"] != LOCAL_CANDIDATE:
                 raise ComposeError("Dummy requires a pinned local web/dummy image bundle")
         self.committed = self.store.status()["deployments"].get(spec["deployment"], {}).get("committed")
+        if restoring_native:
+            state = self.store.status()
+            pending = state["deployments"].get(spec["deployment"], {}).get("pending")
+            if (not state["blocked"] or pending is None
+                    or pending["candidate"]["kind"] != NATIVE_CANDIDATE
+                    or state["reservation"] != {"schema_version": 1, "deployment": spec["deployment"],
+                                               "operation": pending["operation"]}):
+                raise ComposeError("Native baseline restoration requires its reserved native operation")
+            self.committed = None
         if self.committed is not None:
+            if self.committed["selection"]["candidate"]["kind"] == NATIVE_CANDIDATE:
+                raise ComposeError("Native-to-Docker migration requires explicit native recovery, not Compose apply")
             previous_operation = self.committed["selection"]["operation"]
             previous = json.loads(private_read(storage["runtime"] / previous_operation / "active.json"))
             def without_images(value: dict[str, Any]) -> dict[str, Any]:
@@ -374,7 +388,9 @@ class ComposeDeployment:
                             for key in ("RUSSOUND_BACKEND_HOST", "RUSSOUND_BACKEND_PORT")},
                 "native_services": "untouched", "existing_data_and_secrets": "preserved"}
 
-    def stop(self) -> None:
+    def stop(self, *, recovery_operation: str | None = None) -> None:
+        recovery_operation = self.operation if recovery_operation is None else recovery_operation
+        operation_id(recovery_operation)
         self.preflight()
         self.command(self.compose() + ["stop", "--timeout", "30"], timeout=90)
         self.quiescent()
@@ -385,7 +401,7 @@ class ComposeDeployment:
             if item is None:
                 continue
             reference = item["image"]
-            tag = f"mpdrussoundpi-recovery/{component}:{self.operation}"
+            tag = f"mpdrussoundpi-recovery/{component}:{recovery_operation}"
             self.command(["image", "tag", reference, tag])
             archive = self.asset / (component + ".tar")
             with archive.open("xb") as output:

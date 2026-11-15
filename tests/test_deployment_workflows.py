@@ -54,7 +54,7 @@ class DeploymentWorkflowTests(unittest.TestCase):
         self.assertEqual(generate["args"]["creates"], "{{ playback_proxy_certificate }}")
 
     def test_repository_deployments_do_not_force_dirty_checkouts(self):
-        for name in ("setup-musicpi.yml", "deploy-russound-web.yml", "deploy-russound-docker.yml"):
+        for name in ("setup-musicpi.yml", "deploy-russound-docker.yml"):
             with self.subTest(playbook=name):
                 tasks = list(all_tasks(playbook(name)["tasks"]))
                 git_tasks = [task.get("git", task.get("ansible.builtin.git")) for task in tasks
@@ -182,35 +182,15 @@ class DeploymentWorkflowTests(unittest.TestCase):
                             with self.assertRaises(ValueError):
                                 PlaybackAgentConfig.from_environment()
 
-    def test_native_web_uses_persistent_paths_and_isolated_environment(self):
+    def test_in_place_native_installer_is_retired_before_any_target_mutation(self):
         play = playbook("deploy-russound-web.yml")
-        self.assertNotIn("russound-venv", play["vars"]["venv_dir"])
-        tasks = play["tasks"]
-        config = next(task for task in tasks if task["name"].startswith("Create persistent web"))
-        self.assertIn("{{ russound_state_dir }}", config["loop"])
-        for name in ("Create Python virtual environment", "Install Python dependencies"):
-            task = next(task for task in tasks if task["name"] == name)
-            self.assertEqual(task["become_user"], "{{ deploy_user }}")
-        unit = render(
-            (TEMPLATES / "russound-web.service.j2").read_text(),
-            app_dir="/home/musicpi/MPDRussoundPi",
-            venv_dir="/home/musicpi/.local/share/russound-web/venv",
-            russound_config_dir="/home/musicpi/.config/russound-web",
-            russound_state_dir="/home/musicpi/.local/state/russound-web",
-            russound_host="0.0.0.0", russound_port=8000, deploy_user="musicpi",
-            russound_playback_agents=[],
-        )
-        self.assertIn("-m web.russound_server", unit)
-        self.assertIn("--state /home/musicpi/.local/state/russound-web/russound_state.json", unit)
-        self.assertNotIn("/tmp/", unit)
-        self.assertNotIn("--config /home/musicpi/MPDRussoundPi/", unit)
-        for task in tasks:
-            if task["name"] in (
-                "Install the native serial gateway when requested",
-                "Copy ser2net configuration file",
-                "Enable and start ser2net",
-            ):
-                self.assertEqual(task["when"], "russound_manage_serial_gateway | bool")
+        self.assertFalse(play["become"])
+        self.assertFalse(play["gather_facts"])
+        self.assertNotIn("roles", play)
+        self.assertEqual(len(play["tasks"]), 1)
+        self.assertIn("ansible.builtin.fail", play["tasks"][0])
+        self.assertEqual(play["tasks"][0]["tags"], "always")
+        self.assertIn("native-deploy", play["tasks"][0]["ansible.builtin.fail"]["msg"])
 
     def test_staged_audio_deployment_cannot_start_or_enable_playback(self):
         play = playbook("setup-musicpi.yml")

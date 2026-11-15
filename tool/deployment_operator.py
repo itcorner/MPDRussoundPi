@@ -20,6 +20,7 @@ from tool.deployment_inputs import read_file, write_file
 from tool.deployment_load import bundle_streams, select_bundle
 from tool.deployment_local import LOCAL_CANDIDATE
 from tool.deployment_images import MAX_METADATA
+from tool.deployment_native_source import NativeError
 from tool.deployment_recovery import recover, recovery_assets, resume_original
 from tool.deployment_state import STATE_ROOT, StateError, StateStore, candidate, identity, operation_id
 from tool.deployment_transfer import ssh_arguments
@@ -27,10 +28,34 @@ from tool.deployment_transfer import ssh_arguments
 
 TOOLS = Path("/opt/mpdrussoundpi-deploy")
 STORAGE = Path("/var/lib/mpdrussoundpi-operations")
+DEPLOY_ACTIONS = ("deploy", "native-deploy")
 
 
 def serve(channel: Channel, storage: dict[str, Path]) -> None:
     request = channel.receive()
+    if request.get("action") == "native-deploy":
+        from tool.deployment_native import NativeDeployment, recovery_assets as native_assets
+        if (set(request) != {"action", "spec", "selection", "operation", "update"}
+                or type(request["update"]) is not bool):
+            raise ChannelError("Invalid native deployment request")
+        target_native = NativeDeployment(request["spec"], request["selection"], storage,
+                                         operation=request["operation"], update=request["update"])
+        def native_offhost(backup: FileBackup) -> None:
+            native_assets(backup.path, backup.operation, backup.manifest_sha256)
+            send_backup(channel, backup.path, backup.operation, backup.manifest_sha256)
+            if channel.receive() != {"event": "backup-verified", "operation": backup.operation,
+                                     "manifest_sha256": backup.manifest_sha256}:
+                raise ChannelError("Independent native backup verification was not acknowledged")
+            target_native.quiescent()
+        channel.send(target_native.execute(lambda review: approve_remote(channel, review), native_offhost))
+        return
+    if request.get("action") == "native-resume-original":
+        from tool.deployment_native import resume_original as native_resume
+        if set(request) != {"action", "deployment", "operation"}:
+            raise ChannelError("Invalid native original-runtime request")
+        channel.send(native_resume(storage, request["deployment"], request["operation"],
+                                   lambda review: approve_remote(channel, review)))
+        return
     if request.get("action") == "resume-original":
         if set(request) != {"action", "deployment", "operation"}:
             raise ChannelError("Invalid original-runtime request")
@@ -38,7 +63,7 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
                                  lambda review: approve_remote(channel, review))
         channel.send(result)
         return
-    if request.get("action") == "recover":
+    if request.get("action") in ("recover", "native-recover"):
         if set(request) != {"action", "deployment", "operation"}:
             raise ChannelError("Invalid recovery request")
         identity(request["deployment"])
@@ -50,8 +75,12 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         backup, checksum = receive_backup(channel, incoming, header)
         if backup.name != request["operation"]:
             raise ChannelError("Recovery operation and backup differ")
-        result = recover(storage, request["deployment"], request["operation"], backup, checksum,
-                         lambda review: approve_remote(channel, review))
+        recovery_function = recover
+        if request["action"] == "native-recover":
+            from tool.deployment_native import recover as native_recover
+            recovery_function = native_recover
+        result = recovery_function(storage, request["deployment"], request["operation"], backup, checksum,
+                                   lambda review: approve_remote(channel, review))
         channel.send(result)
         return
     if (set(request) != {"action", "spec", "selection", "operation", "update"}
@@ -130,12 +159,18 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                bundle: Path | None = None, recovery: Path | None = None,
                recovery_checksum: str | None = None) -> dict[str, Any]:
     operation = request["operation"]
-    evidence_id = operation + (".recovery" if request["action"] != "deploy" else "")
+    deploying = request["action"] in DEPLOY_ACTIONS
+    native = request["action"].startswith("native-")
+    evidence_id = operation + (".recovery" if not deploying else "")
+    backup_validator = recovery_assets
+    if native:
+        from tool.deployment_native import recovery_assets as native_assets
+        backup_validator = native_assets
     channel.send(request)
-    if request["action"] == "recover":
+    if request["action"] in ("recover", "native-recover"):
         if recovery is None or recovery_checksum is None:
             raise ChannelError("Recovery requires the private independently held backup and identity")
-        recovery_assets(recovery, operation, recovery_checksum)
+        backup_validator(recovery, operation, recovery_checksum)
         send_backup(channel, recovery, operation, recovery_checksum)
     reviewed = None
     backup_received = False
@@ -152,7 +187,20 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                     or event["plan"]["deployment"] != request["spec"]["deployment"]
                     or event["plan"]["scope"]["project"] != request["spec"]["project"]):
                 raise ChannelError("Target reviewed a different deployment scope")
-            if (request["action"] == "deploy" and shutil.disk_usage(evidence).free
+            if request["action"] == "native-deploy" and (
+                    event["plan"]["kind"] != "native-deployment-review"
+                    or event["plan"]["selection"] != request["selection"]
+                    or event["plan"]["deployment"] != request["spec"]["deployment"]
+                    or event["plan"]["scope"]["listener"] != {
+                        "host": request["spec"]["publish_host"], "port": request["spec"]["publish_port"]}
+                    or event["plan"]["scope"]["gateway_listener"] != {
+                        "host": "127.0.0.1", "port": request["spec"]["backend_port"]}
+                    or event["plan"]["scope"]["playback_agents"] != [
+                        item["agent_id"] for item in request["spec"]["playback_agents"]]):
+                raise ChannelError("Target reviewed a different native deployment scope")
+            if (not deploying and event["plan"]["deployment"] != request["deployment"]):
+                raise ChannelError("Target reviewed a different recovery deployment")
+            if (deploying and shutil.disk_usage(evidence).free
                     < event["plan"]["scope"]["offhost_free_bytes_required"]):
                 channel.send({"event": "approval", "digest": None})
                 raise ChannelError("Insufficient independent controller space for the retained recovery bundle")
@@ -180,7 +228,7 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
             if reviewed is None or event["operation"] != operation or backup_received:
                 raise ChannelError("Unreviewed or duplicate recovery transfer")
             backup, checksum = receive_backup(channel, evidence, event)
-            recovery_assets(backup, operation, checksum)
+            backup_validator(backup, operation, checksum)
             private_write(evidence / (operation + ".backup-identity.json"),
                           {"operation": operation, "manifest_sha256": checksum})
             backup_received = True
@@ -188,7 +236,7 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
         elif event.get("event") in ("complete", "recovered", "unchanged"):
             if reviewed is None or event["operation"] != operation:
                 raise ChannelError("Target completion lacks matching reviewed approval")
-            if request["action"] == "deploy" and event["event"] != "unchanged" and not backup_received:
+            if deploying and event["event"] != "unchanged" and not backup_received:
                 raise ChannelError("Target completed without verified off-host backup")
             private_write(evidence / (evidence_id + ".result.json"), event)
             return event
@@ -218,7 +266,7 @@ def remote(args: argparse.Namespace, request: dict[str, Any]) -> dict[str, Any]:
     with checked_directory(trust_path.parent, os.getuid(), private=False) as parent:
         trust, trust_info = read_file(parent, trust_path.name, os.getuid(), (0o400, 0o600))
     # Snapshot host trust before connecting; it is never updated implicitly.
-    evidence_id = request["operation"] + (".recovery" if request["action"] != "deploy" else "")
+    evidence_id = request["operation"] + (".recovery" if request["action"] not in DEPLOY_ACTIONS else "")
     snapshot = evidence / (evidence_id + ".known_hosts")
     with checked_directory(evidence, os.getuid()) as parent:
         write_file(parent, snapshot.name, trust, owner=os.getuid(), group=os.getgid(), mode=0o400)
@@ -256,7 +304,8 @@ def remote(args: argparse.Namespace, request: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("deploy", "recover", "resume-original", "serve"))
+    parser.add_argument("action", choices=("deploy", "recover", "resume-original", "serve",
+                                          "native-deploy", "native-recover", "native-resume-original"))
     parser.add_argument("--host")
     parser.add_argument("--user")
     parser.add_argument("--port", type=int, default=22)
@@ -294,7 +343,17 @@ def main() -> int:
         else:
             if not all((args.host, args.user, args.known_hosts, args.evidence)):
                 parser.error("Select explicit --host, --user, --known-hosts and a private --evidence directory")
-            if args.action == "deploy":
+            if args.action == "native-deploy":
+                if args.spec is None or args.selection is None or args.bundle is not None:
+                    parser.error("native-deploy requires --spec and --selection, not image archives")
+                from tool.deployment_native import specification as native_specification
+                from tool.deployment_native_source import validate_candidate as native_candidate
+                spec = native_specification(json.loads(private_read(args.spec)))
+                selection = json.loads(private_read(args.selection))
+                native_candidate(selection)
+                request = {"action": args.action, "spec": spec, "selection": selection,
+                           "operation": str(uuid4()), "update": args.update}
+            elif args.action == "deploy":
                 if args.spec is None:
                     parser.error("deploy requires --spec")
                 spec = json.loads(private_read(args.spec))
@@ -310,17 +369,17 @@ def main() -> int:
                     "action": "deploy", "spec": spec, "selection": selection,
                     "operation": str(uuid4()), "update": args.update,
                 }
-            elif args.action == "recover":
+            elif args.action in ("recover", "native-recover"):
                 if not all((args.deployment, args.operation, args.backup, args.backup_sha256)):
                     parser.error("recover requires --deployment, --operation, --backup and --backup-sha256")
-                request = {"action": "recover", "deployment": args.deployment, "operation": args.operation}
+                request = {"action": args.action, "deployment": args.deployment, "operation": args.operation}
             else:
                 if not all((args.deployment, args.operation)):
                     parser.error("resume-original requires --deployment and --operation")
-                request = {"action": "resume-original", "deployment": args.deployment, "operation": args.operation}
+                request = {"action": args.action, "deployment": args.deployment, "operation": args.operation}
             print(json.dumps(remote(args, request)))
         return 0
-    except (ComposeError, ChannelError, StateError) as error:
+    except (ComposeError, ChannelError, StateError, NativeError) as error:
         print(str(error) + ". Retain private evidence and inspect target state before retrying.", file=sys.stderr)
         return 1
     except (OSError, ValueError, subprocess.SubprocessError):

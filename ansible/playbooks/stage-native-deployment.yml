@@ -1,0 +1,37 @@
+---
+- name: Stage a sealed native web release using reviewed tooling only
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require one target and explicit immutable native staging
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - native_application_revision is defined
+          - native_application_revision is match('^[a-f0-9]{40}$')
+          - "'stage' in ansible_run_tags"
+          - ansible_run_tags | difference(['all', 'stage']) | length == 0
+          - not ansible_check_mode
+        fail_msg: >-
+          Select one prepared Linux host, --tags stage and a reviewed full
+          native_application_revision available in the trusted tooling checkout.
+          Staging does not install OS packages or change services.
+      tags: always
+  tasks:
+    - name: Build a separate native source and copied-Python environment without activation
+      ansible.builtin.command:
+        argv:
+          - /opt/mpdrussoundpi-deploy/.venv/bin/python
+          - -m
+          - tool.deployment_native_source
+          - --revision
+          - "{{ native_application_revision }}"
+        chdir: /opt/mpdrussoundpi-deploy
+      register: native_candidate
+      changed_when: true
+      tags: stage
+    - name: Report the sealed candidate for separate reviewed activation
+      ansible.builtin.debug:
+        msg: "{{ native_candidate.stdout | from_json }}"
+      tags: stage

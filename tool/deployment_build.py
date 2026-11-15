@@ -119,9 +119,13 @@ def source_context(source: Path, revision: str, destination: Path) -> None:
     archive = destination / "source.tar"
     with archive.open("xb") as output:
         command(["git", "-C", str(source), "archive", "--format=tar", revision], log=output)
+    unpack_source(archive, destination / "context")
+
+
+def unpack_source(archive: Path, context: Path) -> None:
+    """Extract only bounded regular Git source members; never links or internals."""
     if archive.stat().st_size > MAX_SOURCE:
         raise BuildError("Source archive exceeds the size limit")
-    context = destination / "context"
     context.mkdir(mode=0o700)
     total = 0
     with tarfile.open(archive, "r:") as bundle:

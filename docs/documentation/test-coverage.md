@@ -81,6 +81,32 @@ This short run is not six-hour acceptance; no additional observation was started
 Startup pending-route samples precede timing and are not represented as a
 completed pass. See the [real deployment record](../plans/general_open_simplify-deployment-configuration.md#approved-real-s3-deployment-and-observation-2026-11-14).
 
+## Prepared native deployment increment (2026-11-15)
+
+[Native deployment tests](../../tests/test_deployment_native.py) cover distinct
+source/environment candidate identity, strict prepared-host scope, nonroot
+units/host secret mapping, serial option parity, private-umask source
+permissions, byte/mode drift, shared host reservations, controller scope
+substitution, approval refusal, off-host failure, unchanged reruns, explicit
+recovery and rollback, post-backup data preservation, previous native venv
+restoration and partial unit-install recovery. A cutover fixture uses real
+verified Docker archive bytes and the native operation identity while
+simulating service/Docker control; it verifies restoration of the original
+committed Docker record. Existing Compose recovery tests still cover the
+shared image-loading implementation.
+
+Full local Python regression: **901 tests, 13 skipped, no failures**. Both
+native entry points pass Ansible syntax checks. On the Pi, a disposable source
+and venv release imported as the nonroot service identity under umask 077;
+all 1454 backup entries restored with the exact release seal, and generated
+units passed `systemd-analyze verify`. The real native ser2net binary also
+passed bidirectional TCP/PTY routing with generated configuration as nonroot,
+without using the real serial device or changing units. Protected live
+container/native playback identities were unchanged; temporary trees were
+removed. This does **not** certify live native cutover, rollback, physical
+playback, reboot or endurance. See the
+[native support boundary](./container-deployment.md#prepared-native-web-and-gateway).
+
 ## Blind Spots
 
 - `web/config_types.py` has no dedicated tests for malformed configuration, boolean-vs-integer rejection, endpoint defaults, or controller-limit normalization.
