@@ -59,7 +59,7 @@ Preserve existing data and secrets; no automatic pairing, device probing,
 audio playback, firmware changes, installation, service restarts or hardware
 commands without an approved design and explicit consent. Reuse shared
 effective-value metadata from
-[inline overrides](./web_idea_effective-config-overrides.md) and safe-save
+[inline overrides](./web_done_effective-config-overrides.md) and safe-save
 semantics from [configuration change handling](./web_idea_safe-configuration-changes.md).
 The setup UI must not expose secret-file paths or credential contents.
 

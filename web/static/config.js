@@ -16,7 +16,6 @@ const backendBaud = document.getElementById("backendBaud");
 const backendPollInterval = document.getElementById("backendPollInterval");
 const backendConnectionStatus = document.getElementById("backendConnectionStatus");
 const backendSummaryStatus = document.getElementById("backendSummaryStatus");
-const backendOverrides = document.getElementById("backendOverrides");
 const configShortcuts = document.getElementById("configShortcuts");
 const shortcutCountBadge = document.getElementById("shortcutCountBadge");
 const addShortcutButton = document.getElementById("addShortcutButton");
@@ -124,10 +123,34 @@ function escapeAttribute(value) {
 }
 
 function collectBackend() {
+  const savedBackend = configPayload?.config?.backend || {};
+  const effective = configPayload?.effective_backend;
+  const pollInterval = Number(backendPollInterval.value);
+  const incompleteSavedEndpoint = configPayload?.config_required === false &&
+    !savedBackend.device && !(savedBackend.host && savedBackend.port);
+  if (effective?.mode?.source === "environment") {
+    const backend = { ...savedBackend, poll_interval_seconds: pollInterval };
+    if (!savedBackend.device) {
+      if (effective.host?.source !== "environment" &&
+          (!incompleteSavedEndpoint || backendHost.value.trim() !== effective.host?.value)) {
+        backend.host = backendHost.value.trim();
+      }
+      if (effective.port?.source !== "environment" &&
+          (!incompleteSavedEndpoint || Number(backendPort.value) !== effective.port?.value)) {
+        backend.port = Number(backendPort.value);
+      }
+    }
+    return backend;
+  }
+  if (incompleteSavedEndpoint && effective?.mode?.source === "default" &&
+      backendMode.value === "tcp" && backendHost.value.trim() === effective.host?.value &&
+      Number(backendPort.value) === effective.port?.value) {
+    return { ...savedBackend, poll_interval_seconds: pollInterval };
+  }
   const endpoint = backendMode.value === "serial"
     ? { device: backendDevice.value.trim(), baud: Number(backendBaud.value) }
     : { host: backendHost.value.trim(), port: Number(backendPort.value) };
-  return { ...endpoint, poll_interval_seconds: Number(backendPollInterval.value) };
+  return { ...endpoint, poll_interval_seconds: pollInterval };
 }
 
 function collectControllers() {
@@ -146,6 +169,75 @@ function updateConnectionFields() {
   document.getElementById("backendPortField").hidden = serial;
   document.getElementById("backendDeviceField").hidden = !serial;
   document.getElementById("backendBaudField").hidden = !serial;
+}
+
+function backendSourcePresentation(source) {
+  const labels = {
+    environment: "Environment",
+    saved: "Config file",
+    default: "Default",
+    cli: "Command line",
+    command_line: "Command line",
+  };
+  return { label: labels[source] || "Config file" };
+}
+
+function setBackendSource(field, source) {
+  const presentation = backendSourcePresentation(source);
+  const badge = document.getElementById(`backend${field}Source`);
+  badge.textContent = presentation.label;
+  badge.dataset.source = source;
+  badge.hidden = presentation.label === "Config file";
+}
+
+function renderBackendFields(payload) {
+  const savedBackend = payload.config?.backend || {};
+  const effective = payload.effective_backend;
+  const modeSource = effective?.mode?.source || (savedBackend.device ? "saved" : "default");
+  const hostSource = effective?.host?.source || (savedBackend.host ? "saved" : "default");
+  const portSource = effective?.port?.source || (savedBackend.port ? "saved" : "default");
+  const environmentMode = modeSource === "environment";
+  const savedSerialOverridden = environmentMode && Boolean(savedBackend.device);
+  const incompleteSavedEndpoint = payload.config_required === false &&
+    !savedBackend.device && !(savedBackend.host && savedBackend.port);
+  const missingSavedEndpoint = environmentMode && !savedBackend.device &&
+    !(savedBackend.host && savedBackend.port);
+  backendMode.value = environmentMode
+    ? effective?.mode?.value || "tcp"
+    : savedBackend.device ? "serial" : "tcp";
+  backendHost.value = hostSource === "environment" || (hostSource === "default" && incompleteSavedEndpoint)
+    ? effective?.host?.value ?? ""
+    : savedBackend.host ?? effective?.host?.value ?? "";
+  backendPort.value = portSource === "environment" || (portSource === "default" && incompleteSavedEndpoint)
+    ? effective?.port?.value ?? 6666
+    : savedBackend.port ?? effective?.port?.value ?? 6666;
+  backendDevice.value = savedBackend.device || "";
+  backendBaud.value = savedBackend.baud ?? 19200;
+  backendPollInterval.value = savedBackend.poll_interval_seconds ?? 2;
+  backendMode.disabled = environmentMode;
+  backendHost.readOnly = hostSource === "environment" || savedSerialOverridden;
+  backendPort.readOnly = portSource === "environment" || savedSerialOverridden;
+  setBackendSource("Mode", modeSource);
+  setBackendSource("Host", hostSource);
+  setBackendSource("Port", portSource);
+  const details = [];
+  if (savedSerialOverridden) {
+    details.push("The saved endpoint is serial; remove the environment override before editing TCP values.");
+  }
+  if (missingSavedEndpoint && payload.config_required !== false) {
+    details.push("No saved endpoint exists yet; remove the environment override to complete initial setup.");
+  } else if (missingSavedEndpoint) {
+    const missingOverriddenValue = (hostSource === "environment" && !savedBackend.host) ||
+      (portSource === "environment" && !savedBackend.port);
+    details.push(missingOverriddenValue
+      ? "The saved endpoint is incomplete; remove the environment override before completing it."
+      : "The saved endpoint is incomplete; edit the unoverridden field to complete it.");
+  } else if (incompleteSavedEndpoint) {
+    details.push("The saved endpoint is incomplete; edit the connection fields before changing the poll interval.");
+  }
+  document.getElementById("backendSourceDetail").textContent =
+    details.length ? ` ${details.join(" ")}` : "";
+  updateConnectionFields();
 }
 
 function formatSoundValue(action, value) {
@@ -308,6 +400,7 @@ function setBackendConnectionStatus(state, label, message) {
   backendSummaryStatus.textContent = label;
   backendSummaryStatus.title = message;
   backendConnectionStatus.textContent = message;
+  backendConnectionStatus.hidden = state === "connected";
 }
 
 function setMessage(text, isError = false) {
@@ -389,27 +482,13 @@ function recomputeUnsavedChanges() {
   updateSaveButtonState();
 }
 
-function describeEffectiveBackend(effective) {
-  if (!effective) return "";
-  const endpoint = effective.mode.value === "serial"
-    ? "serial (saved device)"
-    : `${effective.host.value} (${effective.host.source}):${effective.port.value} (${effective.port.source})`;
-  return `Runtime connection: ${endpoint}. Fields below edit saved settings; environment overrides are changed in deployment configuration.`;
-}
-
 function renderEditor(payload) {
   configPayload = payload;
   controllerZones.innerHTML = "";
   configSources.innerHTML = "";
   draftZones.clear();
   document.getElementById("configTitle").textContent = payload.config_required ? "Russound setup" : "Russound configuration";
-  backendMode.value = payload.config?.backend?.device ? "serial" : "tcp";
-  backendHost.value = payload.config?.backend?.host || "";
-  backendPort.value = payload.config?.backend?.port ?? 6666;
-  backendDevice.value = payload.config?.backend?.device || "";
-  backendBaud.value = payload.config?.backend?.baud ?? 19200;
-  backendPollInterval.value = payload.config?.backend?.poll_interval_seconds ?? 2;
-  updateConnectionFields();
+  renderBackendFields(payload);
   controllerConfig.innerHTML = "";
   for (let controllerId = 1; controllerId <= 6; controllerId += 1) {
     const configured = payload.config?.controllers?.find((controller) => controller.id === controllerId);
@@ -422,9 +501,6 @@ function renderEditor(payload) {
   }
   document.getElementById("controllerCountBadge").textContent = `${collectControllers().length} enabled`;
   baselineConnectionHash = connectionHash();
-  const effective = payload.effective_backend;
-  backendOverrides.hidden = !effective;
-  backendOverrides.textContent = describeEffectiveBackend(effective);
   baselineZoneSlotsHash = hashZoneSlots(payload.zone_slots || []);
   baselineSourceSlotsHash = hashSourceSlots(payload.source_slots || []);
   hasUnsavedChanges = false;
@@ -544,7 +620,12 @@ function rebuildZoneSlots() {
   }
   const savedDrafts = new Map(draftZones);
   const savedBaselines = [baselineZoneSlotsHash, baselineSourceSlotsHash, baselineConnectionHash, baselineShortcutsHash];
-  renderEditor({ ...configPayload, config: { ...configPayload.config, backend: collectBackend(), controllers, shortcuts: collectShortcuts() }, zone_slots: zoneSlots, source_slots: collectSourceSlots() });
+  const backendDraft = [backendMode, backendHost, backendPort, backendDevice, backendBaud, backendPollInterval]
+    .map((field) => field.value);
+  renderEditor({ ...configPayload, config: { ...configPayload.config, controllers, shortcuts: collectShortcuts() }, zone_slots: zoneSlots, source_slots: collectSourceSlots() });
+  [backendMode, backendHost, backendPort, backendDevice, backendBaud, backendPollInterval]
+    .forEach((field, index) => { field.value = backendDraft[index]; });
+  updateConnectionFields();
   for (const [address, slot] of savedDrafts) draftZones.set(address, slot);
   [baselineZoneSlotsHash, baselineSourceSlotsHash, baselineConnectionHash, baselineShortcutsHash] = savedBaselines;
   recomputeUnsavedChanges();
@@ -629,15 +710,37 @@ async function saveConfig() {
     return;
   }
   const backend = collectBackend();
+  const savedBackend = configPayload?.config?.backend || {};
+  const effective = configPayload?.effective_backend;
+  const savedMode = savedBackend.device ? "serial" : "tcp";
+  const persistenceMode = effective?.mode?.source === "environment" ? savedMode : backendMode.value;
+  const preserveIncompleteEndpoint = configPayload?.config_required === false &&
+    !savedBackend.device && !(savedBackend.host && savedBackend.port) &&
+    !backend.device && !(backend.host && backend.port) &&
+    ["host", "port", "device", "baud"].every((key) => backend[key] === savedBackend[key]);
+  if (preserveIncompleteEndpoint &&
+      backend.poll_interval_seconds !== (savedBackend.poll_interval_seconds ?? 2)) {
+    setMessage("Complete the saved backend endpoint before changing the poll interval.", true);
+    return;
+  }
+  if (!preserveIncompleteEndpoint && effective?.mode?.source === "environment" &&
+      !savedBackend.device && !(savedBackend.host && savedBackend.port) &&
+      (!backend.host || !backend.port)) {
+    setMessage(
+      "No saved backend endpoint is available to complete setup. Remove or change the environment override, restart the web service, then save the endpoint in the config file.",
+      true,
+    );
+    return;
+  }
   if (!Number.isFinite(backend.poll_interval_seconds) || backend.poll_interval_seconds < 1) {
     setMessage("Enter a poll interval of at least 1 second.", true);
     return;
   }
-  if (backendMode.value === "tcp" && (!backend.host || !Number.isInteger(backend.port) || backend.port < 1 || backend.port > 65535)) {
+  if (!preserveIncompleteEndpoint && persistenceMode === "tcp" && (!backend.host || !Number.isInteger(backend.port) || backend.port < 1 || backend.port > 65535)) {
     setMessage("Enter a gateway host and a TCP port from 1 to 65535.", true);
     return;
   }
-  if (backendMode.value === "serial" && (!backend.device || !Number.isInteger(backend.baud) || backend.baud < 1 || backend.baud > 4000000)) {
+  if (persistenceMode === "serial" && (!backend.device || !Number.isInteger(backend.baud) || backend.baud < 1 || backend.baud > 4000000)) {
     setMessage("Enter a serial device and a baud rate from 1 to 4000000.", true);
     return;
   }
@@ -653,7 +756,7 @@ async function saveConfig() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        backend,
+        ...(preserveIncompleteEndpoint ? {} : { backend }),
         controllers: collectControllers(),
         zone_slots: collectZoneSlots(),
         source_slots: collectSourceSlots(),

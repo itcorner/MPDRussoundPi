@@ -770,6 +770,36 @@ h1 {
   min-width: 220px;
 }
 
+.config-field-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid rgba(140, 160, 184, 0.35);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.config-source-explanation {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.config-source-badge[hidden] {
+  display: none;
+}
+
 .field select {
   min-width: 220px;
 }
@@ -981,6 +1011,26 @@ h1 {
   margin-top: 1rem;
 }
 
+.setup-fields > .field {
+  display: grid;
+  grid-template-rows: 2.4rem auto;
+  align-content: start;
+  gap: 0.4rem;
+}
+
+.setup-fields > .field > .config-field-heading {
+  min-height: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.setup-fields > .field > input,
+.setup-fields > .field > select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.9rem;
+}
+
 .setup-controller-row {
   display: flex;
   align-items: center;
@@ -1007,11 +1057,17 @@ h1 {
   min-width: 0;
 }
 
+.setup-fields input:read-only,
+.setup-fields select:disabled {
+  cursor: not-allowed;
+  opacity: 0.82;
+}
+
 .setup-fields [hidden] {
   display: none;
 }
 
-#backendOverrides, #configEmptyMessage {
+#configEmptyMessage {
   overflow-wrap: anywhere;
 }
 

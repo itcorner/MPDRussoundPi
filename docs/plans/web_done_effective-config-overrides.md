@@ -1,15 +1,18 @@
-# Idea: show effective configuration and environment overrides inline
+# Effective configuration and environment overrides inline
 
-Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
+Status: **implemented and test-deployed; phone acceptance confirmed**
+(2026-11-15). Release and screen-reader testing remain follow-ups.
 
 **S3 runtime foundation implemented locally, 2026-11-14:** the shared resolver
 now supplies additive `effective_backend` metadata to the editor, config-state
 API and successful saves. Connectivity uses its `configured` value rather
-than reimplementing environment precedence in JavaScript. The editor shows a
-runtime/source summary but deliberately still edits saved fields. Full inline
-badges/read-only fields, accessibility/help design and API write restrictions
-below remain unimplemented; S3 does not authorize them. See the
-[S3 record](./general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14).
+than reimplementing environment precedence in JavaScript. The operator selected
+the compact backend-only mockup: effective connection mode/host/port now appear
+in their existing fields with inline source badges and accessible explanations.
+Environment-controlled values are read-only; the existing API write contract
+is unchanged. See the
+[S3 record](./general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14)
+and current implementation below.
 
 ## Goal
 
@@ -18,22 +21,21 @@ application in their normal fields instead of a separate environment-override
 banner above conflicting saved values. Identify each externally controlled
 field clearly, make it read-only and explain how to change it.
 
-Prefer a visible **Environment** badge alongside the field over prefixing the
-input value with `env:`: a prefix would corrupt numeric inputs and complicate
-validation and copying. Provide an accessible help control/description, not
-only a hover-only tooltip, naming the relevant variable and explaining that it
-must be changed or removed in the deployment environment and the service
-restarted/recreated. Do not promise that editing a generated `.env` is durable:
+Use an **Environment** badge alongside the field rather than prefixing the
+input value with `env:`. The agreed presentation uses a small explanation
+paragraph, associated with the controls, rather than a tooltip. The API
+documentation names the relevant variables. Do not promise that editing a
+generated `.env` is durable:
 Ansible-managed deployments must change the corresponding playbook variable.
 The UI must not expose secret values or arbitrary environment variables.
 
 ## Verified current behavior and precedence
 
-- The editor renders saved backend host/port from `config` and separately
-  displays `backend_overrides`; see
-  [`renderEditor`](../../web/static/config.js) and
-  [`GET /api/config`](../../web/API.md#get-apiconfig). Since S3, the summary
-  and status use the shared effective metadata, not the legacy override map.
+- The editor renders effective backend mode/host/port in one field each, using
+  the shared metadata instead of a separate conflicting override summary. The
+  legacy `backend_overrides` API value remains for compatibility and is not
+  used by the editor; see [`renderBackendFields`](../../web/static/config.js)
+  and [`GET /api/config`](../../web/API.md#get-apiconfig).
 - For the backend endpoint, non-empty `RUSSOUND_BACKEND_HOST` and valid
   `RUSSOUND_BACKEND_PORT` independently override the saved value. Blank or
   whitespace-only values do not override; a non-integer or out-of-range port
@@ -58,22 +60,28 @@ serial configurations, blank/valid/invalid environment values, and an
 independent port-only override. S3 regression tests now also verify API source
 parity, offline save preservation and shared browser status consumption.
 
-## Proposed behavior
+## Implemented behavior and remaining scope
 
-Coordinate the target precedence with
-[deployment simplification](./general_open_simplify-deployment-configuration.md)
-before changing it. The editor and
-[deployment overview](./general_idea_deployment-status-overview.md) should
-consume the same allowlisted effective-value/source metadata, not duplicate
-precedence logic. Coordinate persistence and stale-editor handling with
-[safe configuration changes](./web_idea_safe-configuration-changes.md).
-
-- For each applicable field, display the effective value, a visible source
-  badge and a keyboard/screen-reader-accessible explanation naming the source.
-  Leave unaffected fields editable, including host and port independently when
-  only one is overridden. Disable editing of the effective connection mode
-  when the override forces TCP; explain why. The displayed source for the other
-  TCP field may be saved configuration or a runtime default.
+- For the selected compact design, backend mode, host and port use their
+  normal fields. `Environment` and `Default` badges are visible; `Config file`
+  badges are hidden by design. A paragraph below the fields is referenced by
+  their `aria-describedby`. Fields controlled by environment are read-only;
+  an unoverridden TCP field remains editable when the saved endpoint is TCP.
+  CLI has no backend host/port override: `--config` selects the file only.
+- When TCP is forced over saved serial configuration, mode is disabled and the
+  hidden saved serial endpoint is preserved. The effective TCP fields are
+  read-only in this case because the saved serial form has no independent
+  dormant TCP fallback to edit. For first setup with no saved endpoint and an
+  active environment override, the UI explains that the override must be
+  removed before a file endpoint can be configured.
+- An existing partial saved TCP endpoint is inactive in the resolver. The UI
+  displays the effective defaults and retains the partial endpoint on unrelated
+  saves. Changing the poll interval is blocked until that endpoint is completed.
+  Backend drafts survive controller/zone editor rebuilds.
+- The selected design labels only backend endpoint fields that have effective
+  provenance; file-only controller/source/shortcut fields retain the compact
+  existing appearance. Poll interval and serial device/baud have no CLI or
+  environment override in the current runtime.
 - Under the approved S3 contract an invalid nonblank runtime override rejects
   startup, rather than producing a running editor with a warning. A future
   deployment UI may explain that startup error without exposing its value;
@@ -89,47 +97,60 @@ precedence logic. Coordinate persistence and stale-editor handling with
   actual connector; avoid a second browser-side implementation of precedence.
   Where it differs, distinguish a runtime default or inactive saved value from
   an environment value.
-- Maintain existing API consumers: define additive typed effective-value and
-  source metadata or a carefully versioned change; preserve the saved `config`
-  and existing `backend_overrides` semantics until compatibility is decided.
-  Resolve value, source and validity centrally using the same logic as the
-  runtime. Only expose explicitly allowlisted non-secret fields.
-- Existing configuration API writes must remain well-defined for other clients;
-  determine whether read-only refers to this editor only or requires API-side
-  enforcement. Do not silently discard submitted values or unintentionally
-  change existing API behavior.
+- Preserve existing API consumers and writes: saved `config`, additive
+  `effective_backend`, and legacy `backend_overrides` semantics are unchanged.
+  Read-only enforcement applies only to the browser editor; direct API clients
+  retain their existing ability to update saved values. The shared resolver
+  remains the sole source of effective backend values and provenance.
 
 ## Decisions and implementation stages
 
-- [ ] Inventory every field in the configuration editor and document whether
+- [x] Inventory every field in the configuration editor and document whether
   environment variables or command-line options genuinely influence it,
-  including defaults, validation and precedence. Limit UI locking to effective
-  overrides, not unrelated settings.
-- [ ] Decide the read-only API contract, behavior for editing a saved serial
-  configuration while TCP is forced, invalid override warning and where
-  durable deployment-specific change instructions are maintained.
+  including defaults, validation and precedence. Only backend mode/host/port
+  have effective source indicators; other editor fields are file-only.
+- [x] Decide the read-only API contract and saved-serial behavior: read-only is
+  UI-only; forced-TCP values over saved serial configuration cannot edit a
+  dormant TCP endpoint. Environment-backed values point operators to the
+  deployment environment and service restart/recreation.
 - [x] Define additive allowlisted source metadata from the shared endpoint
   resolver, preserve saved/legacy API fields, and update
   [web API documentation](../../web/API.md) (S3). Invalid nonblank runtime
-  ports now reject startup; full inline editor policy remains open.
-- [ ] Update the configuration UI, save/diff logic and help text; retain
-  configuration persistence and non-overridden edits across all supported
-  deployment layouts.
-- [ ] Verify automated coverage and manually exercise Docker and native
-  deployments without changing production connection settings.
+  ports reject startup.
+- [x] Update the configuration UI, save/diff logic and help text; retain
+  hidden saved serial endpoints and do not persist environment values.
+- [x] Add automated coverage for effective source badges, editability and
+  saved serial/TCP preservation under environment overrides.
+- [x] Inspect the existing UI on the live Pi Docker deployment without changing
+  connection settings; verify an isolated native web process using a fixture
+  and loopback-only fake backend. The native check does not exercise a Pi
+  systemd deployment.
+- [x] Deploy the current UI candidate to the live Pi for mobile testing.
+- [x] Confirm the live deployment works on the operator's phone.
+- Follow-up: commit and release the changes through the normal workflow.
+- Follow-up: verify keyboard and screen-reader behavior on actual devices.
 
-## Acceptance tests
+## Verification and follow-ups
 
-- TCP saved values with no override, host only, port only and both; equal vs.
-  differing saved/effective values; whitespace, invalid, out-of-range and
-  valid boundaries. Assert displayed values, source, editability and runtime
-  endpoint agree.
-- Serial saved values with host-only and port-only TCP overrides, including the
-  default-host case; prove unrelated saves preserve the serial configuration
-  and removal of the override restores it. Cover first-run/missing config and
-  inaccessible config files.
-- Verify API compatibility, config save/reload, connection change detection,
-  unsaved state, external API clients and status display; verify no masked
-  values are persisted accidentally and no arbitrary secrets are returned.
-- Test browser keyboard and touch access, tooltips/help and screen-reader
-  descriptions; confirm normal numeric values remain copyable and valid.
+- Automated runtime and server tests cover TCP/serial resolution, independent
+  overrides, whitespace, invalid ports and boundaries, metadata parity,
+  offline saves and serial restoration. Editor tests cover source badges,
+  partial overrides, saved-value preservation, incomplete endpoints, draft
+  rebuilds and connection status. These do not cover every combination of
+  browser save/reload and inaccessible config files.
+- The live Pi Docker UI was visually inspected with environment-sourced mode,
+  host and port, a connected backend and healthy containers. On 2026-11-15,
+  the reviewed deployment applied the subsequent incomplete-endpoint and
+  accessibility fixes; apply, container, HTTP, backend and playback checks
+  passed. The served UI assets match the current working tree. This candidate
+  has not been published as a release. The operator confirmed that the
+  deployment looks good and works on their phone.
+- An isolated native web process was exercised in a browser with a partial saved
+  endpoint, both with a port override and after removing it: effective defaults
+  were displayed, a controller edit preserved the backend draft, and unrelated
+  saves preserved the partial file endpoint. Keyboard focus, computed
+  accessibility-tree descriptions and a narrow viewport were checked. This is
+  not a native Pi systemd deployment or a physical touch/screen-reader test.
+- Follow up with physical keyboard and screen-reader verification, and any desired
+  expanded end-to-end coverage. Tooltips were intentionally removed; the
+  explanation paragraph is the intended replacement.

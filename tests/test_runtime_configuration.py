@@ -27,6 +27,7 @@ class RuntimeConfigurationTests(unittest.TestCase):
     def test_partial_overrides_and_sources_share_runtime_resolution(self):
         for backend in ({"host": "saved.local", "port": 6666}, {"device": "/private/device", "baud": 19200}):
             for variables in ({}, {"RUSSOUND_BACKEND_HOST": "gateway.local"},
+                              {"RUSSOUND_BACKEND_HOST": "saved.local", "RUSSOUND_BACKEND_PORT": "6666"},
                               {"RUSSOUND_BACKEND_PORT": "7000"},
                               {"RUSSOUND_BACKEND_HOST": "gateway.local", "RUSSOUND_BACKEND_PORT": "1"},
                               {"RUSSOUND_BACKEND_PORT": "65535"},
@@ -40,6 +41,7 @@ class RuntimeConfigurationTests(unittest.TestCase):
                     self.assertEqual(metadata["port"]["value"], endpoint.port)
                     self.assertEqual(metadata["mode"]["value"], "serial" if endpoint.device else "tcp")
                     self.assertEqual(metadata["host"]["overridden"], bool(variables.get("RUSSOUND_BACKEND_HOST", "").strip()))
+                    self.assertEqual(metadata["port"]["overridden"], bool(variables.get("RUSSOUND_BACKEND_PORT", "").strip()))
                     self.assertEqual(original, json.dumps(config))
                     self.assertNotIn("/private", json.dumps(metadata))
 
