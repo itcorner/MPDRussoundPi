@@ -1,6 +1,6 @@
-# Container deployment
+# Deployment: containers and prepared native hosts
 
-This is the authoritative guide for the new container layouts. Use them for
+This is the authoritative guide for the retained deployment workflows. Use them for
 **new, isolated development deployments** or the explicitly reviewed
 [operator workflow](#reviewed-development-deployment-and-recovery) below.
 That workflow supports prepared Linux web/external-gateway, web/managed-gateway
@@ -13,7 +13,35 @@ An explicitly approved manual Pi trial reached real controller communication,
 then required a separately approved agent proxy allowlist change after the
 Docker subnet changed. Repeated checks passed after that correction; see the
 [target-check record](../plans/general_open_simplify-deployment-configuration.md#early-raspberry-pi-target-check-2026-11-13).
-That trial is not a validated migration procedure.
+That early trial is not a general migration procedure. Later representative
+acceptance and the exact supported boundaries are summarized below.
+
+## Support and acceptance boundaries
+
+| Intent | Retained entry point | Support and evidence |
+|---|---|---|
+| Prepared Linux development containers: managed, external or standalone gateway | [Reviewed operator](#reviewed-development-deployment-and-recovery), `deploy` / `recover` / `resume-original` | Verified local images or pinned Hub candidates, same-layout adoption, unchanged reruns, explicit updates and off-host-backed recovery. Real Pi managed-layout routing, recovery, six-hour observation and representative audible checks passed. |
+| Prepared split-host development | [Split-host procedure](#split-host-deployment-on-prepared-hosts); one reviewed deployment per Linux host | Real Mac-web/Pi-backend routing passed. The Mac trial used manual Compose, not the Linux-root operator; full two-Linux-host apply/failure-recovery acceptance remains unverified. No cross-host atomic transaction. |
+| Hardware-free dummy development | [Dummy layout](#dummy-no-hardware) | Explicit local dummy build and isolated Compose startup; synthetic routing/recovery tests are not physical hardware evidence. Automated dummy-artifact deployment is not supported. |
+| Controller preview / target inspection | `deploy-dev.yml`, `deploy-dev-build.yml` | Preview renders locally; explicit `russound_action=preflight` inspects a target read-only. Neither activates services. Use the operator for apply/recovery. |
+| Trusted deployment tooling | `bootstrap-deployment.yml`, `upgrade-deployment.yml`, `restore-deployment-tools.yml` | Install or switch only the reviewed tooling checkout/environment with its reservation and recovery guards; no web/audio deployment or OS provisioning. |
+| Prepared native web plus dedicated native gateway | [Sealed staging and native operator](#prepared-native-web-and-gateway) | Cutover, unchanged rerun, Docker recovery and native update passed on the Pi. Shared controller-health recovery was fixed in `060084d`; a Pi-local reboot probe verified physical controller readiness in 10.96 seconds without an event client. Full native reboot acceptance is blocked by separate USB-audio profile readiness errors; native rollback, observation and new audible acceptance remain open. |
+| Production containers | `compose.prod.yml` | Layout/rendering only; no approved stable image pair or production deployment workflow. Fail rather than substitute development images. |
+| Existing audio/agent/proxy/egress | `setup-musicpi.yml`, `deploy-playback-agent.yml`, `remove-playback-agent.yml`, `deploy-playback-agent-proxy.yml`, `deploy-playback-egress.yml`; [playback guide](./playback-agent-deployment.md), [audio guide](./mpd-headless-deployment.md) | Separate component-specific tooling and approval boundaries; web/gateway deployment preserves these services. Audio and agent candidate staging is not a full native-stack installer. |
+
+Prepared means the OS, account, Docker/Compose or native runtime, device access,
+private data, credentials, TLS trust and network/firewall routes already exist.
+Tooling bootstrap/upgrade/restore manages only trusted deployment tooling; it
+does not provision those prerequisites. No supported web workflow installs the
+entire stack on a fresh machine.
+
+**Excluded:** automatic same-host/split-host conversion, data movement between
+hosts, legacy-native adoption, external-native gateways, OS/package or schema
+migration, credential rotation and fresh-machine disaster recovery. The one
+implemented cross-layout exception is the explicitly reviewed matching
+managed-Docker-to-native cutover and recovery of its recorded baseline.
+Changing layout is not an ordinary rerun. Missing releases or untested
+acceptance are limitations, never success-shaped fallbacks.
 
 ## What is available
 
@@ -157,8 +185,9 @@ With the same options, replace `reuse` with `verify` to recheck the selected
 digests online without consulting moving aliases; use `check` to compare a
 fresh candidate against the saved **index digests**. Neither command changes
 the selection or target. An approved update requires a new `resolve --output`
-path. Automatic apply, committed target pins and transactional updates remain
-unimplemented.
+path. Candidate selection itself never applies anything. Use the
+[reviewed operator](#reviewed-development-deployment-and-recovery) for committed
+target pins, explicit updates and recovery; no unattended updates are implied.
 
 ## Prepare local development images
 
@@ -245,10 +274,10 @@ starts/stops services, including with `--check`. Explicit
 `russound_action=preflight` opts into the same first-install inspection described
 below; it does not transfer/load images either. Hub selection, explicit Hub
 references and local-bundle inputs cannot be mixed. `russound_action=apply`
-remains blocked: human approval/input custody and the complete apply/recovery
-workflow are not wired together. Local candidate records, reviewed SSH artifact
-handoff and the reserved target-local loader now exist as internal runner APIs,
-not Ansible actions.
+remains blocked in this preview play. The separate
+[reviewed operator](#reviewed-development-deployment-and-recovery) connects human
+approval, protected inputs, artifact transfer, reservation, apply and recovery;
+do not invoke its internal runner APIs directly.
 
 ## 1. Prepare one deployment file
 
@@ -428,8 +457,9 @@ Do not combine a selection file with explicit images or provide only half a
 managed pair. The preview reports which verification path it used.
 The controller Python running Ansible invokes the standard-library resolver;
 Docker Compose must also be installed on that controller.
-The initial preview does not support playback agents or legacy source/mode
-switches. Preview does not pull images or verify target permissions, installed
+The preview validates playback registry entries and renders existing protected
+file references; it never provisions credentials or tests the agent route.
+Legacy source/mode switches are rejected. Preview does not pull images or verify target permissions, installed
 images, hardware or deployment safety.
 `russound_action=apply` fails explicitly. Do not interpret a successful preview
 as authorization or evidence of safe deployment.
@@ -1106,44 +1136,44 @@ independently held recovery assets, restoration and resolved pending state.
 It also tests wrong host keys, lost off-host acknowledgement, explicit
 pre-apply original-runtime restart, preserved operator edits and first-install
 absence restoration. It uses disposable Linux volumes and projects, not the Pi.
-Remaining work belongs to broader configuration/logging cleanup, additional
-mode/layout migrations and S5 live hardware/audio/observation acceptance.
+The prepared same-host Pi's controller/playback, recovery, six-hour observation
+and representative audible checks passed separately. Those results do not
+certify other layouts; see the [support matrix](#support-and-acceptance-boundaries)
+for deferred acceptance and excluded migrations.
 Do not use the internal Python APIs as a deployment shortcut.
 
 ## Existing installations and legacy entry points
 
-The old `docker-compose.yml`, `docker-compose.dummy.yml` and
-`deploy-russound-docker.yml` remain for compatibility;
-they are **not aliases** for the new files. Do not mix their variables,
-state paths or ordered file lists with the new workflow. Legacy Docker
-provisioning can build on the target and stop native services; play-level
-defaults also override inventory. The old `deploy-russound-web.yml` installer
-is now a non-mutating refusal with a link to the native workflow below; it no
-longer updates a checkout/venv or restarts services in place.
-This compatibility surface is temporary in the repository plan: the final
-cleanup step retires superseded deployment scripts and examples after the
-replacement paths and migration/recovery acceptance are complete. It does not
-authorize deleting target data, backups, local-only images or recovery
-evidence.
+The following repository paths are retired and removed, **not aliases**:
 
-For source-only native web candidate staging, use
-[`stage-russound-web.yml`](../../ansible/playbooks/stage-russound-web.yml):
+| Removed path/artifact | Replacement and boundary |
+|---|---|
+| `docker-compose.yml` | `compose.dev.yml` plus optional `compose.gateway.yml`; prepare explicit images/data and use reviewed deployment. No implicit build or fixed container names. |
+| `docker-compose.dummy.yml` | `compose.dev.yml` plus `compose.dummy.yml`; explicit local dummy image and separate data. |
+| `ansible/playbooks/deploy-russound-docker.yml` | Tooling bootstrap plus reviewed `deploy`; Docker/OS/account preparation is now an explicit prerequisite, not a side effect of web deployment. |
+| `ansible/playbooks/deploy-russound-web.yml` | `stage-native-deployment.yml` plus reviewed `native-deploy`; no in-place checkout/venv installer or legacy-native adoption. |
+| `ansible/playbooks/stage-russound-web.yml` | Sealed `stage-native-deployment.yml` candidates consumed by the native operator. Old private source-only candidates cannot be activated by it. |
+| Legacy web/Docker templates, component defaults and unused account role | Explicit operator specifications, retained Compose profiles and generated sealed native units. |
 
-```sh
-ansible-playbook -i ansible/inventory.yaml \
-  ansible/playbooks/stage-russound-web.yml \
-  --tags stage \
-  -e russound_web_revision=FULL_40_OR_64_CHARACTER_COMMIT_SHA
-```
+Old commands now fail because their files do not exist; there is no silent
+redirect, compatibility installer or conversion of old variables/data paths.
+Do not run bare `docker compose up`: select the documented files explicitly.
+Retained preview plays reject legacy source/mode switches.
 
-This stages a clean, exact checkout and isolated dependency environment under
-the deployment user's private candidate directory. It validates existing web
-configuration but does not touch the active checkout, persistent state,
-credentials, system packages, systemd units or running services. Candidate
-staging requires Git, Python venv support and package-index access from the Pi.
-An existing revision candidate is never overwritten; a partial candidate must
-be inspected and a fresh revision selected. It is not an activation or
-recovery workflow.
+**Repository cleanup is not host migration.** Existing target files,
+containers, runtime data, `.env`, overrides, credentials, local-only images,
+deployment records, staged releases and backups are not removed or rewritten.
+Keep the exact old Compose input/overrides and image identities with recovery
+evidence before changing an existing installation. Use same-layout adoption
+only when the reviewed runtime matches; otherwise stop and design a separate
+migration. Never copy a new Compose file over a running legacy project.
+The tracked `docker/` runtime-directory notices and ignore rules remain to
+protect data left by old checkouts, not to advertise another deployment path.
+
+Separate audio/agent staging, proxy/egress/removal plays, their shared roles and
+templates, image Dockerfiles/entrypoints, and internal recovery/test fixtures
+remain in use. They are not alternative web installers; native acceptance
+deferral does not authorize replacing or removing the working playback stack.
 
 ## Prepared native web and gateway
 
@@ -1325,11 +1355,107 @@ Docker; only the explicit, latest-operation recovery described above covers
 the recorded cutover baseline.
 
 The earlier six-hour/audio acceptance belongs to the restored Docker layout.
-Neither it nor isolated native candidate tests certify native activation,
-reboot, physical playback or native endurance. Those remain explicit target
-acceptance gates in the implementation plan.
+The later native trial verified activation, physical controller routing,
+authenticated playback status, unchanged rerun and Docker recovery, not a new
+listening test. The operator subsequently approved live native-to-native
+update/recovery, one reboot and **one hour (3600 seconds)** of observation;
+the operator subsequently paused those further checks after aborting the
+controller session. The original native runtime was resumed. A later separately
+approved single reboot started native services with zero restarts and preserved
+protected files, but the controller API still reported disconnected despite
+healthy authenticated playback and fresh/correct output probes. Reboot acceptance
+therefore failed; no observation was started. Subsequent read-only diagnosis
+confirmed that the first failed poll was cached and headless polling stopped:
+the watcher polls only with an active event client or no recorded health.
+Opening an event stream triggered a successful controller poll without changing
+services, serial settings or playback. That browser-triggered refresh alone
+did not pass unattended reboot acceptance. The subsequently approved shared
+application fix in `060084d` passed regression tests and real-container delayed
+gateway acceptance. A reviewed native-to-native update completed with protected
+services/configuration unchanged and all three output routes healthy.
+
+After an initial reboot's diagnostic-helper scope/timing problem, the operator
+separately approved one additional reboot with a temporary Pi-local readiness
+probe. It measured physical controller health 10.96 seconds after web service
+activation, with no SSE clients. The temporary unit was disabled and removed.
+Controller-health recovery is closed, but **overall native reboot/audio
+acceptance remains blocked**: all three outputs then reported
+`hardware_profile_unavailable`, with MPD output services retrying startup.
+Subsequent diagnosis found contradictory live audio-server state: the USB
+card reported profile `off` despite a valid six-channel sink/downstream graph.
+With explicit approval, pausing the supervisor and three failing outputs and
+performing one runtime `off` -> configured 5.1 reset restored consistent profile
+state. All three outputs then passed fresh readiness and exact-route probes.
+Protected configuration was unchanged; no audio-server restart or further
+reboot occurred during that first recovery. A later authorized investigation
+used one additional reboot and controlled audio-session restarts. It reproduced
+the failure even with the supervisor/MPD outputs stopped and only read-only
+readiness clients: WirePlumber selected saved 5.1, then still exposed/restored
+`off`. Application profile writers are therefore not required to trigger it;
+merely serializing MPD guards is not a proven fix. The exact upstream defect
+remains unconfirmed. Audio was restored and all three fresh readiness/route
+probes passed; temporary test units/debug overrides were removed.
+This is manual recovery, not a permanent startup fix or a
+passed unattended audio reboot test. Investigate coordinated recovery before
+resuming acceptance; no timed observation has started. The corrected session observer
+must also be freshly staged before use. No six-hour native
+test is approved. New audible confirmation remains an operator-controlled check.
+
+A guarded shared-host audio recovery candidate has since been implemented and
+tested separately from the installed audio checkout. It serializes profile
+enforcement, requires native/Pulse agreement, waits five seconds before resetting
+the reproduced idle `off`/valid-5.1-graph inconsistency, and permits only one
+persisted reset per USB/PipeWire generation. Read-only observers do not recover
+audio; healthy or running outputs are not reset, and readiness must be rechecked
+afterward. The private runtime lock/state must not be deleted to bypass a
+recovery budget; inspect the logged failure and device/server generation first.
+No new web-container dependency or deployment-layout-specific service is added.
+
+**Initial candidate promotion was held:** it recovered five real
+restore failures, but one additional native Profile inventory variant caused a
+safe refusal and timeout. Promotion and unattended reboot/endurance acceptance
+were blocked at that point. See the implementation plan
+for the complete trial results; passing later trials do not erase this failure.
+
+The operator subsequently approved extending the candidate to request one
+WirePlumber restart per boot when a selected USB card's profile inventory stays
+missing for five seconds. This is separate from the per-device off/on reset.
+It requires fresh matching native/Pulse identities and idle known-state audio
+throughout the inspected host graph, and refuses conflicting native profiles.
+The restart budget is written before the nonblocking user-service request and
+survives WirePlumber/device generations and guard retries. Failure or timeout
+does not replenish it. Every subsequent readiness check still requires the
+configured profile, virtual sinks and exact downstream topology. This
+host-session recovery is more disruptive than a card reset and is never issued
+by read-only status polling. The extended, tested module is now installed on
+the prepared Pi audio host: 30 additional cold-session trials passed, and an
+explicitly injected missing inventory exercised exactly one real WirePlumber
+restart with successful fresh readiness afterward. Two unattended installed
+reboots passed without needing recovery. This closes the bounded audio
+recovery/reboot gate, not the upstream defect or remaining native lifecycle,
+audible and one-hour endurance acceptance. The first unexpected Profile array
+was not recaptured; conflicting profiles still fail closed. No observation
+has started. See the implementation plan for evidence and collector corrections.
+
+Native acceptance subsequently resumed: a reviewed switch to a distinct sealed
+release at the same fixed revision, independently backed-up native recovery and
+an identical unchanged rerun all passed without touching audio/agent services.
+This tests release switching/recovery, not cross-version compatibility.
+The refreshed Pi-local one-hour observer started at 2026-11-16 01:07:52 CET
+(expected end 02:07:52 CET). Initial checks passed; **completion is pending**.
+It is read-only and durable across laptop disconnects, with no automatic Docker
+restore. Native audible confirmation and final handover remain outstanding.
+
+The operator subsequently extended this run to **four hours total**, ending
+2026-11-16 **05:07:52 CET**. An overlapping read-only Pi-local observer retains
+the exact original baseline and covers the extension without interrupting the
+original observer. Initial extension checks passed; four-hour completion remains
+pending. Review both evidence streams rather than treating the original
+one-hour completion as final acceptance.
 
 The Pi's extra Compose override and local-only web image need explicit
 preservation. Continue to treat adoption as a separately approved migration.
 The [implementation plan](../plans/general_open_simplify-deployment-configuration.md)
-records remaining safety, native/local-build intents and integration gates.
+records completed evidence, deferred native acceptance and remaining S5/CI
+handover gates. The split-host Linux-operator and stable-production limitations
+above are not closed by the native trial or by repository cleanup.

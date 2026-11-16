@@ -1,7 +1,9 @@
 # Plan: simplify deployment and configuration
 
-Status: **open; S0–S4 implementation gates closed, S5 and final legacy retirement
-in progress** (2026-11-15). The Waitress/debug change below is authorized
+Status: **open; S0–S4 implementation gates closed; S5 final handover remains open.
+Superseded web/gateway repository paths retired; native lifecycle/reboot
+checks passed and the observation, extended to four hours by the operator, is running**
+(2026-11-16; completion not yet established). The Waitress/debug change below is authorized
 separately; this plan does not authorize deployment, service restarts, hardware
 tests, or changes to a live installation.
 
@@ -24,8 +26,16 @@ see the [container guide](../documentation/container-deployment.md) for actual
 commands and boundaries. Reviewed automated apply, committed image pins and
 explicit recovery now exist for prepared same-layout Linux development deployments.
 Standalone gateways on prepared hybrid backend hosts now share that reviewed
-workflow; the separate web host uses external-gateway mode. Production/native
-intents, layout migrations and remaining live acceptance are not closed.
+workflow; the separate web host uses external-gateway mode. Prepared native
+web/gateway staging, reviewed managed-Docker cutover and recovery are implemented
+and their representative Pi trial passed. Further native acceptance was
+authorized with a one-hour rather than six-hour observation, paused, and later
+resumed after controller/audio recovery fixes. Native release-switch/recovery
+and reboot checks passed; the observation was extended to four hours and is
+running, not yet a pass.
+Production remains blocked without approved stable images/tooling; automated
+same-host/split-host migration and full fresh-machine provisioning are excluded.
+See the authoritative [support matrix](../documentation/container-deployment.md#support-and-acceptance-boundaries).
 Local candidate state and
 reserved target-local image loading and reviewed SSH artifact handoff are
 implemented internally; human approval/input custody and full apply
@@ -42,11 +52,13 @@ the internal APIs or the still-blocked preview-play apply switch.
 | **Docker development** | Published Hub development images for web and ser2net; detailed, bounded logs. No build. | Select an explicit local build only for source changes. Build on the Ansible controller from identified source and transfer verified images to the target. |
 | **Docker production** | An approved matching pair of stable Hub images; minimal operational logs. | Select a different approved stable pair deliberately. Stable publication is not yet available: report the blocker instead of using dev or building. |
 | **Docker local build** | Explicit dev opt-in, using the same development deployment profile. | Supply a clean, identified source revision; refuse ambiguous or dirty source without deleting or resetting changes. |
-| **Bare metal** | Native web and gateway as selected, with native Pi playback services. | Use when containers are unsuitable. The exact component scope and migration from Docker need design. |
+| **Prepared bare metal** | Sealed native web and dedicated loopback gateway, preserving native Pi playback services. | Use the reviewed native workflow only; matching recorded managed-Docker cutover/recovery is supported. Native observation/audible acceptance remain open; no fresh-machine/full-stack installer or legacy-native adoption. |
 
-Two Compose files express **development** and **production**; four clear
-Ansible intents cover **dev**, **release**, **dev local build**, and **bare
-metal**, reusing shared tasks. The default Pi layout remains hybrid: web and
+Two Compose files express **development** and **production**, with optional
+gateway/dummy overlays and a standalone backend profile. Development previews,
+reviewed container activation/recovery and sealed native staging/activation
+have distinct entry points; **release** remains a blocked intent, not an
+implemented deployment play. The default Pi layout remains hybrid: web and
 gateway in containers; agent, proxy, MPD and audio on the Pi. Preserve external
 gateways, separate web hosts and the hardware-free dummy backend. No image
 fallback or unattended update is implied. Include a separate managed-gateway
@@ -151,9 +163,13 @@ native on the Pi; “Docker deployment” must not imply all components are
 containerized. Preserve the external serial gateway, separate web host and
 hardware-free dummy layouts without mistaking the dummy for a physical gateway.
 
-## Current complexity and important constraints
+## Initial complexity and important constraints
 
-- [`docker-compose.yml`](../../docker-compose.yml) currently declares both
+The legacy source descriptions in the inventory below are historical evidence,
+not current deployment instructions. Superseded files were removed after the
+prepared-host acceptance trials; see the retirement record at the end.
+
+- The former `docker-compose.yml` declared both
   local `build` and local `image` names. The earlier baseline Docker playbook
   builds on the target; subsequent local work adds an optional registry
   override and flags for published images. Native web deployment is a
@@ -193,10 +209,10 @@ token contents, private keys or full stream URLs.
 
 | Path | Current behavior and important boundary |
 |---|---|
-| [Hardware Compose](../../docker-compose.yml) | Local web and ser2net images with build definitions; serial device/group passthrough; web config, data, logs and read-only secrets bind mounts; web port 8000 by default. A Compose environment value may be interpolation only or may be passed to a container. |
-| [Dummy Compose](../../docker-compose.dummy.yml) | Locally built web plus dummy backend for hardware-free development; separate dummy state and port. Its mounts and passed settings differ from hardware Compose. It is not a physical-controller test. |
-| [Docker Ansible play](../../ansible/playbooks/deploy-russound-docker.yml) | Earlier baseline clones/updates the target checkout, generates `.env`, builds there and can use an external gateway. It stops native web and, when managed, native ser2net. Subsequent local changes add explicit published-image references, a registry override, pull policy and optional controller check; they also change missing-device behavior. Review them separately, not as already shipped. |
-| [Native web play](../../ansible/playbooks/deploy-russound-web.yml) | Target checkout and Python venv; systemd web service; optionally installs and restarts native ser2net. Its default Git version is `main`; CLI settings are generated in the unit. |
+| Former hardware Compose (`docker-compose.yml`) | Local web and ser2net images with build definitions; serial device/group passthrough; web config, data, logs and read-only secrets bind mounts; web port 8000 by default. A Compose environment value may be interpolation only or may be passed to a container. |
+| Former dummy Compose (`docker-compose.dummy.yml`) | Locally built web plus dummy backend for hardware-free development; separate dummy state and port. Its mounts and passed settings differ from hardware Compose. It is not a physical-controller test. |
+| Former Docker Ansible play (`deploy-russound-docker.yml`) | Earlier baseline clones/updates the target checkout, generates `.env`, builds there and can use an external gateway. It stops native web and, when managed, native ser2net. Subsequent local changes add explicit published-image references, a registry override, pull policy and optional controller check; they also change missing-device behavior. Review them separately, not as already shipped. |
+| Former native web play (`deploy-russound-web.yml`) | Target checkout and Python venv; systemd web service; optionally installs and restarts native ser2net. Its default Git version is `main`; CLI settings are generated in the unit. |
 | [Audio setup](../../ansible/playbooks/setup-musicpi.yml) | Native Pi MPD/audio, supervisor and native ser2net; tagged setup can restart audio and alter services. This is not a web-only update. |
 | [Agent](../../ansible/playbooks/deploy-playback-agent.yml), [proxy](../../ansible/playbooks/deploy-playback-agent-proxy.yml), [egress](../../ansible/playbooks/deploy-playback-egress.yml) | Independent native plays. Agent/egress source comes from the controller checkout, unlike target Git updates; agent starts only when requested. Proxy requires TLS/CIDR configuration; egress activation can interrupt MPD. The proxy also has subsequent local changes. |
 | Existing Pi acceptance | The [integration record](./general_done_mpd-web-integration.md#6-deployment-acceptance) describes native playback/agent/proxy and containerized web/gateway, plus a locally derived web image. The read-only snapshot below confirms identities and coarse health only. |
@@ -476,8 +492,8 @@ Source of truth for the following rows is the local
 [web server](../../web/russound_server.py),
 [config parser](../../web/config_types.py),
 [agent registry parser](../../web/playback_status.py),
-[hardware Compose](../../docker-compose.yml), and
-[native unit](../../ansible/templates/russound-web.service.j2).
+the former hardware `docker-compose.yml`, and
+the former native `russound-web.service.j2` template.
 Unless noted, runtime environment is read at process start; changing it
 requires restarting the native service or recreating the container. `CLI > env`
 means an explicitly supplied CLI argument, not an Ansible or Compose override.
@@ -625,8 +641,8 @@ precedence specification. Inventory host variables, facts, play variables,
 `set_fact`, extra vars, tags and generated files are separate mechanisms;
 do not assume editing a generated file is durable. A changed input can cause
 recreation or a service restart. Sources:
-[Docker](../../ansible/playbooks/deploy-russound-docker.yml),
-[native web](../../ansible/playbooks/deploy-russound-web.yml),
+the former Docker (`deploy-russound-docker.yml`) and
+native web (`deploy-russound-web.yml`) plays,
 [agent](../../ansible/playbooks/deploy-playback-agent.yml),
 [proxy](../../ansible/playbooks/deploy-playback-agent-proxy.yml),
 [egress](../../ansible/playbooks/deploy-playback-egress.yml),
@@ -746,8 +762,8 @@ finding remain open even if a related symptom has been fixed.
 
 1. **F1 — empty-agent default is rejected.** Both web deployment plays default
    `russound_playback_agents` to `[]`; the
-   [Docker environment template](../../ansible/templates/russound-docker.env.j2)
-   and [native unit](../../ansible/templates/russound-web.service.j2) render
+   former `russound-docker.env.j2` environment template
+   and `russound-web.service.j2` native template render
    that list as `RUSSOUND_PLAYBACK_AGENTS=[]`. The web parser rejects a
    nonblank empty array. A focused selected-interpreter check rendered both
    templates with the default list, then passed the rendered Docker value
@@ -876,10 +892,10 @@ finding remain open even if a related symptom has been fixed.
     container-gateway host and an external-gateway layout. The playback and
     headless guides now warn about the current staging command.
 14. **F14 — default paths disagree with a changed deploy user.** In the
-    [Docker play](../../ansible/playbooks/deploy-russound-docker.yml),
+    former Docker play (`deploy-russound-docker.yml`),
     `deploy_user` controls ownership, but `app_dir` and
     `russound_registry_override_dir` default from `ansible_user`, not
-    `deploy_user`. In the [native play](../../ansible/playbooks/deploy-russound-web.yml)
+    `deploy_user`. In the former native play (`deploy-russound-web.yml`)
     those paths derive from `deploy_user`, but assume `/home/<user>` and
     the unit uses the username as both user and group. Merely changing the
     deployment user can therefore select an unexpected home or fail for a
@@ -908,7 +924,7 @@ finding remain open even if a related symptom has been fixed.
     single validated value, or reject unsupported path overrides. Test
     install, reload, activation and removal with the same resolved identity.
 17. **F17 — endpoint defaults can hide saved configuration.** Direct
-    [hardware Compose](../../docker-compose.yml) leaves backend environment
+    hardware Compose (`docker-compose.yml`) leaves backend environment
     overrides blank by default, whereas the Docker play writes
     `russound-ser2net:6666` into `.env`; a valid override selects TCP over
     the saved serial endpoint and can make editor changes appear ineffective.
@@ -4005,6 +4021,11 @@ Related: [deployment status](./general_idea_deployment-status-overview.md),
 
 ## Final step: retire legacy deployment paths and artifacts
 
+**Superseded web/gateway repository paths retired on 2026-11-15**, at the
+operator's request. The checklist below is retained as the cleanup contract;
+the implementation and retained-surface inventory follow it. Remaining native
+acceptance was explicitly deferred, not passed or replaced by this cleanup.
+
 After the preceding implementation and acceptance work is complete, remove
 superseded deployment entry points so operators have one clean, documented
 path for each supported deployment intent. This is a planned final cleanup,
@@ -4033,6 +4054,146 @@ and recovery have been separately approved.
   confirm the published docs expose only supported paths, while documenting
   unsupported layouts and the exact boundary of any remaining compatibility
   support.
+
+### Repository retirement and support-boundary reconciliation (2026-11-15)
+
+Removed the old build-oriented hardware/dummy Compose files, mutable Docker
+installer, already-refusing native web installer, source-only web staging play,
+their three component-default files, three web/Docker templates and unused
+deployment-account role. Their replacements and non-equivalences are listed in
+the authoritative [retirement table](../documentation/container-deployment.md#existing-installations-and-legacy-entry-points).
+In particular, prepared-host deployment does not replace the old installer's
+OS/Docker provisioning side effects, and sealed native staging cannot activate
+old private source-only candidates.
+
+Retained all five current Compose profiles/overlays, image Dockerfiles and
+entrypoints, reviewed operator/recovery/state/backup modules, and all eleven
+Ansible plays: two development previews, three tooling lifecycle plays, sealed
+native staging, audio staging, agent staging/removal, proxy and egress.
+The shared playback-registry task/filter is still called by development
+preview and is retained; only its unused legacy component dispatch was removed.
+Separate audio/agent activation guards and component tooling are not changed
+by web/gateway retirement. Automatic full native-stack provisioning and
+same-host/split-host migration remain excluded, not silently redirected.
+
+Retired-template/source-only-staging tests were removed with their targets.
+Replacement tests exercise playback registry escaping through the actual
+Ansible preview and retained Compose profile, native unit quoting/host-secret
+mapping, absence of retired paths, no retired entry-point references in active
+automation, and syntax of every retained play without target contact. Existing
+profile, transaction, split-host and recovery tests remain applicable.
+
+README, architecture/protocol guidance, runtime-directory notices and the
+authoritative guide now distinguish accepted prepared-host trials, unverified
+two-Linux-host operator acceptance, deferred native update/recovery/reboot/
+endurance/audible checks and blocked stable production. Historical inventory
+remains evidence, not an alternative runbook; links to removed artifacts in
+the deployment/release plans were converted to historical names. The unrelated
+in-progress first-time-setup draft was deliberately preserved unchanged.
+
+No Pi/host command, service, package, configuration, credential, saved override,
+image, deployment record, staged release or backup was changed by this work.
+Legacy runtime-directory notices and ignore rules remain to protect data from
+older checkouts. Cleanup is repository-only; it does not prune recovery assets.
+Further native acceptance is deferred at the operator's direction. S5 still
+requires final evidence/rollback handover and CI for the unpushed changes;
+unavailable stable production and unverified layouts remain explicit limitations.
+
+Validation passed: **54 targeted workflow/input/profile/native tests**, then
+**252 wider deployment tests, 10 skipped, no failures** (overlapping suites).
+All **11 retained Ansible plays** passed syntax checks against a deliberately
+unreachable inventory without target execution. Active automation has no
+references to the retired entry points; defensive Docker ignore patterns and
+historical/retirement records are intentional, not active consumers.
+
+### Further native acceptance: approved one-hour scope (2026-11-15)
+
+The operator subsequently authorized the prepared-Pi native acceptance work,
+explicitly limiting observation to **3600 seconds**, not a six-hour run.
+Structured confirmation additionally approved **one Pi reboot** for native
+startup checks and selected **restore the original Docker deployment** after
+the trial. Listening remains operator-controlled; no automatic playback,
+source, power or volume changes are authorized by the observer.
+
+A fresh private baseline captured the healthy Docker deployment, all seven
+existing native audio/agent/supervisor identities and twelve protected file
+hashes/owners/modes. Trusted Pi tooling remains committed revision `1c574bd`;
+uncommitted repository retirement changes are not installed on the Pi.
+The existing sealed native release from `3e922d8` was reverified and the actual
+Ansible native staging play produced a second sealed source/venv release from
+`1c574bd` for a native-to-native update/recovery rehearsal. Neither staging
+step changes the playback stack.
+
+The planned sequence is reviewed Docker-to-native cutover with a new off-Pi
+backup, native-to-native update and explicit native recovery, unchanged rerun,
+the approved reboot, complete routing/readiness warmup, then the bounded
+read-only observation and reviewed restoration of the captured Docker baseline.
+Every lifecycle operation uses the public operator and independent backup
+verification. Observation failure is recorded, not silently remediated.
+At this point the further acceptance is **in progress, not completed**.
+
+**Subsequently paused at 19:53 CET:** the operator aborted the controller
+session and requested restarting native deployment only, with no tests.
+The retry `fc48434c-1a55-4308-9686-428140fef770` remained pre-apply at
+`inputs-verified`; both native writers were stopped and an orphaned target
+operator was still running. After confirming its exact PID and pre-apply
+state, terminated only that orphan and used the public
+`native-resume-original` action with fresh reviewed approval. Recovery
+preserved current data and returned the committed native operation
+`ae8e2331-772e-4860-aefa-e2048848fffa` to an unblocked state.
+Web and dedicated serial services were active/running with zero restarts;
+Docker writers remained stopped. No observer or deployment operator remained.
+No reboot, acceptance test or timed observation was started after this request.
+The native update candidate was not applied; partial backups/evidence remain
+for inspection. Further tests and final Docker restoration are paused pending
+renewed operator direction.
+
+**Separately approved reboot-only test at 19:56 CET:** performed exactly one
+Pi reboot. Boot ID changed from `73e33fa4-edb2-435d-9b94-3fce13ff02ad` to
+`2614beeb-7a5a-4593-b3c9-3423fdda7a26`. Native web, dedicated ser2net,
+TLS proxy and all seven existing audio/agent/supervisor services started
+automatically, active/running with zero restart counts; Docker writers stayed
+stopped. Protected file hashes/owners/modes matched the pre-reboot snapshot
+and existing user-service command identities matched after excluding dynamic
+systemd timestamps/PIDs.
+
+**Result: failed controller-recovery acceptance, not a passed reboot test.**
+The required runtime check timed out after 60 seconds; subsequent API checks
+still reported `backend_status.connected=false`. Authenticated playback health
+was `ok` and all three output readiness/route probes were fresh, ready and
+correct. Gateway startup journal reported an initial invalid network-address
+error for `tcp,127.0.0.1,6666`, followed by accepter startup ten seconds later.
+Web initially got connection-refused and then logged gateway reconnection,
+but that TCP recovery did not establish controller readiness. The gateway held
+the USB serial device and listened on loopback; web listened on port 8000.
+Root cause is not established by these observations. No additional reboot,
+service restart, native update, playback mutation or observation was performed.
+Private reboot receipts remain with this trial's off-Pi evidence.
+
+**Root-cause diagnosis after 20:02 CET:** no services were restarted or
+reconfigured. USB enumerated normally, ser2net alone held `/dev/ttyUSB0`,
+serial framing was 19200 8N1 with software/hardware flow control off, and the
+web-to-gateway TCP connection was established. The actual sealed web source
+contained the watcher gate
+`should_poll = self._has_active_event_clients() or self.controller.backend_health_snapshot() is None`.
+An initial failed startup poll records disconnected health; subsequent headless
+iterations then skip hardware polling because health is no longer `None`.
+Gateway reconnect reattaches the listener but does not invalidate that failed
+health or request a fresh full poll. Normal health/rooms GETs serve that cached
+failure instead of polling hardware.
+
+Verified the causal trigger on the live Pi: immediately before a read-only
+`/api/events` subscription the controller API still reported disconnected.
+Registering the event client requests a full poll; within the first two-second
+check the API reported connected, with no error message, and remained connected
+after the diagnostic subscription closed. Web/gateway PIDs remained 1194/908,
+with zero restarts. This demonstrates that hardware/serial communication works
+and identifies the persistent failure as application health/poll scheduling
+after delayed gateway startup, not proof of a broken controller or adapter.
+The early ser2net listener delay triggered the startup failure but does not
+explain its indefinite cached status. A source fix and regression validation
+remain required; the read-only subscription is diagnostic evidence, not the
+permanent fix or a passed unattended reboot test. No observation was started.
 
 ### Blocking bugfix: unattended controller-health recovery
 
@@ -4176,3 +4337,363 @@ observation. Four additional Pi-local probe tests passed. Off-Pi backup,
 container build/runtime, transaction, boot and correction receipts remain
 private session evidence; the first inferred reboot receipt is explicitly
 superseded by its timing correction and the measured Pi-local receipt.
+
+### Audio profile investigation and approved runtime recovery
+
+The subsequent investigation reproduced the readiness failure directly with
+the deployed audio code, using `enforce_profile=False`. USB selection was
+unique and stable (`0d8c:0102`), ALSA enumerated the card, and the complete
+configured downstream graph passed validation. There were no full-speed USB
+reset messages in this boot's kernel journal. Nevertheless, both `pactl` and
+native PipeWire `Profile` parameters reported profile index zero, `off`, while
+the same card still owned an existing six-channel `analog-surround-51` sink.
+WirePlumber's saved default profile already requested
+`output:analog-surround-51`; a wrong saved operator profile was not observed.
+
+This inconsistent live profile state explains why all three MPD services
+remained in their audio-readiness `ExecStartPre` guards: those guards correctly
+require the reported active profile and full downstream topology, not merely
+an existing sink. Repeated ordinary requests to select 5.1 returned success
+without changing the reported profile. The playback API accurately reflected
+this failure; the web controller-health fix was not its source.
+
+The operator approved progressively scoped runtime experiments:
+
+1. Stop only the three failing MPD outputs, issue one serialized selection of
+   the configured profile, and request their startup again. The profile stayed
+   `off`. This experiment **did not prove isolation**: the playback supervisor
+   independently starts those services, and a later stop conflicted with it.
+   The planned second profile experiment aborted before profile mutation.
+2. With separate approval, pause the playback supervisor as well as all three
+   failing outputs, then perform one explicit `off` -> configured 5.1 reset.
+   Explicit `off` removed the stale hardware sink. Selecting 5.1 then recreated
+   the sink and both native PipeWire and PulseAudio consistently reported
+   `output:analog-surround-51` (profile index 15). The state remained correct at
+   the one- and three-second checks. All four services were requested to start
+   again afterward, allowing the supervisor to reconcile saved intentions.
+
+**Verified result:** all seven audio/agent/supervisor services are active and
+running. All three outputs subsequently published fresh readiness `ready=true`
+and route `correct=true` with the exact expected virtual sink. Routes initially
+remained pending and then became fresh/healthy during bounded warmup.
+Controller connectivity remained healthy. The boot ID did not change,
+PipeWire/WirePlumber were not restarted, and protected configuration, secrets
+and unit file hashes were unchanged. No new playback intention, test audio,
+reboot, observation or application fix was introduced. Restart counters now
+reflect the approved manual service lifecycle and do not retroactively pass
+the failed zero-intervention reboot.
+
+**Remaining uncertainty and acceptance consequence:** the failure mechanism
+is a stale/inconsistent audio-server profile state that the current
+same-profile retry cannot clear; the reason this boot entered that state
+(including any startup race or upstream PipeWire/WirePlumber defect) is not
+established. Concurrent readiness guards are a possible startup factor, not a
+proven root cause. The explicit reset is verified runtime recovery, **not an
+implemented permanent fix or unattended reboot pass**. Do not bypass profile
+verification or blindly add repeated `off` resets: they can disrupt working
+outputs. A follow-up should reproduce the inconsistent state and evaluate a
+single coordinated, bounded, identity-checked recovery path before further
+native reboot/endurance acceptance. Private isolation/reset and final fresh
+probe receipts remain with this trial's evidence.
+
+### Extended audio startup isolation: profile restore failure without writers
+
+The operator then authorized further diagnostic reboots and playback changes.
+One additional reboot was performed, from boot
+`50e8c04a-26ed-4299-9934-f4917e813761` to
+`92c983d6-6c58-4461-93b1-9dadfc29e236`. A temporary Pi-local, read-only
+transition recorder captured normal USB initialization on this run:
+no device, then `off` without a sink, then profile 15
+`output:analog-surround-51` with the six-channel sink. All seven services
+started with zero restarts. The recorder unit was disabled and removed.
+This successful run does not erase the earlier intermittent failure.
+
+Controlled trials then paused the supervisor and output services and restarted
+the audio session to isolate profile restoration without further Pi reboots:
+
+- Eight warm-session profile-selection trials, with either one or three
+  simultaneous `pactl` requests, all succeeded. Concurrent profile requests
+  on an already initialized session alone did not reproduce the fault.
+- Cold-session trials reproduced the contradictory `off`/existing-5.1-sink
+  state repeatedly with the deployed readiness guards active. Single-guard,
+  restore-only and additional triple-guard runs also often passed; the
+  failure is intermittent, and verbose logging changes its timing.
+- Tracing the actual deployed guard showed ordinary 5.1 requests returning
+  successfully while both inventories remained `off`. In a failing run,
+  WirePlumber logged selecting the stored 5.1 profile at boot-monotonic
+  707.947 seconds, then route restoration for **`off`** at 707.972 seconds.
+  The first traced application profile request was not until 708.649 seconds.
+  Thus the inconsistent restoration was already visible before that request.
+- Most importantly, a control trial reproduced failed restoration with the
+  supervisor and all MPD outputs stopped and **only read-only readiness
+  clients**. Their mutation function was guarded to raise if called, and
+  recorded profile-write count was zero. In that run WirePlumber selected
+  stored 5.1 at 1098.247 seconds but restored routes for `off` at
+  1098.281 seconds; native and PulseAudio reads continued reporting `off`
+  through the end of the five-second trace.
+
+**Revised causal conclusion:** concurrent MPD startup guards are **not a
+necessary cause**. The fault can originate within the prepared host's
+PipeWire/WirePlumber profile-restoration/notification path without application
+profile mutations. Current versions on this host are PipeWire/Pulse/SPA
+`1.4.2-1+rpt3` and WirePlumber `0.5.8-2`. The correct saved profile is selected,
+but the exposed active-profile state can remain inconsistent with the created
+sink. Same-profile retries do not repair that state; an explicit off/on
+transition does. This narrows the responsible layer, but does **not** establish
+the exact upstream C/Lua defect, a fixed package version, or that a lock around
+the existing MPD guards alone would prevent it. The failure is below the web
+application and is not intrinsically specific to the native web layout.
+
+One extended logging harness exceeded its controller timeout while reading
+journal history. Its temporary debug override was removed and the diagnostic
+process exited; output/supervisor startup was explicitly restored afterward.
+Subsequent journal reads were bounded, results persisted directly, and cleanup
+was verified. This harness issue is not audio acceptance evidence.
+
+**End state verified:** supervisor, all three MPD outputs, PipeWire,
+WirePlumber and playback agent are active/running; each output has fresh
+readiness `ready=true` and exact-route `correct=true`. Controller communication
+is healthy. Protected configuration, secrets and unit files match the initial
+baseline. Temporary boot units and runtime debug drop-ins are absent. Saved
+intentions were reconciled by the existing supervisor; no new application
+playback command was issued. No packages or production code were changed, no
+commit/push was made for this investigation, and no timed observation started.
+
+**Permanent-fix direction:** retain strict profile/topology validation. A
+follow-up must either verify an upstream audio-stack correction against this
+reproducer or add a single, bounded, identity-checked recovery coordinator for
+the demonstrably inconsistent state, avoiding resets of functioning outputs.
+Serialization can protect recovery, but is not by itself a proven fix for the
+restore defect. Add regressions for successful-but-ineffective profile requests,
+transient restoration, missing/ambiguous/replaced hardware and recovery limits,
+then repeat cold-start/reboot acceptance before native endurance validation.
+
+### Guarded audio recovery implementation trial: promotion held
+
+The operator approved the targeted upstream check, bounded shared-host recovery
+if needed, and subsequent acceptance. The available Pi PipeWire candidate is
+`1.4.2-1+rpt5`; its packaging changelog contains libcamera changes only.
+WirePlumber's candidate remains `0.5.8-2`. Public upstream searches/release notes
+did not establish a matching correction. No audio packages were upgraded.
+
+An uncommitted candidate in the shared `lib/audioready.py` now:
+
+- Serializes selector-based profile enforcement using a nonblocking, per-user
+  kernel lock in a validated private `XDG_RUNTIME_DIR`. Read-only observers
+  neither acquire the recovery lock nor mutate profiles/state.
+- Requires agreement between native and Pulse profile observations before
+  declaring selector hardware ready; downstream/sink checks remain mandatory.
+- Recognizes the narrow reproduced `off`/existing valid 5.1 graph inconsistency.
+  Normal profile selection is retained during a five-second observation grace.
+  Healthy readiness cancels the observation.
+- Refuses resets while a sink/playback stream is running or its activity state
+  is unknown, or when hardware identity, topology or native profile inventory
+  cannot be established.
+- Persists one reset attempt per USB device/PipeWire-server generation before
+  issuing off/on. Other guards, service retries and guard crashes cannot
+  replenish that budget. Server cookie, object serial/ID and Pulse index
+  identify the generation. Identity is rechecked before profile changes and
+  after off; server/device replacement aborts re-enable.
+- Requires a subsequent complete readiness check after the reset. Command
+  success is not readiness. Errors and exhausted budgets remain explicit.
+
+**Repository validation:** 205 focused audio and coupled playback tests pass;
+production Pylance diagnostics are clear. Two new regressions fail against
+unchanged HEAD: missing off/on recovery and accepting native/Pulse disagreement.
+Tests also cover grace cancellation, healthy/read-only no-ops, active streams,
+kernel lock exclusion, identity/index reuse, replacement/server restart during
+recovery, per-generation budgets, failed resets and unsafe/corrupt state files.
+
+**Live candidate only, not installation:** the candidate was staged separately
+from the installed audio checkout. Sixty of 61 bounded cold-session trials
+passed with three concurrent candidate guards. Five genuine restoration
+failures, established by a read-only startup phase before candidate execution,
+recovered automatically with exactly one reset each. Fifty-five normal trials
+needed no reset.
+
+**Remaining blocker:** one trial had native Profile inventory cardinality other
+than one. The candidate refused mutation and all three guards timed out.
+Its error identified the cardinality check, but this first harness did not
+retain the raw Profile array; whether it was empty or had multiple entries
+is therefore unknown. Two subsequent bounded capture runs (16 and 20 trials)
+did not reproduce that shape, although they each reproduced and recovered two
+ordinary stale-off failures. These later successes do not supersede the failed
+trial or prove the additional inventory condition resolved.
+
+**Promotion is held**, rather than loosening native-profile validation based on
+an assumption. Capture that inventory variant and establish safe handling (or a
+verified upstream correction), then rerun acceptance. No permanent audio module
+was installed, no Pi reboot was performed in this implementation trial, and no
+one-hour observation was started. All seven original audio services and fresh
+three-output readiness/exact-route probes were verified healthy afterward;
+controller communication and protected configuration are unchanged. The
+installed audio module still matches its pre-trial backup. Diagnostic candidate
+files are retained for follow-up, with no background harness left running.
+
+### Approved session recovery and installed reboot acceptance
+
+The operator authorized the follow-up investigation and explicitly selected
+**one guarded WirePlumber restart while audio is idle** when asked whether to
+expand recovery beyond the previously approved USB off/on reset.
+
+**New real-fault evidence:** the first follow-up capture failed on trial 11
+because the selected USB device's entire profile catalogue disappeared:
+Pulse reported `profiles={}` and `active_profile=null`; `pw-dump` reported an
+empty native `EnumProfile`. A separate direct `pw-cli enum-params` returned no
+EnumProfile entries, although native Profile still had one `off` entry. Pulse
+logged inconsistent port/profile counts, and both desired-profile and cleanup
+off requests returned `No such entity`. Thus this case is not merely our
+Profile-array parser rejecting a healthy card. Restarting WirePlumber restored
+the catalogue and original output services. No package/configuration change
+was needed.
+
+The original earlier non-singleton Profile array was **not** recaptured; its
+exact shape remains unknown. Another 30 bounded read-only-first trials passed,
+including six stale-off recoveries. This does not prove that earlier
+cardinality failure had the same cause as the empty-catalogue failure.
+
+**Approved extension implemented:** under the same kernel lock, missing native
+Profile/EnumProfile or missing Pulse profile inventory must persist across a
+five-second grace and fresh device-identity checks. All inspected sink/playback
+nodes must have a known idle/suspended state. The guard persists a global
+once-per-boot WirePlumber-restart budget before requesting the nonblocking user
+service restart. Changing device/server generations, guard retries and failed
+commands cannot replenish it. A healthy inventory cancels an unspent
+observation. Conflicting Profile entries and missing/ambiguous/replaced
+hardware still fail closed; normal read-only probes never recover audio.
+All configured profile, sink and downstream checks remain required after
+either recovery path.
+
+**Verification before installation:**
+
+- 235 targeted audio, stream and coupled playback tests pass, one skipped.
+  Added regressions cover empty versus conflicting native profiles, transient
+  publication, active/unknown audio, cross-generation boot budgets, failed or
+  timed-out restart requests and read-only isolation. Production Pylance
+  diagnostics and test-file syntax checks are clear.
+- The extended candidate passed 30 further real cold-session trials with three
+  concurrent guards. Seven real stale-off faults recovered with exactly one
+  card reset each; other trials required no reset. Missing inventories did
+  not recur in this set.
+- A separately labelled **reader-only fault injection** substituted empty
+  Profile/EnumProfile arrays in the candidate's observations until the real
+  WirePlumber device generation changed. Three concurrent guards requested
+  **exactly one real WirePlumber restart**, then all passed against fresh,
+  uninjected native/Pulse inventories. This validates the live recovery path,
+  not spontaneous reproduction of the missing-catalogue fault.
+
+**Installed prepared-host fix:** after those gates passed, the exact tested
+module, SHA-256
+`5ff2d9dbb3f111d19f75d960e53fc6341647146ee08e58f6732943481bd6812f`,
+was atomically installed into the existing prepared audio checkout with its
+owner/mode preserved. The previous module was verified unchanged before the
+swap and retained in the private recovery directory with an activation receipt.
+Supervisor/MPD writers were paused, the agent restarted to load the shared
+change, then outputs/supervision restored. No unit, credentials, application
+configuration, audio package, web release or deployment transaction was changed.
+This is a scoped, uncommitted prepared-host audio-module update, not a new
+packaged/native-web release or a claim that the entire audio checkout was
+updated. Preserve the backed-up pre-existing checkout changes.
+
+**Two unattended installed reboots passed:**
+
+1. `92c983d6-6c58-4461-93b1-9dadfc29e236` to
+   `3bd42689-32d4-4fc1-94bf-106ee51ae6a4`.
+2. `3bd42689-32d4-4fc1-94bf-106ee51ae6a4` to
+   `b78f85f7-9a0b-449e-93b3-73b8db16f929`.
+
+Both returned with all seven audio services active/running and zero automatic
+service restarts, fresh three-output readiness/exact routes, healthy controller,
+zero SSE clients and unchanged protected baseline files. The installed module
+hash survived both reboots. Empty recovery records and correctly filtered
+audio-unit journals show no reset/restart was needed on these healthy boots.
+Final native runtime checks passed units, HTTP, backend and playback, with
+committed operation `0eb36b79-8003-4acc-9507-30a9ee37bc53` unchanged and unblocked.
+
+The first receipt collector failed to parse a normally empty recovery-state
+file after the first reboot; it was corrected and resumed receipt collection
+without another reboot. No first-reboot timing is claimed. A self-matching
+journal query was also corrected using actual user-unit fields and normalized
+boot IDs; its correction receipt supersedes the earlier log fields. These
+collector issues are not application failures or timed-endurance evidence.
+
+**Disposition:** the implemented bounded recovery and installed reboot gate
+are validated for the evidence above; native validation can continue. Exact
+upstream internals and the first unknown Profile-array shape remain unproven,
+and conflicting inventories deliberately remain explicit failures rather than
+being accepted. This is a shared-host resilience fix, not an upstream defect
+closure or proof that arbitrary audio failures self-heal. Remaining native
+lifecycle/rollback and audible/endurance acceptance are still open. No timed
+observation or six-hour test was started, and no commit or push was made.
+
+### Resumed native lifecycle and one-hour observation (2026-11-16)
+
+The operator authorized continuing native acceptance and then explicitly
+approved the reviewed update and recovery scopes. To avoid intentionally
+reintroducing the known controller bug, this rehearsal used **two separately
+sealed releases of the same fixed application revision** `060084d`.
+It validates native source/environment release switching and matched-data
+recovery mechanics, not cross-version compatibility. The earlier real
+native-to-native code update to `060084d` remains separate evidence.
+
+- Actual Ansible staging produced release
+  `eb346206-d97f-45be-b8ba-710a114d44f6`, seal
+  `3f54376088d1fd00df35a6640bcc843245bb7a22c9f2e05acf90478716400504`.
+  The original fixed release remained
+  `5b2507b4-f5b1-4d00-807d-6a7c50f76959`.
+- Public-operator update `32258c33-edc1-4e2e-adf0-36268490ae0c` completed
+  after a reviewed, independently verified off-Pi backup. All required
+  units/HTTP/backend/playback checks passed. The backup retained its existing
+  expensive quiescence checks; no checks were bypassed to shorten the outage.
+- Separately reviewed native recovery
+  `0284b449-2041-47eb-9053-1ae15f2aec67` passed matching-data/original-runtime
+  checks, restored the original fixed release and committed operation
+  `0eb36b79-8003-4acc-9507-30a9ee37bc53`, and preserved post-backup trees.
+- Identical rerun `7bf82026-f706-4b61-9a11-03472e540bee` returned
+  **unchanged**, with all required checks passing. Exact recovered runtime
+  identity, service PIDs/restarts, protected files and committed selection
+  remained unchanged. Existing audio/agent services were untouched throughout;
+  the installed guarded audio fix remained in place.
+
+The first local operator invocation refused before target reservation because
+its required evidence directory did not yet exist. Target state was checked
+unblocked before creating that directory and requesting a fresh review. This
+preflight refusal is not an applied update or recovery failure.
+
+**Observation started, not completed:** the refreshed read-only observer was
+staged to a new private Pi directory and its seven deterministic tests passed
+both locally and on the Pi. A fresh complete baseline passed with 20 protected
+files, adding the installed audio-recovery sources/configuration, relevant unit
+drop-ins and the Pulse service. API snapshot/readiness/route observations must
+be strictly younger than 30 seconds; exact three-output and downstream-route
+checks remain required.
+
+Pi systemd unit `mpdrussoundpi-native-1h-20261116.service` started the observer
+at **2026-11-16 00:07:52 UTC / 01:07:52 CET**, with a monotonic **3600-second**
+observation deadline and ten-second sample interval. Expected completion is
+**01:07:52 UTC / 02:07:52 CET**, not evidence that it has completed.
+The first persisted sample and complete runtime/routing checks passed, and the
+unit was verified active/running. Durable Pi-local status/sample files survive
+SSH disconnect or laptop sleep; the temporary Mac sleep inhibitor was stopped
+after the lifecycle transactions completed.
+
+The observer performs no recovery, restart, playback change or rollback;
+failures are persisted and end the run. There is no automatic Docker restore
+scheduled. Native remains active and Docker writers remain stopped pending
+observation results and final-layout review. Audible native confirmation,
+completed observation evidence and final handover remain open. No six-hour
+observation, commit or push was started by this continuation.
+
+**Operator-approved extension:** at approximately 01:10 CET on 2026-11-16,
+the operator extended the observation to **four hours total**, measured from
+the original 01:07:52 CET start. The new expected finish is **05:07:52 CET /
+04:07:52 UTC**. The original one-hour process was left uninterrupted because
+its deadline was fixed at startup. An overlapping Pi-local read-only observer,
+`mpdrussoundpi-native-4h-20261116.service`, continues through the new deadline,
+using an exact copy of the original protected baseline, selection and operation,
+not a newly captured baseline. Both evidence streams must be reviewed together;
+the original one-hour completion alone is no longer sufficient for acceptance.
+The extended observer's nine deterministic tests and initial API/full-runtime
+checks passed on the Pi, and its service was verified active/running. Neither
+observer remediates services or restores Docker. Four-hour completion remains
+pending; native audible confirmation and final handover remain open.

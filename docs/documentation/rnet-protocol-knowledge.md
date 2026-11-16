@@ -25,10 +25,11 @@ it is the canonical reference for future Copilot sessions.
   priority is zero, and should use roughly 100 ms spacing between frames.
 - CAA66 hardware: RS-232 is MCU P21/P22; keypad RS-485 is P71 RX, P72 TX,
   P75 transmit-enable. STATUS 1-6 and IR are hardware paths, not RNET frames.
-- `ser2net` bridges the serial device to TCP; on macOS, USB passthrough into
-  Docker isn't possible, so a host-side `socat` process bridges the serial
-  device to a TCP port that the containerized `ser2net`/backend connects to
-  (see `docker-compose.mac.yml`).
+- `ser2net` bridges the serial device to TCP. The managed USB gateway layout
+  requires a Linux host with device passthrough. For a Mac web container, use
+  an existing external TCP gateway or the
+  [prepared split-host layout](./container-deployment.md#split-host-deployment-on-prepared-hosts);
+  the tested backend gateway runs on the Pi, not on Docker Desktop.
 
 ## Frame format
 

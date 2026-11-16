@@ -21,11 +21,6 @@
   changed_when: false
   tags: always
 
-- name: Validate web playback registry before changing the target
-  ansible.builtin.import_tasks: web_agents.yml
-  when: deployment_component in ['web', 'docker']
-  tags: always
-
 - name: Validate additional proxy CIDRs input type before changing the target
   ansible.builtin.assert:
     that:

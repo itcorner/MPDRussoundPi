@@ -125,6 +125,25 @@ confirmation. Native reboot/endurance and native-to-native live update/recovery
 remain unverified. See the
 [native support boundary](./container-deployment.md#prepared-native-web-and-gateway).
 
+## Deployment retirement validation (2026-11-15)
+
+The superseded web/Docker installers, build-oriented Compose stacks, source-only
+web staging and their unused defaults/templates/account role have been removed.
+[Workflow tests](../../tests/test_deployment_workflows.py) require their absence,
+reject references to removed entry points in active automation and syntax-check
+all **11 retained Ansible plays** without contacting a target.
+The shared playback-registry task/filter remains used by preview; actual
+Ansible/Compose registry rendering and native unit quoting now cover its
+replacement consumers rather than deleted templates.
+
+The combined targeted workflow/input/profile/native suite passed **54 tests**.
+The wider deployment suite then ran **252 tests, 10 skipped, no failures**,
+covering image/source candidates, transfer, state, transactions, backup and
+recovery as well as retirement. Counts overlap; this is not a new whole-project
+coverage measurement or a native live-acceptance run. No host deployment was
+performed. Native acceptance remains deferred, and the unpushed changes still
+need GitHub CI. See the [support matrix](./container-deployment.md#support-and-acceptance-boundaries).
+
 ## Blind Spots
 
 - `web/config_types.py` has no dedicated tests for malformed configuration, boolean-vs-integer rejection, endpoint defaults, or controller-limit normalization.
@@ -363,8 +382,12 @@ explicitly; restore never overwrites an existing destination or clears pending.
 On macOS these unit fixtures shim the unavailable Linux xattr API to an empty
 attribute set; Linux runs exercise real inspection and extended-attribute
 rejection. This does not certify target power-loss durability or live recovery.
-[Template integration](../../tests/test_deployment_render_integration.py) uses
-actual Ansible and Compose rendering for agent configuration and preflight.
+[Profile tests](../../tests/test_container_profiles.py) use the actual retained
+Ansible preview and Compose rendering to verify empty and configured playback
+registries, special-character path preservation and rejection of invalid input
+without target contact. [Native tests](../../tests/test_deployment_native.py)
+cover the replacement generated-unit quoting and protected host-secret mapping.
+Tests of the removed legacy templates/installers were retired with those files.
 
 [Web lifecycle tests](../../tests/test_web_lifecycle.py) use actual Waitress
 subprocesses, SIGTERM/SIGINT and open SSE streams, requiring exit 0 within

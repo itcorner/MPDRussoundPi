@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import tempfile
 import threading
@@ -110,6 +111,17 @@ class NativeContractTests(unittest.TestCase):
             spec["playback_agents"][0]["token_file"] = path
             with self.subTest(path=path), self.assertRaises(source.NativeError):
                 native.environment(spec, native=True)
+
+    def test_native_unit_preserves_quoted_playback_registry_and_host_secret_mapping(self):
+        self.spec["playback_agents"][0]["token_file"] = "/run/secrets/quote'-%-${HOME}"
+        web = native.unit_files(self.spec, self.selection, str(uuid4()))[native.WEB].decode()
+        line = next(line for line in web.splitlines()
+                    if line.startswith('Environment="RUSSOUND_PLAYBACK_AGENTS='))
+        assignment = shlex.split(line.removeprefix("Environment="))[0].replace("%%", "%")
+        self.assertEqual(json.loads(assignment.split("=", 1)[1]),
+                         [{**self.spec["playback_agents"][0],
+                           "token_file": self.spec["data_dir"] + "/secrets/quote'-%-${HOME}",
+                           "tls_ca_file": self.spec["data_dir"] + "/secrets/ca.crt"}])
 
     def test_staging_play_is_single_host_revision_pinned_and_nonactivating(self):
         play = yaml.safe_load((ROOT / "ansible/playbooks/stage-native-deployment.yml").read_text())[0]

@@ -21,16 +21,21 @@ targeting `linux/amd64` and `linux/arm64`, under Docker Hub namespace
 [containerization plan](./mpd_new_agent-containerization.md) is separate.
 Dummy image publication, 32-bit ARM and automatic deployment remain outside scope.
 
-## Current baseline
+## Initial baseline (historical)
+
+The removed deployment files named below describe the initial inspection,
+not current operator guidance. The deployment rework has since retired those
+paths; use the [retained workflow and support matrix](../documentation/container-deployment.md#support-and-acceptance-boundaries).
+This does not change this plan's image-publication approval gates.
 
 - `main` is the current development and default branch; no `develop` branch
   or version tags were listed during the initial inspection.
 - There are no GitHub Actions workflows in the checkout.
-- The [native web](../../ansible/playbooks/deploy-russound-web.yml) and
-  [Docker](../../ansible/playbooks/deploy-russound-docker.yml) Ansible
+- The former native web (`deploy-russound-web.yml`) and
+  Docker (`deploy-russound-docker.yml`) Ansible
   deployments default to `repo_version: main`.
-- Both [hardware](../../docker-compose.yml) and
-  [dummy](../../docker-compose.dummy.yml) Compose stacks build local images.
+- Both former hardware (`docker-compose.yml`) and
+  dummy (`docker-compose.dummy.yml`) Compose stacks build local images.
 - Existing Python and JavaScript test commands are in the
   [README](../../README.md#testing).
 - The Dockerfile copies `publicnetwork.py`, but the initial
