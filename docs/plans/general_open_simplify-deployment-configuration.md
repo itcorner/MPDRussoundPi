@@ -4839,8 +4839,11 @@ Target operator sessions now share an advisory lock, but older tooling and
 other orchestration do not participate. The backup and handover tests pass in
 an isolated Linux container with mocked service boundaries; they do not
 rehearse systemd, Docker ownership, physical serial hardware, or a live cutover.
-The deployment transaction is still unimplemented, so do not start a cutover
-based on these pieces.
+An internal transaction coordinator now tests ordering from reservation and
+transfer through native fencing, backup, image loading, activation checks and
+state finalization. Its platform hooks and off-host verification are mocked;
+it has no production operator or target implementation. It cannot safely
+execute a cutover. Do not start a cutover based on these pieces.
 An internal candidate-fencing primitive additionally requires a reserved
 operation, fully recorded image IDs, an exact operation-specific project and
 activation evidence; it checks identities after review and disables restart

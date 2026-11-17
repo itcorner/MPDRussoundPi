@@ -22,6 +22,7 @@ from tool.deployment_backup import FileBackup
 from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_compose import encoded, private_write
 from tool.deployment_load import select_bundle
+from tool.deployment_handover_transaction import HandoverHooks, execute as execute_handover
 from tool.deployment_operator import controller, serve
 from tool.deployment_pi_handover import (
     capture_backup, check_docker_conflicts, fence_candidate_containers, fence_native, receive_handover_backup,
@@ -305,6 +306,128 @@ class PiHandoverBackupTests(unittest.TestCase):
         evidence = json.loads((self.evidence / (operation + ".backup.json")).read_bytes())
         self.assertEqual(evidence["manifest_sha256"], result.manifest_sha256)
         self.assertTrue(self.store.status()["blocked"])
+
+    def transaction_fixture(self, *, failure=None):
+        self.operation = str(uuid4())
+        runtime = self.root / "transaction-runtime"
+        runtime.mkdir(mode=0o700)
+        storage = {"assets": self.assets, "backups": self.backups, "evidence": self.evidence,
+                   "runtime": runtime}
+        calls = []
+
+        def step(name):
+            calls.append(name)
+            if name == failure:
+                raise source.NativeError("injected " + name)
+
+        def backup():
+            step("backup")
+            capture_backup(self.store, storage, "fixture", self.operation, committed=self.committed,
+                           native_spec=self.spec, image_selection=self.images, native_asset=self.asset,
+                           verify_quiescent=lambda: None, verify_offhost=lambda backup: None)
+
+        def load(digest):
+            step("load")
+            self.store.start_image_load("fixture", self.operation, self.images, digest)
+            images = {name: image["reference"] for name, image in self.images["manifest"]["images"].items()}
+            self.store.complete_image_load("fixture", self.operation, self.images, digest, images)
+            return images
+
+        def apply(images):
+            step("apply")
+            directory = runtime / self.operation
+            config = json.loads((directory / "compose.json").read_bytes())
+            config["services"]["russound-web"]["image"] = images["web"]
+            config["services"]["russound-ser2net"]["image"] = images["ser2net"]
+            private_write(directory / "active.json", config)
+
+        hooks = HandoverHooks(preflight=lambda: step("preflight"),
+                              receive_images=lambda digest: step("transfer"),
+                              stop_native=lambda: step("fence"), capture_backup=backup,
+                              load_images=load, apply=apply,
+                              checks=lambda images: (step("checks") or
+                                                     dict.fromkeys(("containers", "http", "backend", "playback"),
+                                                                   "passed")))
+        arguments = {"committed": self.committed, "native_spec": self.spec, "selection": self.images,
+                     "engine": "engine", "hooks": hooks, "approve": lambda review: review["digest"]}
+        return storage, arguments, calls
+
+    def test_internal_transaction_orders_backup_load_activation_and_checks(self):
+        storage, arguments, calls = self.transaction_fixture()
+        result = execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        self.assertEqual(calls, ["preflight", "preflight", "transfer", "fence", "backup", "load", "apply", "checks"])
+        self.assertEqual(result["event"], "complete")
+        self.assertFalse(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"]["selection"]["candidate"],
+                         self.images)
+        self.assertTrue((self.evidence / (self.operation + ".backup.json")).exists())
+        self.assertTrue((self.evidence / (self.operation + ".handover-activation.json")).exists())
+
+    def test_internal_transaction_keeps_reservation_after_apply_failure(self):
+        storage, arguments, calls = self.transaction_fixture(failure="apply")
+        with self.assertRaisesRegex(source.NativeError, "injected apply"):
+            execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        state = self.store.status()
+        self.assertTrue(state["blocked"])
+        self.assertEqual(state["deployments"]["fixture"]["committed"], self.committed)
+        self.assertEqual(state["deployments"]["fixture"]["pending"]["phase"], "backup-complete")
+        self.assertTrue((self.evidence / (self.operation + ".apply-attempt.json")).exists())
+        self.assertNotIn("checks", calls)
+
+    def test_internal_transaction_decline_does_not_reserve_or_interrupt(self):
+        storage, arguments, calls = self.transaction_fixture()
+        arguments["approve"] = lambda review: None
+        with self.assertRaisesRegex(source.NativeError, "declined"):
+            execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        self.assertEqual(calls, ["preflight"])
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_internal_transaction_backup_failure_never_loads_images(self):
+        storage, arguments, calls = self.transaction_fixture(failure="backup")
+        with self.assertRaisesRegex(source.NativeError, "injected backup"):
+            execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        state = self.store.status()
+        self.assertTrue(state["blocked"])
+        self.assertEqual(state["deployments"]["fixture"]["pending"]["phase"], "inputs-verified")
+        self.assertFalse(state["image_load_started"])
+        self.assertNotIn("load", calls)
+
+    def test_internal_transaction_failed_checks_never_commit_candidate(self):
+        storage, arguments, calls = self.transaction_fixture(failure="checks")
+        with self.assertRaisesRegex(source.NativeError, "injected checks"):
+            execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        state = self.store.status()
+        self.assertTrue(state["blocked"])
+        self.assertEqual(state["deployments"]["fixture"]["committed"], self.committed)
+        self.assertEqual(state["deployments"]["fixture"]["pending"]["phase"], "apply-complete")
+        self.assertEqual(calls[-1], "checks")
+
+    def test_internal_transaction_apply_failure_can_recover_native(self):
+        storage, arguments, calls = self.transaction_fixture(failure="apply")
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        with self.assertRaisesRegex(source.NativeError, "injected apply"):
+            execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        backup_evidence = json.loads((self.evidence / (self.operation + ".backup.json")).read_bytes())
+        restores = self.root / "transaction-restores"
+        restores.mkdir(mode=0o700)
+        storage.update({"state": self.root / "state", "restores": restores})
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native"), patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "runtime_checks"), \
+                patch.object(native, "command"), \
+                patch("tool.deployment_pi_handover.inspect_candidate_containers", return_value=[]), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts", return_value="engine"), \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"):
+            result = recover_before_activation(storage, "fixture", self.operation,
+                                               backup_path=self.backups / self.operation,
+                                               checksum=backup_evidence["manifest_sha256"],
+                                               approve=lambda review: review["digest"], activated=True)
+        self.assertEqual(result["event"], "recovered")
+        self.assertFalse(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.committed)
 
     def test_isolated_restore_preserves_live_data_and_keeps_reservation(self):
         operation = self.operation
