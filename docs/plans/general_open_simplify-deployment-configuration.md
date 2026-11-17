@@ -4903,3 +4903,228 @@ controller are compatible with an activated container.
 The earlier GitHub CI runs predate deployment commit `e55d9de`; no CI run for
 that commit was found on 2026-11-17. Do not report those older runs as CI for
 the current changes. The implementation and live migration remain outstanding.
+
+On 2026-11-17 a read-only Pi check again found the recorded native operation
+unblocked, its web and gateway units active and enabled, the controller reported
+connected, and playback health reported configured and OK. The managed ARM64
+bundle was reverified against its retained manifest identity and native source
+revision. Its web image validated and reconciled a streamed snapshot of the
+Pi's current configuration and state with no network or writable filesystem.
+This is a point-in-time schema check, not a startup, writer-quiescence,
+hardware, authentication-from-container or audible-playback test.
+
+Two stopped legacy Compose containers still reference the live data and serial
+device. Ordinary Compose preflight rejects such references even while stopped,
+so successful handover and subsequent managed operations cannot be assumed
+until those containers have a separately reviewed, non-destructive resolution.
+The handover conflict inspection now offers a strict prospective-project check
+which rejects any such container and project collision; native recovery retains
+its existing stopped-container behavior. The reserved local image loader can
+also bind its checks to an expected Docker daemon and retains uncertain state
+if that identity changes during a load. Neither guard is yet wired into a real
+handover operator. No container or native service was changed by these checks.
+Real hooks, controller/SSH integration, independent backup custody in the
+transaction, representative systemd/Docker failure and recovery rehearsal,
+and future Compose-operation compatibility remain required before cutover.
+
+The internal handover target now implements read-only native and Docker
+preflight and concrete transfer, native fencing, backup and image-load
+boundaries. It requires the exact reserved candidate and completed transfer
+before fencing, checks that native units remain disabled during quiescence,
+and binds image loading to the reviewed Docker daemon. These boundaries use
+the existing backup and reservation mechanisms and retain uncertain state.
+They are not yet connected to an operator action: activation and runtime
+acceptance hooks, reviewed controller/SSH integration, independently validated
+controller-side backup custody and future Compose compatibility remain open.
+Unit and isolated Linux tests do not establish end-to-end handover or recovery
+on systemd, and no Pi services were interrupted by this implementation.
+
+On 2026-11-17 the operator explicitly approved archiving and removing the
+two stopped legacy `russound-dev` container objects. Before removal, their
+private inspect metadata, logs, filesystem exports and both original images
+were retained off-host. Filesystem exports, image archive and logs matched
+independently regenerated Pi checksums; the image archive's OCI manifests
+and blob hashes were also verified. Docker export does not capture bind-mounted
+live data and is not a replacement for the required fresh cutover backup or a
+proof that the original container objects can be recreated identically.
+
+The one-shot retirement held the target operator lock, checked the recorded
+native baseline, exact Docker daemon and stopped-container metadata, and
+recorded private attempt/completion evidence. The two objects were removed
+without deleting their images, live data or the unrelated stopped container.
+Post-checks found no remaining Docker container referring to the selected data
+root or serial device; native units remained enabled and healthy, the
+controller reported connected and playback reported configured and OK.
+The installed older tooling does not participate in the newer operator lock,
+so process checks did not provide universal exclusion against outside
+orchestration. The other cutover gates, including the operator workflow and a
+demonstrated future Compose operation, remain open.
+
+Backup/recovery testing now includes a reserved handover that transfers a fresh
+fixture backup over a duplex channel, verifies and retains a separate
+controller-side copy, injects an activation failure, and restores from that
+copy while preserving the later data tree. Another test drops the custody
+acknowledgment after the controller has retained the backup: both copies and
+the reservation remain, the backup phase is not advanced and image loading
+does not start. Focused handover, operator and image-load tests passed locally
+and in an isolated Linux container; the real-Docker fencing and activated
+restore tests also passed. The integrated fixture still mocks native/systemd
+and image activation, and its controller copy is a separate local directory,
+not an actual off-host Pi transfer.
+
+An interrupted image load with no completed identity record remains an
+explicitly blocked, uncertain state; the current recovery action deliberately
+refuses it rather than assuming Docker finished. There is no reviewed
+resolution for that boundary yet. The handover operator is not wired, so no
+fresh quiescent live-Pi backup or end-to-end live recovery has been performed.
+These results are useful regression evidence, not completion of the backup
+and recovery acceptance gate.
+
+The experimental `handover-deploy` action now connects the controller's
+independently supplied committed record and native specification to the
+target transaction, verified local image transfer, fresh backup custody,
+activation and runtime checks. Controller review validates the derived scope
+and digest; target acceptance checks candidate Compose hashes, exact image
+identities, native fencing, controller and configured playback. A framed
+controller/target test exercises transfer, independent backup receipt and
+state finalization, with systemd, Docker load and activation mocked. It also
+constructs the next ordinary Compose deployment from the resulting committed
+runtime; it does not prove a real subsequent Compose apply or recovery.
+
+This operator is experimental, not accepted for a live Pi cutover. The
+representative systemd/Docker end-to-end rehearsal, incomplete-load
+investigation procedure and live current-data/route verification remain
+outstanding. The deployment command has not been run on the Pi.
+
+The dedicated `handover-recover-uncertain-load` action now offers reviewed
+backup recovery when a verified transfer reached the one-shot load marker but
+did not record completed IDs and activation evidence is absent. It binds the
+original intent and daemon, inventories operation tags without loading or
+deleting images, preserves partial images and later data, and requires explicit
+operator confirmation that both orchestration and the daemon-side request have
+ended. Inventory and a stable log are not proof that the daemon is idle: if
+the operator cannot establish that fact the reservation must remain blocked.
+This is not an automatic retry or a claim that the load succeeded. Real
+systemd/Docker interruption and recovery rehearsal remains outstanding.
+The full Python suite passed (1,026 tests, 17 skipped); 160 focused tests
+passed in isolated Linux (4 skipped). Read-only inspection also found both
+expected exact-revision operation images on the local Docker daemon. These
+results do not prove a daemon-side interrupted request has ended or exercise
+live native-service restoration.
+
+#### Real systemd/Docker handover rehearsal, 2026-11-17
+
+A disposable ARM64 Debian VM with real systemd, Docker and Compose used a
+virtual serial pair and a synthetic authenticated HTTPS playback agent. The
+controller and target communicated over SSH, with the backup independently
+retained on the controller. A full native-to-Compose transaction and a
+subsequent ordinary unchanged Compose verification passed, including
+container, backend, HTTP and playback checks. This is not a Pi hardware or
+physical audio test. In the successful Compose snapshot, a synthetic zone
+volume command reached the paired serial controller, and restarting the test
+web container produced zone-information and turn-on-volume requests with
+synthetic RNET responses.
+
+The first attempt stopped native units and remained reserved before backup.
+The stopped web port was subsequently observed in TCP TIME_WAIT and could
+not pass the exclusive bind check. Reviewed pre-backup recovery restored the
+native fixture. A bounded exclusive-bind wait was added after fencing and
+the next full handover passed; a real Linux socket test reproduced TIME_WAIT
+and verified that the wait fails closed when the port remains occupied.
+Another pre-backup attempt was interrupted by host sleep; after ending the
+disconnected orchestration, reviewed recovery again restored native service.
+
+An injected post-activation failure left real candidate containers running
+and the reservation blocked. Reviewed backup recovery stopped those exact
+containers, disabled their restart policies, restored native service and
+retained a synthetic post-backup edit separately. A separate injected failure
+after completed image loading but before activation also recovered from the
+independently retained backup and preserved a later edit. A separate injected
+partial-load failure occurred immediately after the first real Docker load
+returned, leaving one operation tag and an incomplete load marker. Ordinary
+backup recovery refused it; reviewed uncertain-load recovery restored native
+service and retained both the partial image and a later synthetic edit.
+The fault was injected after the daemon request completed, not during an
+actively running daemon request. It therefore does not prove that a genuinely
+interrupted daemon-side load has ended; that still requires independent
+evidence before recovery. The full Python suite passed (1,028 tests, 17
+skipped). A modified copy of a real off-host backup and a mismatched real
+Docker daemon identity were rejected.
+
+The guarded backup of this fixture's roughly 1,900 release files took about
+12 minutes in the VM. Actual Pi duration and physical routing remain
+unmeasured. This evidence does not authorize or execute live Pi cutover or
+replace its separately approved observation and audible checks.
+
+#### Pi readiness refresh, 2026-11-17
+
+The native web and gateway units were active and enabled with zero restarts;
+deployment state was unblocked with the same committed native operation.
+Read-only API checks reported configured rooms, a connected backend and
+configured playback OK. The native audio, agent and proxy services were
+active, and the gateway listener remained bound to loopback. Docker was
+active (Engine 29.7.2, Compose 5.5.0), and a separately staged copy of the
+candidate tooling passed the exact-candidate handover preflight without
+replacing installed tooling or stopping services. Its estimated controller
+backup capacity was about 174 MB; the controller and Pi had sufficient free
+space at the time. This is a point-in-time check, not a cutover authorization.
+The successful VM rehearsal used Docker 20.10.24 and Compose 2.32.4, so it
+does not establish Pi-version runtime compatibility. A read-only Pi Compose
+configuration/hash check did accept both derived candidate services; it did
+not create or start containers.
+
+The matching public ARM64 `dev` image pair resolved and verified at revision
+`57e2372358012842c53c48cafc917545c1d88c9e`, whereas the native baseline and
+verified local handover bundle use `060084d936ae31578512756d3907b7e11dab008f`.
+Neither public repository had `latest` or a tag for that native revision.
+Do not silently substitute the different published revision: cross-version
+migration needs its own review and compatibility evidence. The newer operator
+also remains uncommitted and must not be copied over the trusted Pi tooling;
+use the reviewed committed tooling upgrade procedure before a live test.
+
+A source comparison established that the published `57e2372` revision is an
+ancestor of `060084d` and lacks its unattended controller-health recovery fix.
+Running the nine current unattended recovery tests against an isolated checkout
+of the published web source produced six failures; the same nine passed against
+the native revision's source. This is a demonstrated source-level regression,
+not a live test of the published image. The published pair must not replace the
+same-revision candidate without a reviewed image containing the fix and its own
+compatibility validation.
+
+#### Interrupted image upload rehearsal, 2026-11-17
+
+On the disposable VM, a fault-injected loader started a real Docker image load,
+fed 1 MiB of the archive and killed its client during the upload. The
+independently retained backup was present, and the target kept the reservation
+blocked with a started load marker and no completed image IDs. The daemon log
+did not establish whether the original request had finished.
+
+With no candidate containers present, the test stopped the VM's Docker socket,
+Docker daemon and containerd, verified that both original daemon processes
+exited, then restarted them and verified the same persistent Docker daemon ID.
+Separately reviewed uncertain-load recovery restored the native fixture,
+preserved the later data tree and retained the operation images. This
+demonstrates recovery for this controlled interruption and daemon lifecycle,
+not a general proof that a quiet daemon is idle. Restarting Docker or
+containerd on the Pi can disrupt unrelated workloads and is not authorized by
+this rehearsal. If the original daemon request cannot be independently
+established as ended, keep the Pi reservation blocked.
+
+#### Matched Docker/Compose rehearsal, 2026-11-17
+
+The disposable ARM64 Debian 12 VM was upgraded to Docker Engine 29.7.2,
+containerd 2.3.3 and Compose 5.5.0, matching the versions observed on the Pi.
+After restoring its reboot-volatile virtual serial module, the full handover
+passed using the same-revision local image bundle and an independently retained
+backup. Both candidate containers were healthy, the native web and gateway
+units were disabled, and the committed state was unblocked. A subsequent
+ordinary unchanged Compose verification passed container, HTTP, backend and
+playback checks. The VM was shut down and its state snapshotted.
+
+The VM uses Debian 12 and a different kernel and package build from the Pi's
+Debian 13 installation; its synthetic serial and playback fixtures do not
+establish physical hardware, audible output or Pi-specific kernel behavior.
+No live Pi cutover or observation was performed. A final read-only Pi check
+found native web and gateway active and enabled, Docker active, no pending
+operation or reservation, and both rooms and playback health endpoints returning
+HTTP 200.

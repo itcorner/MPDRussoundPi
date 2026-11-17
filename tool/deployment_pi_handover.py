@@ -13,12 +13,13 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from tool.deployment_backup import FileBackup, quiescent
-from tool.deployment_build import local_engine
+from tool.deployment_build import image_identity, local_engine
 from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
 from tool.deployment_compose import encoded, private_read, private_write, specification as compose_specification
 from tool.deployment_files import is_list, is_mapping
@@ -26,7 +27,7 @@ from tool.deployment_local import LOCAL_CANDIDATE
 from tool import deployment_native as native
 from tool.deployment_native import environment, specification as native_specification
 from tool.deployment_native_source import NativeError, validate_candidate as native_candidate
-from tool.deployment_preflight import check_data, check_port, overlap, safe_path
+from tool.deployment_preflight import PreflightError, check_data, check_port, overlap, safe_path
 from tool.deployment_state import StateStore, candidate, completion_record, identity, operation_id, pending_record
 
 
@@ -171,6 +172,20 @@ def verify_backup(path: Path, operation: str, checksum: str, *,
     return manifest
 
 
+def wait_fenced_port(host: str, port: int, *, timeout: float = 75) -> None:
+    """Wait for stopped native listeners' TCP TIME_WAIT sockets to expire."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            check_port(host, port)
+            return
+        except PreflightError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise NativeError("Fenced native listener remains unavailable; inspect the reserved handover") from None
+            time.sleep(min(1, remaining))
+
+
 def fence_native(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
                  committed: dict[str, Any], native_spec: dict[str, Any],
                  image_selection: dict[str, Any]) -> None:
@@ -210,15 +225,22 @@ def fence_native(store: StateStore, storage: dict[str, Path], deployment: str, o
     units = native.system_units()
     if any(item.get("UnitFileState") != "disabled" for item in units.values()):
         raise NativeError("Native units are not disabled; inspect before recovery")
+    wait_fenced_port(spec["publish_host"], spec["publish_port"])
+    wait_fenced_port("127.0.0.1", spec["backend_port"])
     native.check_no_writers(spec)
-    check_port(spec["publish_host"], spec["publish_port"])
-    check_port("127.0.0.1", spec["backend_port"])
     if store.status() != state:
         raise NativeError("Handover state changed while native units were fenced")
 
 
-def check_docker_conflicts(spec: dict[str, Any], *, expected_engine: str | None = None) -> str:
-    """Reject conflicting containers and bind inspection to one Docker daemon."""
+def check_docker_conflicts(spec: dict[str, Any], *, expected_engine: str | None = None,
+                           handover_project: str | None = None) -> str:
+    """Reject conflicting containers and bind inspection to one Docker daemon.
+
+    A prospective handover also requires the new project to be unused and no
+    other container, even stopped, to reference its data or serial device.
+    """
+    if handover_project is not None:
+        identity(handover_project)
     docker = ["docker", "--context", local_engine()]
 
     def engine_id() -> str:
@@ -258,6 +280,16 @@ def check_docker_conflicts(spec: dict[str, Any], *, expected_engine: str | None 
         related = (any(mount.get("Type") == "bind" and
                        overlap(Path(mount["Source"]), Path(spec["data_dir"])) for mount in mounts)
                    or any(device["PathOnHost"] == spec["serial_device"] for device in devices))
+        if handover_project is not None:
+            config = item.get("Config")
+            if not is_mapping(config) or (config.get("Labels") is not None
+                                          and not is_mapping(config["Labels"])):
+                raise NativeError("Invalid Docker project metadata blocks handover")
+            labels: dict[str, Any] = config.get("Labels") or {}
+            if labels.get("com.docker.compose.project") == handover_project:
+                raise NativeError("Handover Compose project already has containers")
+            if related:
+                raise NativeError("A container references handover data or serial hardware; review it separately")
         if related and (item["State"]["Running"] or item["State"]["Restarting"]
                         or item["State"]["Paused"] or item["HostConfig"]["RestartPolicy"]["Name"] == "always"):
             raise NativeError("A Docker container can own native data or the serial adapter")
@@ -570,10 +602,37 @@ def prepare_backup_restore(store: StateStore, storage: dict[str, Path], deployme
     return destination
 
 
+def inspect_uncertain_load(selection: dict[str, Any], engine: str) -> dict[str, list[str]]:
+    """Inspect operation tags without loading, removing, or claiming completion."""
+    docker = ["docker", "--context", local_engine()]
+    def check_engine() -> None:
+        info: Any = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
+        if not is_mapping(info) or info.get("ID") != engine:
+            raise NativeError("Docker daemon changed during uncertain image-load inspection")
+
+    check_engine()
+    result: dict[str, list[str]] = {}
+    manifest = selection["manifest"]
+    for name, image in manifest["images"].items():
+        ids = native.command(docker + ["image", "ls", "--no-trunc", "--quiet",
+                                       "--filter", "reference=" + image["tag"]]).decode().splitlines()
+        if len(ids) != len(set(ids)) or any(
+                item not in (image["reference"], selection["configs"][name]) for item in ids):
+            raise NativeError("Operation image tag names an unexpected image; retain the reservation")
+        for item in ids:
+            inspected: Any = json.loads(native.command(docker + ["image", "inspect", item]))
+            if not is_list(inspected) or len(inspected) != 1:
+                raise NativeError("Cannot establish operation image identity")
+            image_identity(inspected[0], item, manifest["platform"], manifest["revision"])
+        result[name] = sorted(ids)
+    check_engine()
+    return result
+
+
 def recover_before_activation(storage: dict[str, Path], deployment: str, operation: str, *,
                               backup_path: Path, checksum: str,
                               approve: Callable[[dict[str, Any]], str | None],
-                              activated: bool = False) -> dict[str, Any]:
+                              activated: bool = False, uncertain_load: bool = False) -> dict[str, Any]:
     """Restore a reviewed backup, optionally fencing an activated candidate first."""
     identity(deployment)
     operation_id(operation)
@@ -586,10 +645,14 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
             or record["pending"]["phase"] not in (("backup-complete", "apply-complete", "checks-complete")
                                                    if activated else ("backup-complete",))
             or record["pending"]["backup"] != operation
-            or (state["image_load_started"] and record["pending"]["loaded_images"] is None)
+            or (state["image_load_started"] and record["pending"]["loaded_images"] is None and not uncertain_load)
             or (not state["image_load_started"] and record["pending"]["loaded_images"] is not None)
             or (storage["evidence"] / (operation + ".apply-attempt.json")).exists() != activated
-            or (activated and (not state["image_load_started"] or record["pending"]["loaded_images"] is None))):
+            or (activated and (not state["image_load_started"] or record["pending"]["loaded_images"] is None))
+            or (uncertain_load and (activated or not state["image_load_started"]
+                                    or record["pending"]["loaded_images"] is not None
+                                    or not state["image_transfer_verified"]
+                                    or (storage["evidence"] / (operation + ".handover-activation.json")).exists()))):
         raise NativeError("Backup recovery requires a completed image load, if started, and matching activation evidence")
     committed = record["committed"]
     previous = committed["selection"]
@@ -600,6 +663,21 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
             or json.loads(private_read(asset / "selection.json")) != selected):
         raise NativeError("Backup recovery differs from the committed native assets")
     images = record["pending"]["candidate"]
+    intent: dict[str, Any] | None = None
+    image_snapshot: dict[str, list[str]] | None = None
+    load_log_digest: str | None = None
+    if uncertain_load:
+        store.verify_image_load_marker(deployment, operation, record["pending"]["intent_digest"])
+        intent = json.loads(private_read(storage["evidence"] / (operation + ".intent.json")))
+        if (not is_mapping(intent) or intent.get("kind") != "pi-handover-transaction"
+                or intent.get("operation") != operation or intent.get("deployment") != deployment
+                or intent.get("committed") != committed or intent.get("selection") != images
+                or intent.get("native_spec") != spec or not isinstance(intent.get("engine"), str)
+                or not intent["engine"]
+                or "sha256:" + hashlib.sha256(encoded(intent)).hexdigest() != record["pending"]["intent_digest"]):
+            raise NativeError("Original handover intent does not match the reserved uncertain image load")
+        load_log_digest = "sha256:" + hashlib.sha256(
+            private_read(storage["evidence"] / (operation + ".image-load.log"))).hexdigest()
     backup_evidence = {"operation": operation, "manifest_sha256": checksum}
     if json.loads(private_read(storage["evidence"] / (operation + ".backup.json"))) != backup_evidence:
         raise NativeError("Restore backup identity differs from captured evidence")
@@ -623,6 +701,11 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
         if not isinstance(engine, str) or not engine:
             raise NativeError("Activated recovery requires the recorded Docker daemon")
         before = inspect_candidate_containers(project, record["pending"]["loaded_images"], engine)
+    elif uncertain_load:
+        if intent is None:
+            raise NativeError("Uncertain image-load intent is missing")
+        engine = check_docker_conflicts(spec, expected_engine=intent["engine"], handover_project=project)
+        image_snapshot = inspect_uncertain_load(images, engine)
     else:
         engine = check_docker_conflicts(spec)
     recovery = str(uuid4())
@@ -637,6 +720,23 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
         "operator_confirmed_original_orchestration_ended": True,
         "audio_agent_proxy_and_os": "untouched",
     }
+    if uncertain_load:
+        plan.update({"uncertain_image_load": True, "docker_engine": engine,
+                     "operation_image_ids": image_snapshot, "image_load_log_sha256": load_log_digest,
+                     "operator_confirmed_daemon_load_ended": True,
+                     "partial_images_and_tags": "retained", "image_load_retry": False})
+
+    def verify_uncertain() -> None:
+        store.verify_image_load_marker(deployment, operation, record["pending"]["intent_digest"])
+        check_docker_conflicts(spec, expected_engine=engine, handover_project=project)
+        if (inspect_uncertain_load(images, engine) != image_snapshot
+                or "sha256:" + hashlib.sha256(
+                    private_read(storage["evidence"] / (operation + ".image-load.log"))).hexdigest() != load_log_digest
+                or json.loads(private_read(storage["evidence"] / (operation + ".intent.json"))) != intent
+                or (storage["evidence"] / (operation + ".apply-attempt.json")).exists()
+                or (storage["evidence"] / (operation + ".handover-activation.json")).exists()):
+            raise NativeError("Uncertain image-load evidence changed after recovery approval")
+
     digest = "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()
     if approve({"plan": plan, "digest": digest}) != digest:
         raise NativeError("Native backup recovery was declined; services were not changed")
@@ -656,6 +756,8 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
     if activated:
         if inspect_candidate_containers(project, record["pending"]["loaded_images"], engine) != before:
             raise NativeError("Candidate containers changed after backup recovery approval")
+    elif uncertain_load:
+        verify_uncertain()
     else:
         check_docker_conflicts(spec, expected_engine=engine)
     native.check_host_writers(Path(spec["data_dir"]), check_files=False)
@@ -676,7 +778,10 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
 
     def quiet() -> None:
         native.check_no_writers(spec)
-        check_docker_conflicts(spec, expected_engine=engine)
+        check_docker_conflicts(spec, expected_engine=engine,
+                               handover_project=project if uncertain_load else None)
+        if uncertain_load and inspect_uncertain_load(images, engine) != image_snapshot:
+            raise NativeError("Operation image identities changed during native recovery")
         if activated and inspect_candidate_containers(project, record["pending"]["loaded_images"], engine) != fenced:
             raise NativeError("Fenced candidate containers changed during native recovery")
 
@@ -697,11 +802,14 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
         raise NativeError("Fenced candidate containers changed after native restart")
     if store.status() != state:
         raise NativeError("Handover state changed during native backup recovery checks")
+    if uncertain_load:
+        verify_uncertain()
     receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,
                                "required": {"original-runtime": "passed", "matching-data": "passed"}}
     private_write(storage["evidence"] / (operation + ".recovery-complete.json"), receipt)
     store.resolve_recovery(deployment, operation, receipt, restore_native=True,
-                           native_previous=committed, handover_native=True)
+                           native_previous=committed, handover_native=True,
+                           handover_uncertain_load=uncertain_load)
     return {"event": "recovered", "operation": operation, "recovery": recovery, "required": receipt["required"]}
 
 

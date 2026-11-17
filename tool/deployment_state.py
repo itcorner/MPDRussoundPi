@@ -397,6 +397,16 @@ class StateStore:
         except OSError:
             raise StateError("Image-load intent exists or persistence is uncertain; do not retry") from None
 
+    def verify_image_load_marker(self, deployment: str, operation: str, intent_digest: str) -> None:
+        """Check the durable marker without changing or completing the load."""
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    if self._image_marker(reservation, operation)["intent_digest"] != intent_digest:
+                        raise StateError("Image-load marker differs from the reserved intent")
+        except OSError:
+            raise StateError("Cannot verify image-load marker; retain the reservation") from None
+
     def complete_image_load(self, deployment: str, operation: str, selection: dict[str, Any],
                             intent_digest: str, images: dict[str, str]) -> None:
         """Record independently inspected target identities, not service completion."""
@@ -471,7 +481,8 @@ class StateStore:
                          restore_native: bool = False,
                          native_previous: dict[str, Any] | None = None,
                          handover_native: bool = False,
-                         handover_resume: bool = False) -> None:
+                         handover_resume: bool = False,
+                         handover_uncertain_load: bool = False) -> None:
         """Internal boundary after approved restoration and independently checked runtime.
 
         The caller must durably retain the original record and recovery evidence.
@@ -497,6 +508,12 @@ class StateStore:
                     committed = record["committed"]
                     if handover_native and handover_resume:
                         raise StateError("Select exactly one handover recovery mode")
+                    incomplete_load = ("image-load.json" in os.listdir(reservation)
+                                       and record["pending"].get("loaded_images") is None)
+                    if handover_uncertain_load != (handover_native and incomplete_load):
+                        raise StateError("Uncertain handover image load requires its dedicated reviewed recovery")
+                    if handover_uncertain_load and self._image_marker(reservation, operation)["intent_digest"] != record["pending"]["intent_digest"]:
+                        raise StateError("Uncertain image-load marker differs from the reserved intent")
                     if (not native and committed is not None
                             and committed["selection"]["candidate"]["kind"] == NATIVE_CANDIDATE
                             and not (handover_native or handover_resume)):

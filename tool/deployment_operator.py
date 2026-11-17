@@ -31,7 +31,7 @@ from tool.deployment_transfer import ssh_arguments
 
 TOOLS = Path("/opt/mpdrussoundpi-deploy")
 STORAGE = Path("/var/lib/mpdrussoundpi-operations")
-DEPLOY_ACTIONS = ("deploy", "native-deploy")
+DEPLOY_ACTIONS = ("deploy", "native-deploy", "handover-deploy")
 
 
 @contextmanager
@@ -57,6 +57,29 @@ def operator_lock(evidence: Path) -> Generator[None, None, None]:
 
 def serve(channel: Channel, storage: dict[str, Path]) -> None:
     request = channel.receive()
+    if request.get("action") == "handover-deploy":
+        from tool.deployment_handover_target import HandoverTarget
+        from tool.deployment_handover_transaction import HandoverHooks, execute
+        if set(request) != {"action", "deployment", "operation", "native_spec", "committed", "selection"}:
+            raise ChannelError("Invalid handover deployment request")
+        store = StateStore(storage["state"], owner_uid=os.getuid())
+        store.initialize()
+        target = HandoverTarget(store, storage, request["deployment"], request["operation"], request["selection"])
+        if target.native_spec != request["native_spec"] or target.committed != request["committed"]:
+            raise ChannelError("Target native baseline differs from independently supplied controller inputs")
+        target.preflight()
+        if target.backup_estimate is None:
+            raise ChannelError("Handover backup capacity was not established")
+        hooks = HandoverHooks(preflight=target.preflight, receive_images=lambda digest: target.receive_images(channel, digest),
+                              stop_native=target.stop_native, capture_backup=lambda: target.capture_backup(channel),
+                              load_images=target.load_images, apply=target.activate, checks=target.checks)
+        result = execute(store, storage, request["deployment"], request["operation"],
+                         committed=target.committed, native_spec=target.native_spec, selection=target.selection,
+                         engine=target.reviewed_engine(), hooks=hooks,
+                         approve=lambda review: approve_remote(channel, review),
+                         offhost_free_bytes_required=target.backup_estimate)
+        channel.send(result)
+        return
     if request.get("action") == "native-deploy":
         from tool.deployment_native import NativeDeployment, recovery_assets as native_assets
         if (set(request) != {"action", "spec", "selection", "operation", "update"}
@@ -95,7 +118,7 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         channel.send(result)
         return
     if request.get("action") in ("recover", "native-recover", "handover-recover-backup",
-                                  "handover-recover-activated"):
+                                  "handover-recover-activated", "handover-recover-uncertain-load"):
         if set(request) != {"action", "deployment", "operation"}:
             raise ChannelError("Invalid recovery request")
         identity(request["deployment"])
@@ -107,12 +130,14 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         backup, checksum = receive_backup(channel, incoming, header)
         if backup.name != request["operation"]:
             raise ChannelError("Recovery operation and backup differ")
-        if request["action"] in ("handover-recover-backup", "handover-recover-activated"):
+        if request["action"] in ("handover-recover-backup", "handover-recover-activated",
+                                  "handover-recover-uncertain-load"):
             from tool.deployment_pi_handover import recover_before_activation
             result = recover_before_activation(storage, request["deployment"], request["operation"],
                                                backup_path=backup, checksum=checksum,
                                                approve=lambda review: approve_remote(channel, review),
-                                               activated=request["action"] == "handover-recover-activated")
+                                               activated=request["action"] == "handover-recover-activated",
+                                               uncertain_load=request["action"] == "handover-recover-uncertain-load")
             channel.send(result)
             return
         recovery_function = recover
@@ -208,10 +233,11 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
         backup_validator = native_assets
     channel.send(request)
     if request["action"] in ("recover", "native-recover", "handover-recover-backup",
-                             "handover-recover-activated"):
+                             "handover-recover-activated", "handover-recover-uncertain-load"):
         if recovery is None or recovery_checksum is None:
             raise ChannelError("Recovery requires the private independently held backup and identity")
-        if request["action"] in ("handover-recover-backup", "handover-recover-activated"):
+        if request["action"] in ("handover-recover-backup", "handover-recover-activated",
+                                  "handover-recover-uncertain-load"):
             portable_backup(recovery, operation, recovery_checksum)
         else:
             backup_validator(recovery, operation, recovery_checksum)
@@ -242,6 +268,28 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                     or event["plan"]["scope"]["playback_agents"] != [
                         item["agent_id"] for item in request["spec"]["playback_agents"]]):
                 raise ChannelError("Target reviewed a different native deployment scope")
+            if request["action"] == "handover-deploy":
+                from tool.deployment_pi_handover import prepare
+                if not is_mapping(request["selection"]):
+                    raise ChannelError("Handover requires a verified local image selection")
+                project = "pi-handover-" + operation.replace("-", "")
+                spec, config = prepare(request["native_spec"], request["committed"]["selection"]["candidate"],
+                                       request["selection"], project=project,
+                                       compose_path=str(STORAGE / "runtime" / operation / "compose.json"))
+                plan = event["plan"]
+                expected: dict[str, Any] = {
+                    "kind": "pi-handover-transaction", "deployment": request["deployment"], "operation": operation,
+                    "committed": request["committed"], "selection": request["selection"],
+                    "native_spec": request["native_spec"], "compose_spec": spec, "compose_config": config,
+                    "engine": plan.get("engine"), "interrupt_native": True, "preserve_data_in_place": True,
+                    "offhost_backup_required": True, "automatic_rollback": False,
+                    "offhost_free_bytes_required": plan.get("offhost_free_bytes_required"),
+                }
+                if (plan != expected or not isinstance(plan["engine"], str) or not plan["engine"]
+                        or type(plan["offhost_free_bytes_required"]) is not int
+                        or plan["offhost_free_bytes_required"] <= 0
+                        or event.get("digest") != "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()):
+                    raise ChannelError("Target reviewed a different handover deployment scope")
             if (not deploying and event["plan"]["deployment"] != request["deployment"]):
                 raise ChannelError("Target reviewed a different recovery deployment")
             if (request["action"] == "handover-resume-original"
@@ -249,7 +297,8 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                          or event["plan"].get("restore_data") is not False
                          or event["plan"].get("preserve_operator_edits") is not True)):
                 raise ChannelError("Target reviewed a different handover recovery action")
-            if (request["action"] in ("handover-recover-backup", "handover-recover-activated")
+            if (request["action"] in ("handover-recover-backup", "handover-recover-activated",
+                                       "handover-recover-uncertain-load")
                     and (event["plan"].get("kind") != "pi-handover-backup-recovery"
                          or event["plan"].get("backup_manifest_sha256") != recovery_checksum
                          or event["plan"].get("restore_matching_data") is not True
@@ -258,8 +307,16 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                          or event["plan"].get("activated") is not
                          (request["action"] == "handover-recover-activated"))):
                 raise ChannelError("Target reviewed a different handover backup recovery")
-            if (deploying and shutil.disk_usage(evidence).free
-                    < event["plan"]["scope"]["offhost_free_bytes_required"]):
+            if (request["action"] == "handover-recover-uncertain-load"
+                    and (event["plan"].get("uncertain_image_load") is not True
+                         or event["plan"].get("operator_confirmed_daemon_load_ended") is not True
+                         or event["plan"].get("partial_images_and_tags") != "retained"
+                         or event["plan"].get("image_load_retry") is not False
+                         or event.get("digest") != "sha256:" + hashlib.sha256(encoded(event["plan"])).hexdigest())):
+                raise ChannelError("Target reviewed a different uncertain image-load resolution")
+            required_space = (event["plan"]["offhost_free_bytes_required"] if request["action"] == "handover-deploy"
+                              else event["plan"]["scope"]["offhost_free_bytes_required"] if deploying else 0)
+            if deploying and shutil.disk_usage(evidence).free < required_space:
                 channel.send({"event": "approval", "digest": None})
                 raise ChannelError("Insufficient independent controller space for the retained recovery bundle")
             answer = approve(event)
@@ -268,7 +325,7 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
             if answer != event["digest"]:
                 raise ChannelError("Operation was declined; target must not interrupt services")
         elif event.get("event") == "images":
-            if (reviewed is None or request["action"] != "deploy" or bundle is None
+            if (reviewed is None or request["action"] not in ("deploy", "handover-deploy") or bundle is None
                     or event != {"event": "images", "operation": operation, "intent_digest": reviewed["digest"]}):
                 raise ChannelError("Unreviewed image transfer request")
             selection = request["selection"]
@@ -285,17 +342,37 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
         elif event.get("event") == "backup":
             if reviewed is None or event["operation"] != operation or backup_received:
                 raise ChannelError("Unreviewed or duplicate recovery transfer")
-            backup, checksum = receive_backup(channel, evidence, event)
-            backup_validator(backup, operation, checksum)
-            private_write(evidence / (operation + ".backup-identity.json"),
-                          {"operation": operation, "manifest_sha256": checksum})
+            if request["action"] == "handover-deploy":
+                from tool.deployment_pi_handover import receive_handover_backup
+                if not is_mapping(request["selection"]):
+                    raise ChannelError("Handover requires a verified local image selection")
+                receive_handover_backup(
+                    channel, evidence, event, operation=operation, committed=request["committed"],
+                    native_spec=request["native_spec"], image_selection=request["selection"],
+                    native_asset=STORAGE / "assets" / request["committed"]["selection"]["operation"])
+            else:
+                backup, checksum = receive_backup(channel, evidence, event)
+                backup_validator(backup, operation, checksum)
+                private_write(evidence / (operation + ".backup-identity.json"),
+                              {"operation": operation, "manifest_sha256": checksum})
+                channel.send({"event": "backup-verified", "operation": operation, "manifest_sha256": checksum})
             backup_received = True
-            channel.send({"event": "backup-verified", "operation": operation, "manifest_sha256": checksum})
         elif event.get("event") in ("complete", "recovered", "unchanged"):
             if reviewed is None or event["operation"] != operation:
                 raise ChannelError("Target completion lacks matching reviewed approval")
             if deploying and event["event"] != "unchanged" and not backup_received:
                 raise ChannelError("Target completed without verified off-host backup")
+            if request["action"] == "handover-deploy":
+                images = event.get("images")
+                selection = request["selection"]
+                if (event["event"] != "complete" or event.get("deployment") != request["deployment"]
+                        or not is_mapping(images) or not is_mapping(selection)
+                        or set(images) != set(selection["manifest"]["images"])
+                        or any(images[name] not in (image["reference"], selection["configs"][name])
+                               for name, image in selection["manifest"]["images"].items())
+                        or event.get("required") != dict.fromkeys(
+                            ("apply", "containers", "http", "backend", "playback"), "passed")):
+                    raise ChannelError("Handover completion does not match the reviewed images and checks")
             private_write(evidence / (evidence_id + ".result.json"), event)
             return event
         elif event.get("event") == "error":
@@ -310,6 +387,13 @@ def interactive(review: dict[str, Any]) -> str | None:
     expected = "approve " + review["plan"]["operation"]
     with open("/dev/tty", "r", encoding="utf-8") as source, \
             open("/dev/tty", "w", encoding="utf-8") as terminal:
+        if review["plan"].get("uncertain_image_load") is True:
+            confirmation = "confirm load-ended " + review["plan"]["operation"]
+            terminal.write("Only if you independently established that the original orchestration and "
+                           "daemon-side load request ended, type '" + confirmation + "': ")
+            terminal.flush()
+            if source.readline().strip() != confirmation:
+                return None
         terminal.write("Type '" + expected + "' to proceed: ")
         terminal.flush()
         answer = source.readline().strip()
@@ -364,8 +448,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("deploy", "recover", "resume-original", "serve",
                                           "native-deploy", "native-recover", "native-resume-original",
+                                          "handover-deploy",
                                           "handover-resume-original", "handover-recover-backup",
-                                          "handover-recover-activated"))
+                                          "handover-recover-activated", "handover-recover-uncertain-load"))
     parser.add_argument("--host")
     parser.add_argument("--user")
     parser.add_argument("--port", type=int, default=22)
@@ -404,7 +489,20 @@ def main() -> int:
         else:
             if not all((args.host, args.user, args.known_hosts, args.evidence)):
                 parser.error("Select explicit --host, --user, --known-hosts and a private --evidence directory")
-            if args.action == "native-deploy":
+            if args.action == "handover-deploy":
+                if not all((args.spec, args.selection, args.bundle, args.manifest_sha256, args.deployment)):
+                    parser.error("handover-deploy requires --deployment, --spec, --selection, --bundle and --manifest-sha256")
+                from tool.deployment_native import specification as native_specification
+                spec = native_specification(json.loads(private_read(args.spec)))
+                committed = json.loads(private_read(args.selection))
+                if spec["deployment"] != args.deployment:
+                    raise ChannelError("Controller native specification differs from deployment")
+                image_selection = select_bundle(args.bundle, args.manifest_sha256, "managed",
+                                                {"aarch64": "linux/arm64", "x86_64": "linux/amd64"}[
+                                                    committed["selection"]["candidate"]["runtime"]["machine"]])
+                request = {"action": args.action, "deployment": args.deployment, "operation": str(uuid4()),
+                           "native_spec": spec, "committed": committed, "selection": image_selection}
+            elif args.action == "native-deploy":
                 if args.spec is None or args.selection is None or args.bundle is not None:
                     parser.error("native-deploy requires --spec and --selection, not image archives")
                 from tool.deployment_native import specification as native_specification
@@ -431,7 +529,7 @@ def main() -> int:
                     "operation": str(uuid4()), "update": args.update,
                 }
             elif args.action in ("recover", "native-recover", "handover-recover-backup",
-                                 "handover-recover-activated"):
+                                 "handover-recover-activated", "handover-recover-uncertain-load"):
                 if not all((args.deployment, args.operation, args.backup, args.backup_sha256)):
                     parser.error("recover requires --deployment, --operation, --backup and --backup-sha256")
                 request = {"action": args.action, "deployment": args.deployment, "operation": args.operation}

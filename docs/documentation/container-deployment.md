@@ -38,10 +38,103 @@ entire stack on a fresh machine.
 **Excluded:** automatic same-host/split-host conversion, data movement between
 hosts, legacy-native adoption, external-native gateways, OS/package or schema
 migration, credential rotation and fresh-machine disaster recovery. The one
-implemented cross-layout exception is the explicitly reviewed matching
+accepted cross-layout exception is the explicitly reviewed matching
 managed-Docker-to-native cutover and recovery of its recorded baseline.
 Changing layout is not an ordinary rerun. Missing releases or untested
 acceptance are limitations, never success-shaped fallbacks.
+
+## Experimental Pi native-to-Docker handover
+
+The internal `handover-deploy` operator action is **not yet accepted for a live
+cutover**. It needs representative systemd/Docker rehearsal, including the
+reviewed uncertain-image-load recovery. Do not treat the presence of the
+command as evidence that those gates have passed.
+
+The controller requires a private copy of the exact native specification
+(`--spec`), the full committed deployment record (`--selection`), the separately
+verified managed image bundle and its manifest digest (`--bundle` and
+`--manifest-sha256`), and the deployment identity (`--deployment`). These
+inputs must be independently retained and checked against the target; the
+operator rejects a different committed record or specification. As with other
+operator actions, explicit SSH host, user, known-hosts and a private evidence
+directory are required. The reviewed scope includes private paths and agent
+configuration, so protect the controller terminal and evidence.
+
+The spec and committed record are JSON files owned by the controller user with
+mode `0400` or `0600`; `--selection` is the complete committed state record,
+not just its nested image or native candidate. The known-hosts file has the
+same ownership and mode requirements, and the evidence directory must be
+private. Both the controller checkout and the trusted installed target tooling
+must contain this implementation. Once its acceptance gates have been met, the
+command shape is:
+
+```sh
+python -m tool.deployment_operator handover-deploy \
+  --host PI_HOST --user PI_USER --known-hosts /private/known_hosts \
+  --evidence /private/evidence --deployment DEPLOYMENT_ID \
+  --spec /private/native-spec.json --selection /private/committed-record.json \
+  --bundle /private/managed-bundle --manifest-sha256 sha256:MANIFEST_DIGEST
+```
+
+The operator prints the exact review and requires interactive confirmation of
+the operation ID. The example is not authorization to run an unaccepted live
+cutover.
+
+The action reviews an operation-specific Compose project, reserves state,
+transfers and verifies images, fences the native writers, and captures a fresh
+backup. Loading and activation follow only after independently verified
+off-host backup acknowledgment. Runtime acceptance requires the exact image
+identities, healthy containers, controller communication and configured
+playback; the old native committed state remains until checks pass. An
+interrupted action is not automatically retried or rolled back: retain both
+endpoints' evidence and inspect the pending state before selecting a reviewed
+recovery action. In particular, an incomplete image load currently requires
+the separate reviewed recovery described below rather than an automatic retry.
+After fencing, the operator waits up to 75 seconds per native listener for an
+exclusive bind to succeed, allowing TCP TIME_WAIT to expire. A listener still
+unavailable at the deadline fails the handover and retains the reservation;
+it does not authorize an automatic retry or recovery.
+
+### Interrupted handover image load
+
+If the reservation records a started image load without completed image
+identities and activation has not begun, `handover-recover-uncertain-load`
+can restore the independently retained backup and the recorded native
+baseline. It does **not** retry the load, mark it complete, remove images or
+remove operation tags. It records the inspected partial image IDs and log
+digest in the recovery review; unexpected tags, daemon changes, modified
+evidence or a candidate project collision block recovery.
+
+Before approving, the operator must establish that the original operator,
+its subprocesses **and the daemon-side image-load request have ended**.
+The image inventory and a quiet log cannot prove the daemon request is idle.
+If that fact cannot be established, leave the reservation blocked and
+investigate; do not approve based on elapsed time. Inspect the original
+private review and log, and ensure no other orchestration can start candidate
+containers or mutate its tags. This is an operator attestation, not automatic
+proof of daemon quiescence. The normal recovery action still refuses this
+uncertain state.
+
+Once those conditions are independently established, use the same host trust
+and private evidence requirements as the original operation:
+
+```sh
+python -m tool.deployment_operator handover-recover-uncertain-load \
+  --host PI_HOST --user PI_USER --known-hosts /private/known_hosts \
+  --evidence /private/recovery-evidence --deployment DEPLOYMENT_ID \
+  --operation ORIGINAL_OPERATION --backup /private/OFFHOST_BACKUP_DIRECTORY \
+  --backup-sha256 sha256:BACKUP_MANIFEST_DIGEST
+```
+
+The recovery review requires the separate `confirm load-ended ORIGINAL_OPERATION`
+attestation followed by the usual approval, and preserves the post-backup
+data tree before restoring matching data. Failure leaves evidence and the
+reservation for investigation; do not rerun it blindly. Isolated systemd/Docker rehearsals exercised this recovery after a completed
+image-load request and after a client was killed during an upload. In the
+latter case the test stopped and restarted its otherwise unused Docker daemon
+and containerd before recovery. This does not establish a general method for
+proving that an interrupted daemon-side request has ended, or authorize a
+daemon restart on the Pi. The handover is not yet accepted for live Pi cutover.
 
 ## What is available
 

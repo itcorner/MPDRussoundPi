@@ -1,4 +1,5 @@
 import copy
+from contextlib import ExitStack
 import hashlib
 import io
 import json
@@ -11,6 +12,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from typing import Any
 from unittest.mock import Mock, call, patch
 from uuid import uuid4
 
@@ -20,19 +22,41 @@ from tool import deployment_native as native
 from tool import deployment_native_source as source
 from tool.deployment_backup import FileBackup
 from tool.deployment_channel import Channel, ChannelError
-from tool.deployment_compose import encoded, private_write
+from tool.deployment_compose import ComposeDeployment, ComposeError, encoded, private_write, runtime_checks
 from tool.deployment_load import select_bundle
 from tool.deployment_handover_transaction import HandoverHooks, execute as execute_handover
-from tool.deployment_operator import controller, serve
+from tool.deployment_handover_target import HandoverTarget
+from tool.deployment_operator import controller, interactive, serve
 from tool.deployment_pi_handover import (
-    capture_backup, check_docker_conflicts, fence_candidate_containers, fence_native, receive_handover_backup,
+    capture_backup, check_docker_conflicts, fence_candidate_containers, fence_native, inspect_uncertain_load,
+    receive_handover_backup,
     prepare, prepare_backup_restore, recover_before_activation, resume_before_backup, send_handover_backup,
-    verify_backup,
+    verify_backup, wait_fenced_port,
 )
+from tool.deployment_preflight import PreflightError
 from tool.deployment_state import PHASES, StateError, StateStore
 
 
 INTENT = "sha256:" + "d" * 64
+
+
+class FencedPortTests(unittest.TestCase):
+    def test_waits_until_exclusive_bind_succeeds(self):
+        with patch("tool.deployment_pi_handover.check_port",
+                   side_effect=[PreflightError("occupied"), PreflightError("occupied"), None]) as port, \
+                patch("tool.deployment_pi_handover.time.monotonic", side_effect=[0, 1, 2]), \
+                patch("tool.deployment_pi_handover.time.sleep") as sleep:
+            wait_fenced_port("127.0.0.1", 8000, timeout=3)
+        self.assertEqual(port.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_occupied_port_fails_closed_at_deadline(self):
+        with patch("tool.deployment_pi_handover.check_port", side_effect=PreflightError("occupied")), \
+                patch("tool.deployment_pi_handover.time.monotonic", side_effect=[0, 1, 3]), \
+                patch("tool.deployment_pi_handover.time.sleep") as sleep:
+            with self.assertRaisesRegex(source.NativeError, "remains unavailable"):
+                wait_fenced_port("127.0.0.1", 8000, timeout=3)
+        sleep.assert_called_once_with(1)
 
 
 class PiHandoverStateTests(unittest.TestCase):
@@ -352,6 +376,317 @@ class PiHandoverBackupTests(unittest.TestCase):
                      "engine": "engine", "hooks": hooks, "approve": lambda review: review["digest"]}
         return storage, arguments, calls
 
+    def target_fixture(self):
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        data = Path(self.spec["data_dir"])
+        (data / "config").mkdir()
+        (data / "config/russound_config.json").write_text('{"zones": [{"controller": 1, "zone": 1}]}')
+        storage = {"assets": self.assets, "backups": self.backups, "evidence": self.evidence,
+                   "state": self.root / "state", "runtime": self.root / "target-runtime",
+                   "incoming": self.root / "incoming", "staging": self.root / "staging",
+                   "restores": self.root / "restores"}
+        for name in ("runtime", "incoming", "staging", "restores"):
+            storage[name].mkdir(mode=0o700)
+        return HandoverTarget(self.store, storage, "fixture", str(uuid4()), self.images)
+
+    def target_preflight_patches(self):
+        stack = ExitStack()
+        stack.enter_context(patch("tool.deployment_handover_target.sys.platform", "linux"))
+        stack.enter_context(patch("tool.deployment_handover_target.os.geteuid", return_value=0))
+        stack.enter_context(patch("tool.deployment_handover_target.pwd.getpwuid",
+                                  return_value=Mock(pw_gid=self.spec["gid"])))
+        stack.enter_context(patch("tool.deployment_handover_target.check_data"))
+        stack.enter_context(patch("tool.deployment_handover_target.validate_runtime_files"))
+        stack.enter_context(patch("web.config_types.validate_russound_config"))
+        stack.enter_context(patch("tool.deployment_handover_target.safe_path",
+                                  return_value=Mock(st_mode=stat.S_IFCHR | 0o660,
+                                                    st_gid=self.spec["serial_gid"])))
+        stack.enter_context(patch("tool.deployment_handover_target.mode_access", return_value=True))
+        stack.enter_context(patch.object(native, "unit_status",
+                                        return_value={"ActiveState": "inactive", "UnitFileState": "disabled"}))
+        stack.enter_context(patch.object(native, "runtime_checks"))
+        stack.enter_context(patch.object(native, "check_host_writers"))
+        stack.enter_context(patch("tool.deployment_handover_target.check_docker_conflicts", return_value="engine"))
+        stack.enter_context(patch("tool.deployment_handover_target.local_engine", return_value="default"))
+
+        def command(argv):
+            if "info" in argv:
+                return b'{"ID":"engine","OSType":"linux","Architecture":"arm64","SecurityOptions":[]}'
+            if "version" in argv:
+                return b'{"version":"2.0"}'
+            raise AssertionError(argv)
+
+        stack.enter_context(patch.object(native, "command", side_effect=command))
+        return stack
+
+    def test_target_preflight_checks_native_assets_and_strict_docker_scope(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches(), \
+                patch("tool.deployment_handover_target.check_docker_conflicts", return_value="engine") as conflicts:
+            target.preflight()
+            target.preflight()
+        self.assertEqual(target.engine, "engine")
+        self.assertGreater(target.backup_estimate, 0)
+        self.assertEqual(conflicts.call_count, 4)
+        self.assertTrue(all(call.kwargs["handover_project"] == target.project for call in conflicts.call_args_list))
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_target_preflight_rejects_changed_native_assets_without_mutation(self):
+        target = self.target_fixture()
+        (self.asset / "spec.json").write_text("{}")
+        with self.target_preflight_patches(), patch.object(native, "command") as command:
+            with self.assertRaisesRegex(source.NativeError, "assets changed"):
+                target.preflight()
+            command.assert_not_called()
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_target_preflight_rejects_conflicting_container_before_review(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches(), \
+                patch("tool.deployment_handover_target.check_docker_conflicts",
+                      side_effect=source.NativeError("container references live data")):
+            with self.assertRaisesRegex(source.NativeError, "container references"):
+                target.preflight()
+        self.assertIsNone(target.engine)
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_target_preflight_rejects_docker_identity_drift(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+            with patch("tool.deployment_handover_target.check_docker_conflicts",
+                       side_effect=source.NativeError("Docker daemon changed")):
+                with self.assertRaisesRegex(source.NativeError, "daemon changed"):
+                    target.preflight()
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_target_receives_verified_bundle_only_for_matching_reservation(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        self.store.begin("fixture", target.operation, self.images, INTENT, ["apply"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", target.operation, "inputs-verified")
+        self.store.start_image_transfer("fixture", target.operation, self.images, INTENT)
+        source = self.root / self.images["manifest"]["operation"]
+        wire = io.BytesIO()
+        sender = Channel(io.BytesIO(), wire)
+        sender.send_file(source / "manifest.json")
+        for component in sorted(self.images["manifest"]["images"]):
+            sender.send_file(source / self.images["manifest"]["images"][component]["archive"])
+        requests = io.BytesIO()
+        target.receive_images(Channel(io.BytesIO(wire.getvalue()), requests), INTENT)
+        self.assertEqual(Channel(io.BytesIO(requests.getvalue()), io.BytesIO()).receive(),
+                         {"event": "images", "operation": target.operation, "intent_digest": INTENT})
+        incoming = target.storage["incoming"] / target.operation
+        self.assertEqual(select_bundle(incoming, self.images["manifest_sha256"], "managed", "linux/arm64"),
+                         self.images)
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertFalse(self.store.status()["image_transfer_verified"])
+
+    def test_target_rejects_unreserved_image_transfer_without_receiving_files(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        channel = Mock()
+        with self.assertRaisesRegex(source.NativeError, "reserved handover"):
+            target.receive_images(channel, INTENT)
+        channel.send.assert_not_called()
+        self.assertFalse((target.storage["incoming"] / target.operation).exists())
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_interrupted_target_transfer_retains_reservation_and_never_acknowledges(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        self.store.begin("fixture", target.operation, self.images, INTENT, ["apply"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", target.operation, "inputs-verified")
+        self.store.start_image_transfer("fixture", target.operation, self.images, INTENT)
+        source = self.root / self.images["manifest"]["operation"]
+        wire = io.BytesIO()
+        sender = Channel(io.BytesIO(), wire)
+        sender.send_file(source / "manifest.json")
+        channel = Channel(io.BytesIO(wire.getvalue()), io.BytesIO())
+        with self.assertRaisesRegex(ChannelError, "ended unexpectedly"):
+            target.receive_images(channel, INTENT)
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertTrue(self.store.status()["image_transfer_started"])
+        self.assertFalse(self.store.status()["image_transfer_verified"])
+
+    def test_target_preflight_allows_bounded_growth_but_not_unreviewed_capacity(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+            growth = Path(self.spec["data_dir"]) / "state.json"
+            growth.write_text("changed live data")
+            target.preflight()
+            target.backup_estimate = 1
+            with self.assertRaisesRegex(source.NativeError, "outgrew"):
+                target.preflight()
+        self.assertFalse(self.store.status()["blocked"])
+
+    def test_target_binds_fence_backup_and_load_to_reviewed_engine(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        self.store.begin("fixture", target.operation, self.images, INTENT, ["apply"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", target.operation, "inputs-verified")
+        self.store.start_image_transfer("fixture", target.operation, self.images, INTENT)
+        self.store.complete_image_transfer("fixture", target.operation, self.images, INTENT)
+        channel = Mock()
+        with patch("tool.deployment_handover_target.check_docker_conflicts") as conflicts, \
+                patch("tool.deployment_handover_target.fence_native") as fence, \
+                patch("tool.deployment_handover_target.capture_backup") as backup, \
+                patch("tool.deployment_handover_target.load_reserved_bundle", return_value={"web": "image"}) as load, \
+                patch.object(native, "check_no_writers") as quiet, \
+                patch.object(native, "verify_units"), \
+                patch.object(native, "system_units", return_value={
+                    native.WEB: {"UnitFileState": "disabled"},
+                    native.GATEWAY: {"UnitFileState": "disabled"}}):
+            target.stop_native()
+            target.capture_backup(channel)
+            self.assertEqual(target.load_images(INTENT), {"web": "image"})
+        self.assertEqual(conflicts.call_count, 3)
+        self.assertEqual(quiet.call_count, 2)
+        self.assertEqual(fence.call_args.kwargs["committed"], self.committed)
+        self.assertEqual(backup.call_args.kwargs["verify_quiescent"], target.quiescent)
+        self.assertEqual(load.call_args.kwargs["expected_engine"], "engine")
+
+    def test_target_does_not_fence_before_verified_transfer(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        self.store.begin("fixture", target.operation, self.images, INTENT, ["apply"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", target.operation, "inputs-verified")
+        with patch("tool.deployment_handover_target.fence_native") as fence:
+            with self.assertRaisesRegex(source.NativeError, "verified image transfer"):
+                target.stop_native()
+        fence.assert_not_called()
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_quiescence_rejects_reenabled_native_units(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        with patch.object(native, "verify_units"), \
+                patch.object(native, "system_units", return_value={
+                    native.WEB: {"UnitFileState": "enabled"},
+                    native.GATEWAY: {"UnitFileState": "disabled"}}), \
+                patch.object(native, "check_no_writers") as quiet:
+            with self.assertRaisesRegex(source.NativeError, "no longer disabled"):
+                target.quiescent()
+        quiet.assert_not_called()
+
+    def test_target_activation_requires_matching_markers_and_images(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        self.store.begin("fixture", target.operation, self.images, INTENT, ["apply"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", target.operation, "inputs-verified")
+        self.store.advance("fixture", target.operation, "backup-complete", backup=target.operation)
+        self.store.start_image_load("fixture", target.operation, self.images, INTENT)
+        images = {name: image["reference"] for name, image in self.images["manifest"]["images"].items()}
+        self.store.complete_image_load("fixture", target.operation, self.images, INTENT, images)
+        runtime = target.storage["runtime"] / target.operation
+        runtime.mkdir(mode=0o700)
+        private_write(runtime / "compose.json", target.config)
+        private_write(self.evidence / (target.operation + ".apply-attempt.json"),
+                      {"operation": target.operation, "intent_digest": INTENT})
+        private_write(self.evidence / (target.operation + ".handover-activation.json"),
+                      {"operation": target.operation, "intent_digest": INTENT, "project": target.project,
+                       "engine": "engine", "images": images,
+                       "config_digest": "sha256:" + hashlib.sha256(encoded(target.config)).hexdigest()})
+        with patch.object(target, "quiescent"), patch.object(target, "command"), \
+                patch("tool.deployment_handover_target.check_port"), \
+                patch("tool.deployment_handover_target.apply") as apply:
+            with self.assertRaisesRegex(source.NativeError, "fully loaded"):
+                target.activate({**images, "web": "sha256:" + "f" * 64})
+            apply.assert_not_called()
+            target.activate(images)
+            apply.assert_called_once_with(runtime / "compose.json", images)
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_runtime_acceptance_rejects_foreign_data_container(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        images = {"web": "web-image", "ser2net": "gateway-image"}
+        candidates = [{"id": "web", "running": True, "restarting": False},
+                      {"id": "gateway", "running": True, "restarting": False}]
+        foreign = {"Id": "foreign", "Mounts": [{"Type": "bind", "Source": self.spec["data_dir"]}],
+                   "HostConfig": {"Devices": []}}
+        units = {native.WEB: {"UnitFileState": "disabled", "ActiveState": "inactive", "MainPID": "0"},
+                 native.GATEWAY: {"UnitFileState": "disabled", "ActiveState": "inactive", "MainPID": "0"}}
+        with patch.object(native, "verify_units"), patch.object(native, "system_units", return_value=units), \
+                patch("tool.deployment_handover_target.inspect_candidate_containers", return_value=candidates), \
+                patch.object(target, "inspect_all", return_value=[foreign]), \
+                patch("tool.deployment_handover_target.runtime_checks") as checks:
+            with self.assertRaisesRegex(source.NativeError, "foreign container"):
+                target.checks(images)
+            checks.assert_not_called()
+
+    def test_runtime_acceptance_requires_configured_playback_when_requested(self):
+        target = Mock()
+        target.services = {"russound-web": "web"}
+        target.spec = {"gateway": "managed", "require_controller": True, "require_playback": True,
+                       "publish_host": "127.0.0.1", "publish_port": 8000}
+        container: dict[str, Any] = {"Id": "web-id", "Image": "web-image", "RestartCount": 0,
+                                     "Config": {"Labels": {"com.docker.compose.service": "russound-web"}},
+                                     "State": {"Running": True, "Health": {"Status": "healthy"}}}
+        target.own.return_value = [container]
+        target.command.return_value = json.dumps({"configured": True, "backend": True,
+                                                  "playback": True, "playback_configured": False}).encode()
+        with patch("tool.deployment_compose.time.monotonic", side_effect=[0, 61]):
+            with self.assertRaisesRegex(ComposeError, "health/routing deadline"):
+                runtime_checks(target, {"web": "web-image"})
+        target.command.return_value = json.dumps({"configured": True, "backend": True,
+                                                  "playback": True, "playback_configured": True}).encode()
+        response = Mock(status=200)
+        opener = Mock()
+        opener.open.return_value.__enter__ = Mock(return_value=response)
+        opener.open.return_value.__exit__ = Mock(return_value=False)
+        with patch("urllib.request.build_opener", return_value=opener):
+            self.assertEqual(runtime_checks(target, {"web": "web-image"}),
+                             dict.fromkeys(("containers", "http", "backend", "playback"), "passed"))
+        target.command.side_effect = source.NativeError("Docker daemon changed")
+        with self.assertRaisesRegex(source.NativeError, "Docker daemon changed"):
+            runtime_checks(target, {"web": "web-image"})
+
+    def test_candidate_acceptance_validates_compose_hashes(self):
+        target = self.target_fixture()
+        with self.target_preflight_patches():
+            target.preflight()
+        images = {"web": "web-image", "ser2net": "gateway-image"}
+        candidates: list[dict[str, Any]] = [{"id": name, "running": True, "restarting": False}
+                                            for name in ("web", "gateway")]
+        containers: list[dict[str, Any]] = [
+            {"Id": identifier, "Config": {"Labels": {
+                "com.docker.compose.project": target.project,
+                "com.docker.compose.service": service,
+                "com.docker.compose.config-hash": checksum,
+            }}} for identifier, service, checksum in (
+                ("web", "russound-web", "web-hash"),
+                ("gateway", "russound-ser2net", "gateway-hash"))
+        ]
+        units = {name: {"UnitFileState": "disabled", "ActiveState": "inactive", "MainPID": "0"}
+                 for name in (native.WEB, native.GATEWAY)}
+        result = dict.fromkeys(("containers", "http", "backend", "playback"), "passed")
+        with patch.object(native, "verify_units"), patch.object(native, "system_units", return_value=units), \
+                patch("tool.deployment_handover_target.inspect_candidate_containers", return_value=candidates), \
+                patch.object(target, "inspect_all", return_value=containers), \
+                patch.object(target, "command", return_value=b"russound-web web-hash\nrussound-ser2net gateway-hash\n"), \
+                patch("tool.deployment_handover_target.runtime_checks", return_value=result) as checks:
+            self.assertEqual(target.checks(images), result)
+            containers[0]["Config"]["Labels"]["com.docker.compose.config-hash"] = "different"
+            with self.assertRaisesRegex(source.NativeError, "configuration differs"):
+                target.checks(images)
+            self.assertEqual(checks.call_count, 1)
+
     def test_internal_transaction_orders_backup_load_activation_and_checks(self):
         storage, arguments, calls = self.transaction_fixture()
         result = execute_handover(self.store, storage, "fixture", self.operation, **arguments)
@@ -573,6 +908,181 @@ class PiHandoverBackupTests(unittest.TestCase):
                     approve=lambda review: review["digest"])
             stop.assert_not_called()
         self.assertTrue(self.store.status()["blocked"])
+
+    def uncertain_load_fixture(self):
+        operation = self.operation
+        intent = {"kind": "pi-handover-transaction", "deployment": "fixture", "operation": operation,
+                  "committed": self.committed, "selection": self.images, "native_spec": self.spec,
+                  "engine": "engine"}
+        digest = "sha256:" + hashlib.sha256(encoded(intent)).hexdigest()
+        self.store.begin("fixture", operation, self.images, digest, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.start_image_transfer("fixture", operation, self.images, digest)
+        self.store.complete_image_transfer("fixture", operation, self.images, digest)
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        self.store.start_image_load("fixture", operation, self.images, digest)
+        private_write(self.evidence / (operation + ".intent.json"), intent)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        log = self.evidence / (operation + ".image-load.log")
+        log.write_text("partial load")
+        log.chmod(0o600)
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        return {"assets": self.assets, "evidence": self.evidence,
+                "state": self.root / "state", "restores": restores}
+
+    def test_uncertain_load_recovery_preserves_partial_images_and_recovers_native(self):
+        storage = self.uncertain_load_fixture()
+        live = Path(self.spec["data_dir"]) / "state.json"
+        live.write_text("later edit")
+        snapshot = {"web": [], "ser2net": [self.images["configs"]["ser2net"]]}
+        reviews = []
+
+        def approve(review):
+            reviews.append(review["plan"])
+            return review["digest"]
+
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native"), patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "runtime_checks"), \
+                patch.object(native, "command"), \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts", return_value="engine"), \
+                patch("tool.deployment_pi_handover.inspect_uncertain_load", return_value=snapshot):
+            result = recover_before_activation(storage, "fixture", self.operation, backup_path=self.backup.path,
+                                               checksum=self.backup.manifest_sha256, approve=approve,
+                                               uncertain_load=True)
+        self.assertEqual(reviews[0]["operation_image_ids"], snapshot)
+        self.assertTrue(reviews[0]["operator_confirmed_daemon_load_ended"])
+        self.assertFalse(reviews[0]["image_load_retry"])
+        self.assertEqual(live.read_text(), "current state")
+        retained = live.parent.with_name(live.parent.name + ".failed-" + result["recovery"])
+        self.assertEqual((retained / "state.json").read_text(), "later edit")
+        self.assertFalse(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.committed)
+
+    def test_uncertain_load_decline_or_evidence_drift_never_mutates_services(self):
+        storage = self.uncertain_load_fixture()
+        snapshot = {"web": [], "ser2net": []}
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native") as stop, \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts", return_value="engine"), \
+                patch("tool.deployment_pi_handover.inspect_uncertain_load", return_value=snapshot):
+            with self.assertRaisesRegex(source.NativeError, "declined"):
+                recover_before_activation(storage, "fixture", self.operation, backup_path=self.backup.path,
+                                          checksum=self.backup.manifest_sha256, approve=lambda _: None,
+                                          uncertain_load=True)
+
+            def drift(review):
+                (self.evidence / (self.operation + ".image-load.log")).write_text("changed")
+                return review["digest"]
+
+            with self.assertRaisesRegex(source.NativeError, "evidence changed"):
+                recover_before_activation(storage, "fixture", self.operation, backup_path=self.backup.path,
+                                          checksum=self.backup.manifest_sha256, approve=drift,
+                                          uncertain_load=True)
+            stop.assert_not_called()
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_uncertain_load_requires_untouched_activation_evidence(self):
+        storage = self.uncertain_load_fixture()
+        private_write(self.evidence / (self.operation + ".handover-activation.json"), {})
+        with patch.object(native, "stop_native") as stop:
+            with self.assertRaises(source.NativeError):
+                recover_before_activation(storage, "fixture", self.operation, backup_path=self.backup.path,
+                                          checksum=self.backup.manifest_sha256, approve=lambda review: review["digest"],
+                                          uncertain_load=True)
+            stop.assert_not_called()
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_uncertain_load_inspection_rejects_foreign_images_and_daemon_drift(self):
+        image_id = self.images["configs"]["web"]
+        manifest = self.images["manifest"]
+        metadata = {"Id": image_id, "Os": "linux", "Architecture": "arm64", "Config": {"Labels": {
+            "org.opencontainers.image.revision": manifest["revision"],
+            "org.opencontainers.image.source": "https://github.com/itcorner/MPDRussoundPi"}}}
+        names = list(manifest["images"])
+        existing_name = names[0]
+        image_id = self.images["configs"][existing_name]
+        metadata["Id"] = image_id
+        sequence = [b'{"ID":"engine"}', (image_id + "\n").encode(),
+                    json.dumps([metadata]).encode(), b"", b'{"ID":"engine"}']
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=sequence) as command:
+            result = inspect_uncertain_load(self.images, "engine")
+            self.assertEqual(result[existing_name], [image_id])
+            self.assertTrue(all(not call.args[0][-2:] == ["image", "load"] for call in command.call_args_list))
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=[b'{"ID":"engine"}', b"sha256:foreign\n"]):
+            with self.assertRaisesRegex(source.NativeError, "unexpected image"):
+                inspect_uncertain_load(self.images, "engine")
+        sequence[-1] = b'{"ID":"other"}'
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=sequence):
+            with self.assertRaisesRegex(source.NativeError, "daemon changed"):
+                inspect_uncertain_load(self.images, "engine")
+
+    def test_uncertain_load_cannot_be_resolved_as_ordinary_recovery(self):
+        self.uncertain_load_fixture()
+        receipt = {"operation": self.operation, "review_digest": INTENT,
+                   "required": {"original-runtime": "passed", "matching-data": "passed"}}
+        with self.assertRaisesRegex(StateError, "dedicated reviewed recovery"):
+            self.store.resolve_recovery("fixture", self.operation, receipt, restore_native=True,
+                                        native_previous=self.committed, handover_native=True)
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_operator_routes_uncertain_load_recovery(self):
+        request = {"action": "handover-recover-uncertain-load", "deployment": "fixture",
+                   "operation": self.operation}
+        channel = Mock()
+        channel.receive.side_effect = [request, {"event": "backup"}]
+        incoming = self.root / "incoming"
+        incoming.mkdir(mode=0o700)
+        with patch("tool.deployment_operator.receive_backup",
+                   return_value=(self.backup.path, self.backup.manifest_sha256)), \
+                patch("tool.deployment_pi_handover.recover_before_activation") as recover:
+            recover.return_value = {"event": "recovered", "operation": self.operation}
+            serve(channel, {"incoming": incoming})
+        self.assertTrue(recover.call_args.kwargs["uncertain_load"])
+        self.assertFalse(recover.call_args.kwargs["activated"])
+
+    def test_controller_rejects_uncertain_load_review_without_end_confirmation(self):
+        request = {"action": "handover-recover-uncertain-load", "deployment": "fixture",
+                   "operation": self.operation}
+        plan = {"kind": "pi-handover-backup-recovery", "operation": self.operation,
+                "deployment": "fixture", "backup_manifest_sha256": self.backup.manifest_sha256,
+                "restore_matching_data": True, "preserve_post_backup_tree": True,
+                "operator_confirmed_original_orchestration_ended": True, "activated": False,
+                "uncertain_image_load": True, "operator_confirmed_daemon_load_ended": False,
+                "partial_images_and_tags": "retained", "image_load_retry": False}
+        review = {"event": "review", "plan": plan,
+                  "digest": "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()}
+        stream = io.BytesIO()
+        Channel(io.BytesIO(), stream).send(review)
+        approve = Mock()
+        with patch("tool.deployment_operator.portable_backup"), patch("tool.deployment_operator.send_backup"):
+            with self.assertRaisesRegex(ChannelError, "different uncertain image-load resolution"):
+                controller(Channel(io.BytesIO(stream.getvalue()), io.BytesIO()), request, self.evidence,
+                           approve, recovery=self.backup.path, recovery_checksum=self.backup.manifest_sha256)
+        approve.assert_not_called()
+
+    def test_interactive_uncertain_recovery_requires_separate_load_end_attestation(self):
+        review = {"digest": INTENT,
+                  "plan": {"operation": self.operation, "uncertain_image_load": True}}
+        for entered, expected in (
+                (f"approve {self.operation}\n", None),
+                (f"confirm load-ended {self.operation}\napprove {self.operation}\n", INTENT)):
+            with self.subTest(entered=entered), \
+                    patch("builtins.open", side_effect=[io.StringIO(entered), io.StringIO()]):
+                self.assertEqual(interactive(review), expected)
 
     def test_backup_recovery_after_completed_image_load_preserves_live_tree(self):
         operation = self.operation
@@ -1365,6 +1875,30 @@ class PiHandoverBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(source.NativeError, "daemon changed"):
                 check_docker_conflicts(self.spec, expected_engine="engine-a")
 
+    def test_handover_conflicts_include_stopped_containers_and_project_collision(self):
+        item = {"Id": "container-id", "Mounts": [],
+                "Config": {"Labels": {"com.docker.compose.project": "old-project"}},
+                "HostConfig": {"Devices": [], "RestartPolicy": {"Name": "unless-stopped"}},
+                "State": {"Running": False, "Restarting": False, "Paused": False}}
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command") as command:
+            for change in ("data", "device", "project", "malformed"):
+                altered = copy.deepcopy(item)
+                if change == "data":
+                    altered["Mounts"] = [{"Type": "bind", "Source": self.spec["data_dir"]}]
+                elif change == "device":
+                    altered["HostConfig"]["Devices"] = [{"PathOnHost": self.spec["serial_device"]}]
+                elif change == "project":
+                    altered["Config"]["Labels"]["com.docker.compose.project"] = "new-project"
+                else:
+                    altered["Config"]["Labels"] = []
+                command.side_effect = [b'{"ID":"engine"}', b"container-id\n", json.dumps([altered]).encode()]
+                with self.subTest(change=change), self.assertRaises(source.NativeError):
+                    check_docker_conflicts(self.spec, handover_project="new-project")
+            command.side_effect = [b'{"ID":"engine"}', b"container-id\n",
+                                   json.dumps([item]).encode(), b'{"ID":"engine"}']
+            self.assertEqual(check_docker_conflicts(self.spec, handover_project="new-project"), "engine")
+
     def test_operator_routes_prebackup_resume_and_rejects_malformed_request(self):
         operation = str(uuid4())
         request = {"action": "handover-resume-original", "deployment": "fixture", "operation": operation}
@@ -1561,6 +2095,231 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertTrue((self.offhost / operation / "manifest.json").is_file())
         self.assertTrue((self.offhost / (operation + ".backup-identity.json")).is_file())
         self.assertEqual(self.store.status()["deployments"]["fixture"]["pending"]["phase"], "backup-complete")
+
+    def test_apply_failure_recovers_from_independently_received_backup(self):
+        storage, arguments, _ = self.transaction_fixture(failure="apply")
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        live = Path(self.spec["data_dir"]) / "state.json"
+        live.write_text("fresh before backup")
+        target_socket, controller_socket = socket.socketpair()
+        target_socket.settimeout(10)
+        controller_socket.settimeout(10)
+        received = []
+        failures = []
+
+        def controller_backup():
+            try:
+                with controller_socket, controller_socket.makefile("rb") as source_stream, \
+                        controller_socket.makefile("wb") as target_stream:
+                    channel = Channel(source_stream, target_stream)
+                    received.append(receive_handover_backup(
+                        channel, self.offhost, channel.receive(), operation=self.operation,
+                        committed=self.committed, native_spec=self.spec,
+                        image_selection=self.images, native_asset=self.asset))
+            except Exception as error:
+                failures.append(error)
+
+        def capture():
+            worker = threading.Thread(target=controller_backup)
+            worker.start()
+            try:
+                with target_socket, target_socket.makefile("rb") as source_stream, \
+                        target_socket.makefile("wb") as target_stream:
+                    channel = Channel(source_stream, target_stream)
+                    capture_backup(
+                        self.store, storage, "fixture", self.operation, committed=self.committed,
+                        native_spec=self.spec, image_selection=self.images, native_asset=self.asset,
+                        verify_quiescent=lambda: None,
+                        verify_offhost=lambda backup: send_handover_backup(channel, backup))
+            finally:
+                worker.join(timeout=12)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(failures, [])
+
+        hooks = arguments["hooks"]
+        arguments["hooks"] = HandoverHooks(
+            preflight=hooks.preflight, receive_images=hooks.receive_images, stop_native=hooks.stop_native,
+            capture_backup=capture, load_images=hooks.load_images, apply=hooks.apply, checks=hooks.checks)
+        with self.assertRaisesRegex(source.NativeError, "injected apply"):
+            execute_handover(self.store, storage, "fixture", self.operation, **arguments)
+        self.assertEqual(len(received), 1)
+        backup_path, checksum = received[0]
+        self.assertEqual(backup_path, self.offhost / self.operation)
+        self.assertEqual(json.loads((self.offhost / (self.operation + ".backup-identity.json")).read_bytes()),
+                         {"operation": self.operation, "manifest_sha256": checksum})
+        live.write_text("post-backup change")
+        restores = self.root / "offhost-recovery-restores"
+        restores.mkdir(mode=0o700)
+        storage.update({"state": self.root / "state", "restores": restores})
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native"), patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "runtime_checks"), \
+                patch.object(native, "command"), \
+                patch("tool.deployment_pi_handover.inspect_candidate_containers", return_value=[]), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts", return_value="engine"), \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"):
+            result = recover_before_activation(
+                storage, "fixture", self.operation, backup_path=backup_path, checksum=checksum,
+                approve=lambda review: review["digest"], activated=True)
+        self.assertEqual(live.read_text(), "fresh before backup")
+        preserved = live.parent.with_name(live.parent.name + ".failed-" + result["recovery"])
+        self.assertEqual((preserved / "state.json").read_text(), "post-backup change")
+        self.assertFalse(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.committed)
+
+    def test_operator_handover_protocol_transfers_backup_and_commits(self):
+        target = self.target_fixture()
+        storage = target.storage
+        storage["runtime"] = self.runtime
+        operation = target.operation
+        request = {"action": "handover-deploy", "deployment": "fixture", "operation": operation,
+                   "native_spec": self.spec, "committed": self.committed, "selection": self.images}
+        bundle = self.root / self.images["manifest"]["operation"]
+        target_socket, controller_socket = socket.socketpair()
+        target_socket.settimeout(15)
+        controller_socket.settimeout(15)
+        failures = []
+
+        def preflight(instance):
+            instance.engine = "engine"
+            instance.backup_estimate = 1024
+
+        def load(instance, digest):
+            instance.store.start_image_load("fixture", operation, self.images, digest)
+            images = {name: image["reference"] for name, image in self.images["manifest"]["images"].items()}
+            instance.store.complete_image_load("fixture", operation, self.images, digest, images)
+            return images
+
+        def activate(instance, images):
+            active = copy.deepcopy(instance.config)
+            for name, component in instance.services.items():
+                active["services"][name]["image"] = images[component]
+            private_write(instance.storage["runtime"] / operation / "active.json", active)
+
+        def target_worker():
+            try:
+                with target_socket, target_socket.makefile("rb") as source_stream, \
+                        target_socket.makefile("wb") as target_stream:
+                    serve(Channel(source_stream, target_stream), storage)
+            except Exception as error:
+                failures.append(error)
+
+        with patch("tool.deployment_operator.STORAGE", self.root), \
+                patch.object(HandoverTarget, "preflight", preflight), \
+                patch.object(HandoverTarget, "stop_native", return_value=None), \
+                patch.object(HandoverTarget, "quiescent", return_value=None), \
+                patch.object(HandoverTarget, "load_images", load), \
+                patch.object(HandoverTarget, "activate", activate), \
+                patch.object(HandoverTarget, "checks",
+                             return_value=dict.fromkeys(("containers", "http", "backend", "playback"), "passed")):
+            worker = threading.Thread(target=target_worker)
+            worker.start()
+            try:
+                with controller_socket, controller_socket.makefile("rb") as source_stream, \
+                        controller_socket.makefile("wb") as target_stream:
+                    result = controller(Channel(source_stream, target_stream), request, self.offhost,
+                                        lambda review: review["digest"], bundle=bundle)
+            finally:
+                worker.join(timeout=17)
+                if failures:
+                    raise failures[0]
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(result["event"], "complete")
+        self.assertFalse(self.store.status()["blocked"])
+        self.assertTrue((self.offhost / operation / "manifest.json").is_file())
+        self.assertTrue((self.offhost / (operation + ".backup-identity.json")).is_file())
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"]["selection"]["candidate"],
+                         self.images)
+        next_spec, _ = prepare(self.spec, self.selection, self.images,
+                               project="pi-handover-" + operation.replace("-", ""),
+                               compose_path=str(self.runtime / operation / "compose.json"))
+        with patch("tool.deployment_compose.local_engine", return_value="default"):
+            next_deployment = ComposeDeployment(next_spec, self.images, storage, operation=str(uuid4()))
+        self.assertEqual(next_deployment.config,
+                         json.loads((self.runtime / operation / "active.json").read_bytes()))
+
+    def test_controller_rejects_altered_handover_review_and_digest(self):
+        operation = str(uuid4())
+        request = {"action": "handover-deploy", "deployment": "fixture", "operation": operation,
+                   "native_spec": self.spec, "committed": self.committed, "selection": self.images}
+        project = "pi-handover-" + operation.replace("-", "")
+        spec, config = prepare(self.spec, self.selection, self.images, project=project,
+                               compose_path=str(self.root / "runtime" / operation / "compose.json"))
+        plan = {"kind": "pi-handover-transaction", "deployment": "fixture", "operation": operation,
+                "committed": self.committed, "selection": self.images, "native_spec": self.spec,
+                "compose_spec": spec, "compose_config": config, "engine": "engine",
+                "interrupt_native": True, "preserve_data_in_place": True, "offhost_backup_required": True,
+                "automatic_rollback": False, "offhost_free_bytes_required": 1024}
+        for change in ("native", "config", "digest"):
+            altered = copy.deepcopy(plan)
+            if change == "native":
+                altered["native_spec"]["serial_options"] = "9600n81"
+            elif change == "config":
+                altered["compose_config"]["name"] = "different"
+            digest = "sha256:" + hashlib.sha256(encoded(altered)).hexdigest()
+            if change == "digest":
+                digest = "sha256:" + "f" * 64
+            wire = io.BytesIO()
+            Channel(io.BytesIO(), wire).send({"event": "review", "plan": altered, "digest": digest})
+            approve = Mock()
+            with self.subTest(change=change), patch("tool.deployment_operator.STORAGE", self.root):
+                with self.assertRaisesRegex(ChannelError, "different handover deployment scope"):
+                    controller(Channel(io.BytesIO(wire.getvalue()), io.BytesIO()),
+                               request, self.offhost, approve)
+            approve.assert_not_called()
+
+    def test_lost_custody_ack_retains_both_copies_and_blocks_activation(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        target_socket, controller_socket = socket.socketpair()
+        target_socket.settimeout(10)
+        controller_socket.settimeout(10)
+        failures = []
+
+        def controller_backup():
+            try:
+                with controller_socket, controller_socket.makefile("rb") as source_stream, \
+                        controller_socket.makefile("wb") as target_stream:
+                    channel = Channel(source_stream, target_stream)
+                    with patch.object(channel, "send", side_effect=ChannelError("acknowledgment lost")):
+                        receive_handover_backup(
+                            channel, self.offhost, channel.receive(), operation=operation,
+                            committed=self.committed, native_spec=self.spec,
+                            image_selection=self.images, native_asset=self.asset)
+            except ChannelError as error:
+                failures.append(str(error))
+
+        worker = threading.Thread(target=controller_backup)
+        worker.start()
+        try:
+            with target_socket, target_socket.makefile("rb") as source_stream, \
+                    target_socket.makefile("wb") as target_stream:
+                channel = Channel(source_stream, target_stream)
+                with self.assertRaises(ChannelError):
+                    capture_backup(
+                        self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+                        "fixture", operation, committed=self.committed, native_spec=self.spec,
+                        image_selection=self.images, native_asset=self.asset,
+                        verify_quiescent=lambda: None,
+                        verify_offhost=lambda backup: send_handover_backup(channel, backup))
+        finally:
+            worker.join(timeout=12)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, ["acknowledgment lost"])
+        self.assertTrue((self.backups / operation / "manifest.json").is_file())
+        self.assertTrue((self.offhost / operation / "manifest.json").is_file())
+        self.assertTrue((self.offhost / (operation + ".backup-identity.json")).is_file())
+        self.assertFalse((self.evidence / (operation + ".backup.json")).exists())
+        state = self.store.status()
+        self.assertTrue(state["blocked"])
+        self.assertFalse(state["image_load_started"])
+        self.assertEqual(state["deployments"]["fixture"]["pending"]["phase"], "inputs-verified")
 
     def test_capture_rejects_nonquiescent_writer_before_creating_backup(self):
         operation = str(uuid4())

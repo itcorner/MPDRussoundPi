@@ -15,7 +15,7 @@ import stat
 import subprocess
 import sys
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from tool.deployment_backup import MAX_BYTES, FileBackup, extended_metadata, source_info
@@ -24,7 +24,7 @@ from tool.deployment_files import checked_directory, is_mapping
 from tool.deployment_images import DIGEST, components
 from tool.deployment_inputs import attributes, read_file, write_file
 from tool.deployment_local import LOCAL_CANDIDATE
-from tool.deployment_native_source import NATIVE_CANDIDATE
+from tool.deployment_native_source import NATIVE_CANDIDATE, NativeError
 from tool.deployment_preflight import check_data, check_port, check_serial, mode_access, overlap, safe_path
 from tool.deployment_runner import DevelopmentRun, RunHooks
 from tool.deployment_state import StateStore, candidate, identity, operation_id
@@ -554,7 +554,16 @@ def validate_runtime_files(spec: dict[str, Any], environment: dict[str, Any]) ->
         PlaybackStatusClient(mapped)
 
 
-def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[str, str]:
+class RuntimeTarget(Protocol):
+    spec: dict[str, Any]
+    services: dict[str, str]
+
+    def command(self, args: list[str], *, timeout: int = 60) -> bytes: ...
+    def inspect_all(self) -> list[dict[str, Any]]: ...
+    def own(self, containers: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
+
+def runtime_checks(target: RuntimeTarget, images: dict[str, str]) -> dict[str, str]:
     deadline = time.monotonic() + 60
     expected = {name: images[component] for name, component in target.services.items()}
     while True:
@@ -592,7 +601,8 @@ def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[st
             status = json.loads(target.command(["exec", web["Id"], "python", "-c", script], timeout=20))
             passed = (status["configured"]
                       and (status["backend"] or not target.spec["require_controller"])
-                      and (status["playback"] if target.spec["require_playback"] else not status["playback_configured"])
+                      and (status["playback"] and status["playback_configured"]
+                           if target.spec["require_playback"] else not status["playback_configured"])
                       and all(item["State"].get("Health", {}).get("Status") == "healthy" for item in own))
             if passed:
                 # Check the published host route too, not only container loopback.
@@ -605,6 +615,8 @@ def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[st
                     if response.status != 200:
                         raise ComposeError("Published host HTTP route did not return 200")
                 return dict.fromkeys(("containers", "http", "backend", "playback"), "passed")
+        except NativeError:
+            raise
         except (ComposeError, OSError, ValueError):
             if time.monotonic() >= deadline:
                 raise ComposeError("Runtime health/routing failed; pending state and backup are retained") from None

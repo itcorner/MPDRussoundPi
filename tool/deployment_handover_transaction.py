@@ -36,14 +36,16 @@ class HandoverHooks:
 def execute(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
             committed: dict[str, Any], native_spec: dict[str, Any], selection: dict[str, Any],
             engine: str, hooks: HandoverHooks,
-            approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
+            approve: Callable[[dict[str, Any]], str | None],
+            offhost_free_bytes_required: int = 0) -> dict[str, Any]:
     """Run one approved transaction; failures retain all existing state and evidence."""
     identity(deployment)
     operation_id(operation)
     committed = copy.deepcopy(committed)
     native_spec = copy.deepcopy(native_spec)
     selection = copy.deepcopy(selection)
-    if store.owner_uid != os.getuid() or not engine:
+    if (store.owner_uid != os.getuid() or not engine
+            or type(offhost_free_bytes_required) is not int or offhost_free_bytes_required < 0):
         raise NativeError("Handover requires the state owner and a reviewed Docker daemon")
     initial = store.status()
     if (initial["blocked"] or initial["deployments"].get(deployment, {}).get("committed") != committed
@@ -58,6 +60,7 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
         "native_spec": copy.deepcopy(native_spec), "compose_spec": spec, "compose_config": config,
         "engine": engine, "interrupt_native": True, "preserve_data_in_place": True,
         "offhost_backup_required": True, "automatic_rollback": False,
+        "offhost_free_bytes_required": offhost_free_bytes_required,
     }
     digest = "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()
 
