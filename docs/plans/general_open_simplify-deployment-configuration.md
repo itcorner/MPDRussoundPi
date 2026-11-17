@@ -4773,6 +4773,21 @@ connector in the route test, not the physical serial adapter. This is local
 image evidence only, not a registry publication, a schema compatibility
 assessment, a tested migration transaction or live hardware acceptance.
 
+**One-time Pi migration choice (2026-11-17):** the operator selected a
+Pi-specific migration rather than a general cross-layout feature, with a
+tested state handover rather than leaving deployment tooling blocked or its
+committed native record misleading. A second managed ARM64 bundle was built
+from the exact currently committed native revision
+`060084d936ae31578512756d3907b7e11dab008f`; its independently retained
+manifest identity is
+`sha256:eb3312d820745381034ba1e7f6b08fd552abd44dfe15b720e10f6551182453ab`.
+Verification, separate web and gateway smoke tests, and an isolated
+web-to-gateway TCP route check passed. The gateway route test used `stdio`,
+not the serial device. The native and container Python environments are
+different, so matching source revision is not proof of runtime or schema
+compatibility. The one-time handover, fresh quiescent off-host backup,
+failure recovery, live activation and hardware acceptance remain outstanding.
+
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
    host/ports/device, gateway and proxy settings, plus a verified compatible
