@@ -1043,14 +1043,14 @@ class PiHandoverBackupTests(unittest.TestCase):
         request = {"action": "handover-recover-uncertain-load", "deployment": "fixture",
                    "operation": self.operation}
         channel = Mock()
-        channel.receive.side_effect = [request, {"event": "backup"}]
+        channel.receive.side_effect = [request, {"event": "backup", "operation": self.operation}]
         incoming = self.root / "incoming"
         incoming.mkdir(mode=0o700)
         with patch("tool.deployment_operator.receive_backup",
                    return_value=(self.backup.path, self.backup.manifest_sha256)), \
                 patch("tool.deployment_pi_handover.recover_before_activation") as recover:
             recover.return_value = {"event": "recovered", "operation": self.operation}
-            serve(channel, {"incoming": incoming})
+            serve(channel, {"incoming": incoming, "restores": self.root})
         self.assertTrue(recover.call_args.kwargs["uncertain_load"])
         self.assertFalse(recover.call_args.kwargs["activated"])
 
@@ -1918,10 +1918,10 @@ class PiHandoverBackupTests(unittest.TestCase):
         operation = self.operation
         request = {"action": "handover-recover-backup", "deployment": "fixture", "operation": operation}
         channel = Mock()
-        channel.receive.side_effect = [request, {"event": "backup"}]
+        channel.receive.side_effect = [request, {"event": "backup", "operation": operation}]
         incoming = self.root / "incoming"
         incoming.mkdir(mode=0o700)
-        storage = {"incoming": incoming}
+        storage = {"incoming": incoming, "restores": self.root}
         with patch("tool.deployment_operator.receive_backup",
                    return_value=(self.backup.path, self.backup.manifest_sha256)), \
                 patch("tool.deployment_pi_handover.recover_before_activation") as recover:
@@ -1932,14 +1932,27 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertFalse(recover.call_args.kwargs["activated"])
         channel.send.assert_called_once_with({"event": "recovered", "operation": operation})
 
+    def test_operator_rejects_mismatched_backup_before_creating_receive_directory(self):
+        request = {"action": "handover-recover-backup", "deployment": "fixture",
+                   "operation": self.operation}
+        channel = Mock()
+        channel.receive.side_effect = [request, {"event": "backup", "operation": str(uuid4())}]
+        incoming = self.root / "incoming"
+        incoming.mkdir(mode=0o700)
+        with patch("tool.deployment_operator.receive_backup") as receive, \
+                self.assertRaisesRegex(ChannelError, "operation and backup differ"):
+            serve(channel, {"incoming": incoming, "restores": self.root})
+        receive.assert_not_called()
+        self.assertEqual(list(incoming.iterdir()), [])
+
     def test_operator_routes_activated_recovery(self):
         operation = self.operation
         request = {"action": "handover-recover-activated", "deployment": "fixture", "operation": operation}
         channel = Mock()
-        channel.receive.side_effect = [request, {"event": "backup"}]
+        channel.receive.side_effect = [request, {"event": "backup", "operation": operation}]
         incoming = self.root / "incoming"
         incoming.mkdir(mode=0o700)
-        storage = {"incoming": incoming}
+        storage = {"incoming": incoming, "restores": self.root}
         with patch("tool.deployment_operator.receive_backup",
                    return_value=(self.backup.path, self.backup.manifest_sha256)), \
                 patch("tool.deployment_pi_handover.recover_before_activation") as recover:

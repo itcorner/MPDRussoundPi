@@ -124,10 +124,12 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         identity(request["deployment"])
         operation_id(request["operation"])
         header = channel.receive()
+        if header.get("operation") != request["operation"]:
+            raise ChannelError("Recovery operation and backup differ")
         # Always use a new receive parent, never replace the target's old backup.
         incoming = storage["incoming"] / str(uuid4())
         incoming.mkdir(mode=0o700)
-        backup, checksum = receive_backup(channel, incoming, header)
+        backup, checksum = receive_backup(channel, incoming, header, restore_root=storage["restores"])
         if backup.name != request["operation"]:
             raise ChannelError("Recovery operation and backup differ")
         if request["action"] in ("handover-recover-backup", "handover-recover-activated",

@@ -609,6 +609,10 @@ and finalization. There is no `--yes`, unattended update or automatic rollback.
   activation. Unsupported source metadata/ownership and insufficient space
   fail explicitly. Backups are bounded to 8 GiB; allocate additional room for
   exported old images, received candidates and isolated restoration.
+  Recovery uploads check incoming and restore filesystem capacity before blob
+  transfer and recheck headroom while receiving; insufficient space leaves
+  partial evidence in place for inspection rather than deleting it or retrying.
+  These checks are snapshots, not a reservation against other filesystem writers.
 
 Install trusted tooling as a **separate administrative operation**, using a
 reviewed, published full commit containing these tools:

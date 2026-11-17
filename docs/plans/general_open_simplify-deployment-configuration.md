@@ -5128,3 +5128,17 @@ No live Pi cutover or observation was performed. A final read-only Pi check
 found native web and gateway active and enabled, Docker active, no pending
 operation or reservation, and both rooms and playback health endpoints returning
 HTTP 200.
+
+#### Recovery upload capacity review, 2026-11-18
+
+Review identified that recovery could receive a backup without first checking
+incoming filesystem capacity. Recovery uploads now check capacity before
+metadata, before blob transfer and during writes, including isolated restore
+space and headroom. A failed transfer preserves partial evidence; the check
+cannot reserve space against other writers.
+
+In the disposable Linux VM, a real 80 MiB tmpfs rejected a synthetic 10 MiB
+backup before receiving its blob when same-filesystem restore space and
+headroom were insufficient. After resizing to 100 MiB, receiving and verifying
+the backup succeeded, while the first attempt's manifest remained intact.
+This tests local filesystem pressure, not Pi recovery or concurrent writers.
