@@ -1,8 +1,8 @@
-"""Internal preparation and backup primitives for a Pi native-to-Compose handover.
+"""Preparation, backup and recovery primitives for a Pi native-to-Compose handover.
 
-This module does not expose an operator or deploy anything. Service fencing
-and backup capture require an existing reservation and verified inputs.
-Their output is not authorization for activation.
+Service fencing, backup capture and isolated recovery preparation require an
+existing reservation and verified inputs. Their output is not authorization
+for activation or live restoration.
 """
 
 import copy
@@ -381,6 +381,56 @@ def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str,
                   {"operation": operation, "manifest_sha256": backup.manifest_sha256})
     store.advance(deployment, operation, "backup-complete", backup=operation)
     return backup
+
+
+def prepare_backup_restore(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
+                           backup_path: Path, checksum: str, committed: dict[str, Any],
+                           native_spec: dict[str, Any], image_selection: dict[str, Any],
+                           native_asset: Path, recovery: str,
+                           verify_quiescent: Callable[[], None]) -> Path:
+    """Verify a matching backup and restore only to a new isolated tree.
+
+    The caller must independently retain the checksum, fence all writers, and
+    keep them fenced until any separately approved live restoration completes.
+    No live paths, services or deployment state are modified here.
+    """
+    identity(deployment)
+    operation_id(operation)
+    operation_id(recovery)
+    spec = native_specification(native_spec)
+    if spec["deployment"] != deployment or native_asset != storage["assets"] / committed["selection"]["operation"]:
+        raise NativeError("Restore inputs differ from the committed native deployment")
+
+    original_state = store.status()
+
+    def check_state() -> None:
+        state = store.status()
+        record = state["deployments"].get(deployment)
+        if (state != original_state
+                or state["reservation"] != {"schema_version": 1, "deployment": deployment, "operation": operation}
+                or record is None or record["committed"] != committed or record["pending"] is None
+                or record["pending"]["operation"] != operation
+                or record["pending"]["candidate"] != image_selection
+                or record["pending"]["backup"] != operation
+                or record["pending"]["phase"] not in ("backup-complete", "apply-complete", "checks-complete")):
+            raise NativeError("Isolated restore requires the matching reserved handover and backup")
+
+    def quiet() -> None:
+        check_state()
+        quiescent(verify_quiescent)
+
+    check_state()
+    evidence = json.loads(private_read(storage["evidence"] / (operation + ".backup.json")))
+    if evidence != {"operation": operation, "manifest_sha256": checksum}:
+        raise NativeError("Restore backup identity differs from captured evidence")
+    verify_backup(backup_path, operation, checksum, committed=committed, native_spec=spec,
+                  image_selection=image_selection, native_asset=native_asset)
+    if backup_path.name != operation:
+        raise NativeError("Restore backup path differs from the reserved operation")
+    destination = storage["restores"] / recovery
+    FileBackup(backup_path.parent, operation, checksum).restore_new(destination, verify_quiescent=quiet)
+    quiet()
+    return destination
 
 
 def send_handover_backup(channel: Channel, backup: FileBackup) -> None:

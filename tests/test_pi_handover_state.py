@@ -18,11 +18,12 @@ from tool import deployment_native as native
 from tool import deployment_native_source as source
 from tool.deployment_backup import FileBackup
 from tool.deployment_channel import Channel, ChannelError
+from tool.deployment_compose import private_write
 from tool.deployment_load import select_bundle
 from tool.deployment_operator import controller, serve
 from tool.deployment_pi_handover import (
     capture_backup, check_docker_conflicts, fence_native, receive_handover_backup,
-    resume_before_backup, send_handover_backup, verify_backup,
+    prepare_backup_restore, resume_before_backup, send_handover_backup, verify_backup,
 )
 from tool.deployment_state import PHASES, StateError, StateStore
 
@@ -301,6 +302,100 @@ class PiHandoverBackupTests(unittest.TestCase):
         evidence = json.loads((self.evidence / (operation + ".backup.json")).read_bytes())
         self.assertEqual(evidence["manifest_sha256"], result.manifest_sha256)
         self.assertTrue(self.store.status()["blocked"])
+
+    def test_isolated_restore_preserves_live_data_and_keeps_reservation(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        live = Path(self.spec["data_dir"]) / "state.json"
+        live.write_text("post-backup change")
+        guard = Mock(return_value=None)
+        destination = prepare_backup_restore(
+            self.store, {"assets": self.assets, "evidence": self.evidence, "restores": restores},
+            "fixture", operation, backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
+            committed=self.committed, native_spec=self.spec, image_selection=self.images,
+            native_asset=self.asset, recovery=str(uuid4()), verify_quiescent=guard)
+        self.assertEqual((destination / "data/state.json").read_text(), "current state")
+        self.assertEqual(live.read_text(), "post-backup change")
+        self.assertGreater(guard.call_count, 1)
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.committed)
+
+    def test_isolated_restore_rejects_mismatched_custody_and_prebackup_state(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": "0" * 64})
+        arguments = {
+            "backup_path": self.backup.path, "checksum": self.backup.manifest_sha256,
+            "committed": self.committed, "native_spec": self.spec, "image_selection": self.images,
+            "native_asset": self.asset, "recovery": str(uuid4()), "verify_quiescent": lambda: None,
+        }
+        storage = {"assets": self.assets, "evidence": self.evidence, "restores": restores}
+        with self.assertRaisesRegex(source.NativeError, "reserved handover"):
+            prepare_backup_restore(self.store, storage, "fixture", operation, **arguments)
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        with self.assertRaisesRegex(source.NativeError, "captured evidence"):
+            prepare_backup_restore(self.store, storage, "fixture", operation, **arguments)
+        self.assertEqual(list(restores.iterdir()), [])
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_isolated_restore_keeps_partial_tree_when_quiescence_fails(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        recovery = str(uuid4())
+        guard = Mock(side_effect=[None, source.NativeError("writer appeared")])
+        with self.assertRaisesRegex(source.NativeError, "writer appeared"):
+            prepare_backup_restore(
+                self.store, {"assets": self.assets, "evidence": self.evidence, "restores": restores},
+                "fixture", operation, backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
+                committed=self.committed, native_spec=self.spec, image_selection=self.images,
+                native_asset=self.asset, recovery=recovery, verify_quiescent=guard)
+        self.assertTrue((restores / recovery).is_dir())
+        self.assertEqual((Path(self.spec["data_dir"]) / "state.json").read_text(), "current state")
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_isolated_restore_stops_if_image_load_starts_concurrently(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        recovery = str(uuid4())
+
+        def change_state():
+            self.store.start_image_load("fixture", operation, self.images, INTENT)
+
+        with self.assertRaisesRegex(source.NativeError, "reserved handover"):
+            prepare_backup_restore(
+                self.store, {"assets": self.assets, "evidence": self.evidence, "restores": restores},
+                "fixture", operation, backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
+                committed=self.committed, native_spec=self.spec, image_selection=self.images,
+                native_asset=self.asset, recovery=recovery, verify_quiescent=change_state)
+        self.assertTrue((restores / recovery).is_dir())
+        self.assertTrue(self.store.status()["image_load_started"])
+        self.assertEqual((Path(self.spec["data_dir"]) / "state.json").read_text(), "current state")
 
     def test_native_fencing_is_reserved_one_shot_and_disables_before_quiescence(self):
         operation = str(uuid4())

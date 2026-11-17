@@ -4829,7 +4829,13 @@ not establish Pi or reboot behavior. A separately reviewed
 `handover-resume-original` action handles the reserved pre-backup phase without
 replacing data and clears state only after native runtime checks. Its service
 boundaries have only been mocked, not rehearsed on Linux or the Pi. Post-backup
-and post-activation recovery remain unimplemented.
+and post-activation recovery remain unimplemented. An internal isolated restore
+preparation verifies the separately retained backup identity and matching
+reservation, repeatedly requires caller-provided writer quiescence, and restores
+only into a new tree. It does not fence writers, replace live data, restart
+services, or reconcile state; it is not an operational rollback. The backup
+and handover tests pass in an isolated Linux container, but this does not
+rehearse systemd, Docker ownership, physical serial hardware, or a live cutover.
 
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
