@@ -2,8 +2,9 @@
 
 Status: **open; S0–S4 implementation gates closed; S5 final handover remains open.
 Superseded web/gateway repository paths retired; native lifecycle/reboot
-checks passed and the observation, extended to four hours by the operator, is running**
-(2026-11-16; completion not yet established). The Waitress/debug change below is authorized
+checks, the operator-approved four-hour observation and representative native
+audible acceptance passed. Final layout/handover remain open** (2026-11-17).
+The Waitress/debug change below is authorized
 separately; this plan does not authorize deployment, service restarts, hardware
 tests, or changes to a live installation.
 
@@ -31,8 +32,8 @@ web/gateway staging, reviewed managed-Docker cutover and recovery are implemente
 and their representative Pi trial passed. Further native acceptance was
 authorized with a one-hour rather than six-hour observation, paused, and later
 resumed after controller/audio recovery fixes. Native release-switch/recovery
-and reboot checks passed; the observation was extended to four hours and is
-running, not yet a pass.
+and reboot checks passed; the operator-approved four-hour observation passed.
+Representative audible acceptance passed; the final operating layout remains open.
 Production remains blocked without approved stable images/tooling; automated
 same-host/split-host migration and full fresh-machine provisioning are excluded.
 See the authoritative [support matrix](../documentation/container-deployment.md#support-and-acceptance-boundaries).
@@ -52,7 +53,7 @@ the internal APIs or the still-blocked preview-play apply switch.
 | **Docker development** | Published Hub development images for web and ser2net; detailed, bounded logs. No build. | Select an explicit local build only for source changes. Build on the Ansible controller from identified source and transfer verified images to the target. |
 | **Docker production** | An approved matching pair of stable Hub images; minimal operational logs. | Select a different approved stable pair deliberately. Stable publication is not yet available: report the blocker instead of using dev or building. |
 | **Docker local build** | Explicit dev opt-in, using the same development deployment profile. | Supply a clean, identified source revision; refuse ambiguous or dirty source without deleting or resetting changes. |
-| **Prepared bare metal** | Sealed native web and dedicated loopback gateway, preserving native Pi playback services. | Use the reviewed native workflow only; matching recorded managed-Docker cutover/recovery is supported. Native observation/audible acceptance remain open; no fresh-machine/full-stack installer or legacy-native adoption. |
+| **Prepared bare metal** | Sealed native web and dedicated loopback gateway, preserving native Pi playback services. | Use the reviewed native workflow only; matching recorded managed-Docker cutover/recovery is supported. Representative native listening passed; final handover remains open. No fresh-machine/full-stack installer or legacy-native adoption. |
 
 Two Compose files express **development** and **production**, with optional
 gateway/dummy overlays and a standalone backend profile. Development previews,
@@ -4697,3 +4698,109 @@ The extended observer's nine deterministic tests and initial API/full-runtime
 checks passed on the Pi, and its service was verified active/running. Neither
 observer remediates services or restores Docker. Four-hour completion remains
 pending; native audible confirmation and final handover remain open.
+
+### Completed four-hour observation and current read-only check (2026-11-17)
+
+Both Pi-local observer streams were reviewed after completion. The original
+stream ran from **2026-11-16 01:07:52 to 02:07:52 CET**, completing 341 API
+samples and 57 full checks with zero failed samples. The overlapping extension
+started at **01:09:59 CET** and completed at **05:07:52 CET**, with 1,359 API
+samples and 227 full checks, also with zero failed samples. Both systemd
+services exited successfully. Their protected baselines, native specifications,
+candidate selections and committed operation files matched byte-for-byte; the
+maximum consecutive sample gaps were 13.35 and 13.40 seconds respectively.
+Together the streams cover the approved four-hour window; neither performed
+automatic remediation or Docker restoration.
+
+At **2026-11-17 01:13 CET**, a new read-only API and full baseline check passed:
+controller connectivity, authenticated playback, the three fresh audio
+readiness/routes, deployment selection, runtime identities, protected files and
+stopped Docker writers matched the observation baseline. This is a point-in-time
+check, not continuous monitoring after the observation ended.
+
+The observation establishes monitored health, not audible output. On
+**2026-11-17**, the operator independently operated the web controls and
+confirmed in Living Room that `stereo_front`/source 1,
+`stereo_centerlfe`/source 2 and `stereo_rear`/source 3 each played the correct
+station clearly and uninterrupted on both speakers. The operator was asked to
+listen for about 30 seconds per path at a comfortable volume and reported each
+passed with “all good”; the listening duration was not independently measured.
+This verifies Living Room only, not every room. No assistant-issued playback,
+zone power, source or volume changes were made.
+
+At **01:20 CET**, a fresh read-only API and full baseline check passed after
+listening, with the controller connected and all three outputs ready with
+correct routes. The operator selected restoring the previous Docker layout as
+the desired final state and requested a separate review; no restoration has
+been performed. The committed native selection is newer than the original
+Docker-to-native cutover, and the recovery operator only accepts the latest
+committed operation. Therefore the original cutover cannot simply be recovered
+directly: establish and review a supported return path and preservation of
+current state before any service change. S5 and its evidence/recovery handover
+remain open until the layout and remaining documentation/CI gates are
+addressed. The release-switch rehearsal remains same-revision evidence, not
+proof of cross-version or schema rollback compatibility.
+
+**Recovery-chain inspection (2026-11-17):** the host is unblocked with native
+operation `0eb36b79-8003-4acc-9507-30a9ee37bc53` committed. Both relevant
+off-host backups passed portable-manifest and blob verification against their
+separately retained manifest identities. The current operation's backup
+identifies an earlier native deployment
+`ae8e2331-772e-4860-aefa-e2048848fffa`; that operation's backup identifies the
+previous Compose deployment. Sequential recovery would therefore restore two
+historical data snapshots, preserve post-backup trees separately, and briefly
+run the earlier native release before restoring Docker. It does not merge
+current state into the restored data. Its suitability, the historical Docker
+image's controller-recovery behavior and any current-data migration require
+separate review; no recovery was started and no current data was replaced.
+
+### Proposed current-data-preserving native-to-Docker return (2026-11-17)
+
+The operator selected designing and validating a safe migration instead of
+rolling back historical data. This is a new, separately reviewed cross-layout
+transaction, not a bypass of the existing recovery checks. Ordinary Compose
+apply explicitly refuses a committed native deployment. No currently supported
+operation implements this return while retaining current data; the proposal
+below is not an implemented or approved live migration.
+
+1. **Freeze the scope and candidate.** Bind the review to the current native
+   operation, exact native units/release, current data root and ownership,
+   host/ports/device, gateway and proxy settings, plus a verified compatible
+   `linux/arm64` managed-gateway image pair. Require the web image to include
+   the controller-health fix. A retained locally verified `060084d` web image
+   bundle exists, but it is a **dummy-gateway bundle**, not an accepted
+   managed-gateway pair; do not activate it or silently substitute images.
+   Produce and verify a suitable pair and establish data/schema compatibility.
+2. **Implement a dedicated reviewed transaction.** Reuse the durable host-wide
+   reservation and exact identity checks; revalidate scope immediately before
+   stopping only the selected native web/gateway writers. Confirm all writers
+   are quiescent, take a fresh consistent backup of the current data and native
+   source/environment/runtime, and require independent off-host verification
+   before activation. Preserve the active data and credentials in place, never
+   restore either historical snapshot as migration input. Retain the prior
+   native units and recovery evidence; do not change the agent, audio, proxy,
+   OS or unrelated containers.
+3. **Activate and validate the reviewed Docker pair.** Reject incompatible
+   mounts, networks, port/device ownership, target identities and unexpected
+   services instead of guessing. Verify exact loaded image identities, Compose
+   units, web health, physical controller communication and authenticated
+   playback readiness/routes before committing the new selection. Keep the
+   controller fix and do not claim readiness proves audible playback.
+4. **Recover explicitly on failure.** No automatic replay, rollback, data
+   overlay or reservation clearing after uncertain dispatch. Preserve current
+   and failed-state trees, logs and off-host backup; a separately reviewed
+   recovery restores the matching native runtime and corresponding fresh
+   backup. Specify and test each crash/backup/activation boundary before use.
+5. **Validate before target approval.** Add deterministic transaction tests for
+   native-to-Compose identity guards, fresh backup and independent custody,
+   data/config/secret preservation, image/port mismatches, failures before and
+   after mutation, interrupted execution, idempotency, exclusion races and
+   reviewed native recovery. Exercise an isolated representative host first.
+   Only then present an exact live review with interruption, rollback and
+   current-data implications. After any separately authorized cutover, verify
+   actual routing and obtain operator-controlled audible confirmation as
+   appropriate; update the handover and S5 status only from real evidence.
+
+The earlier GitHub CI runs predate deployment commit `e55d9de`; no CI run for
+that commit was found on 2026-11-17. Do not report those older runs as CI for
+the current changes. The implementation and live migration remain outstanding.

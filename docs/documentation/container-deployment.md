@@ -25,7 +25,7 @@ acceptance and the exact supported boundaries are summarized below.
 | Hardware-free dummy development | [Dummy layout](#dummy-no-hardware) | Explicit local dummy build and isolated Compose startup; synthetic routing/recovery tests are not physical hardware evidence. Automated dummy-artifact deployment is not supported. |
 | Controller preview / target inspection | `deploy-dev.yml`, `deploy-dev-build.yml` | Preview renders locally; explicit `russound_action=preflight` inspects a target read-only. Neither activates services. Use the operator for apply/recovery. |
 | Trusted deployment tooling | `bootstrap-deployment.yml`, `upgrade-deployment.yml`, `restore-deployment-tools.yml` | Install or switch only the reviewed tooling checkout/environment with its reservation and recovery guards; no web/audio deployment or OS provisioning. |
-| Prepared native web plus dedicated native gateway | [Sealed staging and native operator](#prepared-native-web-and-gateway) | Cutover, unchanged rerun, Docker recovery and native update passed on the Pi. Shared controller-health recovery was fixed in `060084d`; a Pi-local reboot probe verified physical controller readiness in 10.96 seconds without an event client. Full native reboot acceptance is blocked by separate USB-audio profile readiness errors; native rollback, observation and new audible acceptance remain open. |
+| Prepared native web plus dedicated native gateway | [Sealed staging and native operator](#prepared-native-web-and-gateway) | Cutover, native release-switch/recovery, unchanged rerun, reboot, four-hour observation and representative audible checks passed on the Pi after controller and guarded audio-recovery fixes. Final handover remains open; the release-switch rehearsal is not cross-version compatibility evidence. |
 | Production containers | `compose.prod.yml` | Layout/rendering only; no approved stable image pair or production deployment workflow. Fail rather than substitute development images. |
 | Existing audio/agent/proxy/egress | `setup-musicpi.yml`, `deploy-playback-agent.yml`, `remove-playback-agent.yml`, `deploy-playback-agent-proxy.yml`, `deploy-playback-egress.yml`; [playback guide](./playback-agent-deployment.md), [audio guide](./mpd-headless-deployment.md) | Separate component-specific tooling and approval boundaries; web/gateway deployment preserves these services. Audio and agent candidate staging is not a full native-stack installer. |
 
@@ -1173,14 +1173,15 @@ protect data left by old checkouts, not to advertise another deployment path.
 Separate audio/agent staging, proxy/egress/removal plays, their shared roles and
 templates, image Dockerfiles/entrypoints, and internal recovery/test fixtures
 remain in use. They are not alternative web installers; native acceptance
-deferral does not authorize replacing or removing the working playback stack.
+does not authorize replacing or removing the working playback stack.
 
 ## Prepared native web and gateway
 
-**Prepared-Pi live acceptance passed (2026-11-15): Docker-to-native cutover,
-physical controller/authenticated playback routing, unchanged rerun and
-independently backed-up rollback to Docker. Native reboot and endurance remain
-unverified. The trial Pi was returned to Docker at the operator's request.**
+**Prepared-Pi live acceptance:** the 2026-11-15 trial passed Docker-to-native
+cutover, physical controller/authenticated playback routing, unchanged rerun
+and independently backed-up rollback to Docker. Later native reboot, release
+switch/recovery and four-hour observation also passed as documented below; representative
+native audible checks passed in Living Room. Final handover remains outstanding.
 Use the reviewed tooling installation/upgrade procedure above to install these
 committed tools first. Never copy unfinished code into the live tooling checkout.
 This workflow manages only `russound-web.service` and the dedicated
@@ -1354,6 +1355,9 @@ Ordinary Compose apply cannot switch a committed native deployment back to
 Docker; only the explicit, latest-operation recovery described above covers
 the recorded cutover baseline.
 
+The following paragraphs are a chronological record; intermediate blockers
+and pending observation statements describe their status at that time, not
+the current outcome summarized in the completed-observation record below.
 The earlier six-hour/audio acceptance belongs to the restored Docker layout.
 The later native trial verified activation, physical controller routing,
 authenticated playback status, unchanged rerun and Docker recovery, not a new
@@ -1452,6 +1456,34 @@ the exact original baseline and covers the extension without interrupting the
 original observer. Initial extension checks passed; four-hour completion remains
 pending. Review both evidence streams rather than treating the original
 one-hour completion as final acceptance.
+
+**Completed observation (2026-11-16):** both streams subsequently completed
+successfully. The original recorded 341 API samples and 57 full checks; the
+overlapping extension recorded 1,359 API samples and 227 full checks. Neither
+reported a failed sample, and both used identical baseline, specification,
+candidate and operation files. Together they covered 01:07:52–05:07:52 CET.
+On 2026-11-17 at 01:13 CET, a separate read-only API and full baseline check
+passed. This does not establish continuous health after the observation or
+prove audible playback.
+
+On **2026-11-17**, the operator separately confirmed clear, uninterrupted
+playback on both speakers in Living Room for front/source 1, center/LFE/source 2
+and rear/source 3, using the web UI and a self-selected comfortable volume.
+These are representative Living Room checks, not all-room acceptance. A fresh
+read-only API and full baseline check passed after listening. The operator
+selected a separately reviewed return to the previous Docker layout, but no
+restoration occurred. The current native commit is newer than the original
+Docker-to-native cutover; the operator accepts only the latest committed
+operation for recovery, so a supported return path and preservation of current
+state must be reviewed before changing services. The two retained off-host
+backups have been independently reverified: the current operation points to an
+earlier native deployment, whose backup points to Compose. Sequential recovery
+would activate historical data snapshots rather than merge current state, and
+requires explicit review of state preservation and runtime compatibility.
+The operator chose a separately designed current-data-preserving migration;
+it is not yet implemented or approved for live execution. See the
+[proposed return transaction](../plans/general_open_simplify-deployment-configuration.md#proposed-current-data-preserving-native-to-docker-return-2026-11-17).
+S5 handover remains open.
 
 The Pi's extra Compose override and local-only web image need explicit
 preservation. Continue to treat adoption as a separately approved migration.

@@ -94,6 +94,18 @@ class OperatorContractTests(unittest.TestCase):
                 self.target()
         self.assertFalse(any(self.storage["state"].glob("reservation")))
 
+    def test_compose_apply_rejects_committed_native_layout_without_mutation(self):
+        from tool.deployment_native_source import NATIVE_CANDIDATE
+
+        committed = {"selection": {"candidate": {"kind": NATIVE_CANDIDATE}}}
+        status = {"deployments": {self.spec["deployment"]: {"committed": committed}}}
+        with patch("tool.deployment_compose.local_engine", return_value="default"), \
+                patch("tool.deployment_compose.StateStore.status", return_value=status):
+            with self.assertRaisesRegex(ComposeError, "Native-to-Docker migration"):
+                ComposeDeployment(self.spec, self.selection, self.storage)
+        self.assertFalse(any(self.storage["assets"].iterdir()))
+        self.assertFalse((self.storage["state"] / "reservation").exists())
+
     def test_explicit_adoption_acceptance_and_no_hidden_dummy_build(self):
         for key, value in (("adopt", "yes"), ("require_playback", None),
                            ("data_dir", "/"), ("compose", "../compose.json")):
