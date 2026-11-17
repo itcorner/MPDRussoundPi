@@ -1,8 +1,8 @@
-"""Preparation-only inputs for the one-time Pi native-to-Compose handover.
+"""Internal preparation and backup primitives for a Pi native-to-Compose handover.
 
-This module does not reserve state, stop services or deploy anything. Its
-output must not be used for activation without a reviewed transaction and
-matching recovery path.
+This module does not reserve state, stop services or deploy anything. Backup
+capture requires an existing reservation and caller-established quiescence.
+Its output is not authorization for activation.
 """
 
 import copy
@@ -10,16 +10,17 @@ import hashlib
 import ipaddress
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from tool.deployment_backup import FileBackup, quiescent
 from tool.deployment_channel import portable_backup
-from tool.deployment_compose import specification as compose_specification
+from tool.deployment_compose import private_write, specification as compose_specification
 from tool.deployment_local import LOCAL_CANDIDATE
 from tool import deployment_native as native
 from tool.deployment_native import environment, specification as native_specification
 from tool.deployment_native_source import NativeError, validate_candidate as native_candidate
-from tool.deployment_state import candidate, completion_record, identity, operation_id, pending_record
+from tool.deployment_state import StateStore, candidate, completion_record, identity, operation_id, pending_record
 
 
 def prepare(native_spec: dict[str, Any], native_selection: dict[str, Any],
@@ -161,3 +162,56 @@ def verify_backup(path: Path, operation: str, checksum: str, *,
     if digest != selected["sha256"]:
         raise NativeError("Backed-up native release differs from the committed source/environment")
     return manifest
+
+
+def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
+                   committed: dict[str, Any], native_spec: dict[str, Any],
+                   image_selection: dict[str, Any], native_asset: Path,
+                   verify_quiescent: Callable[[], None],
+                   verify_offhost: Callable[[FileBackup], None]) -> FileBackup:
+    """Capture and acknowledge a handover backup after callers have stopped writers.
+
+    The caller must fence services before calling and independently verify the
+    transferred backup in verify_offhost. This function never stops services,
+    performs recovery, or releases a reservation.
+    """
+    identity(deployment)
+    operation_id(operation)
+    spec = native_specification(native_spec)
+    if spec["deployment"] != deployment:
+        raise NativeError("Handover backup deployment differs from the reviewed scope")
+
+    def check_state() -> None:
+        state = store.status()
+        record = state["deployments"].get(deployment)
+        if (not state["blocked"] or state["reservation"] != {
+                "schema_version": 1, "deployment": deployment, "operation": operation}
+                or record is None or record["committed"] != committed
+                or record["pending"] is None or record["pending"]["operation"] != operation
+                or record["pending"]["candidate"] != image_selection
+                or record["pending"]["phase"] != "inputs-verified"):
+            raise NativeError("Handover backup requires the matching reserved native baseline and image candidate")
+
+    check_state()
+    previous = committed["selection"]
+    prepare(spec, previous["candidate"], image_selection, project=deployment,
+            compose_path="/handover-compose.json")
+    if native_asset != storage["assets"] / previous["operation"]:
+        raise NativeError("Handover backup must use the recorded native asset directory")
+    sources: dict[str, Path] = {"data": Path(spec["data_dir"]), "native-asset": native_asset,
+                               "previous-release": native.RELEASES / previous["candidate"]["release"],
+                               "previous-runtime": native.RUNTIME / previous["operation"]}
+    quiescent(verify_quiescent)
+    backup = FileBackup.capture(storage["backups"], operation, sources,
+                                verify_quiescent=verify_quiescent, source_owner_uid=spec["uid"])
+    verify_backup(backup.path, operation, backup.manifest_sha256, committed=committed,
+                  native_spec=spec, image_selection=image_selection, native_asset=native_asset)
+    if verify_offhost(backup) is not None:
+        raise NativeError("Off-host verification must raise on failure, not return a status")
+    backup.verify()
+    quiescent(verify_quiescent)
+    check_state()
+    private_write(storage["evidence"] / (operation + ".backup.json"),
+                  {"operation": operation, "manifest_sha256": backup.manifest_sha256})
+    store.advance(deployment, operation, "backup-complete", backup=operation)
+    return backup

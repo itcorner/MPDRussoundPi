@@ -4805,9 +4805,13 @@ same-revision managed image candidate, the backup phase and both native
 recovery checks. A separate portable-backup verifier checks fresh data roots,
 native units, gateway configuration and sealed release against independently
 retained identities. Neither component stops writers or restores services,
-and state receipts are not proof that those actions occurred. The actual
-one-time transaction, independent backup transfer, recovery orchestration and
-live acceptance remain unimplemented; do not start a cutover based on them.
+and state receipts are not proof that those actions occurred. A backup-capture
+boundary now requires the reserved operation, a quiescence guard and a
+caller-supplied independent off-host verification before recording
+`backup-complete`; a failed transfer retains the pending reservation. It does
+not itself stop services or implement the transfer. The actual one-time
+transaction, independent backup transfer, recovery orchestration and live
+acceptance remain unimplemented; do not start a cutover based on these pieces.
 
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,

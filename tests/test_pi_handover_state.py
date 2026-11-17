@@ -2,6 +2,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,7 +14,7 @@ from tool import deployment_native as native
 from tool import deployment_native_source as source
 from tool.deployment_backup import FileBackup
 from tool.deployment_load import select_bundle
-from tool.deployment_pi_handover import verify_backup
+from tool.deployment_pi_handover import capture_backup, verify_backup
 from tool.deployment_state import PHASES, StateError, StateStore
 
 
@@ -138,7 +139,9 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.runtime = self.root / "runtime"
         self.assets = self.root / "assets"
         self.backups = self.root / "backups"
-        for directory in (self.releases, self.runtime, self.assets, self.backups):
+        self.evidence = self.root / "evidence"
+        self.offhost = self.root / "offhost"
+        for directory in (self.releases, self.runtime, self.assets, self.backups, self.evidence, self.offhost):
             directory.mkdir(mode=0o700)
         self.patchers = [
             patch.object(native, "RELEASES", self.releases),
@@ -170,6 +173,7 @@ class PiHandoverBackupTests(unittest.TestCase):
         data.mkdir(mode=0o700)
         (data / "state.json").write_text("current state")
         store = StateStore(self.root / "state", owner_uid=os.getuid())
+        self.store = store
         store.initialize()
         required = list(native.CHECKS)
         store.begin("fixture", self.native_operation, self.selection, INTENT, required)
@@ -235,6 +239,85 @@ class PiHandoverBackupTests(unittest.TestCase):
                     verify_backup(backup.path, operation, backup.manifest_sha256, committed=self.committed,
                                   native_spec=self.spec, image_selection=self.images, native_asset=self.asset)
                 path.write_bytes(original)
+
+    def test_capture_requires_independent_verification_before_advancing(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        observed = []
+        def verify_offhost(backup):
+            self.assertEqual(self.store.status()["deployments"]["fixture"]["pending"]["phase"],
+                             "inputs-verified")
+            copy = self.offhost / operation
+            shutil.copytree(backup.path, copy)
+            verify_backup(copy, operation, backup.manifest_sha256, committed=self.committed,
+                          native_spec=self.spec, image_selection=self.images, native_asset=self.asset)
+            observed.append("verified")
+        result = capture_backup(
+            self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+            "fixture", operation, committed=self.committed, native_spec=self.spec,
+            image_selection=self.images, native_asset=self.asset,
+            verify_quiescent=lambda: None, verify_offhost=verify_offhost,
+        )
+        self.assertEqual(observed, ["verified"])
+        pending = self.store.status()["deployments"]["fixture"]["pending"]
+        self.assertEqual((pending["phase"], pending["backup"]), ("backup-complete", operation))
+        evidence = json.loads((self.evidence / (operation + ".backup.json")).read_bytes())
+        self.assertEqual(evidence["manifest_sha256"], result.manifest_sha256)
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_nonvoid_offhost_verification_never_advances(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        with self.assertRaisesRegex(source.NativeError, "Off-host verification"):
+            capture_backup(
+                self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+                "fixture", operation, committed=self.committed, native_spec=self.spec,
+                image_selection=self.images, native_asset=self.asset,
+                verify_quiescent=lambda: None, verify_offhost=lambda backup: False,
+            )
+        pending = self.store.status()["deployments"]["fixture"]["pending"]
+        self.assertEqual(pending["phase"], "inputs-verified")
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertFalse((self.evidence / (operation + ".backup.json")).exists())
+
+    def test_interrupted_offhost_transfer_keeps_reservation_and_backup(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        def interrupted(backup):
+            raise OSError("transfer interrupted")
+        with self.assertRaisesRegex(OSError, "transfer interrupted"):
+            capture_backup(
+                self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+                "fixture", operation, committed=self.committed, native_spec=self.spec,
+                image_selection=self.images, native_asset=self.asset,
+                verify_quiescent=lambda: None, verify_offhost=interrupted,
+            )
+        self.assertTrue((self.backups / operation).exists())
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["pending"]["phase"], "inputs-verified")
+
+    def test_capture_rejects_nonquiescent_writer_before_creating_backup(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        def nonquiescent():
+            raise source.NativeError("writer active")
+        with self.assertRaisesRegex(source.NativeError, "writer active"):
+            capture_backup(
+                self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+                "fixture", operation, committed=self.committed, native_spec=self.spec,
+                image_selection=self.images, native_asset=self.asset,
+                verify_quiescent=nonquiescent, verify_offhost=lambda backup: None,
+            )
+        self.assertFalse((self.backups / operation).exists())
+        self.assertTrue(self.store.status()["blocked"])
 
 
 if __name__ == "__main__":
