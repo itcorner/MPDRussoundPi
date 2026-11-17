@@ -79,13 +79,24 @@ class PiHandoverStateTests(unittest.TestCase):
                          expected_committed=self.previous)
         receipt = {"operation": self.operation, "review_digest": INTENT,
                    "required": dict.fromkeys(("containers", "http", "backend", "playback"), "passed")}
-        with self.assertRaisesRegex(StateError, "Only native recovery"):
+        with self.assertRaisesRegex(StateError, "explicit handover recovery"):
             self.store.resolve_recovery("fixture", self.operation, receipt,
                                         restore_native=True, native_previous=self.previous)
         state = self.store.status()
         self.assertTrue(state["blocked"])
         self.assertEqual(state["deployments"]["fixture"]["committed"], self.previous)
         self.assertEqual(state["deployments"]["fixture"]["pending"]["operation"], self.operation)
+
+    def test_generic_image_recovery_cannot_clear_a_native_baseline(self):
+        self.store.begin("fixture", self.operation, self.images, INTENT, self.required,
+                         expected_committed=self.previous)
+        for required in (dict.fromkeys(("containers", "http", "backend", "playback"), "passed"),
+                         {"containers-absent": "passed", "prepared-data-restored": "passed"}):
+            receipt = {"operation": self.operation, "review_digest": INTENT, "required": required}
+            with self.subTest(required=required), self.assertRaisesRegex(StateError, "explicit handover recovery"):
+                self.store.resolve_recovery("fixture", self.operation, receipt)
+            self.assertTrue(self.store.status()["blocked"])
+            self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.previous)
 
     def test_explicit_handover_resolution_requires_matching_backup_and_native_checks(self):
         self.store.begin("fixture", self.operation, self.images, INTENT, self.required,

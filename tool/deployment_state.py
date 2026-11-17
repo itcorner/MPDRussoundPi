@@ -493,8 +493,13 @@ class StateStore:
                         raise StateError("Recovery does not own the original pending operation")
                     selection = record["pending"]["candidate"]
                     native = selection["kind"] == NATIVE_CANDIDATE
+                    committed = record["committed"]
+                    if (not native and committed is not None
+                            and committed["selection"]["candidate"]["kind"] == NATIVE_CANDIDATE
+                            and not handover_native):
+                        raise StateError("A native baseline requires explicit handover recovery")
                     if handover_native:
-                        previous = record["committed"]
+                        previous = committed
                         if (not restore_native or native or selection.get("kind") != LOCAL_CANDIDATE
                                 or previous is None or native_previous != previous
                                 or previous["selection"]["candidate"]["kind"] != NATIVE_CANDIDATE

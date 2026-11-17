@@ -4805,7 +4805,10 @@ same-revision managed image candidate, the backup phase and both native
 recovery checks. A separate portable-backup verifier checks fresh data roots,
 native units, gateway configuration and sealed release against independently
 retained identities. Neither component stops writers or restores services,
-and state receipts are not proof that those actions occurred. A backup-capture
+and state receipts are not proof that those actions occurred. Ordinary image
+recovery now also refuses to clear a pending operation when the committed
+baseline is native; only the explicitly selected handover boundary can do so.
+A backup-capture
 boundary now requires the reserved operation, a quiescence guard and a
 caller-supplied independent off-host verification before recording
 `backup-complete`; a failed transfer retains the pending reservation. Internal
