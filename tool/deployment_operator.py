@@ -56,6 +56,13 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         channel.send(native_resume(storage, request["deployment"], request["operation"],
                                    lambda review: approve_remote(channel, review)))
         return
+    if request.get("action") == "handover-resume-original":
+        from tool.deployment_pi_handover import resume_before_backup
+        if set(request) != {"action", "deployment", "operation"}:
+            raise ChannelError("Invalid handover original-runtime request")
+        channel.send(resume_before_backup(storage, request["deployment"], request["operation"],
+                                         lambda review: approve_remote(channel, review)))
+        return
     if request.get("action") == "resume-original":
         if set(request) != {"action", "deployment", "operation"}:
             raise ChannelError("Invalid original-runtime request")
@@ -200,6 +207,11 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                 raise ChannelError("Target reviewed a different native deployment scope")
             if (not deploying and event["plan"]["deployment"] != request["deployment"]):
                 raise ChannelError("Target reviewed a different recovery deployment")
+            if (request["action"] == "handover-resume-original"
+                    and (event["plan"].get("kind") != "pi-handover-resume-original"
+                         or event["plan"].get("restore_data") is not False
+                         or event["plan"].get("preserve_operator_edits") is not True)):
+                raise ChannelError("Target reviewed a different handover recovery action")
             if (deploying and shutil.disk_usage(evidence).free
                     < event["plan"]["scope"]["offhost_free_bytes_required"]):
                 channel.send({"event": "approval", "digest": None})
@@ -305,7 +317,8 @@ def remote(args: argparse.Namespace, request: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("deploy", "recover", "resume-original", "serve",
-                                          "native-deploy", "native-recover", "native-resume-original"))
+                                          "native-deploy", "native-recover", "native-resume-original",
+                                          "handover-resume-original"))
     parser.add_argument("--host")
     parser.add_argument("--user")
     parser.add_argument("--port", type=int, default=22)

@@ -9,18 +9,23 @@ import copy
 import hashlib
 import ipaddress
 import json
+import os
 from pathlib import Path
+import stat
 from typing import Any, Callable
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from tool.deployment_backup import FileBackup, quiescent
+from tool.deployment_build import local_engine
 from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
-from tool.deployment_compose import private_read, private_write, specification as compose_specification
+from tool.deployment_compose import encoded, private_read, private_write, specification as compose_specification
+from tool.deployment_files import is_list, is_mapping
 from tool.deployment_local import LOCAL_CANDIDATE
 from tool import deployment_native as native
 from tool.deployment_native import environment, specification as native_specification
 from tool.deployment_native_source import NativeError, validate_candidate as native_candidate
-from tool.deployment_preflight import check_port
+from tool.deployment_preflight import check_data, check_port, overlap, safe_path
 from tool.deployment_state import StateStore, candidate, completion_record, identity, operation_id, pending_record
 
 
@@ -209,6 +214,120 @@ def fence_native(store: StateStore, storage: dict[str, Path], deployment: str, o
     check_port("127.0.0.1", spec["backend_port"])
     if store.status() != state:
         raise NativeError("Handover state changed while native units were fenced")
+
+
+def check_docker_conflicts(spec: dict[str, Any]) -> None:
+    """Reject active or automatically restarting containers sharing data or serial."""
+    docker = ["docker", "--context", local_engine()]
+    ids = native.command(docker + ["ps", "--all", "--quiet", "--no-trunc"]).decode().split()
+    containers: Any = json.loads(native.command(docker + ["inspect", *ids])) if ids else []
+    if not is_list(containers) or len(containers) != len(ids) or len(set(ids)) != len(ids):
+        raise NativeError("Cannot establish Docker container identities")
+    inspected: set[str] = set()
+    for item in containers:
+        if (not is_mapping(item) or not is_mapping(item.get("HostConfig"))
+                or not is_mapping(item.get("State")) or not is_list(item.get("Mounts"))
+                or not is_mapping(item["HostConfig"].get("RestartPolicy"))
+                or not isinstance(item.get("Id"), str) or item["Id"] not in ids
+                or item["Id"] in inspected
+                or any(type(item["State"].get(key)) is not bool for key in ("Running", "Restarting", "Paused"))
+                or not isinstance(item["HostConfig"]["RestartPolicy"].get("Name"), str)):
+            raise NativeError("Invalid Docker container metadata blocks native resume")
+        inspected.add(item["Id"])
+        mounts: list[Any] = item["Mounts"]
+        devices: Any = item["HostConfig"].get("Devices")
+        if devices is None:
+            devices = []
+        if (not is_list(devices) or any(not is_mapping(mount) for mount in mounts)
+                or any(not is_mapping(device) for device in devices)
+                or any(mount.get("Type") == "bind" and not isinstance(mount.get("Source"), str)
+                       for mount in mounts)
+                or any(not isinstance(device.get("PathOnHost"), str) for device in devices)):
+            raise NativeError("Invalid Docker mounts or devices block native resume")
+        related = (any(mount.get("Type") == "bind" and
+                       overlap(Path(mount["Source"]), Path(spec["data_dir"])) for mount in mounts)
+                   or any(device["PathOnHost"] == spec["serial_device"] for device in devices))
+        if related and (item["State"]["Running"] or item["State"]["Restarting"]
+                        or item["State"]["Paused"] or item["HostConfig"]["RestartPolicy"]["Name"] == "always"):
+            raise NativeError("A Docker container can own native data or the serial adapter")
+
+
+def resume_before_backup(storage: dict[str, Path], deployment: str, operation: str,
+                         approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
+    """Resume the captured native runtime without replacing data before image activation."""
+    identity(deployment)
+    operation_id(operation)
+    store = StateStore(storage["state"], owner_uid=os.getuid())
+    state = store.status()
+    record = state["deployments"].get(deployment)
+    if (not state["blocked"] or state["reservation"] != {
+            "schema_version": 1, "deployment": deployment, "operation": operation}
+            or record is None or record["committed"] is None or record["pending"] is None
+            or record["pending"]["operation"] != operation
+            or record["pending"]["phase"] != "inputs-verified"
+            or state["image_load_started"]
+            or (storage["evidence"] / (operation + ".apply-attempt.json")).exists()):
+        raise NativeError("Native handover resume requires the matching pre-backup operation without image activation")
+    previous = record["committed"]["selection"]
+    asset = storage["assets"] / previous["operation"]
+    spec = native_specification(json.loads(private_read(asset / "spec.json")))
+    selected = json.loads(private_read(asset / "selection.json"))
+    if spec["deployment"] != deployment or selected != previous["candidate"]:
+        raise NativeError("Native handover resume differs from the committed assets")
+    prepare(spec, selected, record["pending"]["candidate"], project=deployment,
+            compose_path="/handover-compose.json")
+    native.verify_units(native.unit_files(spec, selected, previous["operation"]))
+    native.verify_release(selected)
+    gateway = native.RUNTIME / previous["operation"] / "ser2net.yaml"
+
+    def verify_gateway() -> None:
+        info = safe_path(gateway)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or gateway.read_bytes() != native.gateway_config(spec):
+            raise NativeError("Native gateway configuration changed; resume requires investigation")
+
+    verify_gateway()
+    check_data(native.data_spec(spec))
+    check_docker_conflicts(spec)
+    recovery = str(uuid4())
+    plan: dict[str, Any] = {
+        "kind": "pi-handover-resume-original", "deployment": deployment, "operation": operation,
+        "recovery": recovery, "native_operation": previous["operation"], "restore_data": False,
+        "preserve_operator_edits": True, "audio_agent_proxy_and_os": "untouched",
+        "data_dir": spec["data_dir"], "uid": spec["uid"], "gid": spec["gid"],
+        "serial_device": spec["serial_device"], "serial_options": spec["serial_options"],
+        "publish_host": spec["publish_host"], "publish_port": spec["publish_port"],
+        "backend_port": spec["backend_port"], "revision": selected["revision"],
+        "native_selection_digest": "sha256:" + hashlib.sha256(encoded(selected)).hexdigest(),
+        "native_spec_digest": "sha256:" + hashlib.sha256(encoded(spec)).hexdigest(),
+        "pending_intent_digest": record["pending"]["intent_digest"],
+    }
+    digest = "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()
+    if approve({"plan": plan, "digest": digest}) != digest:
+        raise NativeError("Native handover resume was declined; services were not changed")
+    if store.status() != state:
+        raise NativeError("Handover state changed after resume approval")
+    if (json.loads(private_read(asset / "spec.json")) != spec
+            or json.loads(private_read(asset / "selection.json")) != selected):
+        raise NativeError("Native handover assets changed after resume approval")
+    native.verify_units(native.unit_files(spec, selected, previous["operation"]))
+    native.verify_release(selected)
+    verify_gateway()
+    check_data(native.data_spec(spec))
+    check_docker_conflicts(spec)
+    native.check_host_writers(Path(spec["data_dir"]), check_files=False)
+    private_write(storage["evidence"] / (operation + ".recovery-attempt.json"),
+                  {"review": plan, "review_digest": digest, "original_record": record})
+    native.stop_native(spec, selected, previous["operation"], {"previous_native": None})
+    native.check_no_writers(spec)
+    check_docker_conflicts(spec)
+    native.command(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
+    native.runtime_checks(spec, selected, previous["operation"])
+    receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,
+                               "required": {"original-runtime": "passed", "data-preserved": "passed"}}
+    private_write(storage["evidence"] / (operation + ".recovery-complete.json"), receipt)
+    store.resolve_recovery(deployment, operation, receipt, restore_native=True,
+                           native_previous=record["committed"], handover_resume=True)
+    return {"event": "recovered", "operation": operation, "recovery": recovery, "required": receipt["required"]}
 
 
 def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,

@@ -4825,8 +4825,11 @@ operation and committed native assets, verifies the existing native runtime,
 records a one-shot attempt, disables and stops the two native units, and checks
 quiescence and both listeners. It is not wired into an operator, and callers
 must separately review and fence conflicting containers. Its mocked tests do
-not establish Pi or reboot behavior. Pre-backup recovery and post-activation
-recovery are still unimplemented.
+not establish Pi or reboot behavior. A separately reviewed
+`handover-resume-original` action handles the reserved pre-backup phase without
+replacing data and clears state only after native runtime checks. Its service
+boundaries have only been mocked, not rehearsed on Linux or the Pi. Post-backup
+and post-activation recovery remain unimplemented.
 
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
