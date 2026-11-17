@@ -14,7 +14,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from tool.deployment_backup import FileBackup, quiescent
-from tool.deployment_channel import portable_backup
+from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
 from tool.deployment_compose import private_write, specification as compose_specification
 from tool.deployment_local import LOCAL_CANDIDATE
 from tool import deployment_native as native
@@ -215,3 +215,27 @@ def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str,
                   {"operation": operation, "manifest_sha256": backup.manifest_sha256})
     store.advance(deployment, operation, "backup-complete", backup=operation)
     return backup
+
+
+def send_handover_backup(channel: Channel, backup: FileBackup) -> None:
+    """Send captured bytes and require the exact independent custody receipt."""
+    send_backup(channel, backup.path, backup.operation, backup.manifest_sha256)
+    if channel.receive() != {"event": "backup-verified", "operation": backup.operation,
+                             "manifest_sha256": backup.manifest_sha256}:
+        raise ChannelError("Independent handover backup verification was not acknowledged")
+
+
+def receive_handover_backup(channel: Channel, evidence: Path, header: dict[str, Any], *,
+                            operation: str, committed: dict[str, Any], native_spec: dict[str, Any],
+                            image_selection: dict[str, Any], native_asset: Path) -> tuple[Path, str]:
+    """Verify received bytes against the controller's reviewed baseline before acknowledging."""
+    operation_id(operation)
+    if header.get("operation") != operation:
+        raise ChannelError("Handover backup differs from the reviewed operation")
+    backup, checksum = receive_backup(channel, evidence, header)
+    verify_backup(backup, operation, checksum, committed=committed, native_spec=native_spec,
+                  image_selection=image_selection, native_asset=native_asset)
+    private_write(evidence / (operation + ".backup-identity.json"),
+                  {"operation": operation, "manifest_sha256": checksum})
+    channel.send({"event": "backup-verified", "operation": operation, "manifest_sha256": checksum})
+    return backup, checksum

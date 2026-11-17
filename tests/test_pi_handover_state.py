@@ -1,9 +1,12 @@
 import copy
+import io
 import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -13,8 +16,9 @@ from test_deployment_native import selection_fixture, spec_fixture
 from tool import deployment_native as native
 from tool import deployment_native_source as source
 from tool.deployment_backup import FileBackup
+from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_load import select_bundle
-from tool.deployment_pi_handover import capture_backup, verify_backup
+from tool.deployment_pi_handover import capture_backup, receive_handover_backup, send_handover_backup, verify_backup
 from tool.deployment_state import PHASES, StateError, StateStore
 
 
@@ -301,6 +305,105 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertTrue((self.backups / operation).exists())
         self.assertTrue(self.store.status()["blocked"])
         self.assertEqual(self.store.status()["deployments"]["fixture"]["pending"]["phase"], "inputs-verified")
+
+    def test_channel_custody_is_verified_and_persisted_before_acknowledgment(self):
+        outbound = io.BytesIO()
+        expected = {"event": "backup-verified", "operation": self.operation,
+                    "manifest_sha256": self.backup.manifest_sha256}
+        acknowledgment = io.BytesIO()
+        Channel(io.BytesIO(), acknowledgment).send(expected)
+        send_handover_backup(Channel(io.BytesIO(acknowledgment.getvalue()), outbound), self.backup)
+        controller_ack = io.BytesIO()
+        controller = Channel(io.BytesIO(outbound.getvalue()), controller_ack)
+        header = controller.receive()
+        received, checksum = receive_handover_backup(
+            controller, self.offhost, header, operation=self.operation, committed=self.committed,
+            native_spec=self.spec, image_selection=self.images, native_asset=self.asset,
+        )
+        self.assertEqual(checksum, self.backup.manifest_sha256)
+        self.assertTrue(received.is_dir())
+        identity = json.loads((self.offhost / (self.operation + ".backup-identity.json")).read_bytes())
+        self.assertEqual(identity, {"operation": self.operation, "manifest_sha256": checksum})
+        self.assertEqual(Channel(io.BytesIO(controller_ack.getvalue()), io.BytesIO()).receive(), expected)
+
+    def test_controller_rejects_mismatched_review_and_truncated_stream_without_ack(self):
+        outgoing = io.BytesIO()
+        acknowledgment = io.BytesIO()
+        Channel(io.BytesIO(), acknowledgment).send(
+            {"event": "backup-verified", "operation": self.operation,
+             "manifest_sha256": self.backup.manifest_sha256})
+        send_handover_backup(Channel(io.BytesIO(acknowledgment.getvalue()), outgoing), self.backup)
+        wire = outgoing.getvalue()
+        changed = copy.deepcopy(self.spec)
+        changed["serial_options"] = "9600n81"
+        for data, spec, operation in ((wire, changed, self.operation),
+                                      (wire[:-1], self.spec, self.operation),
+                                      (wire, self.spec, str(uuid4()))):
+            with self.subTest(operation=operation, truncated=len(data) != len(wire)):
+                parent = self.root / str(uuid4())
+                parent.mkdir(mode=0o700)
+                reply = io.BytesIO()
+                controller = Channel(io.BytesIO(data), reply)
+                header = controller.receive()
+                with self.assertRaises((ValueError, EOFError)):
+                    receive_handover_backup(controller, parent, header, operation=operation,
+                                            committed=self.committed, native_spec=spec,
+                                            image_selection=self.images, native_asset=self.asset)
+                self.assertEqual(reply.getvalue(), b"")
+                self.assertFalse((parent / (operation + ".backup-identity.json")).exists())
+
+    def test_target_rejects_mismatched_or_missing_acknowledgment(self):
+        for response in (None, {"event": "backup-verified", "operation": str(uuid4()),
+                                "manifest_sha256": self.backup.manifest_sha256},
+                         {"event": "backup-verified", "operation": self.operation,
+                          "manifest_sha256": "0" * 64}):
+            reply = io.BytesIO()
+            if response is not None:
+                Channel(io.BytesIO(), reply).send(response)
+            with self.subTest(response=response), self.assertRaises(ChannelError):
+                send_handover_backup(Channel(io.BytesIO(reply.getvalue()), io.BytesIO()), self.backup)
+
+    def test_reserved_capture_transfers_and_verifies_over_duplex_channel(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        target_socket, controller_socket = socket.socketpair()
+        target_socket.settimeout(10)
+        controller_socket.settimeout(10)
+        failures = []
+        def controller():
+            try:
+                with controller_socket, controller_socket.makefile("rb") as source_stream, \
+                        controller_socket.makefile("wb") as target_stream:
+                    channel = Channel(source_stream, target_stream)
+                    receive_handover_backup(
+                        channel, self.offhost, channel.receive(), operation=operation,
+                        committed=self.committed, native_spec=self.spec,
+                        image_selection=self.images, native_asset=self.asset,
+                    )
+            except Exception as error:
+                failures.append(error)
+        worker = threading.Thread(target=controller)
+        worker.start()
+        try:
+            with target_socket, target_socket.makefile("rb") as source_stream, \
+                    target_socket.makefile("wb") as target_stream:
+                channel = Channel(source_stream, target_stream)
+                capture_backup(
+                    self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+                    "fixture", operation, committed=self.committed, native_spec=self.spec,
+                    image_selection=self.images, native_asset=self.asset,
+                    verify_quiescent=lambda: None,
+                    verify_offhost=lambda backup: send_handover_backup(channel, backup),
+                )
+        finally:
+            worker.join(timeout=12)
+        self.assertFalse(worker.is_alive(), "Controller transfer did not finish")
+        self.assertEqual(failures, [])
+        self.assertTrue((self.offhost / operation / "manifest.json").is_file())
+        self.assertTrue((self.offhost / (operation + ".backup-identity.json")).is_file())
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["pending"]["phase"], "backup-complete")
 
     def test_capture_rejects_nonquiescent_writer_before_creating_backup(self):
         operation = str(uuid4())

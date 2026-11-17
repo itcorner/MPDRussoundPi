@@ -4808,10 +4808,14 @@ retained identities. Neither component stops writers or restores services,
 and state receipts are not proof that those actions occurred. A backup-capture
 boundary now requires the reserved operation, a quiescence guard and a
 caller-supplied independent off-host verification before recording
-`backup-complete`; a failed transfer retains the pending reservation. It does
-not itself stop services or implement the transfer. The actual one-time
-transaction, independent backup transfer, recovery orchestration and live
-acceptance remain unimplemented; do not start a cutover based on these pieces.
+`backup-complete`; a failed transfer retains the pending reservation. Internal
+framed-transfer helpers now verify the received backup against controller-held
+review inputs, persist its manifest identity before acknowledgement, and
+reject an incomplete or mismatched receipt. A duplex test exercises these
+helpers together with the capture boundary. They are not wired into the
+operator or SSH transport and do not stop services. The one-time transaction,
+operator integration, recovery orchestration and live acceptance remain
+unimplemented; do not start a cutover based on these pieces.
 
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
