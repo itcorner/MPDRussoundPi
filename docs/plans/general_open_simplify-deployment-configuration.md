@@ -4820,6 +4820,14 @@ operator or SSH transport and do not stop services. The one-time transaction,
 operator integration, recovery orchestration and live acceptance remain
 unimplemented; do not start a cutover based on these pieces.
 
+An internal native-unit fencing primitive now requires the matching reserved
+operation and committed native assets, verifies the existing native runtime,
+records a one-shot attempt, disables and stops the two native units, and checks
+quiescence and both listeners. It is not wired into an operator, and callers
+must separately review and fence conflicting containers. Its mocked tests do
+not establish Pi or reboot behavior. Pre-backup recovery and post-activation
+recovery are still unimplemented.
+
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
    host/ports/device, gateway and proxy settings, plus a verified compatible

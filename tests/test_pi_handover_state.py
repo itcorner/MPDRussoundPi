@@ -8,7 +8,7 @@ import socket
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 from uuid import uuid4
 
 from test_deployment_build import fixture_bundle
@@ -18,7 +18,9 @@ from tool import deployment_native_source as source
 from tool.deployment_backup import FileBackup
 from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_load import select_bundle
-from tool.deployment_pi_handover import capture_backup, receive_handover_backup, send_handover_backup, verify_backup
+from tool.deployment_pi_handover import (
+    capture_backup, fence_native, receive_handover_backup, send_handover_backup, verify_backup,
+)
 from tool.deployment_state import PHASES, StateError, StateStore
 
 
@@ -281,6 +283,97 @@ class PiHandoverBackupTests(unittest.TestCase):
         evidence = json.loads((self.evidence / (operation + ".backup.json")).read_bytes())
         self.assertEqual(evidence["manifest_sha256"], result.manifest_sha256)
         self.assertTrue(self.store.status()["blocked"])
+
+    def test_native_fencing_is_reserved_one_shot_and_disables_before_quiescence(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        units = {name: {"UnitFileState": "disabled"} for name in (native.WEB, native.GATEWAY)}
+        with patch.object(native, "runtime_checks") as runtime_checks, \
+                patch.object(native, "check_host_writers"), \
+                patch.object(native, "command") as command, \
+                patch.object(native, "verify_units"), \
+                patch.object(native, "system_units", return_value=units), \
+                patch.object(native, "check_no_writers") as quiet, \
+                patch("tool.deployment_pi_handover.check_port") as ports:
+            fence_native(self.store, {"assets": self.assets, "evidence": self.evidence},
+                         "fixture", operation, committed=self.committed, native_spec=self.spec,
+                         image_selection=self.images)
+            runtime_checks.assert_called_once_with(self.spec, self.selection, self.native_operation)
+            command.assert_called_once_with(
+                ["systemctl", "disable", "--now", native.WEB, native.GATEWAY], timeout=90)
+            quiet.assert_called_once_with(self.spec)
+            self.assertEqual(ports.call_args_list,
+                             [call(self.spec["publish_host"], self.spec["publish_port"]),
+                              call("127.0.0.1", self.spec["backend_port"])])
+            with self.assertRaises(FileExistsError):
+                fence_native(self.store, {"assets": self.assets, "evidence": self.evidence},
+                             "fixture", operation, committed=self.committed, native_spec=self.spec,
+                             image_selection=self.images)
+            self.assertEqual(command.call_count, 1)
+        self.assertTrue((self.evidence / (operation + ".fence-attempt.json")).is_file())
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_native_fencing_rejects_unreserved_or_changed_assets_before_stop(self):
+        operation = str(uuid4())
+        storage = {"assets": self.assets, "evidence": self.evidence}
+        with patch.object(native, "command") as command:
+            with self.assertRaisesRegex(source.NativeError, "matching reserved"):
+                fence_native(self.store, storage, "fixture", operation, committed=self.committed,
+                             native_spec=self.spec, image_selection=self.images)
+            self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                             expected_committed=self.committed)
+            self.store.advance("fixture", operation, "inputs-verified")
+            for name in ("spec.json", "selection.json"):
+                (self.asset / name).chmod(0o600)
+            changed = copy.deepcopy(self.spec)
+            changed["serial_options"] = "9600n81"
+            with self.assertRaisesRegex(source.NativeError, "committed assets"):
+                fence_native(self.store, storage, "fixture", operation, committed=self.committed,
+                             native_spec=changed, image_selection=self.images)
+            command.assert_not_called()
+        self.assertFalse((self.evidence / (operation + ".fence-attempt.json")).exists())
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_native_fencing_failure_retains_attempt_and_reservation(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        with patch.object(native, "runtime_checks"), patch.object(native, "check_host_writers"), \
+                patch.object(native, "command", side_effect=source.NativeError("injected stop failure")):
+            with self.assertRaisesRegex(source.NativeError, "injected stop failure"):
+                fence_native(self.store, {"assets": self.assets, "evidence": self.evidence},
+                             "fixture", operation, committed=self.committed, native_spec=self.spec,
+                             image_selection=self.images)
+        self.assertTrue((self.evidence / (operation + ".fence-attempt.json")).exists())
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_native_fencing_rejects_units_that_remain_enabled(self):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        units = {native.WEB: {"UnitFileState": "disabled"},
+                 native.GATEWAY: {"UnitFileState": "enabled"}}
+        with patch.object(native, "runtime_checks"), patch.object(native, "check_host_writers"), \
+                patch.object(native, "command"), patch.object(native, "verify_units"), \
+                patch.object(native, "system_units", return_value=units), \
+                patch.object(native, "check_no_writers") as quiet:
+            with self.assertRaisesRegex(source.NativeError, "not disabled"):
+                fence_native(self.store, {"assets": self.assets, "evidence": self.evidence},
+                             "fixture", operation, committed=self.committed, native_spec=self.spec,
+                             image_selection=self.images)
+            quiet.assert_not_called()
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertTrue((self.evidence / (operation + ".fence-attempt.json")).is_file())
 
     def test_nonvoid_offhost_verification_never_advances(self):
         operation = str(uuid4())

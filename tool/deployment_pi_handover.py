@@ -1,8 +1,8 @@
 """Internal preparation and backup primitives for a Pi native-to-Compose handover.
 
-This module does not reserve state, stop services or deploy anything. Backup
-capture requires an existing reservation and caller-established quiescence.
-Its output is not authorization for activation.
+This module does not expose an operator or deploy anything. Service fencing
+and backup capture require an existing reservation and verified inputs.
+Their output is not authorization for activation.
 """
 
 import copy
@@ -15,11 +15,12 @@ from urllib.parse import urlsplit
 
 from tool.deployment_backup import FileBackup, quiescent
 from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
-from tool.deployment_compose import private_write, specification as compose_specification
+from tool.deployment_compose import private_read, private_write, specification as compose_specification
 from tool.deployment_local import LOCAL_CANDIDATE
 from tool import deployment_native as native
 from tool.deployment_native import environment, specification as native_specification
 from tool.deployment_native_source import NativeError, validate_candidate as native_candidate
+from tool.deployment_preflight import check_port
 from tool.deployment_state import StateStore, candidate, completion_record, identity, operation_id, pending_record
 
 
@@ -162,6 +163,52 @@ def verify_backup(path: Path, operation: str, checksum: str, *,
     if digest != selected["sha256"]:
         raise NativeError("Backed-up native release differs from the committed source/environment")
     return manifest
+
+
+def fence_native(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
+                 committed: dict[str, Any], native_spec: dict[str, Any],
+                 image_selection: dict[str, Any]) -> None:
+    """Disable the exact reserved native units; failures retain the reservation.
+
+    The caller must approve the complete scope and check Docker and other host
+    conflicts independently before calling this one-shot internal boundary.
+    """
+    identity(deployment)
+    operation_id(operation)
+    spec = native_specification(native_spec)
+    state = store.status()
+    record = state["deployments"].get(deployment)
+    if (spec["deployment"] != deployment or not state["blocked"]
+            or state["reservation"] != {"schema_version": 1, "deployment": deployment, "operation": operation}
+            or record is None or record["committed"] != committed
+            or record["pending"] is None or record["pending"]["operation"] != operation
+            or record["pending"]["phase"] != "inputs-verified"
+            or record["pending"]["candidate"] != image_selection):
+        raise NativeError("Native fencing requires the matching reserved handover and committed baseline")
+    previous = committed["selection"]
+    selected = previous["candidate"]
+    prepare(spec, selected, image_selection, project=deployment, compose_path="/handover-compose.json")
+    asset = storage["assets"] / previous["operation"]
+    if (json.loads(private_read(asset / "spec.json")) != spec
+            or json.loads(private_read(asset / "selection.json")) != selected):
+        raise NativeError("Native fencing inputs differ from the committed assets")
+    native.runtime_checks(spec, selected, previous["operation"])
+    native.check_host_writers(Path(spec["data_dir"]), check_files=False)
+    if store.status() != state:
+        raise NativeError("Handover state changed before native fencing")
+    private_write(storage["evidence"] / (operation + ".fence-attempt.json"),
+                  {"operation": operation, "native_operation": previous["operation"],
+                   "intent_digest": record["pending"]["intent_digest"]})
+    native.command(["systemctl", "disable", "--now", native.WEB, native.GATEWAY], timeout=90)
+    native.verify_units(native.unit_files(spec, selected, previous["operation"]))
+    units = native.system_units()
+    if any(item.get("UnitFileState") != "disabled" for item in units.values()):
+        raise NativeError("Native units are not disabled; inspect before recovery")
+    native.check_no_writers(spec)
+    check_port(spec["publish_host"], spec["publish_port"])
+    check_port("127.0.0.1", spec["backend_port"])
+    if store.status() != state:
+        raise NativeError("Handover state changed while native units were fenced")
 
 
 def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
