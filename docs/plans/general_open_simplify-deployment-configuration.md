@@ -4763,6 +4763,16 @@ apply explicitly refuses a committed native deployment. No currently supported
 operation implements this return while retaining current data; the proposal
 below is not an implemented or approved live migration.
 
+**Image preparation (2026-11-17):** a local `linux/arm64` managed web/ser2net
+bundle was built from commit `e93783bbbb1c0c2c60add80563f03c9766a14093`,
+which includes the controller-health fix. Its separately retained manifest
+identity is `sha256:c6bf9b878327de45f9bb5aef792d3b162638cc5e006e80be3c736aba09a01dd1`.
+Bundle verification, both isolated image smoke tests, and an isolated
+web-to-gateway Docker-network TCP check passed. The gateway used a `stdio`
+connector in the route test, not the physical serial adapter. This is local
+image evidence only, not a registry publication, a schema compatibility
+assessment, a tested migration transaction or live hardware acceptance.
+
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
    host/ports/device, gateway and proxy settings, plus a verified compatible
@@ -4770,7 +4780,8 @@ below is not an implemented or approved live migration.
    the controller-health fix. A retained locally verified `060084d` web image
    bundle exists, but it is a **dummy-gateway bundle**, not an accepted
    managed-gateway pair; do not activate it or silently substitute images.
-   Produce and verify a suitable pair and establish data/schema compatibility.
+   The managed pair described above is locally verified; independently
+   establish data/schema compatibility before considering it for activation.
 2. **Implement a dedicated reviewed transaction.** Reuse the durable host-wide
    reservation and exact identity checks; revalidate scope immediately before
    stopping only the selected native web/gateway writers. Confirm all writers

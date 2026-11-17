@@ -21,6 +21,62 @@ ENABLED = os.environ.get("RUSSOUND_RUN_CONTAINER_TESTS") == "1"
 
 @unittest.skipUnless(DOCKER and ENABLED, "opt in with RUSSOUND_RUN_CONTAINER_TESTS=1 on local Docker")
 class ContainerRuntimeTests(unittest.TestCase):
+    def test_managed_bundle_web_can_reach_serial_gateway_on_isolated_network(self):
+        bundle = os.environ.get("RUSSOUND_TEST_MANAGED_BUNDLE")
+        checksum = os.environ.get("RUSSOUND_TEST_MANAGED_MANIFEST_SHA256")
+        if not bundle or not checksum:
+            self.skipTest("set RUSSOUND_TEST_MANAGED_BUNDLE and RUSSOUND_TEST_MANAGED_MANIFEST_SHA256")
+        self.assertNotIn("DOCKER_HOST", os.environ, "Run this test only against a local Docker socket")
+        self.assertNotIn("DOCKER_CONTEXT", os.environ, "Select a local context explicitly before testing")
+        context = json.loads(subprocess.check_output([DOCKER, "context", "inspect"], text=True))[0]
+        self.assertTrue(context["Endpoints"]["docker"]["Host"].startswith(("unix://", "npipe://")),
+                        "A remote Docker endpoint must not be used")
+        selected = verify_bundle(Path(bundle), checksum, "managed", "linux/arm64")
+        for image in selected["images"].values():
+            metadata = json.loads(subprocess.check_output(
+                [DOCKER, "image", "inspect", image["reference"]], text=True))[0]
+            image_identity(metadata, image["reference"], selected["platform"], selected["revision"])
+
+        def docker(*arguments):
+            return subprocess.check_output([DOCKER, *arguments], text=True, timeout=90).strip()
+
+        network = docker("network", "create", "--internal", "russound-managed-test-" + uuid.uuid4().hex)
+        containers = []
+        try:
+            gateway = docker("create", "--platform", selected["platform"], "--network", network,
+                             "--network-alias", "russound-ser2net",
+                             "-e", "RUSSOUND_SER2NET_CONNECTOR=stdio",
+                             selected["images"]["ser2net"]["reference"])
+            containers.append(gateway)
+            docker("start", gateway)
+            deadline = time.monotonic() + 120
+            while True:
+                status = docker("inspect", "--format", "{{.State.Health.Status}}", gateway)
+                if status == "healthy":
+                    break
+                self.assertEqual(status, "starting", "Gateway did not become healthy")
+                self.assertLess(time.monotonic(), deadline, "Gateway health deadline exceeded")
+                time.sleep(2)
+            web = docker("create", "--platform", selected["platform"], "--network", network,
+                         selected["images"]["web"]["reference"])
+            containers.append(web)
+            docker("start", web)
+            docker("exec", web, "python", "-c",
+                   "import socket; s = socket.create_connection(('russound-ser2net', 6666), timeout=5); s.close()")
+        finally:
+            failures = []
+            for container in reversed(containers):
+                result = subprocess.run([DOCKER, "rm", "--force", "--volumes", container],
+                                        capture_output=True, text=True, timeout=90)
+                if result.returncode:
+                    failures.append(f"container {container}: {result.stderr.strip()}")
+            result = subprocess.run([DOCKER, "network", "rm", network],
+                                    capture_output=True, text=True, timeout=90)
+            if result.returncode:
+                failures.append(f"network {network}: {result.stderr.strip()}")
+            if failures:
+                self.fail("Isolated managed test cleanup failed: " + "; ".join(failures))
+
     def test_dummy_routing_external_mode_and_state_survive_rerun(self):
         self.assertNotIn("DOCKER_HOST", os.environ, "Run this test only against a local Docker socket")
         self.assertNotIn("DOCKER_CONTEXT", os.environ, "Select a local context explicitly before testing")

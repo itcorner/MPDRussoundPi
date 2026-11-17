@@ -246,6 +246,22 @@ labels, target architecture, archive tags, config identity and OCI blobs.
 Copied files must belong to the verifying account and retain their modes.
 Archives are inspected, never extracted. Successful output selects exact
 exporting-daemon image IDs (`sha256:...`), not repository pull digests.
+
+For an additional isolated managed-image route check, load the verified
+bundle's exact image IDs into the local Docker daemon and run:
+
+```sh
+RUSSOUND_RUN_CONTAINER_TESTS=1 \
+RUSSOUND_TEST_MANAGED_BUNDLE=/absolute/controller/path/to/bundle \
+RUSSOUND_TEST_MANAGED_MANIFEST_SHA256=sha256:REPLACE_WITH_SEPARATELY_RETAINED_DIGEST \
+python3 -m unittest discover -s tests -p test_container_runtime.py -k managed_bundle
+```
+
+The test verifies the bundle and loaded image identities, then checks that
+the web container can open a TCP connection to the managed gateway by its
+Docker network alias. It uses an isolated network and a `stdio` connector;
+it does not verify serial hardware, controller protocol, playback or a
+native-to-Docker migration.
 Docker's classic and containerd image stores can identify the same image
 differently. The internal reserved-load layer reconciles these identities;
 the public transfer/apply workflow is not integrated yet.
