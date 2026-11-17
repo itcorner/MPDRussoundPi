@@ -4799,11 +4799,15 @@ to perform the one-time handover.
 
 State-layer tests establish that a reserved local image candidate keeps the
 old native selection committed until the required backup, image-load and
-completion boundaries have been recorded. They also establish a remaining
-blocker: existing recovery refuses to restore the native selection for a
-pending image candidate and retains the reservation. These tests exercise
-state transitions only; they do not prove a backup, a Docker deployment or a
-working recovery. Do not start a manual cutover based on them.
+completion boundaries have been recorded. A new internal handover recovery
+state boundary requires the exact native committed record, a matching
+same-revision managed image candidate, the backup phase and both native
+recovery checks. A separate portable-backup verifier checks fresh data roots,
+native units, gateway configuration and sealed release against independently
+retained identities. Neither component stops writers or restores services,
+and state receipts are not proof that those actions occurred. The actual
+one-time transaction, independent backup transfer, recovery orchestration and
+live acceptance remain unimplemented; do not start a cutover based on them.
 
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,

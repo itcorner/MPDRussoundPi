@@ -1,12 +1,19 @@
+import copy
+import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from test_deployment_build import fixture_bundle
-from test_deployment_native import selection_fixture
+from test_deployment_native import selection_fixture, spec_fixture
+from tool import deployment_native as native
+from tool import deployment_native_source as source
+from tool.deployment_backup import FileBackup
 from tool.deployment_load import select_bundle
+from tool.deployment_pi_handover import verify_backup
 from tool.deployment_state import PHASES, StateError, StateStore
 
 
@@ -74,6 +81,160 @@ class PiHandoverStateTests(unittest.TestCase):
         self.assertTrue(state["blocked"])
         self.assertEqual(state["deployments"]["fixture"]["committed"], self.previous)
         self.assertEqual(state["deployments"]["fixture"]["pending"]["operation"], self.operation)
+
+    def test_explicit_handover_resolution_requires_matching_backup_and_native_checks(self):
+        self.store.begin("fixture", self.operation, self.images, INTENT, self.required,
+                         expected_committed=self.previous)
+        receipt = {"operation": self.operation, "review_digest": INTENT,
+                   "required": {"original-runtime": "passed", "matching-data": "passed"}}
+        with self.assertRaisesRegex(StateError, "baseline and backup"):
+            self.store.resolve_recovery("fixture", self.operation, receipt, restore_native=True,
+                                        native_previous=self.previous, handover_native=True)
+        self.store.advance("fixture", self.operation, "inputs-verified")
+        self.store.advance("fixture", self.operation, "backup-complete", backup=self.operation)
+        wrong_previous = copy.deepcopy(self.previous)
+        wrong_previous["selection"]["operation"] = str(uuid4())
+        wrong_receipt = {**receipt, "required": {"original-runtime": "passed", "matching-data": "failed"}}
+        for previous, result in ((wrong_previous, receipt), (self.previous, wrong_receipt)):
+            with self.subTest(previous=previous, result=result), self.assertRaises(StateError):
+                self.store.resolve_recovery("fixture", self.operation, result, restore_native=True,
+                                            native_previous=previous, handover_native=True)
+            self.assertTrue(self.store.status()["blocked"])
+        self.store.resolve_recovery("fixture", self.operation, receipt, restore_native=True,
+                                    native_previous=self.previous, handover_native=True)
+        state = self.store.status()
+        self.assertFalse(state["blocked"])
+        self.assertEqual(state["deployments"]["fixture"]["committed"], self.previous)
+        self.assertIsNone(state["deployments"]["fixture"]["pending"])
+
+    def reject_candidate_drift(self, field, value):
+        images = copy.deepcopy(self.images)
+        images["manifest"][field] = value
+        self.store.begin("fixture", self.operation, images, INTENT, self.required,
+                         expected_committed=self.previous)
+        self.store.advance("fixture", self.operation, "inputs-verified")
+        self.store.advance("fixture", self.operation, "backup-complete", backup=self.operation)
+        receipt = {"operation": self.operation, "review_digest": INTENT,
+                   "required": {"original-runtime": "passed", "matching-data": "passed"}}
+        with self.assertRaisesRegex(StateError, "candidate identity"):
+            self.store.resolve_recovery("fixture", self.operation, receipt, restore_native=True,
+                                        native_previous=self.previous, handover_native=True)
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_handover_resolution_rejects_revision_drift(self):
+        self.reject_candidate_drift("revision", "b" * 40)
+
+    def test_handover_resolution_rejects_platform_drift(self):
+        self.reject_candidate_drift("platform", "linux/amd64")
+
+
+class PiHandoverBackupTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="pi-handover-backup-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.root.chmod(0o700)
+        self.releases = self.root / "releases"
+        self.runtime = self.root / "runtime"
+        self.assets = self.root / "assets"
+        self.backups = self.root / "backups"
+        for directory in (self.releases, self.runtime, self.assets, self.backups):
+            directory.mkdir(mode=0o700)
+        self.patchers = [
+            patch.object(native, "RELEASES", self.releases),
+            patch.object(native, "RUNTIME", self.runtime),
+            patch("tool.deployment_backup.os.listxattr", return_value=[], create=True),
+        ]
+        for patcher in self.patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.spec = spec_fixture(self.root)
+        self.spec["uid"] = os.getuid() or 1000
+        self.operation = str(uuid4())
+        self.native_operation = str(uuid4())
+        self.selection = selection_fixture()
+        release = self.releases / self.selection["release"]
+        release.mkdir(mode=0o700)
+        (release / "code").write_text("sealed source")
+        self.selection["sha256"] = source.tree_digest(release, owner=os.getuid())
+        runtime = self.runtime / self.native_operation
+        runtime.mkdir(mode=0o700)
+        (runtime / "ser2net.yaml").write_bytes(native.gateway_config(self.spec))
+        self.asset = self.assets / self.native_operation
+        self.asset.mkdir(mode=0o700)
+        (self.asset / "spec.json").write_text(json.dumps(self.spec))
+        (self.asset / "selection.json").write_text(json.dumps(self.selection))
+        for name, value in native.unit_files(self.spec, self.selection, self.native_operation).items():
+            (self.asset / name).write_bytes(value)
+        data = Path(self.spec["data_dir"])
+        data.mkdir(mode=0o700)
+        (data / "state.json").write_text("current state")
+        store = StateStore(self.root / "state", owner_uid=os.getuid())
+        store.initialize()
+        required = list(native.CHECKS)
+        store.begin("fixture", self.native_operation, self.selection, INTENT, required)
+        for phase in PHASES[1:]:
+            store.advance("fixture", self.native_operation, phase)
+        store.finalize("fixture", self.native_operation, {
+            "operation": self.native_operation, "intent_digest": INTENT,
+            "invocation": "verified-complete", "required": dict.fromkeys(required, "passed"),
+        })
+        self.committed = store.status()["deployments"]["fixture"]["committed"]
+        bundle, checksum, _ = fixture_bundle(self.root, "managed")
+        self.images = select_bundle(bundle, checksum, "managed", "linux/arm64")
+        self.backup = FileBackup.capture(self.backups, self.operation, {
+            "data": data, "native-asset": self.asset, "previous-release": release, "previous-runtime": runtime,
+        }, verify_quiescent=lambda: None, source_owner_uid=os.getuid())
+
+    def verify(self, **overrides):
+        arguments = {"committed": self.committed, "native_spec": self.spec,
+                     "image_selection": self.images, "native_asset": self.asset, **overrides}
+        return verify_backup(self.backup.path, self.operation, self.backup.manifest_sha256, **arguments)
+
+    def test_verified_backup_binds_fresh_data_and_native_assets(self):
+        manifest = self.verify()
+        self.assertEqual(manifest["sources"]["data"], self.spec["data_dir"])
+        self.assertTrue(any(entry["path"] == "data/state.json" for entry in manifest["entries"]))
+
+    def test_wrong_native_identity_or_bundle_is_rejected(self):
+        changed = copy.deepcopy(self.spec)
+        changed["serial_options"] = "9600n81"
+        with self.assertRaisesRegex(source.NativeError, "native inputs"):
+            self.verify(native_spec=changed)
+        images = copy.deepcopy(self.images)
+        images["manifest"]["revision"] = "b" * 40
+        with self.assertRaisesRegex(source.NativeError, "source revision"):
+            self.verify(image_selection=images)
+        with self.assertRaisesRegex(source.NativeError, "asset path"):
+            self.verify(native_asset=self.assets / str(uuid4()))
+
+    def test_corrupted_backup_is_rejected(self):
+        blob = next(self.backup.path.glob("*.blob"))
+        blob.chmod(0o600)
+        blob.write_bytes(b"corrupted")
+        blob.chmod(0o400)
+        with self.assertRaises(ValueError):
+            self.verify()
+
+    def test_validly_captured_but_changed_native_assets_are_rejected(self):
+        for path, replacement, message in (
+            (self.asset / native.WEB, b"unexpected unit", "native unit"),
+            (self.runtime / self.native_operation / "ser2net.yaml", b"unexpected route", "gateway configuration"),
+            (self.releases / self.selection["release"] / "code", b"unexpected source", "native release"),
+        ):
+            with self.subTest(path=path):
+                original = path.read_bytes()
+                path.write_bytes(replacement)
+                operation = str(uuid4())
+                backup = FileBackup.capture(self.backups, operation, {
+                    "data": Path(self.spec["data_dir"]), "native-asset": self.asset,
+                    "previous-release": self.releases / self.selection["release"],
+                    "previous-runtime": self.runtime / self.native_operation,
+                }, verify_quiescent=lambda: None, source_owner_uid=os.getuid())
+                with self.assertRaisesRegex(source.NativeError, message):
+                    verify_backup(backup.path, operation, backup.manifest_sha256, committed=self.committed,
+                                  native_spec=self.spec, image_selection=self.images, native_asset=self.asset)
+                path.write_bytes(original)
 
 
 if __name__ == "__main__":

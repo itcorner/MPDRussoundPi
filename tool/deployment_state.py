@@ -469,10 +469,14 @@ class StateStore:
 
     def resolve_recovery(self, deployment: str, operation: str, receipt: dict[str, Any], *,
                          restore_native: bool = False,
-                         native_previous: dict[str, Any] | None = None) -> None:
+                         native_previous: dict[str, Any] | None = None,
+                         handover_native: bool = False) -> None:
         """Internal boundary after approved restoration and independently checked runtime.
 
         The caller must durably retain the original record and recovery evidence.
+        For a handover the caller must independently verify the fresh backup,
+        stop all candidate writers and verify the restored native runtime/data.
+        The receipt and state checks do not perform or prove those actions.
         This is not an unlock API and is deliberately absent from the state CLI.
         """
         absent = {"containers-absent": "passed", "prepared-data-restored": "passed"}
@@ -489,17 +493,32 @@ class StateStore:
                         raise StateError("Recovery does not own the original pending operation")
                     selection = record["pending"]["candidate"]
                     native = selection["kind"] == NATIVE_CANDIDATE
-                    if native:
+                    if handover_native:
+                        previous = record["committed"]
+                        if (not restore_native or native or selection.get("kind") != LOCAL_CANDIDATE
+                                or previous is None or native_previous != previous
+                                or previous["selection"]["candidate"]["kind"] != NATIVE_CANDIDATE
+                                or record["pending"]["backup"] != operation
+                                or PHASES.index(record["pending"]["phase"]) < PHASES.index("backup-complete")):
+                            raise StateError("Native handover recovery requires the matching committed baseline and backup")
+                        native_selection = previous["selection"]["candidate"]
+                        image = selection["manifest"]
+                        platform = {"aarch64": "linux/arm64", "x86_64": "linux/amd64"}[
+                            native_selection["runtime"]["machine"]]
+                        if (image["gateway"] != "managed" or image["platform"] != platform
+                                or image["revision"] != native_selection["revision"]):
+                            raise StateError("Native handover recovery candidate identity differs from its baseline")
+                    if native or handover_native:
                         expected = {"original-runtime": "passed", "matching-data": "passed"}
                     else:
                         metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
                         expected = ({"containers": "passed", "gateway": "passed"}
                                     if metadata["gateway"] == "standalone" else
                                     {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"})
-                    if receipt["required"] != expected and (native or receipt["required"] != absent):
+                    if receipt["required"] != expected and (native or handover_native or receipt["required"] != absent):
                         raise StateError("Recovery requires matching approval and all independent runtime checks")
                     if restore_native:
-                        if not native:
+                        if not native and not handover_native:
                             raise StateError("Only native recovery may restore its captured prior committed selection")
                         if native_previous is not None:
                             if set(native_previous) != {"selection", "completion"}:

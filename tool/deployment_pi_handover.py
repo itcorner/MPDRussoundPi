@@ -6,17 +6,20 @@ matching recovery path.
 """
 
 import copy
+import hashlib
 import ipaddress
 import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from tool.deployment_channel import portable_backup
 from tool.deployment_compose import specification as compose_specification
 from tool.deployment_local import LOCAL_CANDIDATE
+from tool import deployment_native as native
 from tool.deployment_native import environment, specification as native_specification
 from tool.deployment_native_source import NativeError, validate_candidate as native_candidate
-from tool.deployment_state import candidate, identity
+from tool.deployment_state import candidate, completion_record, identity, operation_id, pending_record
 
 
 def prepare(native_spec: dict[str, Any], native_selection: dict[str, Any],
@@ -98,3 +101,63 @@ def prepare(native_spec: dict[str, Any], native_selection: dict[str, Any],
     if "${" in json.dumps(config):
         raise NativeError("Handover inputs must not contain Compose interpolation expressions")
     return copy.deepcopy(compose_spec), config
+
+
+def verify_backup(path: Path, operation: str, checksum: str, *,
+                  committed: dict[str, Any], native_spec: dict[str, Any],
+                  image_selection: dict[str, Any], native_asset: Path) -> dict[str, Any]:
+    """Verify a fresh handover backup against independently retained review inputs."""
+    operation_id(operation)
+    if set(committed) != {"selection", "completion"}:
+        raise NativeError("Handover backup requires an independently retained committed native record")
+    pending_record(committed["selection"])
+    completion_record(committed["completion"], committed["selection"])
+    previous = committed["selection"]
+    if previous["phase"] != "checks-complete":
+        raise NativeError("Handover backup requires a completed native baseline")
+    selected = previous["candidate"]
+    native_candidate(selected)
+    spec = native_specification(native_spec)
+    prepare(spec, selected, image_selection, project=spec["deployment"], compose_path="/handover-compose.json")
+    previous_operation = previous["operation"]
+    expected_sources: dict[str, str] = {
+        "data": spec["data_dir"],
+        "native-asset": str(native_asset),
+        "previous-release": str(native.RELEASES / selected["release"]),
+        "previous-runtime": str(native.RUNTIME / previous_operation),
+    }
+    if (not native_asset.is_absolute() or ".." in native_asset.parts
+            or native_asset.name != previous_operation):
+        raise NativeError("Handover backup native asset path differs from the committed operation")
+    manifest = portable_backup(path, operation, checksum)
+    if manifest["sources"] != expected_sources:
+        raise NativeError("Handover backup roots differ from the independently retained native baseline")
+    entries = {item["path"]: item for item in manifest["entries"] if item["type"] == "file"}
+
+    def content(name: str) -> bytes:
+        entry = entries.get(name)
+        if entry is None:
+            raise NativeError("Handover backup is missing native recovery assets")
+        return (path / entry["blob"]).read_bytes()
+
+    if (json.loads(content("native-asset/spec.json")) != spec
+            or json.loads(content("native-asset/selection.json")) != selected):
+        raise NativeError("Backed-up native inputs differ from the committed baseline")
+    for name, value in native.unit_files(spec, selected, previous_operation).items():
+        if content("native-asset/" + name) != value:
+            raise NativeError("Backed-up native unit differs from the committed baseline")
+    if content("previous-runtime/ser2net.yaml") != native.gateway_config(spec):
+        raise NativeError("Backed-up native gateway configuration differs from the committed baseline")
+    inventory: list[dict[str, Any]] = []
+    for item in sorted((item for item in manifest["entries"]
+                        if item["path"].split("/")[0] == "previous-release"),
+                       key=lambda item: Path(item["path"]).parts[1:]):
+        entry: dict[str, Any] = {"path": "/".join(Path(item["path"]).parts[1:]) or ".", "mode": item["mode"]}
+        if item["type"] == "file":
+            entry["sha256"] = item["sha256"]
+        inventory.append(entry)
+    digest = hashlib.sha256(b"".join((json.dumps(item, sort_keys=True) + "\n").encode()
+                                     for item in inventory)).hexdigest()
+    if digest != selected["sha256"]:
+        raise NativeError("Backed-up native release differs from the committed source/environment")
+    return manifest
