@@ -4797,6 +4797,14 @@ live provenance, reserve state, transfer or load images, capture a backup,
 activate services or provide recovery. Its derived layout is not authorization
 to perform the one-time handover.
 
+State-layer tests establish that a reserved local image candidate keeps the
+old native selection committed until the required backup, image-load and
+completion boundaries have been recorded. They also establish a remaining
+blocker: existing recovery refuses to restore the native selection for a
+pending image candidate and retains the reservation. These tests exercise
+state transitions only; they do not prove a backup, a Docker deployment or a
+working recovery. Do not start a manual cutover based on them.
+
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
    host/ports/device, gateway and proxy settings, plus a verified compatible
