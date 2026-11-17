@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import io
 import json
 import os
@@ -6,6 +7,7 @@ from pathlib import Path
 import shutil
 import socket
 import stat
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -18,12 +20,13 @@ from tool import deployment_native as native
 from tool import deployment_native_source as source
 from tool.deployment_backup import FileBackup
 from tool.deployment_channel import Channel, ChannelError
-from tool.deployment_compose import private_write
+from tool.deployment_compose import encoded, private_write
 from tool.deployment_load import select_bundle
 from tool.deployment_operator import controller, serve
 from tool.deployment_pi_handover import (
-    capture_backup, check_docker_conflicts, fence_native, receive_handover_backup,
-    prepare_backup_restore, recover_before_activation, resume_before_backup, send_handover_backup, verify_backup,
+    capture_backup, check_docker_conflicts, fence_candidate_containers, fence_native, receive_handover_backup,
+    prepare, prepare_backup_restore, recover_before_activation, resume_before_backup, send_handover_backup,
+    verify_backup,
 )
 from tool.deployment_state import PHASES, StateError, StateStore
 
@@ -440,13 +443,52 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.store.advance("fixture", operation, "backup-complete", backup=operation)
         self.store.start_image_load("fixture", operation, self.images, INTENT)
         with patch.object(native, "stop_native") as stop:
-            with self.assertRaisesRegex(source.NativeError, "before image load"):
+            with self.assertRaisesRegex(source.NativeError, "completed image load"):
                 recover_before_activation(
                     {"state": self.root / "state", "evidence": self.evidence}, "fixture", operation,
                     backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
                     approve=lambda review: review["digest"])
             stop.assert_not_called()
         self.assertTrue(self.store.status()["blocked"])
+
+    def test_backup_recovery_after_completed_image_load_preserves_live_tree(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        self.store.start_image_load("fixture", operation, self.images, INTENT)
+        loaded = {name: image["reference"] for name, image in self.images["manifest"]["images"].items()}
+        self.store.complete_image_load("fixture", operation, self.images, INTENT, loaded)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        live = Path(self.spec["data_dir"]) / "state.json"
+        live.write_text("later edit")
+        storage = {"assets": self.assets, "evidence": self.evidence,
+                   "state": self.root / "state", "restores": restores}
+        reviews = []
+        def approve(review):
+            reviews.append(review["plan"])
+            return review["digest"]
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native"), patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "runtime_checks"), \
+                patch.object(native, "command"), \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts"):
+            result = recover_before_activation(storage, "fixture", operation, backup_path=self.backup.path,
+                                               checksum=self.backup.manifest_sha256, approve=approve)
+        self.assertEqual(reviews[0]["loaded_images"], loaded)
+        self.assertEqual(live.read_text(), "current state")
+        retained = live.parent.with_name(live.parent.name + ".failed-" + result["recovery"])
+        self.assertEqual((retained / "state.json").read_text(), "later edit")
+        self.assertFalse(self.store.status()["blocked"])
 
     def test_backup_recovery_rejects_apply_attempt_before_any_service_change(self):
         operation = self.operation
@@ -456,7 +498,7 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.store.advance("fixture", operation, "backup-complete", backup=operation)
         private_write(self.evidence / (operation + ".apply-attempt.json"), {"operation": operation})
         with patch.object(native, "stop_native") as stop:
-            with self.assertRaisesRegex(source.NativeError, "before image load"):
+            with self.assertRaisesRegex(source.NativeError, "completed image load"):
                 recover_before_activation(
                     {"state": self.root / "state", "evidence": self.evidence}, "fixture", operation,
                     backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
@@ -490,6 +532,189 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertFalse((self.evidence / (operation + ".recovery-attempt.json")).exists())
         self.assertEqual(list(restores.iterdir()), [])
         self.assertTrue(self.store.status()["blocked"])
+
+    def candidate_fencing_fixture(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        self.store.start_image_load("fixture", operation, self.images, INTENT)
+        loaded = {name: image["reference"] for name, image in self.images["manifest"]["images"].items()}
+        self.store.complete_image_load("fixture", operation, self.images, INTENT, loaded)
+        private_write(self.evidence / (operation + ".apply-attempt.json"),
+                      {"operation": operation, "intent_digest": INTENT})
+        project = "pi-handover-" + operation.replace("-", "")
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        _, config = prepare(self.spec, self.selection, self.images, project=project,
+                            compose_path="/handover-compose.json")
+        private_write(self.evidence / (operation + ".handover-activation.json"),
+                      {"operation": operation, "intent_digest": INTENT, "project": project,
+                       "engine": "engine", "images": loaded,
+                       "config_digest": "sha256:" + hashlib.sha256(encoded(config)).hexdigest()})
+        containers = []
+        for service, component in (("russound-web", "web"), ("russound-ser2net", "ser2net")):
+            containers.append({"Id": component + "-id", "Image": loaded[component],
+                               "Config": {"Labels": {"com.docker.compose.project": project,
+                                                     "com.docker.compose.service": service}},
+                               "State": {"Running": True, "Restarting": False, "Paused": False},
+                               "HostConfig": {"RestartPolicy": {"Name": "unless-stopped"}}})
+        return containers
+
+    def test_candidate_fencing_stops_only_matching_operation_containers(self):
+        containers = self.candidate_fencing_fixture()
+        unrelated = {"Id": "unrelated-id", "Image": "other", "Config": {"Labels": {}},
+                     "State": {}, "HostConfig": {}}
+        containers.append(unrelated)
+        mutations = []
+        def command(argv, **kwargs):
+            args = argv[3:]
+            if args[:1] == ["info"]:
+                return b'{"ID":"engine"}'
+            if args[:1] == ["ps"]:
+                return ("\n".join(item["Id"] for item in containers) + "\n").encode()
+            if args[:1] == ["inspect"]:
+                return json.dumps(containers).encode()
+            mutations.append(args)
+            item = next(item for item in containers if item["Id"] == args[-1])
+            if args[0] == "update":
+                item["HostConfig"]["RestartPolicy"]["Name"] = "no"
+            elif args[0] == "stop":
+                item["State"]["Running"] = False
+            else:
+                self.fail(f"Unexpected Docker command: {args}")
+            return b""
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=command), \
+                patch.object(native, "check_host_writers"), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts") as conflicts:
+            fence_candidate_containers(
+                self.store, {"evidence": self.evidence, "assets": self.assets}, "fixture", self.operation,
+                native_spec=self.spec, expected_engine="engine", approve=lambda review: review["digest"])
+        self.assertEqual(len(mutations), 4)
+        self.assertTrue(all(args[-1] != "unrelated-id" for args in mutations))
+        conflicts.assert_called_once_with(self.spec, expected_engine="engine")
+        self.assertTrue((self.evidence / (self.operation + ".candidate-fence-complete.json")).exists())
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_candidate_fencing_refuses_unapproved_image_before_mutation(self):
+        containers = self.candidate_fencing_fixture()
+        containers[0]["Image"] = "unexpected"
+        def command(argv, **kwargs):
+            args = argv[3:]
+            if args[:1] == ["info"]:
+                return b'{"ID":"engine"}'
+            if args[:1] == ["ps"]:
+                return ("\n".join(item["Id"] for item in containers) + "\n").encode()
+            if args[:1] == ["inspect"]:
+                return json.dumps(containers).encode()
+            self.fail(f"Unexpected Docker mutation: {args}")
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=command):
+            with self.assertRaisesRegex(source.NativeError, "Unexpected candidate"):
+                fence_candidate_containers(
+                    self.store, {"evidence": self.evidence, "assets": self.assets}, "fixture", self.operation,
+                    native_spec=self.spec, expected_engine="engine", approve=lambda review: review["digest"])
+        self.assertFalse((self.evidence / (self.operation + ".candidate-fence-attempt.json")).exists())
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_candidate_fencing_refuses_container_drift_after_review(self):
+        containers = self.candidate_fencing_fixture()
+        def command(argv, **kwargs):
+            args = argv[3:]
+            if args[:1] == ["info"]:
+                return b'{"ID":"engine"}'
+            if args[:1] == ["ps"]:
+                return ("\n".join(item["Id"] for item in containers) + "\n").encode()
+            if args[:1] == ["inspect"]:
+                return json.dumps(containers).encode()
+            self.fail(f"Unexpected Docker mutation: {args}")
+        def approve(review):
+            containers[0]["State"]["Running"] = False
+            return review["digest"]
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=command):
+            with self.assertRaisesRegex(source.NativeError, "changed after fencing review"):
+                fence_candidate_containers(
+                    self.store, {"evidence": self.evidence, "assets": self.assets}, "fixture",
+                    self.operation, native_spec=self.spec, expected_engine="engine", approve=approve)
+        self.assertFalse((self.evidence / (self.operation + ".candidate-fence-attempt.json")).exists())
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_candidate_fencing_failure_retains_one_shot_evidence(self):
+        containers = self.candidate_fencing_fixture()
+        updates = []
+        def command(argv, **kwargs):
+            args = argv[3:]
+            if args[:1] == ["info"]:
+                return b'{"ID":"engine"}'
+            if args[:1] == ["ps"]:
+                return ("\n".join(item["Id"] for item in containers) + "\n").encode()
+            if args[:1] == ["inspect"]:
+                return json.dumps(containers).encode()
+            updates.append(args)
+            raise source.NativeError("injected Docker failure")
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command", side_effect=command), \
+                patch.object(native, "check_host_writers"):
+            arguments = {"native_spec": self.spec, "expected_engine": "engine",
+                         "approve": lambda review: review["digest"]}
+            with self.assertRaisesRegex(source.NativeError, "injected Docker failure"):
+                fence_candidate_containers(self.store, {"evidence": self.evidence, "assets": self.assets},
+                                           "fixture", self.operation, **arguments)
+            with self.assertRaises(FileExistsError):
+                fence_candidate_containers(self.store, {"evidence": self.evidence, "assets": self.assets},
+                                           "fixture", self.operation, **arguments)
+        self.assertEqual(len(updates), 1)
+        self.assertTrue((self.evidence / (self.operation + ".candidate-fence-attempt.json")).exists())
+        self.assertFalse((self.evidence / (self.operation + ".candidate-fence-complete.json")).exists())
+        self.assertTrue(self.store.status()["blocked"])
+
+    @unittest.skipUnless(os.environ.get("MPDRUSSOUNDPI_TEST_DOCKER_FENCING_IMAGE"),
+                         "requires an explicitly selected local Docker test image")
+    def test_candidate_fencing_against_real_docker(self):
+        self.candidate_fencing_fixture()
+        from tool.deployment_build import local_engine
+        docker = ["docker", "--context", local_engine()]
+        image = os.environ["MPDRUSSOUNDPI_TEST_DOCKER_FENCING_IMAGE"]
+        image_id = subprocess.check_output(docker + ["image", "inspect", "--format", "{{.Id}}", image],
+                                           text=True).strip()
+        info = json.loads(subprocess.check_output(docker + ["info", "--format", "{{json .}}"]))
+        state = self.store.status()
+        loaded = {"web": image_id, "ser2net": image_id}
+        state["deployments"]["fixture"]["pending"]["loaded_images"] = loaded
+        store = Mock(spec=StateStore)
+        store.status.return_value = state
+        project = "pi-handover-" + self.operation.replace("-", "")
+        _, config = prepare(self.spec, self.selection, self.images, project=project,
+                            compose_path="/handover-compose.json")
+        activation = self.evidence / (self.operation + ".handover-activation.json")
+        activation.chmod(0o600)
+        activation.write_bytes(encoded({"operation": self.operation, "intent_digest": INTENT,
+                                        "project": project, "engine": info["ID"], "images": loaded,
+                                        "config_digest": "sha256:" + hashlib.sha256(encoded(config)).hexdigest()}))
+        activation.chmod(0o400)
+        created = []
+        for service in ("russound-web", "russound-ser2net"):
+            container = subprocess.check_output(docker + [
+                "run", "--detach", "--network", "none", "--restart", "unless-stopped",
+                "--label", "com.docker.compose.project=" + project,
+                "--label", "com.docker.compose.service=" + service,
+                "--entrypoint", "python", image, "-c",
+                "import signal,sys,time; signal.signal(signal.SIGTERM, lambda *args: sys.exit(0)); time.sleep(300)",
+            ], text=True).strip()
+            created.append(container)
+            self.addCleanup(subprocess.run, docker + ["rm", "--force", container],
+                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        with patch.object(native, "check_host_writers"):
+            fence_candidate_containers(store, {"evidence": self.evidence, "assets": self.assets},
+                                       "fixture", self.operation, native_spec=self.spec,
+                                       expected_engine=info["ID"], approve=lambda review: review["digest"])
+        inspected = json.loads(subprocess.check_output(docker + ["inspect", *created]))
+        for item in inspected:
+            self.assertFalse(item["State"]["Running"])
+            self.assertEqual(item["HostConfig"]["RestartPolicy"]["Name"], "no")
 
     def test_backup_recovery_failure_keeps_evidence_and_does_not_retry(self):
         operation = self.operation

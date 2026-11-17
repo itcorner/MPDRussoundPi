@@ -266,6 +266,116 @@ def check_docker_conflicts(spec: dict[str, Any], *, expected_engine: str | None 
     return engine
 
 
+def fence_candidate_containers(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
+                               native_spec: dict[str, Any], expected_engine: str,
+                               approve: Callable[[dict[str, Any]], str | None]) -> None:
+    """Fence only operation-scoped candidate containers; never restart native services.
+
+    The caller must establish that the original activation process and any
+    subprocesses have ended. This primitive is not a complete recovery workflow.
+    """
+    identity(deployment)
+    operation_id(operation)
+    spec = native_specification(native_spec)
+    state = store.status()
+    record = state["deployments"].get(deployment)
+    if (spec["deployment"] != deployment
+            or state["reservation"] != {"schema_version": 1, "deployment": deployment, "operation": operation}
+            or record is None or record["committed"] is None or record["pending"] is None
+            or record["pending"]["operation"] != operation or record["pending"]["backup"] != operation
+            or record["pending"]["phase"] not in ("backup-complete", "apply-complete", "checks-complete")
+            or not state["image_load_started"] or record["pending"]["loaded_images"] is None):
+        raise NativeError("Candidate fencing requires a reserved handover with fully loaded images")
+    pending = record["pending"]
+    previous = record["committed"]["selection"]
+    if previous["candidate"]["kind"] != native.NATIVE_CANDIDATE:
+        raise NativeError("Candidate fencing requires the committed native baseline")
+    project = "pi-handover-" + operation.replace("-", "")
+    asset = storage["assets"] / previous["operation"]
+    if (json.loads(private_read(asset / "spec.json")) != spec
+            or json.loads(private_read(asset / "selection.json")) != previous["candidate"]):
+        raise NativeError("Candidate fencing differs from the committed native assets")
+    _, config = prepare(spec, previous["candidate"], pending["candidate"], project=project,
+                        compose_path="/handover-compose.json")
+    marker = json.loads(private_read(storage["evidence"] / (operation + ".apply-attempt.json")))
+    if marker != {"operation": operation, "intent_digest": pending["intent_digest"]}:
+        raise NativeError("Candidate activation evidence differs from the reserved operation")
+    activation = json.loads(private_read(storage["evidence"] / (operation + ".handover-activation.json")))
+    if activation != {"operation": operation, "intent_digest": pending["intent_digest"],
+                      "project": project, "engine": expected_engine, "images": pending["loaded_images"],
+                      "config_digest": "sha256:" + hashlib.sha256(encoded(config)).hexdigest()}:
+        raise NativeError("Candidate activation scope differs from the reviewed handover")
+    docker = ["docker", "--context", local_engine()]
+    components = {"russound-web": "web", "russound-ser2net": "ser2net"}
+
+    def inspect() -> list[dict[str, Any]]:
+        info: Any = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
+        if not is_mapping(info) or info.get("ID") != expected_engine:
+            raise NativeError("Docker daemon changed during candidate fencing")
+        ids = native.command(docker + ["ps", "--all", "--quiet", "--no-trunc"]).decode().split()
+        containers: Any = json.loads(native.command(docker + ["inspect", *ids])) if ids else []
+        if not is_list(containers) or len(containers) != len(ids) or len(ids) != len(set(ids)):
+            raise NativeError("Cannot establish candidate container identities")
+        seen: set[str] = set()
+        services: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for item in containers:
+            if (not is_mapping(item) or not isinstance(item.get("Id"), str) or item["Id"] not in ids
+                    or item["Id"] in seen or not is_mapping(item.get("Config"))
+                    or not is_mapping(item.get("State")) or not is_mapping(item.get("HostConfig"))):
+                raise NativeError("Invalid Docker inspection blocks candidate fencing")
+            seen.add(item["Id"])
+            labels: Any = item["Config"].get("Labels") or {}
+            if not is_mapping(labels):
+                raise NativeError("Invalid container labels block candidate fencing")
+            if labels.get("com.docker.compose.project") != project:
+                continue
+            service = labels.get("com.docker.compose.service")
+            if (not isinstance(service, str) or service not in components or service in services
+                    or item.get("Image") != pending["loaded_images"][components[service]]
+                    or any(type(item["State"].get(key)) is not bool for key in ("Running", "Restarting", "Paused"))
+                    or item["State"]["Paused"] or not is_mapping(item["HostConfig"].get("RestartPolicy"))
+                    or not isinstance(item["HostConfig"]["RestartPolicy"].get("Name"), str)):
+                raise NativeError("Unexpected candidate container identity blocks recovery")
+            services.add(service)
+            result.append({"id": item["Id"], "service": service, "image": item["Image"],
+                           "restart": item["HostConfig"]["RestartPolicy"]["Name"],
+                           "running": item["State"]["Running"], "restarting": item["State"]["Restarting"]})
+        info = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
+        if not is_mapping(info) or info.get("ID") != expected_engine:
+            raise NativeError("Docker daemon changed during candidate inspection")
+        return sorted(result, key=lambda item: item["service"])
+
+    if not expected_engine:
+        raise NativeError("Candidate fencing requires the reviewed Docker daemon identity")
+    before = inspect()
+    plan: dict[str, Any] = {"kind": "pi-handover-fence-candidates", "deployment": deployment,
+                            "operation": operation, "project": project, "engine": expected_engine,
+                            "containers": before, "disable_restart_and_stop": True,
+                            "data_and_native_services": "untouched"}
+    digest = "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()
+    if approve({"plan": plan, "digest": digest}) != digest:
+        raise NativeError("Candidate fencing was declined; containers were not changed")
+    if store.status() != state or inspect() != before:
+        raise NativeError("Candidate identities or handover state changed after fencing review")
+    native.check_host_writers(Path(spec["data_dir"]), check_files=False)
+    private_write(storage["evidence"] / (operation + ".candidate-fence-attempt.json"),
+                  {"review": plan, "review_digest": digest})
+    for item in before:
+        native.command(docker + ["update", "--restart", "no", item["id"]], timeout=90)
+        native.command(docker + ["stop", "--time", "30", item["id"]], timeout=90)
+    after = inspect()
+    if ([{key: item[key] for key in ("id", "service", "image")} for item in before]
+            != [{key: item[key] for key in ("id", "service", "image")} for item in after]
+            or any(item["running"] or item["restarting"] or item["restart"] != "no" for item in after)):
+        raise NativeError("Candidate fencing outcome is uncertain; preserve the reservation")
+    check_docker_conflicts(spec, expected_engine=expected_engine)
+    if store.status() != state:
+        raise NativeError("Handover state changed during candidate fencing")
+    private_write(storage["evidence"] / (operation + ".candidate-fence-complete.json"),
+                  {"operation": operation, "review_digest": digest, "containers": after})
+
+
 def resume_before_backup(storage: dict[str, Path], deployment: str, operation: str,
                          approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
     """Resume the captured native runtime without replacing data before image activation."""
@@ -453,7 +563,7 @@ def prepare_backup_restore(store: StateStore, storage: dict[str, Path], deployme
 def recover_before_activation(storage: dict[str, Path], deployment: str, operation: str, *,
                               backup_path: Path, checksum: str,
                               approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
-    """Restore a reviewed backup before any candidate image load or activation."""
+    """Restore a reviewed backup before activation, after a completed image load if any."""
     identity(deployment)
     operation_id(operation)
     store = StateStore(storage["state"], owner_uid=os.getuid())
@@ -464,9 +574,10 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
             or record["pending"]["operation"] != operation
             or record["pending"]["phase"] != "backup-complete"
             or record["pending"]["backup"] != operation
-            or state["image_load_started"]
+            or (state["image_load_started"] and record["pending"]["loaded_images"] is None)
+            or (not state["image_load_started"] and record["pending"]["loaded_images"] is not None)
             or (storage["evidence"] / (operation + ".apply-attempt.json")).exists()):
-        raise NativeError("Backup recovery requires the matching handover before image load and activation")
+        raise NativeError("Backup recovery requires a completed image load, if started, and no activation attempt")
     committed = record["committed"]
     previous = committed["selection"]
     selected = previous["candidate"]
@@ -496,6 +607,7 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
         "kind": "pi-handover-backup-recovery", "deployment": deployment, "operation": operation,
         "recovery": recovery, "native_operation": previous["operation"],
         "backup_manifest_sha256": checksum, "data_dir": spec["data_dir"],
+        "loaded_images": record["pending"]["loaded_images"],
         "restore_matching_data": True, "preserve_post_backup_tree": True,
         "audio_agent_proxy_and_os": "untouched",
     }

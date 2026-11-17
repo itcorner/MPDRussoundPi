@@ -4832,14 +4832,23 @@ boundaries have only been mocked, not rehearsed on Linux or the Pi. An internal 
 preparation verifies the separately retained backup identity and matching
 reservation, repeatedly requires caller-provided writer quiescence, and restores
 only into a new tree. A separately reviewed `handover-recover-backup` action
-uses that restore only at `backup-complete` before image loading or apply,
-preserves the later data tree, and checks native health before state resolution.
+uses that restore only at `backup-complete` before apply, with no image load
+or a fully recorded image load, preserves the later data tree, and checks
+native health before state resolution. An incomplete image load blocks recovery.
 Target operator sessions now share an advisory lock, but older tooling and
 other orchestration do not participate. The backup and handover tests pass in
 an isolated Linux container with mocked service boundaries; they do not
 rehearse systemd, Docker ownership, physical serial hardware, or a live cutover.
-The deployment transaction and post-image-load/post-activation recovery are
+The deployment transaction and post-activation recovery are
 still unimplemented, so do not start a cutover based on these pieces.
+An internal candidate-fencing primitive additionally requires a reserved
+operation, fully recorded image IDs, an exact operation-specific project and
+activation evidence; it checks identities after review and disables restart
+before stopping each candidate. A local Docker test exercised this against two
+temporary labelled containers, but not actual Compose partial activation,
+systemd, daemon interruption or Pi hardware. It is not connected to a cutover
+or post-activation recovery and assumes the original activation process and
+its subprocesses have ended.
 The exact-revision web image (Python 3.12.15) also passed 101 configuration,
 playback-status, and server unit tests against synthetic inputs. This is not
 proof that the Pi's current data, native Python 3.13 environment, or physical

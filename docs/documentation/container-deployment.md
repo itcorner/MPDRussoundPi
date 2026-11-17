@@ -1374,9 +1374,10 @@ the recorded cutover baseline.
 The experimental Pi handover recovery actions are not a migration procedure.
 `handover-resume-original` is limited to the reserved pre-backup phase.
 `handover-recover-backup` requires a separately retained matching backup and
-manifest identity, and refuses after image loading or apply has started.
+manifest identity. It allows a completed image load, but refuses an uncertain
+or interrupted load and any started apply.
 It preserves the post-backup data tree and checks the native runtime before
-clearing state. These actions have mocked service tests only; post-image-load
+clearing state. These actions have mocked service tests only; post-activation
 recovery and the native-to-Docker transaction are not yet implemented. Never
 begin a cutover on the assumption that these actions cover it. The target
 operator lock serializes cooperating current-version sessions only; establish
