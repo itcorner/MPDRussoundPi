@@ -266,6 +266,54 @@ def check_docker_conflicts(spec: dict[str, Any], *, expected_engine: str | None 
     return engine
 
 
+def inspect_candidate_containers(project: str, images: dict[str, str], expected_engine: str) -> list[dict[str, Any]]:
+    """Inspect the exact operation-scoped candidate set on the reviewed daemon."""
+    docker = ["docker", "--context", local_engine()]
+    components = {"russound-web": "web", "russound-ser2net": "ser2net"}
+
+    def inspect() -> list[dict[str, Any]]:
+        info: Any = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
+        if not is_mapping(info) or info.get("ID") != expected_engine:
+            raise NativeError("Docker daemon changed during candidate fencing")
+        ids = native.command(docker + ["ps", "--all", "--quiet", "--no-trunc"]).decode().split()
+        containers: Any = json.loads(native.command(docker + ["inspect", *ids])) if ids else []
+        if not is_list(containers) or len(containers) != len(ids) or len(ids) != len(set(ids)):
+            raise NativeError("Cannot establish candidate container identities")
+        seen: set[str] = set()
+        services: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for item in containers:
+            if (not is_mapping(item) or not isinstance(item.get("Id"), str) or item["Id"] not in ids
+                    or item["Id"] in seen or not is_mapping(item.get("Config"))
+                    or not is_mapping(item.get("State")) or not is_mapping(item.get("HostConfig"))):
+                raise NativeError("Invalid Docker inspection blocks candidate fencing")
+            seen.add(item["Id"])
+            labels: Any = item["Config"].get("Labels") or {}
+            if not is_mapping(labels):
+                raise NativeError("Invalid container labels block candidate fencing")
+            if labels.get("com.docker.compose.project") != project:
+                continue
+            service = labels.get("com.docker.compose.service")
+            if (not isinstance(service, str) or service not in components or service in services
+                    or item.get("Image") != images[components[service]]
+                    or any(type(item["State"].get(key)) is not bool for key in ("Running", "Restarting", "Paused"))
+                    or item["State"]["Paused"] or not is_mapping(item["HostConfig"].get("RestartPolicy"))
+                    or not isinstance(item["HostConfig"]["RestartPolicy"].get("Name"), str)):
+                raise NativeError("Unexpected candidate container identity blocks recovery")
+            services.add(service)
+            result.append({"id": item["Id"], "service": service, "image": item["Image"],
+                           "restart": item["HostConfig"]["RestartPolicy"]["Name"],
+                           "running": item["State"]["Running"], "restarting": item["State"]["Restarting"]})
+        info = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
+        if not is_mapping(info) or info.get("ID") != expected_engine:
+            raise NativeError("Docker daemon changed during candidate inspection")
+        return sorted(result, key=lambda item: item["service"])
+
+    if not expected_engine:
+        raise NativeError("Candidate fencing requires the reviewed Docker daemon identity")
+    return inspect()
+
+
 def fence_candidate_containers(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
                                native_spec: dict[str, Any], expected_engine: str,
                                approve: Callable[[dict[str, Any]], str | None]) -> None:
@@ -306,48 +354,10 @@ def fence_candidate_containers(store: StateStore, storage: dict[str, Path], depl
                       "config_digest": "sha256:" + hashlib.sha256(encoded(config)).hexdigest()}:
         raise NativeError("Candidate activation scope differs from the reviewed handover")
     docker = ["docker", "--context", local_engine()]
-    components = {"russound-web": "web", "russound-ser2net": "ser2net"}
 
     def inspect() -> list[dict[str, Any]]:
-        info: Any = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
-        if not is_mapping(info) or info.get("ID") != expected_engine:
-            raise NativeError("Docker daemon changed during candidate fencing")
-        ids = native.command(docker + ["ps", "--all", "--quiet", "--no-trunc"]).decode().split()
-        containers: Any = json.loads(native.command(docker + ["inspect", *ids])) if ids else []
-        if not is_list(containers) or len(containers) != len(ids) or len(ids) != len(set(ids)):
-            raise NativeError("Cannot establish candidate container identities")
-        seen: set[str] = set()
-        services: set[str] = set()
-        result: list[dict[str, Any]] = []
-        for item in containers:
-            if (not is_mapping(item) or not isinstance(item.get("Id"), str) or item["Id"] not in ids
-                    or item["Id"] in seen or not is_mapping(item.get("Config"))
-                    or not is_mapping(item.get("State")) or not is_mapping(item.get("HostConfig"))):
-                raise NativeError("Invalid Docker inspection blocks candidate fencing")
-            seen.add(item["Id"])
-            labels: Any = item["Config"].get("Labels") or {}
-            if not is_mapping(labels):
-                raise NativeError("Invalid container labels block candidate fencing")
-            if labels.get("com.docker.compose.project") != project:
-                continue
-            service = labels.get("com.docker.compose.service")
-            if (not isinstance(service, str) or service not in components or service in services
-                    or item.get("Image") != pending["loaded_images"][components[service]]
-                    or any(type(item["State"].get(key)) is not bool for key in ("Running", "Restarting", "Paused"))
-                    or item["State"]["Paused"] or not is_mapping(item["HostConfig"].get("RestartPolicy"))
-                    or not isinstance(item["HostConfig"]["RestartPolicy"].get("Name"), str)):
-                raise NativeError("Unexpected candidate container identity blocks recovery")
-            services.add(service)
-            result.append({"id": item["Id"], "service": service, "image": item["Image"],
-                           "restart": item["HostConfig"]["RestartPolicy"]["Name"],
-                           "running": item["State"]["Running"], "restarting": item["State"]["Restarting"]})
-        info = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
-        if not is_mapping(info) or info.get("ID") != expected_engine:
-            raise NativeError("Docker daemon changed during candidate inspection")
-        return sorted(result, key=lambda item: item["service"])
+        return inspect_candidate_containers(project, pending["loaded_images"], expected_engine)
 
-    if not expected_engine:
-        raise NativeError("Candidate fencing requires the reviewed Docker daemon identity")
     before = inspect()
     plan: dict[str, Any] = {"kind": "pi-handover-fence-candidates", "deployment": deployment,
                             "operation": operation, "project": project, "engine": expected_engine,
@@ -562,8 +572,9 @@ def prepare_backup_restore(store: StateStore, storage: dict[str, Path], deployme
 
 def recover_before_activation(storage: dict[str, Path], deployment: str, operation: str, *,
                               backup_path: Path, checksum: str,
-                              approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
-    """Restore a reviewed backup before activation, after a completed image load if any."""
+                              approve: Callable[[dict[str, Any]], str | None],
+                              activated: bool = False) -> dict[str, Any]:
+    """Restore a reviewed backup, optionally fencing an activated candidate first."""
     identity(deployment)
     operation_id(operation)
     store = StateStore(storage["state"], owner_uid=os.getuid())
@@ -572,12 +583,14 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
     if (state["reservation"] != {"schema_version": 1, "deployment": deployment, "operation": operation}
             or record is None or record["committed"] is None or record["pending"] is None
             or record["pending"]["operation"] != operation
-            or record["pending"]["phase"] != "backup-complete"
+            or record["pending"]["phase"] not in (("backup-complete", "apply-complete", "checks-complete")
+                                                   if activated else ("backup-complete",))
             or record["pending"]["backup"] != operation
             or (state["image_load_started"] and record["pending"]["loaded_images"] is None)
             or (not state["image_load_started"] and record["pending"]["loaded_images"] is not None)
-            or (storage["evidence"] / (operation + ".apply-attempt.json")).exists()):
-        raise NativeError("Backup recovery requires a completed image load, if started, and no activation attempt")
+            or (storage["evidence"] / (operation + ".apply-attempt.json")).exists() != activated
+            or (activated and (not state["image_load_started"] or record["pending"]["loaded_images"] is None))):
+        raise NativeError("Backup recovery requires a completed image load, if started, and matching activation evidence")
     committed = record["committed"]
     previous = committed["selection"]
     selected = previous["candidate"]
@@ -601,14 +614,27 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
     info = safe_path(gateway)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or gateway.read_bytes() != native.gateway_config(spec):
         raise NativeError("Native gateway configuration changed; backup recovery requires investigation")
-    engine = check_docker_conflicts(spec)
+    fenced: list[dict[str, Any]] | None = None
+    before: list[dict[str, Any]] = []
+    project = "pi-handover-" + operation.replace("-", "")
+    if activated:
+        activation = json.loads(private_read(storage["evidence"] / (operation + ".handover-activation.json")))
+        engine = activation.get("engine") if is_mapping(activation) else None
+        if not isinstance(engine, str) or not engine:
+            raise NativeError("Activated recovery requires the recorded Docker daemon")
+        before = inspect_candidate_containers(project, record["pending"]["loaded_images"], engine)
+    else:
+        engine = check_docker_conflicts(spec)
     recovery = str(uuid4())
     plan: dict[str, Any] = {
         "kind": "pi-handover-backup-recovery", "deployment": deployment, "operation": operation,
         "recovery": recovery, "native_operation": previous["operation"],
         "backup_manifest_sha256": checksum, "data_dir": spec["data_dir"],
         "loaded_images": record["pending"]["loaded_images"],
+        "activated": activated, "candidate_project": project if activated else None,
+        "candidate_containers": before, "docker_engine": engine if activated else None,
         "restore_matching_data": True, "preserve_post_backup_tree": True,
+        "operator_confirmed_original_orchestration_ended": True,
         "audio_agent_proxy_and_os": "untouched",
     }
     digest = "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()
@@ -627,16 +653,32 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
     info = safe_path(gateway)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or gateway.read_bytes() != native.gateway_config(spec):
         raise NativeError("Native gateway configuration changed after backup recovery approval")
-    check_docker_conflicts(spec, expected_engine=engine)
+    if activated:
+        if inspect_candidate_containers(project, record["pending"]["loaded_images"], engine) != before:
+            raise NativeError("Candidate containers changed after backup recovery approval")
+    else:
+        check_docker_conflicts(spec, expected_engine=engine)
     native.check_host_writers(Path(spec["data_dir"]), check_files=False)
     private_write(storage["evidence"] / (operation + ".recovery-attempt.json"),
                   {"review": plan, "review_digest": digest, "original_record": record,
                    "backup_manifest_sha256": checksum})
+    if activated:
+        def approve_fence(review: dict[str, Any]) -> str | None:
+            expected: dict[str, Any] = {"kind": "pi-handover-fence-candidates", "deployment": deployment,
+                        "operation": operation, "project": project, "engine": engine,
+                        "containers": before, "disable_restart_and_stop": True,
+                        "data_and_native_services": "untouched"}
+            return review["digest"] if review["plan"] == expected else None
+        fence_candidate_containers(store, storage, deployment, operation, native_spec=spec,
+                                   expected_engine=engine, approve=approve_fence)
+        fenced = json.loads(private_read(storage["evidence"] / (operation + ".candidate-fence-complete.json")))["containers"]
     native.stop_native(spec, selected, previous["operation"], {"previous_native": None})
 
     def quiet() -> None:
         native.check_no_writers(spec)
         check_docker_conflicts(spec, expected_engine=engine)
+        if activated and inspect_candidate_containers(project, record["pending"]["loaded_images"], engine) != fenced:
+            raise NativeError("Fenced candidate containers changed during native recovery")
 
     restored = prepare_backup_restore(
         store, storage, deployment, operation, backup_path=backup_path, checksum=checksum,
@@ -646,9 +688,13 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
     native.preserve_replace(restored / "data", Path(spec["data_dir"]), recovery, spec["uid"])
     check_data(native.data_spec(spec))
     check_docker_conflicts(spec, expected_engine=engine)
+    if activated and inspect_candidate_containers(project, record["pending"]["loaded_images"], engine) != fenced:
+        raise NativeError("Fenced candidate containers changed before native restart")
     native.command(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
     native.runtime_checks(spec, selected, previous["operation"])
     check_docker_conflicts(spec, expected_engine=engine)
+    if activated and inspect_candidate_containers(project, record["pending"]["loaded_images"], engine) != fenced:
+        raise NativeError("Fenced candidate containers changed after native restart")
     if store.status() != state:
         raise NativeError("Handover state changed during native backup recovery checks")
     receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,

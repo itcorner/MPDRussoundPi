@@ -1378,8 +1378,15 @@ manifest identity. It allows a completed image load, but refuses an uncertain
 or interrupted load and any started apply.
 It preserves the post-backup data tree and checks the native runtime before
 clearing state. These actions have mocked service tests only; post-activation
-recovery and the native-to-Docker transaction are not yet implemented. Never
-begin a cutover on the assumption that these actions cover it. The target
+recovery now has an experimental `handover-recover-activated` action that
+reviews the candidate identities, disables their restart policies, stops them,
+and preserves post-backup data before restoring native services. Its service
+boundaries are mocked, although local tests exercise fencing and data restore
+with temporary real Docker containers. It requires matching activation evidence and the
+operator must first establish that the original activation process and its
+subprocesses have ended. The native-to-Docker transaction is not yet
+implemented. Never begin a cutover on the assumption that these actions cover
+it. The target
 operator lock serializes cooperating current-version sessions only; establish
 that older tooling and any other orchestration have stopped before recovery.
 

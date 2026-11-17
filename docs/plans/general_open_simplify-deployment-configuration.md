@@ -4839,16 +4839,20 @@ Target operator sessions now share an advisory lock, but older tooling and
 other orchestration do not participate. The backup and handover tests pass in
 an isolated Linux container with mocked service boundaries; they do not
 rehearse systemd, Docker ownership, physical serial hardware, or a live cutover.
-The deployment transaction and post-activation recovery are
-still unimplemented, so do not start a cutover based on these pieces.
+The deployment transaction is still unimplemented, so do not start a cutover
+based on these pieces.
 An internal candidate-fencing primitive additionally requires a reserved
 operation, fully recorded image IDs, an exact operation-specific project and
 activation evidence; it checks identities after review and disables restart
 before stopping each candidate. A local Docker test exercised this against two
 temporary labelled containers, but not actual Compose partial activation,
 systemd, daemon interruption or Pi hardware. It is not connected to a cutover
-or post-activation recovery and assumes the original activation process and
-its subprocesses have ended.
+but post-activation recovery now uses this primitive before an isolated data
+restore and native health checks. A local Docker test exercises the combined
+fencing and restore with temporary containers; state and native systemd
+boundaries remain mocked. This recovery assumes the original activation
+process and its subprocesses have ended, and is not yet rehearsed on a
+representative systemd/Docker host.
 The exact-revision web image (Python 3.12.15) also passed 101 configuration,
 playback-status, and server unit tests against synthetic inputs. This is not
 proof that the Pi's current data, native Python 3.13 environment, or physical

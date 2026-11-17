@@ -94,7 +94,8 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
                                  lambda review: approve_remote(channel, review))
         channel.send(result)
         return
-    if request.get("action") in ("recover", "native-recover", "handover-recover-backup"):
+    if request.get("action") in ("recover", "native-recover", "handover-recover-backup",
+                                  "handover-recover-activated"):
         if set(request) != {"action", "deployment", "operation"}:
             raise ChannelError("Invalid recovery request")
         identity(request["deployment"])
@@ -106,11 +107,12 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         backup, checksum = receive_backup(channel, incoming, header)
         if backup.name != request["operation"]:
             raise ChannelError("Recovery operation and backup differ")
-        if request["action"] == "handover-recover-backup":
+        if request["action"] in ("handover-recover-backup", "handover-recover-activated"):
             from tool.deployment_pi_handover import recover_before_activation
             result = recover_before_activation(storage, request["deployment"], request["operation"],
                                                backup_path=backup, checksum=checksum,
-                                               approve=lambda review: approve_remote(channel, review))
+                                               approve=lambda review: approve_remote(channel, review),
+                                               activated=request["action"] == "handover-recover-activated")
             channel.send(result)
             return
         recovery_function = recover
@@ -205,10 +207,11 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
         from tool.deployment_native import recovery_assets as native_assets
         backup_validator = native_assets
     channel.send(request)
-    if request["action"] in ("recover", "native-recover", "handover-recover-backup"):
+    if request["action"] in ("recover", "native-recover", "handover-recover-backup",
+                             "handover-recover-activated"):
         if recovery is None or recovery_checksum is None:
             raise ChannelError("Recovery requires the private independently held backup and identity")
-        if request["action"] == "handover-recover-backup":
+        if request["action"] in ("handover-recover-backup", "handover-recover-activated"):
             portable_backup(recovery, operation, recovery_checksum)
         else:
             backup_validator(recovery, operation, recovery_checksum)
@@ -246,11 +249,14 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                          or event["plan"].get("restore_data") is not False
                          or event["plan"].get("preserve_operator_edits") is not True)):
                 raise ChannelError("Target reviewed a different handover recovery action")
-            if (request["action"] == "handover-recover-backup"
+            if (request["action"] in ("handover-recover-backup", "handover-recover-activated")
                     and (event["plan"].get("kind") != "pi-handover-backup-recovery"
                          or event["plan"].get("backup_manifest_sha256") != recovery_checksum
                          or event["plan"].get("restore_matching_data") is not True
-                         or event["plan"].get("preserve_post_backup_tree") is not True)):
+                         or event["plan"].get("preserve_post_backup_tree") is not True
+                         or event["plan"].get("operator_confirmed_original_orchestration_ended") is not True
+                         or event["plan"].get("activated") is not
+                         (request["action"] == "handover-recover-activated"))):
                 raise ChannelError("Target reviewed a different handover backup recovery")
             if (deploying and shutil.disk_usage(evidence).free
                     < event["plan"]["scope"]["offhost_free_bytes_required"]):
@@ -358,7 +364,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("deploy", "recover", "resume-original", "serve",
                                           "native-deploy", "native-recover", "native-resume-original",
-                                          "handover-resume-original", "handover-recover-backup"))
+                                          "handover-resume-original", "handover-recover-backup",
+                                          "handover-recover-activated"))
     parser.add_argument("--host")
     parser.add_argument("--user")
     parser.add_argument("--port", type=int, default=22)
@@ -423,7 +430,8 @@ def main() -> int:
                     "action": "deploy", "spec": spec, "selection": selection,
                     "operation": str(uuid4()), "update": args.update,
                 }
-            elif args.action in ("recover", "native-recover", "handover-recover-backup"):
+            elif args.action in ("recover", "native-recover", "handover-recover-backup",
+                                 "handover-recover-activated"):
                 if not all((args.deployment, args.operation, args.backup, args.backup_sha256)):
                     parser.error("recover requires --deployment, --operation, --backup and --backup-sha256")
                 request = {"action": args.action, "deployment": args.deployment, "operation": args.operation}
