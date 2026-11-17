@@ -23,7 +23,7 @@ from tool.deployment_load import select_bundle
 from tool.deployment_operator import controller, serve
 from tool.deployment_pi_handover import (
     capture_backup, check_docker_conflicts, fence_native, receive_handover_backup,
-    prepare_backup_restore, resume_before_backup, send_handover_backup, verify_backup,
+    prepare_backup_restore, recover_before_activation, resume_before_backup, send_handover_backup, verify_backup,
 )
 from tool.deployment_state import PHASES, StateError, StateStore
 
@@ -397,6 +397,155 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertTrue(self.store.status()["image_load_started"])
         self.assertEqual((Path(self.spec["data_dir"]) / "state.json").read_text(), "current state")
 
+    def test_backup_recovery_restores_data_and_retains_later_tree(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        live = Path(self.spec["data_dir"]) / "state.json"
+        live.write_text("later edit")
+        storage = {"assets": self.assets, "evidence": self.evidence,
+                   "state": self.root / "state", "restores": restores}
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native"), patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "runtime_checks") as checks, \
+                patch.object(native, "command") as command, \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts"):
+            result = recover_before_activation(storage, "fixture", operation, backup_path=self.backup.path,
+                                               checksum=self.backup.manifest_sha256,
+                                               approve=lambda review: review["digest"])
+        self.assertEqual(live.read_text(), "current state")
+        preserved = live.parent.with_name(live.parent.name + ".failed-" + result["recovery"])
+        self.assertEqual((preserved / "state.json").read_text(), "later edit")
+        checks.assert_called_once_with(self.spec, self.selection, self.native_operation)
+        command.assert_called_once_with(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
+        self.assertFalse(self.store.status()["blocked"])
+        self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.committed)
+
+    def test_backup_recovery_rejects_started_image_load_without_service_mutation(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        self.store.start_image_load("fixture", operation, self.images, INTENT)
+        with patch.object(native, "stop_native") as stop:
+            with self.assertRaisesRegex(source.NativeError, "before image load"):
+                recover_before_activation(
+                    {"state": self.root / "state", "evidence": self.evidence}, "fixture", operation,
+                    backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
+                    approve=lambda review: review["digest"])
+            stop.assert_not_called()
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_backup_recovery_rejects_apply_attempt_before_any_service_change(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".apply-attempt.json"), {"operation": operation})
+        with patch.object(native, "stop_native") as stop:
+            with self.assertRaisesRegex(source.NativeError, "before image load"):
+                recover_before_activation(
+                    {"state": self.root / "state", "evidence": self.evidence}, "fixture", operation,
+                    backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
+                    approve=lambda review: review["digest"])
+            stop.assert_not_called()
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_backup_recovery_decline_does_not_stop_services_or_create_attempt(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        storage = {"assets": self.assets, "evidence": self.evidence,
+                   "state": self.root / "state", "restores": restores}
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native") as stop, \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts"):
+            with self.assertRaisesRegex(source.NativeError, "declined"):
+                recover_before_activation(storage, "fixture", operation, backup_path=self.backup.path,
+                                           checksum=self.backup.manifest_sha256, approve=lambda review: None)
+            stop.assert_not_called()
+        self.assertFalse((self.evidence / (operation + ".recovery-attempt.json")).exists())
+        self.assertEqual(list(restores.iterdir()), [])
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_backup_recovery_failure_keeps_evidence_and_does_not_retry(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        live = Path(self.spec["data_dir"]) / "state.json"
+        live.write_text("later edit")
+        storage = {"assets": self.assets, "evidence": self.evidence,
+                   "state": self.root / "state", "restores": restores}
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native") as stop, patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "command"), \
+                patch.object(native, "runtime_checks", side_effect=source.NativeError("injected health failure")), \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts"):
+            arguments = {"backup_path": self.backup.path, "checksum": self.backup.manifest_sha256,
+                         "approve": lambda review: review["digest"]}
+            with self.assertRaisesRegex(source.NativeError, "injected health failure"):
+                recover_before_activation(storage, "fixture", operation, **arguments)
+            with self.assertRaises(FileExistsError):
+                recover_before_activation(storage, "fixture", operation, **arguments)
+            stop.assert_called_once()
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertTrue((self.evidence / (operation + ".recovery-attempt.json")).exists())
+        self.assertFalse((self.evidence / (operation + ".recovery-complete.json")).exists())
+        retained = list(live.parent.parent.glob(live.parent.name + ".failed-*"))
+        self.assertEqual(len(retained), 1)
+        self.assertEqual((retained[0] / "state.json").read_text(), "later edit")
+
+    def test_controller_rejects_handover_backup_review_substitution(self):
+        operation = self.operation
+        request = {"action": "handover-recover-backup", "deployment": "fixture", "operation": operation}
+        review = {"event": "review", "digest": INTENT,
+                  "plan": {"kind": "pi-handover-backup-recovery", "operation": operation,
+                           "deployment": "fixture", "backup_manifest_sha256": "0" * 64,
+                           "restore_matching_data": True, "preserve_post_backup_tree": True}}
+        source_stream = io.BytesIO()
+        Channel(io.BytesIO(), source_stream).send(review)
+        approve = Mock()
+        with patch("tool.deployment_operator.send_backup"), patch("tool.deployment_operator.portable_backup"):
+            with self.assertRaisesRegex(ChannelError, "different handover backup recovery"):
+                controller(Channel(io.BytesIO(source_stream.getvalue()), io.BytesIO()),
+                           request, self.evidence, approve, recovery=self.backup.path,
+                           recovery_checksum=self.backup.manifest_sha256)
+        approve.assert_not_called()
+
     def test_native_fencing_is_reserved_one_shot_and_disables_before_quiescence(self):
         operation = str(uuid4())
         self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
@@ -593,11 +742,11 @@ class PiHandoverBackupTests(unittest.TestCase):
             for field, value in (("Running", True), ("Restarting", True), ("Paused", True)):
                 altered = copy.deepcopy(item)
                 altered["State"][field] = value
-                command.side_effect = [b"container-id\n", json.dumps([altered]).encode()]
+                command.side_effect = [b'{"ID":"engine"}', b"container-id\n", json.dumps([altered]).encode()]
                 with self.subTest(field=field), self.assertRaisesRegex(source.NativeError, "Docker container"):
                     check_docker_conflicts(self.spec)
             item["HostConfig"]["RestartPolicy"]["Name"] = "always"
-            command.side_effect = [b"container-id\n", json.dumps([item]).encode()]
+            command.side_effect = [b'{"ID":"engine"}', b"container-id\n", json.dumps([item]).encode()]
             with self.assertRaisesRegex(source.NativeError, "Docker container"):
                 check_docker_conflicts(self.spec)
 
@@ -607,12 +756,23 @@ class PiHandoverBackupTests(unittest.TestCase):
                 "State": {"Running": True, "Restarting": False, "Paused": False}}
         with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
                 patch.object(native, "command") as command:
-            command.side_effect = [b"container-id\n", json.dumps([item]).encode()]
+            command.side_effect = [b'{"ID":"engine"}', b"container-id\n", json.dumps([item]).encode()]
             with self.assertRaisesRegex(source.NativeError, "metadata"):
                 check_docker_conflicts(self.spec)
             item["Id"] = "container-id"
-            command.side_effect = [b"container-id\n", json.dumps([item]).encode()]
-            check_docker_conflicts(self.spec)
+            command.side_effect = [b'{"ID":"engine"}', b"container-id\n",
+                                   json.dumps([item]).encode(), b'{"ID":"engine"}']
+            self.assertEqual(check_docker_conflicts(self.spec), "engine")
+
+    def test_docker_conflict_check_rejects_daemon_drift(self):
+        with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
+                patch.object(native, "command") as command:
+            command.side_effect = [b'{"ID":"engine-a"}', b"", b'{"ID":"engine-b"}']
+            with self.assertRaisesRegex(source.NativeError, "daemon changed"):
+                check_docker_conflicts(self.spec)
+            command.side_effect = [b'{"ID":"engine-b"}']
+            with self.assertRaisesRegex(source.NativeError, "daemon changed"):
+                check_docker_conflicts(self.spec, expected_engine="engine-a")
 
     def test_operator_routes_prebackup_resume_and_rejects_malformed_request(self):
         operation = str(uuid4())
@@ -628,6 +788,23 @@ class PiHandoverBackupTests(unittest.TestCase):
         channel.receive.return_value = {**request, "extra": True}
         with self.assertRaises(ChannelError):
             serve(channel, storage)
+
+    def test_operator_routes_handover_backup_recovery(self):
+        operation = self.operation
+        request = {"action": "handover-recover-backup", "deployment": "fixture", "operation": operation}
+        channel = Mock()
+        channel.receive.side_effect = [request, {"event": "backup"}]
+        incoming = self.root / "incoming"
+        incoming.mkdir(mode=0o700)
+        storage = {"incoming": incoming}
+        with patch("tool.deployment_operator.receive_backup",
+                   return_value=(self.backup.path, self.backup.manifest_sha256)), \
+                patch("tool.deployment_pi_handover.recover_before_activation") as recover:
+            recover.return_value = {"event": "recovered", "operation": operation}
+            serve(channel, storage)
+        self.assertEqual(recover.call_args.args, (storage, "fixture", operation))
+        self.assertEqual(recover.call_args.kwargs["checksum"], self.backup.manifest_sha256)
+        channel.send.assert_called_once_with({"event": "recovered", "operation": operation})
 
     def test_controller_rejects_resume_scope_that_replaces_data(self):
         operation = str(uuid4())

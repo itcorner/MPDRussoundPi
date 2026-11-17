@@ -23,7 +23,7 @@ from tool.deployment_compose import (
     ComposeDeployment, ComposeError, check_host_writers, encoded, paths, specification, validate_runtime_files,
 )
 from tool.deployment_load import select_bundle
-from tool.deployment_operator import controller, interactive, remote
+from tool.deployment_operator import controller, interactive, operator_lock, remote
 from tool.deployment_recovery import recovery_assets
 from test_deployment_build import fixture_bundle
 
@@ -75,6 +75,32 @@ class OperatorContractTests(unittest.TestCase):
     def target(self):
         with patch("tool.deployment_compose.local_engine", return_value="default"):
             return ComposeDeployment(self.spec, self.selection, self.storage)
+
+    def test_operator_lock_excludes_other_operations_and_releases_on_exit(self):
+        with operator_lock(self.storage["evidence"]):
+            with self.assertRaisesRegex(ChannelError, "Another target operator"):
+                with operator_lock(self.storage["evidence"]):
+                    self.fail("Concurrent operator acquired the lock")
+        with operator_lock(self.storage["evidence"]):
+            pass
+
+    def test_operator_lock_rejects_unsafe_existing_lock(self):
+        path = self.storage["evidence"] / "operator.lock"
+        path.write_text("")
+        path.chmod(0o644)
+        with self.assertRaisesRegex(ChannelError, "Unsafe target operator lock"):
+            with operator_lock(self.storage["evidence"]):
+                self.fail("Unsafe lock was accepted")
+
+    def test_operator_lock_excludes_a_separate_process(self):
+        script = ("from pathlib import Path\n"
+                  "from tool.deployment_operator import operator_lock\n"
+                  "with operator_lock(Path(__import__('sys').argv[1])): print('acquired')\n")
+        with operator_lock(self.storage["evidence"]):
+            result = subprocess.run([sys.executable, "-c", script, str(self.storage["evidence"])],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Another target operator is active", result.stderr)
 
     def test_prepared_scope_preserves_exact_services_and_rejects_privilege_or_mount_changes(self):
         target = self.target()

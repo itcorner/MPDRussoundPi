@@ -1371,6 +1371,17 @@ Ordinary Compose apply cannot switch a committed native deployment back to
 Docker; only the explicit, latest-operation recovery described above covers
 the recorded cutover baseline.
 
+The experimental Pi handover recovery actions are not a migration procedure.
+`handover-resume-original` is limited to the reserved pre-backup phase.
+`handover-recover-backup` requires a separately retained matching backup and
+manifest identity, and refuses after image loading or apply has started.
+It preserves the post-backup data tree and checks the native runtime before
+clearing state. These actions have mocked service tests only; post-image-load
+recovery and the native-to-Docker transaction are not yet implemented. Never
+begin a cutover on the assumption that these actions cover it. The target
+operator lock serializes cooperating current-version sessions only; establish
+that older tooling and any other orchestration have stopped before recovery.
+
 The following paragraphs are a chronological record; intermediate blockers
 and pending observation statements describe their status at that time, not
 the current outcome summarized in the completed-observation record below.

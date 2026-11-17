@@ -4828,14 +4828,22 @@ must separately review and fence conflicting containers. Its mocked tests do
 not establish Pi or reboot behavior. A separately reviewed
 `handover-resume-original` action handles the reserved pre-backup phase without
 replacing data and clears state only after native runtime checks. Its service
-boundaries have only been mocked, not rehearsed on Linux or the Pi. Post-backup
-and post-activation recovery remain unimplemented. An internal isolated restore
+boundaries have only been mocked, not rehearsed on Linux or the Pi. An internal isolated restore
 preparation verifies the separately retained backup identity and matching
 reservation, repeatedly requires caller-provided writer quiescence, and restores
-only into a new tree. It does not fence writers, replace live data, restart
-services, or reconcile state; it is not an operational rollback. The backup
-and handover tests pass in an isolated Linux container, but this does not
+only into a new tree. A separately reviewed `handover-recover-backup` action
+uses that restore only at `backup-complete` before image loading or apply,
+preserves the later data tree, and checks native health before state resolution.
+Target operator sessions now share an advisory lock, but older tooling and
+other orchestration do not participate. The backup and handover tests pass in
+an isolated Linux container with mocked service boundaries; they do not
 rehearse systemd, Docker ownership, physical serial hardware, or a live cutover.
+The deployment transaction and post-image-load/post-activation recovery are
+still unimplemented, so do not start a cutover based on these pieces.
+The exact-revision web image (Python 3.12.15) also passed 101 configuration,
+playback-status, and server unit tests against synthetic inputs. This is not
+proof that the Pi's current data, native Python 3.13 environment, or physical
+controller are compatible with an activated container.
 
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,

@@ -11,6 +11,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -216,9 +217,19 @@ def fence_native(store: StateStore, storage: dict[str, Path], deployment: str, o
         raise NativeError("Handover state changed while native units were fenced")
 
 
-def check_docker_conflicts(spec: dict[str, Any]) -> None:
-    """Reject active or automatically restarting containers sharing data or serial."""
+def check_docker_conflicts(spec: dict[str, Any], *, expected_engine: str | None = None) -> str:
+    """Reject conflicting containers and bind inspection to one Docker daemon."""
     docker = ["docker", "--context", local_engine()]
+
+    def engine_id() -> str:
+        info: Any = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
+        if not is_mapping(info) or not isinstance(info.get("ID"), str) or not info["ID"]:
+            raise NativeError("Cannot establish Docker daemon identity")
+        return info["ID"]
+
+    engine = engine_id()
+    if expected_engine is not None and engine != expected_engine:
+        raise NativeError("Docker daemon changed during native recovery")
     ids = native.command(docker + ["ps", "--all", "--quiet", "--no-trunc"]).decode().split()
     containers: Any = json.loads(native.command(docker + ["inspect", *ids])) if ids else []
     if not is_list(containers) or len(containers) != len(ids) or len(set(ids)) != len(ids):
@@ -250,6 +261,9 @@ def check_docker_conflicts(spec: dict[str, Any]) -> None:
         if related and (item["State"]["Running"] or item["State"]["Restarting"]
                         or item["State"]["Paused"] or item["HostConfig"]["RestartPolicy"]["Name"] == "always"):
             raise NativeError("A Docker container can own native data or the serial adapter")
+    if engine_id() != engine:
+        raise NativeError("Docker daemon changed during conflict inspection")
+    return engine
 
 
 def resume_before_backup(storage: dict[str, Path], deployment: str, operation: str,
@@ -287,7 +301,7 @@ def resume_before_backup(storage: dict[str, Path], deployment: str, operation: s
 
     verify_gateway()
     check_data(native.data_spec(spec))
-    check_docker_conflicts(spec)
+    engine = check_docker_conflicts(spec)
     recovery = str(uuid4())
     plan: dict[str, Any] = {
         "kind": "pi-handover-resume-original", "deployment": deployment, "operation": operation,
@@ -313,13 +327,13 @@ def resume_before_backup(storage: dict[str, Path], deployment: str, operation: s
     native.verify_release(selected)
     verify_gateway()
     check_data(native.data_spec(spec))
-    check_docker_conflicts(spec)
+    check_docker_conflicts(spec, expected_engine=engine)
     native.check_host_writers(Path(spec["data_dir"]), check_files=False)
     private_write(storage["evidence"] / (operation + ".recovery-attempt.json"),
                   {"review": plan, "review_digest": digest, "original_record": record})
     native.stop_native(spec, selected, previous["operation"], {"previous_native": None})
     native.check_no_writers(spec)
-    check_docker_conflicts(spec)
+    check_docker_conflicts(spec, expected_engine=engine)
     native.command(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
     native.runtime_checks(spec, selected, previous["operation"])
     receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,
@@ -431,6 +445,100 @@ def prepare_backup_restore(store: StateStore, storage: dict[str, Path], deployme
     FileBackup(backup_path.parent, operation, checksum).restore_new(destination, verify_quiescent=quiet)
     quiet()
     return destination
+
+
+def recover_before_activation(storage: dict[str, Path], deployment: str, operation: str, *,
+                              backup_path: Path, checksum: str,
+                              approve: Callable[[dict[str, Any]], str | None]) -> dict[str, Any]:
+    """Restore a reviewed backup before any candidate image load or activation."""
+    identity(deployment)
+    operation_id(operation)
+    store = StateStore(storage["state"], owner_uid=os.getuid())
+    state = store.status()
+    record = state["deployments"].get(deployment)
+    if (state["reservation"] != {"schema_version": 1, "deployment": deployment, "operation": operation}
+            or record is None or record["committed"] is None or record["pending"] is None
+            or record["pending"]["operation"] != operation
+            or record["pending"]["phase"] != "backup-complete"
+            or record["pending"]["backup"] != operation
+            or state["image_load_started"]
+            or (storage["evidence"] / (operation + ".apply-attempt.json")).exists()):
+        raise NativeError("Backup recovery requires the matching handover before image load and activation")
+    committed = record["committed"]
+    previous = committed["selection"]
+    selected = previous["candidate"]
+    asset = storage["assets"] / previous["operation"]
+    spec = native_specification(json.loads(private_read(asset / "spec.json")))
+    if (spec["deployment"] != deployment
+            or json.loads(private_read(asset / "selection.json")) != selected):
+        raise NativeError("Backup recovery differs from the committed native assets")
+    images = record["pending"]["candidate"]
+    backup_evidence = {"operation": operation, "manifest_sha256": checksum}
+    if json.loads(private_read(storage["evidence"] / (operation + ".backup.json"))) != backup_evidence:
+        raise NativeError("Restore backup identity differs from captured evidence")
+    manifest = verify_backup(backup_path, operation, checksum, committed=committed, native_spec=spec,
+                             image_selection=images, native_asset=asset)
+    if (shutil.disk_usage(storage["restores"]).free < manifest["total_bytes"] + 64 * 1024**2
+            or Path(spec["data_dir"]).parent.stat().st_dev != storage["restores"].stat().st_dev):
+        raise NativeError("Backup recovery requires sufficient isolated space on the live-data filesystem")
+    native.verify_units(native.unit_files(spec, selected, previous["operation"]))
+    native.verify_release(selected)
+    gateway = native.RUNTIME / previous["operation"] / "ser2net.yaml"
+    info = safe_path(gateway)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or gateway.read_bytes() != native.gateway_config(spec):
+        raise NativeError("Native gateway configuration changed; backup recovery requires investigation")
+    engine = check_docker_conflicts(spec)
+    recovery = str(uuid4())
+    plan: dict[str, Any] = {
+        "kind": "pi-handover-backup-recovery", "deployment": deployment, "operation": operation,
+        "recovery": recovery, "native_operation": previous["operation"],
+        "backup_manifest_sha256": checksum, "data_dir": spec["data_dir"],
+        "restore_matching_data": True, "preserve_post_backup_tree": True,
+        "audio_agent_proxy_and_os": "untouched",
+    }
+    digest = "sha256:" + hashlib.sha256(encoded(plan)).hexdigest()
+    if approve({"plan": plan, "digest": digest}) != digest:
+        raise NativeError("Native backup recovery was declined; services were not changed")
+    if store.status() != state:
+        raise NativeError("Handover state changed after backup recovery approval")
+    if (json.loads(private_read(asset / "spec.json")) != spec
+            or json.loads(private_read(asset / "selection.json")) != selected
+            or json.loads(private_read(storage["evidence"] / (operation + ".backup.json"))) != backup_evidence):
+        raise NativeError("Native assets changed after backup recovery approval")
+    verify_backup(backup_path, operation, checksum, committed=committed, native_spec=spec,
+                  image_selection=images, native_asset=asset)
+    native.verify_units(native.unit_files(spec, selected, previous["operation"]))
+    native.verify_release(selected)
+    info = safe_path(gateway)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or gateway.read_bytes() != native.gateway_config(spec):
+        raise NativeError("Native gateway configuration changed after backup recovery approval")
+    check_docker_conflicts(spec, expected_engine=engine)
+    native.check_host_writers(Path(spec["data_dir"]), check_files=False)
+    private_write(storage["evidence"] / (operation + ".recovery-attempt.json"),
+                  {"review": plan, "review_digest": digest, "original_record": record,
+                   "backup_manifest_sha256": checksum})
+    native.stop_native(spec, selected, previous["operation"], {"previous_native": None})
+
+    def quiet() -> None:
+        native.check_no_writers(spec)
+        check_docker_conflicts(spec, expected_engine=engine)
+
+    restored = prepare_backup_restore(
+        store, storage, deployment, operation, backup_path=backup_path, checksum=checksum,
+        committed=committed, native_spec=spec, image_selection=images,
+        native_asset=asset, recovery=recovery, verify_quiescent=quiet)
+    quiet()
+    native.preserve_replace(restored / "data", Path(spec["data_dir"]), recovery, spec["uid"])
+    check_data(native.data_spec(spec))
+    check_docker_conflicts(spec, expected_engine=engine)
+    native.command(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
+    native.runtime_checks(spec, selected, previous["operation"])
+    receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,
+                               "required": {"original-runtime": "passed", "matching-data": "passed"}}
+    private_write(storage["evidence"] / (operation + ".recovery-complete.json"), receipt)
+    store.resolve_recovery(deployment, operation, receipt, restore_native=True,
+                           native_previous=committed, handover_native=True)
+    return {"event": "recovered", "operation": operation, "recovery": recovery, "required": receipt["required"]}
 
 
 def send_handover_backup(channel: Channel, backup: FileBackup) -> None:

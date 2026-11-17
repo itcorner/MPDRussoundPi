@@ -1,19 +1,22 @@
 """Interactive controller entry point for reviewed remote development deployments."""
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import shutil
 import sys
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Generator
 from uuid import uuid4
 
 from tool.deployment_backup import FileBackup
-from tool.deployment_channel import Channel, ChannelError, receive_backup, send_backup
+from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
 from tool.deployment_compose import ComposeDeployment, ComposeError, encoded, paths, private_read, private_write
 from tool.deployment_files import checked_directory, is_mapping
 from tool.deployment_inputs import read_file, write_file
@@ -29,6 +32,27 @@ from tool.deployment_transfer import ssh_arguments
 TOOLS = Path("/opt/mpdrussoundpi-deploy")
 STORAGE = Path("/var/lib/mpdrussoundpi-operations")
 DEPLOY_ACTIONS = ("deploy", "native-deploy")
+
+
+@contextmanager
+def operator_lock(evidence: Path) -> Generator[None, None, None]:
+    """Serialize reviewed target operations without releasing durable reservations."""
+    with checked_directory(evidence, os.getuid()) as directory:
+        fd = os.open("operator.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        try:
+            info = os.fstat(fd)
+            current = os.stat("operator.lock", dir_fd=directory, follow_symlinks=False)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)):
+                raise ChannelError("Unsafe target operator lock")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ChannelError("Another target operator is active; inspect its outcome before recovery") from None
+            yield
+        finally:
+            os.close(fd)
 
 
 def serve(channel: Channel, storage: dict[str, Path]) -> None:
@@ -70,7 +94,7 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
                                  lambda review: approve_remote(channel, review))
         channel.send(result)
         return
-    if request.get("action") in ("recover", "native-recover"):
+    if request.get("action") in ("recover", "native-recover", "handover-recover-backup"):
         if set(request) != {"action", "deployment", "operation"}:
             raise ChannelError("Invalid recovery request")
         identity(request["deployment"])
@@ -82,6 +106,13 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
         backup, checksum = receive_backup(channel, incoming, header)
         if backup.name != request["operation"]:
             raise ChannelError("Recovery operation and backup differ")
+        if request["action"] == "handover-recover-backup":
+            from tool.deployment_pi_handover import recover_before_activation
+            result = recover_before_activation(storage, request["deployment"], request["operation"],
+                                               backup_path=backup, checksum=checksum,
+                                               approve=lambda review: approve_remote(channel, review))
+            channel.send(result)
+            return
         recovery_function = recover
         if request["action"] == "native-recover":
             from tool.deployment_native import recover as native_recover
@@ -174,10 +205,13 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
         from tool.deployment_native import recovery_assets as native_assets
         backup_validator = native_assets
     channel.send(request)
-    if request["action"] in ("recover", "native-recover"):
+    if request["action"] in ("recover", "native-recover", "handover-recover-backup"):
         if recovery is None or recovery_checksum is None:
             raise ChannelError("Recovery requires the private independently held backup and identity")
-        backup_validator(recovery, operation, recovery_checksum)
+        if request["action"] == "handover-recover-backup":
+            portable_backup(recovery, operation, recovery_checksum)
+        else:
+            backup_validator(recovery, operation, recovery_checksum)
         send_backup(channel, recovery, operation, recovery_checksum)
     reviewed = None
     backup_received = False
@@ -212,6 +246,12 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                          or event["plan"].get("restore_data") is not False
                          or event["plan"].get("preserve_operator_edits") is not True)):
                 raise ChannelError("Target reviewed a different handover recovery action")
+            if (request["action"] == "handover-recover-backup"
+                    and (event["plan"].get("kind") != "pi-handover-backup-recovery"
+                         or event["plan"].get("backup_manifest_sha256") != recovery_checksum
+                         or event["plan"].get("restore_matching_data") is not True
+                         or event["plan"].get("preserve_post_backup_tree") is not True)):
+                raise ChannelError("Target reviewed a different handover backup recovery")
             if (deploying and shutil.disk_usage(evidence).free
                     < event["plan"]["scope"]["offhost_free_bytes_required"]):
                 channel.send({"event": "approval", "digest": None})
@@ -318,7 +358,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("deploy", "recover", "resume-original", "serve",
                                           "native-deploy", "native-recover", "native-resume-original",
-                                          "handover-resume-original"))
+                                          "handover-resume-original", "handover-recover-backup"))
     parser.add_argument("--host")
     parser.add_argument("--user")
     parser.add_argument("--port", type=int, default=22)
@@ -349,7 +389,8 @@ def main() -> int:
             StateStore().initialize()
             channel = Channel(sys.stdin.buffer, sys.stdout.buffer)
             try:
-                serve(channel, storage)
+                with operator_lock(storage["evidence"]):
+                    serve(channel, storage)
             except (OSError, ValueError, subprocess.SubprocessError):
                 channel.send({"event": "error"})
                 raise
@@ -382,7 +423,7 @@ def main() -> int:
                     "action": "deploy", "spec": spec, "selection": selection,
                     "operation": str(uuid4()), "update": args.update,
                 }
-            elif args.action in ("recover", "native-recover"):
+            elif args.action in ("recover", "native-recover", "handover-recover-backup"):
                 if not all((args.deployment, args.operation, args.backup, args.backup_sha256)):
                     parser.error("recover requires --deployment, --operation, --backup and --backup-sha256")
                 request = {"action": args.action, "deployment": args.deployment, "operation": args.operation}
