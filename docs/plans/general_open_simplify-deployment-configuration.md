@@ -4788,6 +4788,15 @@ different, so matching source revision is not proof of runtime or schema
 compatibility. The one-time handover, fresh quiescent off-host backup,
 failure recovery, live activation and hardware acceptance remain outstanding.
 
+The preparation-only `tool.deployment_pi_handover` derives a managed Compose
+layout from the native scope and requires the same source revision, target
+platform, serial device/framing, listener, data mounts and playback registry.
+It rejects loopback playback endpoints, which would resolve inside a bridge
+container, and Compose interpolation expressions. This helper does not verify
+live provenance, reserve state, transfer or load images, capture a backup,
+activate services or provide recovery. Its derived layout is not authorization
+to perform the one-time handover.
+
 1. **Freeze the scope and candidate.** Bind the review to the current native
    operation, exact native units/release, current data root and ownership,
    host/ports/device, gateway and proxy settings, plus a verified compatible
