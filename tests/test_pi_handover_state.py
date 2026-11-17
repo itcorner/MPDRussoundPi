@@ -529,6 +529,40 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertEqual(len(retained), 1)
         self.assertEqual((retained[0] / "state.json").read_text(), "later edit")
 
+    def test_backup_recovery_does_not_clear_changed_state_after_runtime_check(self):
+        operation = self.operation
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        self.store.advance("fixture", operation, "backup-complete", backup=operation)
+        private_write(self.evidence / (operation + ".backup.json"),
+                      {"operation": operation, "manifest_sha256": self.backup.manifest_sha256})
+        for name in ("spec.json", "selection.json"):
+            (self.asset / name).chmod(0o600)
+        restores = self.root / "restores"
+        restores.mkdir(mode=0o700)
+        storage = {"assets": self.assets, "evidence": self.evidence,
+                   "state": self.root / "state", "restores": restores}
+
+        def change_state(*args):
+            self.store.start_image_load("fixture", operation, self.images, INTENT)
+
+        with patch.object(native, "verify_units"), patch.object(native, "verify_release"), \
+                patch.object(native, "stop_native"), patch.object(native, "check_no_writers"), \
+                patch.object(native, "check_host_writers"), patch.object(native, "command"), \
+                patch.object(native, "runtime_checks", side_effect=change_state), \
+                patch("tool.deployment_pi_handover.safe_path",
+                      return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
+                patch("tool.deployment_pi_handover.check_data"), \
+                patch("tool.deployment_pi_handover.check_docker_conflicts"):
+            with self.assertRaisesRegex(source.NativeError, "state changed"):
+                recover_before_activation(storage, "fixture", operation, backup_path=self.backup.path,
+                                           checksum=self.backup.manifest_sha256,
+                                           approve=lambda review: review["digest"])
+        self.assertTrue(self.store.status()["blocked"])
+        self.assertTrue(self.store.status()["image_load_started"])
+        self.assertFalse((self.evidence / (operation + ".recovery-complete.json")).exists())
+
     def test_controller_rejects_handover_backup_review_substitution(self):
         operation = self.operation
         request = {"action": "handover-recover-backup", "deployment": "fixture", "operation": operation}

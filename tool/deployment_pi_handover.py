@@ -336,6 +336,9 @@ def resume_before_backup(storage: dict[str, Path], deployment: str, operation: s
     check_docker_conflicts(spec, expected_engine=engine)
     native.command(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
     native.runtime_checks(spec, selected, previous["operation"])
+    check_docker_conflicts(spec, expected_engine=engine)
+    if store.status() != state:
+        raise NativeError("Handover state changed during native resume checks")
     receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,
                                "required": {"original-runtime": "passed", "data-preserved": "passed"}}
     private_write(storage["evidence"] / (operation + ".recovery-complete.json"), receipt)
@@ -533,6 +536,9 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
     check_docker_conflicts(spec, expected_engine=engine)
     native.command(["systemctl", "enable", "--now", native.GATEWAY, native.WEB], timeout=90)
     native.runtime_checks(spec, selected, previous["operation"])
+    check_docker_conflicts(spec, expected_engine=engine)
+    if store.status() != state:
+        raise NativeError("Handover state changed during native backup recovery checks")
     receipt: dict[str, Any] = {"operation": operation, "review_digest": digest,
                                "required": {"original-runtime": "passed", "matching-data": "passed"}}
     private_write(storage["evidence"] / (operation + ".recovery-complete.json"), receipt)
