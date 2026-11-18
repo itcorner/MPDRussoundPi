@@ -25,7 +25,7 @@ from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_compose import ComposeDeployment, ComposeError, encoded, private_write, runtime_checks
 from tool.deployment_load import select_bundle
 from tool.deployment_handover_transaction import HandoverHooks, execute as execute_handover
-from tool.deployment_handover_target import HandoverTarget
+from tool.deployment_handover_target import HandoverTarget, proxy_allows_subnet
 from tool.deployment_operator import controller, interactive, serve
 from tool.deployment_pi_handover import (
     capture_backup, check_docker_conflicts, fence_candidate_containers, fence_native, inspect_uncertain_load,
@@ -194,6 +194,27 @@ class PiHandoverStateTests(unittest.TestCase):
 
 
 class PiHandoverBackupTests(unittest.TestCase):
+    def test_project_network_requires_exact_active_proxy_allowlist_and_no_overlap(self):
+        from ipaddress import IPv4Network
+        subnet = IPv4Network("10.231.84.0/28")
+        host = "proxy.example.test"
+        gate = {"remote_ip": {"ranges": ["192.0.2.0/24"]}}
+        servers = {"srv0": {"listen": [":8443"], "routes": [
+            {"match": [{"host": [host]}], "handle": [
+                {"handler": "subroute", "routes": [{"match": [gate]}]}
+            ]}
+        ]}}
+        self.assertFalse(proxy_allows_subnet(servers, host, 8443, subnet))
+        gate["remote_ip"]["ranges"].append(str(subnet))
+        self.assertTrue(proxy_allows_subnet(servers, host, 8443, subnet))
+        self.assertFalse(proxy_allows_subnet(servers, host, 443, subnet))
+        self.assertFalse(proxy_allows_subnet(servers, "other.example", 8443, subnet))
+        target = HandoverTarget.__new__(HandoverTarget)
+        target.playback_subnet = str(subnet)
+        with patch.object(native, "command", side_effect=[b'[{"dst":"10.231.84.0/24"}]', b""]), \
+                self.assertRaisesRegex(source.NativeError, "overlaps"):
+            target.check_playback_network(["docker"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="pi-handover-backup-")
         self.addCleanup(self.temporary.cleanup)
@@ -2310,7 +2331,8 @@ class PiHandoverBackupTests(unittest.TestCase):
         storage["runtime"] = self.runtime
         operation = target.operation
         request = {"action": "handover-deploy", "deployment": "fixture", "operation": operation,
-                   "native_spec": self.spec, "committed": self.committed, "selection": self.images}
+                   "native_spec": self.spec, "committed": self.committed, "selection": self.images,
+                   "playback_subnet": "10.231.84.0/28"}
         bundle = self.root / self.images["manifest"]["operation"]
         target_socket, controller_socket = socket.socketpair()
         target_socket.settimeout(15)
@@ -2370,11 +2392,14 @@ class PiHandoverBackupTests(unittest.TestCase):
                          self.images)
         next_spec, _ = prepare(self.spec, self.selection, self.images,
                                project="pi-handover-" + operation.replace("-", ""),
-                               compose_path=str(self.runtime / operation / "compose.json"))
+                               compose_path=str(self.runtime / operation / "compose.json"),
+                               playback_subnet=request["playback_subnet"])
         with patch("tool.deployment_compose.local_engine", return_value="default"):
             next_deployment = ComposeDeployment(next_spec, self.images, storage, operation=str(uuid4()))
         self.assertEqual(next_deployment.config,
                          json.loads((self.runtime / operation / "active.json").read_bytes()))
+        self.assertEqual(next_deployment.config["networks"]["default"]["ipam"]["config"],
+                         [{"subnet": request["playback_subnet"]}])
 
     def test_controller_rejects_altered_handover_review_and_digest(self):
         operation = str(uuid4())

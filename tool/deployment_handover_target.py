@@ -6,6 +6,7 @@ reservation before stopping services or activating containers.
 
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,9 @@ import shutil
 import stat
 import sys
 from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, build_opener
 
 from tool import deployment_native as native
 from tool.deployment_backup import MAX_BYTES
@@ -33,11 +37,30 @@ from tool.deployment_preflight import check_data, check_port, mode_access, overl
 from tool.deployment_state import StateStore, identity, operation_id
 
 
+def proxy_allows_subnet(servers: dict[str, Any], host: str, port: int, subnet: ipaddress.IPv4Network) -> bool:
+    for server in servers.values():
+        if f":{port}" not in server.get("listen", []):
+            continue
+        for route in server.get("routes", []):
+            if route.get("match") != [{"host": [host]}]:
+                continue
+            for handler in route.get("handle", []):
+                if handler.get("handler") != "subroute" or not handler.get("routes"):
+                    continue
+                matches = handler["routes"][0].get("match", [])
+                if len(matches) != 1 or set(matches[0]) != {"remote_ip"}:
+                    continue
+                policy = matches[0]["remote_ip"]
+                if set(policy) == {"ranges"} and str(subnet) in policy["ranges"]:
+                    return True
+    return False
+
+
 class HandoverTarget:
     """Validate the exact committed native baseline without changing it."""
 
     def __init__(self, store: StateStore, storage: dict[str, Path], deployment: str,
-                 operation: str, selection: dict[str, Any]):
+                 operation: str, selection: dict[str, Any], *, playback_subnet: str | None = None):
         identity(deployment)
         operation_id(operation)
         if store.owner_uid != os.getuid():
@@ -47,6 +70,7 @@ class HandoverTarget:
         self.deployment = deployment
         self.operation = operation
         self.selection = copy.deepcopy(selection)
+        self.playback_subnet = playback_subnet
         state = store.status()
         committed = state["deployments"].get(deployment, {}).get("committed")
         if state["blocked"] or committed is None:
@@ -62,11 +86,40 @@ class HandoverTarget:
         self.project = "pi-handover-" + operation.replace("-", "")
         self.compose_spec, self.config = prepare(
             self.native_spec, previous["candidate"], self.selection, project=self.project,
-            compose_path=str(storage["runtime"] / operation / "compose.json"))
+            compose_path=str(storage["runtime"] / operation / "compose.json"), playback_subnet=playback_subnet)
         self.spec = self.compose_spec
         self.services = {"russound-web": "web", "russound-ser2net": "ser2net"}
         self.engine: str | None = None
         self.backup_estimate: int | None = None
+
+    def check_playback_network(self, docker: list[str]) -> None:
+        if self.playback_subnet is None:
+            return
+        subnet = ipaddress.IPv4Network(self.playback_subnet)
+        try:
+            routes = json.loads(native.command(["ip", "-j", "-4", "route", "show", "table", "all"]))
+            occupied = [ipaddress.ip_network(route["dst"], strict=False)
+                        for route in routes if route.get("dst") not in (None, "default")]
+            ids = native.command(docker + ["network", "ls", "-q"]).decode().split()
+            if ids:
+                networks = json.loads(native.command(docker + ["network", "inspect", *ids]))
+                occupied.extend(ipaddress.ip_network(item["Subnet"])
+                                for network in networks for item in network["IPAM"]["Config"] or []
+                                if "Subnet" in item)
+            if any(network.version == 4 and subnet.overlaps(network) for network in occupied):
+                raise NativeError("Dedicated playback subnet overlaps an existing host route or Docker network")
+            opener = build_opener(ProxyHandler({}))
+            with opener.open("http://127.0.0.1:2020/config/apps/http/servers/", timeout=5) as response:
+                servers = json.load(response)
+            for agent in self.native_spec["playback_agents"]:
+                url = urlsplit(agent["url"])
+                if (url.scheme != "https" or not url.hostname
+                        or not proxy_allows_subnet(servers, url.hostname, url.port or 443, subnet)):
+                    raise NativeError("Active local playback proxy must explicitly allow the reviewed Docker subnet")
+        except NativeError:
+            raise
+        except (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
+            raise NativeError("Cannot verify the dedicated playback subnet and active local proxy policy") from None
 
     def preflight(self) -> None:
         if not sys.platform.startswith("linux") or os.geteuid() != 0:
@@ -102,6 +155,7 @@ class HandoverTarget:
         native.check_host_writers(Path(spec["data_dir"]), check_files=False)
         engine = check_docker_conflicts(spec, expected_engine=self.engine, handover_project=self.project)
         docker = ["docker", "--context", local_engine()]
+        self.check_playback_network(docker)
         info: Any = json.loads(native.command(docker + ["info", "--format", "{{json .}}"]))
         if not is_mapping(info):
             raise NativeError("Docker daemon metadata is invalid")
@@ -177,6 +231,7 @@ class HandoverTarget:
 
     def stop_native(self) -> None:
         engine = self.reviewed_engine()
+        self.check_playback_network(["docker", "--context", local_engine()])
         state = self.store.status()
         record = state["deployments"].get(self.deployment)
         if (state["reservation"] != {"schema_version": 1, "deployment": self.deployment,
@@ -268,6 +323,7 @@ class HandoverTarget:
                                   "config_digest": "sha256:" + hashlib.sha256(encoded(self.config)).hexdigest()}):
             raise NativeError("Activation evidence differs from the reserved handover")
         self.quiescent()
+        self.check_playback_network(["docker", "--context", local_engine()])
         check_port(self.native_spec["publish_host"], self.native_spec["publish_port"])
         if self.store.status() != state:
             raise NativeError("Handover state changed before activation")
@@ -319,6 +375,14 @@ class HandoverTarget:
             service = labels.get("com.docker.compose.service")
             if service not in hashes or labels.get("com.docker.compose.config-hash") != hashes[service]:
                 raise NativeError("Candidate container configuration differs from the reviewed Compose scope")
+            if self.playback_subnet is not None:
+                subnet = ipaddress.IPv4Network(self.playback_subnet)
+                networks = item["NetworkSettings"]["Networks"]
+                network = networks.get(f"{self.project}_default")
+                if (len(networks) != 1 or not network
+                        or network.get("IPPrefixLen") != subnet.prefixlen
+                        or network.get("IPAddress") not in {str(address) for address in subnet.hosts()}):
+                    raise NativeError("Candidate container is not on the reviewed playback bridge")
         result = runtime_checks(self, images)
         if inspect_candidate_containers(self.project, images, self.reviewed_engine()) != candidate:
             raise NativeError("Candidate container identities changed during runtime checks")
