@@ -10,7 +10,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Callable
+import sys
+import time
+from typing import Any, Callable, TypeVar
 
 from tool.deployment_compose import encoded, private_read, private_write
 from tool.deployment_native_source import NativeError
@@ -20,6 +22,7 @@ from tool.deployment_state import StateStore, identity, operation_id
 
 
 CHECKS = ("containers", "http", "backend", "playback")
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -37,7 +40,7 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
             committed: dict[str, Any], native_spec: dict[str, Any], selection: dict[str, Any],
             engine: str, hooks: HandoverHooks,
             approve: Callable[[dict[str, Any]], str | None],
-            offhost_free_bytes_required: int = 0) -> dict[str, Any]:
+            offhost_free_bytes_required: int = 0, playback_subnet: str | None = None) -> dict[str, Any]:
     """Run one approved transaction; failures retain all existing state and evidence."""
     identity(deployment)
     operation_id(operation)
@@ -53,7 +56,8 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
         raise NativeError("Handover requires the unblocked reviewed native baseline")
     project = "pi-handover-" + operation.replace("-", "")
     spec, config = prepare(native_spec, committed["selection"]["candidate"], selection,
-                           project=project, compose_path=str(storage["runtime"] / operation / "compose.json"))
+                           project=project, compose_path=str(storage["runtime"] / operation / "compose.json"),
+                           playback_subnet=playback_subnet)
     plan: dict[str, Any] = {
         "kind": "pi-handover-transaction", "deployment": deployment, "operation": operation,
         "committed": copy.deepcopy(committed), "selection": copy.deepcopy(selection),
@@ -68,6 +72,13 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
         if hashlib.sha256(encoded(plan)).hexdigest() != digest.removeprefix("sha256:"):
             raise NativeError("Reviewed handover scope changed")
 
+    def timed(name: str, action: Callable[[], T]) -> T:
+        start = time.monotonic()
+        try:
+            return action()
+        finally:
+            print(f"handover timing: {name} {time.monotonic() - start:.3f}s", file=sys.stderr, flush=True)
+
     def pending_at(phase: str) -> dict[str, Any]:
         state = store.status()
         record = state["deployments"].get(deployment)
@@ -78,30 +89,30 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
             raise NativeError("Handover state changed during the transaction")
         return state
 
-    void_result(hooks.preflight(), "Handover preflight")
+    void_result(timed("preflight", hooks.preflight), "Handover preflight")
     unchanged()
     if approve({"plan": copy.deepcopy(plan), "digest": digest}) != digest:
         raise NativeError("Handover was declined; services were not changed")
     unchanged()
-    void_result(hooks.preflight(), "Handover preflight")
+    void_result(timed("post-approval preflight", hooks.preflight), "Handover preflight")
     if store.status() != initial:
         raise NativeError("Handover state changed after review")
     private_write(storage["evidence"] / (operation + ".intent.json"), plan)
     store.begin(deployment, operation, selection, digest, ["apply", *CHECKS], expected_committed=committed)
     store.advance(deployment, operation, "inputs-verified")
     store.start_image_transfer(deployment, operation, selection, digest)
-    void_result(hooks.receive_images(digest), "Handover image transfer")
+    void_result(timed("image transfer", lambda: hooks.receive_images(digest)), "Handover image transfer")
     store.complete_image_transfer(deployment, operation, selection, digest)
     if not pending_at("inputs-verified")["image_transfer_verified"]:
         raise NativeError("Handover image transfer was not verified")
-    void_result(hooks.stop_native(), "Native fencing")
+    void_result(timed("native fencing", hooks.stop_native), "Native fencing")
     pending_at("inputs-verified")
-    void_result(hooks.capture_backup(), "Handover backup")
+    void_result(timed("backup and off-host custody", hooks.capture_backup), "Handover backup")
     state = pending_at("backup-complete")
     pending = state["deployments"][deployment]["pending"]
     if pending is None or pending["phase"] != "backup-complete" or pending["backup"] != operation:
         raise NativeError("Handover backup did not record the matching verified backup")
-    images = hooks.load_images(digest)
+    images = timed("image load", lambda: hooks.load_images(digest))
     state = pending_at("backup-complete")
     pending = state["deployments"][deployment]["pending"]
     if (pending is None or pending["loaded_images"] != images or not state["image_load_started"]
@@ -116,7 +127,7 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
                    "config_digest": "sha256:" + hashlib.sha256(encoded(config)).hexdigest()})
     private_write(storage["evidence"] / (operation + ".apply-attempt.json"),
                   {"operation": operation, "intent_digest": digest})
-    void_result(hooks.apply(copy.deepcopy(images)), "Handover apply")
+    void_result(timed("Compose activation", lambda: hooks.apply(copy.deepcopy(images))), "Handover apply")
     pending_at("backup-complete")
     active = copy.deepcopy(config)
     for service, component in (("russound-web", "web"), ("russound-ser2net", "ser2net")):
@@ -124,7 +135,7 @@ def execute(store: StateStore, storage: dict[str, Path], deployment: str, operat
     if json.loads(private_read(runtime / "active.json")) != active:
         raise NativeError("Activated Compose scope differs from the verified images")
     store.advance(deployment, operation, "apply-complete")
-    checked = hooks.checks(copy.deepcopy(images))
+    checked = timed("runtime acceptance", lambda: hooks.checks(copy.deepcopy(images)))
     if checked != dict.fromkeys(CHECKS, "passed"):
         raise NativeError("Handover runtime checks are incomplete")
     unchanged()

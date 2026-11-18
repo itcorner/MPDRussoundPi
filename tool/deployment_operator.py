@@ -62,11 +62,16 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
     if request.get("action") == "handover-deploy":
         from tool.deployment_handover_target import HandoverTarget
         from tool.deployment_handover_transaction import HandoverHooks, execute
-        if set(request) != {"action", "deployment", "operation", "native_spec", "committed", "selection"}:
+        fields = {"action", "deployment", "operation", "native_spec", "committed", "selection"}
+        if set(request) not in (fields, fields | {"playback_subnet"}):
             raise ChannelError("Invalid handover deployment request")
         store = StateStore(storage["state"], owner_uid=os.getuid())
         store.initialize()
-        target = HandoverTarget(store, storage, request["deployment"], request["operation"], request["selection"])
+        subnet = request.get("playback_subnet")
+        if "playback_subnet" in request and not isinstance(subnet, str):
+            raise ChannelError("Invalid handover playback subnet")
+        target = HandoverTarget(store, storage, request["deployment"], request["operation"], request["selection"],
+                                **({"playback_subnet": subnet} if subnet is not None else {}))
         if target.native_spec != request["native_spec"] or target.committed != request["committed"]:
             raise ChannelError("Target native baseline differs from independently supplied controller inputs")
         target.preflight()
@@ -79,7 +84,7 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
                          committed=target.committed, native_spec=target.native_spec, selection=target.selection,
                          engine=target.reviewed_engine(), hooks=hooks,
                          approve=lambda review: approve_remote(channel, review),
-                         offhost_free_bytes_required=target.backup_estimate)
+                         offhost_free_bytes_required=target.backup_estimate, playback_subnet=subnet)
         channel.send(result)
         return
     if request.get("action") == "native-deploy":
@@ -279,7 +284,8 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
                 project = "pi-handover-" + operation.replace("-", "")
                 spec, config = prepare(request["native_spec"], request["committed"]["selection"]["candidate"],
                                        request["selection"], project=project,
-                                       compose_path=str(STORAGE / "runtime" / operation / "compose.json"))
+                                       compose_path=str(STORAGE / "runtime" / operation / "compose.json"),
+                                       playback_subnet=request.get("playback_subnet"))
                 plan = event["plan"]
                 expected: dict[str, Any] = {
                     "kind": "pi-handover-transaction", "deployment": request["deployment"], "operation": operation,
@@ -470,6 +476,7 @@ def main() -> int:
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--manifest-sha256")
     parser.add_argument("--deployment")
+    parser.add_argument("--playback-subnet", help="Dedicated RFC1918 /28 or /29 for the Pi handover bridge")
     parser.add_argument("--operation")
     parser.add_argument("--backup", type=Path)
     parser.add_argument("--backup-sha256")
@@ -477,6 +484,8 @@ def main() -> int:
                         help=f"Remote session limit (default {DEFAULT_CONTROLLER_TIMEOUT}, maximum "
                              f"{MAX_CONTROLLER_TIMEOUT}); does not extend an active session")
     args = parser.parse_args()
+    if args.playback_subnet is not None and args.action != "handover-deploy":
+        parser.error("--playback-subnet applies only to handover-deploy")
     timeout = args.controller_timeout_seconds
     if timeout is not None:
         if args.action == "serve":
@@ -520,6 +529,8 @@ def main() -> int:
                                                     committed["selection"]["candidate"]["runtime"]["machine"]])
                 request = {"action": args.action, "deployment": args.deployment, "operation": str(uuid4()),
                            "native_spec": spec, "committed": committed, "selection": image_selection}
+                if args.playback_subnet is not None:
+                    request["playback_subnet"] = args.playback_subnet
             elif args.action == "native-deploy":
                 if args.spec is None or args.selection is None or args.bundle is not None:
                     parser.error("native-deploy requires --spec and --selection, not image archives")

@@ -80,6 +80,21 @@ The operator prints the exact review and requires interactive confirmation of
 the operation ID. The example is not authorization to run an unaccepted live
 cutover.
 
+For a Pi-local playback TLS proxy, reserve an unused RFC1918 `/28` or `/29`
+and explicitly add that exact CIDR to `playback_proxy_additional_allowed_cidrs`
+in the [proxy deployment](playback-agent-deployment.md#4-activate-the-tls-proxy).
+Pass the same CIDR to `handover-deploy --playback-subnet CIDR`. The reviewed
+Compose project uses that CIDR instead of a Docker-assigned subnet. The target
+checks host routes, Docker network allocations and the active local Caddy
+allowlist before stopping native services, then verifies container attachment
+and authenticated playback during acceptance. Do not allow all bridges or
+remove TLS or token verification. A retained network from an earlier attempt
+on the same CIDR blocks a retry; review its ownership and attachments first.
+
+The private controller SSH log records elapsed timings for preflight, image
+transfer, native fencing, backup with off-host custody, image load, Compose
+activation, and runtime acceptance.
+
 The controller's remote session defaults to one hour. For a reviewed longer
 maintenance window, set `--controller-timeout-seconds 18000` when starting
 the controller (five hours). Any external terminal wrapper must allow at

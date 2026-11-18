@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import sys
 import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -33,7 +34,7 @@ from tool.deployment_state import StateStore, candidate, completion_record, iden
 
 def prepare(native_spec: dict[str, Any], native_selection: dict[str, Any],
             image_selection: dict[str, Any], *, project: str,
-            compose_path: str) -> tuple[dict[str, Any], dict[str, Any]]:
+            compose_path: str, playback_subnet: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Derive a same-revision managed layout; callers must verify its provenance."""
     spec = native_specification(native_spec)
     native_candidate(native_selection)
@@ -107,6 +108,16 @@ def prepare(native_spec: dict[str, Any], native_selection: dict[str, Any],
             },
         },
     }
+    if playback_subnet is not None:
+        try:
+            subnet = ipaddress.IPv4Network(playback_subnet)
+        except (ValueError, TypeError):
+            raise NativeError("Playback bridge requires a canonical private IPv4 subnet") from None
+        private_ranges = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+        if (playback_subnet != str(subnet) or not 28 <= subnet.prefixlen <= 29
+                or not any(subnet.subnet_of(ipaddress.IPv4Network(block)) for block in private_ranges)):
+            raise NativeError("Playback bridge requires a canonical RFC1918 /28 or /29 subnet")
+        config["networks"] = {"default": {"driver": "bridge", "ipam": {"config": [{"subnet": str(subnet)}]}}}
     if "${" in json.dumps(config):
         raise NativeError("Handover inputs must not contain Compose interpolation expressions")
     return copy.deepcopy(compose_spec), config
@@ -381,6 +392,13 @@ def fence_candidate_containers(store: StateStore, storage: dict[str, Path], depl
     if marker != {"operation": operation, "intent_digest": pending["intent_digest"]}:
         raise NativeError("Candidate activation evidence differs from the reserved operation")
     activation = json.loads(private_read(storage["evidence"] / (operation + ".handover-activation.json")))
+    intent_path = storage["evidence"] / (operation + ".intent.json")
+    if intent_path.exists():
+        intent = json.loads(private_read(intent_path))
+        if "networks" in intent.get("compose_config", {}):
+            if "sha256:" + hashlib.sha256(encoded(intent)).hexdigest() != pending["intent_digest"]:
+                raise NativeError("Candidate network scope differs from the reserved intent")
+            config = intent["compose_config"]
     if activation != {"operation": operation, "intent_digest": pending["intent_digest"],
                       "project": project, "engine": expected_engine, "images": pending["loaded_images"],
                       "config_digest": "sha256:" + hashlib.sha256(encoded(config)).hexdigest()}:
@@ -546,6 +564,7 @@ def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str,
         quiescent(verify_quiescent)
 
     parent = storage["backups"]
+    capture_started = time.monotonic()
     for attempt in range(1, HANDOVER_CAPTURE_ATTEMPTS + 1):
         # Bound this attempt even if sources grew or earlier attempts consumed space.
         free = shutil.disk_usage(parent).free - HANDOVER_STORAGE_MARGIN
@@ -568,8 +587,13 @@ def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str,
     verify_backup(backup.path, operation, backup.manifest_sha256, committed=committed,
                   native_spec=spec, image_selection=image_selection, native_asset=native_asset)
     quiet()
+    transfer_started = time.monotonic()
+    print(f"handover timing: capture and local verification {transfer_started - capture_started:.3f}s",
+          file=sys.stderr, flush=True)
     if verify_offhost(backup) is not None:
         raise NativeError("Off-host verification must raise on failure, not return a status")
+    print(f"handover timing: off-host transfer and acknowledgment {time.monotonic() - transfer_started:.3f}s",
+          file=sys.stderr, flush=True)
     backup.verify()
     quiet()
     private_write(storage["evidence"] / (operation + ".backup.json"),
