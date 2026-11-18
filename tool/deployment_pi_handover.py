@@ -18,11 +18,11 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from tool.deployment_backup import FileBackup, quiescent
+from tool.deployment_backup import MAX_BYTES, FileBackup, SourceVerificationError, quiescent
 from tool.deployment_build import image_identity, local_engine
 from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
 from tool.deployment_compose import encoded, private_read, private_write, specification as compose_specification
-from tool.deployment_files import is_list, is_mapping
+from tool.deployment_files import checked_directory, is_list, is_mapping
 from tool.deployment_local import LOCAL_CANDIDATE
 from tool import deployment_native as native
 from tool.deployment_native import environment, specification as native_specification
@@ -499,6 +499,10 @@ def resume_before_backup(storage: dict[str, Path], deployment: str, operation: s
     return {"event": "recovered", "operation": operation, "recovery": recovery, "required": receipt["required"]}
 
 
+HANDOVER_CAPTURE_ATTEMPTS = 3
+HANDOVER_STORAGE_MARGIN = 256 * 1024**2
+
+
 def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str, operation: str, *,
                    committed: dict[str, Any], native_spec: dict[str, Any],
                    image_selection: dict[str, Any], native_asset: Path,
@@ -536,16 +540,38 @@ def capture_backup(store: StateStore, storage: dict[str, Path], deployment: str,
     sources: dict[str, Path] = {"data": Path(spec["data_dir"]), "native-asset": native_asset,
                                "previous-release": native.RELEASES / previous["candidate"]["release"],
                                "previous-runtime": native.RUNTIME / previous["operation"]}
-    quiescent(verify_quiescent)
-    backup = FileBackup.capture(storage["backups"], operation, sources,
-                                verify_quiescent=verify_quiescent, source_owner_uid=spec["uid"])
+
+    def quiet() -> None:
+        check_state()
+        quiescent(verify_quiescent)
+
+    parent = storage["backups"]
+    for attempt in range(1, HANDOVER_CAPTURE_ATTEMPTS + 1):
+        # Bound this attempt even if sources grew or earlier attempts consumed space.
+        free = shutil.disk_usage(parent).free - HANDOVER_STORAGE_MARGIN
+        if free <= 0:
+            raise NativeError("Insufficient space to capture the backup and retain recovery headroom")
+        try:
+            backup = FileBackup.capture(parent, operation, sources, verify_quiescent=quiet,
+                                        source_owner_uid=spec["uid"], phase_checks_only=True,
+                                        byte_limit=min(MAX_BYTES, free // 3))
+            break
+        except SourceVerificationError as error:
+            quiet()
+            if attempt == HANDOVER_CAPTURE_ATTEMPTS:
+                raise NativeError("Backup source did not stabilize after three captures; retained all attempts") from error
+            with checked_directory(parent, store.owner_uid) as directory:
+                os.rename(operation, f"{operation}.rejected-{uuid4()}", src_dir_fd=directory, dst_dir_fd=directory)
+                os.fsync(directory)
+    else:
+        raise AssertionError("Handover capture requires at least one attempt")
     verify_backup(backup.path, operation, backup.manifest_sha256, committed=committed,
                   native_spec=spec, image_selection=image_selection, native_asset=native_asset)
+    quiet()
     if verify_offhost(backup) is not None:
         raise NativeError("Off-host verification must raise on failure, not return a status")
     backup.verify()
-    quiescent(verify_quiescent)
-    check_state()
+    quiet()
     private_write(storage["evidence"] / (operation + ".backup.json"),
                   {"operation": operation, "manifest_sha256": backup.manifest_sha256})
     store.advance(deployment, operation, "backup-complete", backup=operation)
@@ -597,8 +623,8 @@ def prepare_backup_restore(store: StateStore, storage: dict[str, Path], deployme
     if backup_path.name != operation:
         raise NativeError("Restore backup path differs from the reserved operation")
     destination = storage["restores"] / recovery
-    FileBackup(backup_path.parent, operation, checksum).restore_new(destination, verify_quiescent=quiet)
-    quiet()
+    FileBackup(backup_path.parent, operation, checksum).restore_new(
+        destination, verify_quiescent=quiet, phase_checks_only=True)
     return destination
 
 
@@ -790,6 +816,8 @@ def recover_before_activation(storage: dict[str, Path], deployment: str, operati
         committed=committed, native_spec=spec, image_selection=images,
         native_asset=asset, recovery=recovery, verify_quiescent=quiet)
     quiet()
+    if store.status() != state:
+        raise NativeError("Handover state changed before replacing live data")
     native.preserve_replace(restored / "data", Path(spec["data_dir"]), recovery, spec["uid"])
     check_data(native.data_spec(spec))
     check_docker_conflicts(spec, expected_engine=engine)

@@ -101,6 +101,56 @@ class FileBackupTests(unittest.TestCase):
         with self.assertRaises(backups.BackupError):
             self.capture()
 
+    def test_phase_checks_bracket_copy_source_verification_and_local_verification(self):
+        for index in range(100):
+            (self.source / "data" / str(index)).write_bytes(b"fixture")
+        events = []
+        self.guard = lambda: events.append("guard")
+        verify_sources = backups.FileBackup._verify_sources
+        verify_backup = backups.FileBackup.verify
+
+        def verify_source_phase(*args):
+            self.assertTrue(list((self.storage / self.operation).glob("*.blob")))
+            self.assertFalse((self.storage / self.operation / "manifest.json").exists())
+            events.append("source verification")
+            return verify_sources(*args)
+
+        def verify_local_phase(backup):
+            events.append("local verification")
+            return verify_backup(backup)
+
+        with patch.object(backups.FileBackup, "_verify_sources", side_effect=verify_source_phase), \
+                patch.object(backups.FileBackup, "verify", verify_local_phase):
+            backup = self.capture(phase_checks_only=True)
+        self.assertEqual(events, ["guard", "guard", "source verification", "guard",
+                                  "local verification", "guard"])
+        self.assertEqual(backup.verify()["method"], "stopped-writers")
+        destination = self.root / "recovered"
+        backup.restore_new(destination, verify_quiescent=lambda: None)
+        self.assertEqual((destination / "web/config/settings.json").read_bytes(), self.config.read_bytes())
+        self.assertEqual((destination / "web/data/99").read_bytes(), b"fixture")
+
+    def test_phase_checks_refuse_manifest_if_guard_fails_after_copy_or_source_verification(self):
+        for boundary in (2, 3):
+            with self.subTest(boundary=boundary):
+                self.operation = str(uuid4())
+                self.guard_calls = 0
+
+                def guard():
+                    self.guard_calls += 1
+                    if self.guard_calls == boundary:
+                        raise backups.BackupError("writer status uncertain")
+
+                self.guard = guard
+                with self.assertRaisesRegex(backups.BackupError, "uncertain"):
+                    self.capture(phase_checks_only=True)
+                self.assertFalse((self.storage / self.operation / "manifest.json").exists())
+
+    def test_capture_limit_is_checked_before_writing_blob(self):
+        with self.assertRaisesRegex(backups.BackupError, "capture byte limit"):
+            self.capture(phase_checks_only=True, byte_limit=0)
+        self.assertFalse(any((self.storage / self.operation).iterdir()))
+
     def test_new_process_can_verify_offhost_copy_with_separately_retained_manifest_identity(self):
         backup = self.capture()
         offhost = self.root / "offhost"
@@ -360,9 +410,12 @@ backup.restore_new(Path(sys.argv[4]), verify_quiescent=lambda: None)
         def corrupt(fd, content):
             return write(fd, b"x" * len(content))
 
-        with patch.object(backups.os, "write", side_effect=corrupt):
-            with self.assertRaisesRegex(backups.BackupError, "independent byte verification"):
-                backup.restore_new(self.root / "corrupted", verify_quiescent=self.guard)
+        for phase_checks_only in (False, True):
+            with self.subTest(phase_checks_only=phase_checks_only), \
+                    patch.object(backups.os, "write", side_effect=corrupt), \
+                    self.assertRaisesRegex(backups.BackupError, "independent byte verification"):
+                backup.restore_new(self.root / f"corrupted-{phase_checks_only}",
+                                   verify_quiescent=self.guard, phase_checks_only=phase_checks_only)
         backup.verify()
 
     def test_short_writes_are_completed_instead_of_truncating_data(self):

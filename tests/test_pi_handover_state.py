@@ -20,7 +20,7 @@ from test_deployment_build import fixture_bundle
 from test_deployment_native import selection_fixture, spec_fixture
 from tool import deployment_native as native
 from tool import deployment_native_source as source
-from tool.deployment_backup import FileBackup
+from tool.deployment_backup import BackupError, FileBackup
 from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_compose import ComposeDeployment, ComposeError, encoded, private_write, runtime_checks
 from tool.deployment_load import select_bundle
@@ -784,7 +784,7 @@ class PiHandoverBackupTests(unittest.TestCase):
             native_asset=self.asset, recovery=str(uuid4()), verify_quiescent=guard)
         self.assertEqual((destination / "data/state.json").read_text(), "current state")
         self.assertEqual(live.read_text(), "post-backup change")
-        self.assertGreater(guard.call_count, 1)
+        self.assertEqual(guard.call_count, 2)
         self.assertTrue(self.store.status()["blocked"])
         self.assertEqual(self.store.status()["deployments"]["fixture"]["committed"], self.committed)
 
@@ -811,7 +811,7 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertEqual(list(restores.iterdir()), [])
         self.assertTrue(self.store.status()["blocked"])
 
-    def test_isolated_restore_keeps_partial_tree_when_quiescence_fails(self):
+    def test_isolated_restore_retains_staged_tree_when_final_quiescence_check_fails(self):
         operation = self.operation
         self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
                          expected_committed=self.committed)
@@ -829,7 +829,7 @@ class PiHandoverBackupTests(unittest.TestCase):
                 "fixture", operation, backup_path=self.backup.path, checksum=self.backup.manifest_sha256,
                 committed=self.committed, native_spec=self.spec, image_selection=self.images,
                 native_asset=self.asset, recovery=recovery, verify_quiescent=guard)
-        self.assertTrue((restores / recovery).is_dir())
+        self.assertEqual((restores / recovery / "data/state.json").read_text(), "current state")
         self.assertEqual((Path(self.spec["data_dir"]) / "state.json").read_text(), "current state")
         self.assertTrue(self.store.status()["blocked"])
 
@@ -1360,6 +1360,12 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertFalse(self.store.status()["blocked"])
 
     def test_activated_recovery_refuses_restarted_candidate_before_restore(self):
+        self.assert_restarted_candidate_blocks_recovery(during_staging=False)
+
+    def test_activated_recovery_refuses_candidate_restarted_during_staging(self):
+        self.assert_restarted_candidate_blocks_recovery(during_staging=True)
+
+    def assert_restarted_candidate_blocks_recovery(self, *, during_staging):
         containers = self.candidate_fencing_fixture()
         private_write(self.evidence / (self.operation + ".backup.json"),
                       {"operation": self.operation, "manifest_sha256": self.backup.manifest_sha256})
@@ -1385,13 +1391,23 @@ class PiHandoverBackupTests(unittest.TestCase):
             else:
                 self.fail(f"Unexpected Docker command: {args}")
             return b""
-        def restart(*args):
+        metadata = FileBackup._metadata
+
+        def restart_before_restore(*args):
+            if not during_staging:
+                containers[0]["State"]["Running"] = True
+
+        def restore_metadata(fd, entry):
+            metadata(fd, entry)
             containers[0]["State"]["Running"] = True
+
         with patch("tool.deployment_pi_handover.local_engine", return_value="default"), \
                 patch.object(native, "command", side_effect=command), \
                 patch.object(native, "check_host_writers"), patch.object(native, "verify_units"), \
                 patch.object(native, "verify_release"), patch.object(native, "stop_native"), \
-                patch.object(native, "check_no_writers", side_effect=restart), \
+                patch.object(native, "check_no_writers", side_effect=restart_before_restore), \
+                patch.object(FileBackup, "_metadata", side_effect=restore_metadata), \
+                patch.object(native, "preserve_replace") as replace, \
                 patch.object(native, "runtime_checks") as checks, \
                 patch("tool.deployment_pi_handover.safe_path",
                       return_value=Mock(st_mode=stat.S_IFREG | 0o644, st_uid=0)), \
@@ -1402,6 +1418,14 @@ class PiHandoverBackupTests(unittest.TestCase):
                                            checksum=self.backup.manifest_sha256,
                                            approve=lambda review: review["digest"], activated=True)
             checks.assert_not_called()
+            replace.assert_not_called()
+        if during_staging:
+            staged, = restores.iterdir()
+            self.assertEqual((staged / "data/state.json").read_text(), "current state")
+            self.assertEqual((staged / "previous-runtime/ser2net.yaml").read_bytes(),
+                             native.gateway_config(self.spec))
+        else:
+            self.assertEqual(list(restores.iterdir()), [])
         self.assertEqual(live.read_text(), "later edit")
         self.assertTrue(self.store.status()["blocked"])
         self.assertFalse((self.evidence / (self.operation + ".recovery-complete.json")).exists())
@@ -1991,6 +2015,103 @@ class PiHandoverBackupTests(unittest.TestCase):
         self.assertEqual(pending["phase"], "inputs-verified")
         self.assertTrue(self.store.status()["blocked"])
         self.assertFalse((self.evidence / (operation + ".backup.json")).exists())
+
+    def exercise_backup_drift(self, change, guard=lambda: None):
+        operation = str(uuid4())
+        self.store.begin("fixture", operation, self.images, INTENT, ["apply", "containers"],
+                         expected_committed=self.committed)
+        self.store.advance("fixture", operation, "inputs-verified")
+        verify_sources = FileBackup._verify_sources
+        data_file = Path(self.spec["data_dir"]) / "state.json"
+        offhost = Mock(return_value=None)
+
+        def drift(*args):
+            change(data_file)
+            verify_sources(*args)
+
+        arguments = {
+            "committed": self.committed, "native_spec": self.spec,
+            "image_selection": self.images, "native_asset": self.asset,
+            "verify_quiescent": guard, "verify_offhost": offhost,
+        }
+        return (operation, offhost, patch.object(FileBackup, "_verify_sources", side_effect=drift),
+                lambda: capture_backup(
+                    self.store, {"assets": self.assets, "backups": self.backups, "evidence": self.evidence},
+                    "fixture", operation, **arguments))
+
+    def test_handover_recaptures_fresh_content_and_only_sends_verified_attempt(self):
+        change = Mock()
+
+        def update_once(path):
+            if change.call_count == 1:
+                path.write_text("updated state")
+
+        change.side_effect = update_once
+        operation, offhost, verify, capture = self.exercise_backup_drift(change)
+        with verify:
+            backup = capture()
+        self.assertEqual(change.call_count, 2)
+        offhost.assert_called_once_with(backup)
+        rejected, = self.backups.glob(f"{operation}.rejected-*")
+        self.assertFalse((rejected / "manifest.json").exists())
+        self.assertEqual(rejected.stat().st_mode & 0o777, 0o700)
+        restored = self.root / "retry-restore"
+        backup.restore_new(restored, verify_quiescent=lambda: None)
+        self.assertEqual((restored / "data/state.json").read_text(), "updated state")
+
+    def test_handover_stops_after_three_unstable_captures(self):
+        change = Mock(side_effect=lambda path: path.write_text(path.read_text() + "!"))
+        operation, offhost, verify, capture = self.exercise_backup_drift(change)
+        with verify, self.assertRaisesRegex(source.NativeError, "after three captures"):
+            capture()
+        self.assertEqual(change.call_count, 3)
+        self.assertEqual(len(list(self.backups.glob(f"{operation}.rejected-*"))), 2)
+        self.assertFalse((self.backups / operation / "manifest.json").exists())
+        offhost.assert_not_called()
+        state = self.store.status()
+        self.assertEqual(state["deployments"]["fixture"]["pending"]["phase"], "inputs-verified")
+        self.assertFalse(state["image_load_started"])
+
+    def test_handover_does_not_retry_when_rechecking_writers_fails(self):
+        change = Mock(side_effect=lambda path: path.write_text("updated state"))
+
+        def guard():
+            if change.called:
+                raise source.NativeError("writer active")
+
+        operation, offhost, verify, capture = self.exercise_backup_drift(change, guard)
+        with verify, self.assertRaisesRegex(source.NativeError, "writer active"):
+            capture()
+        change.assert_called_once()
+        offhost.assert_not_called()
+        self.assertFalse(list(self.backups.glob(f"{operation}.rejected-*")))
+
+    def test_handover_does_not_retry_unsafe_metadata(self):
+        change = Mock(side_effect=lambda path: path.chmod(0o666))
+        operation, offhost, verify, capture = self.exercise_backup_drift(change)
+        with verify, self.assertRaisesRegex(BackupError, "unsupported type, ownership, permissions"):
+            capture()
+        change.assert_called_once()
+        offhost.assert_not_called()
+        self.assertFalse(list(self.backups.glob(f"{operation}.rejected-*")))
+
+    def test_handover_does_not_retry_after_losing_reservation(self):
+        change = Mock(side_effect=lambda path: path.write_text("updated state"))
+        operation, offhost, verify, capture = self.exercise_backup_drift(change)
+        real_status = self.store.status
+
+        def status():
+            state = real_status()
+            if change.called:
+                state["reservation"] = None
+            return state
+
+        with verify, patch.object(self.store, "status", side_effect=status), \
+                self.assertRaisesRegex(source.NativeError, "matching reserved native baseline"):
+            capture()
+        change.assert_called_once()
+        offhost.assert_not_called()
+        self.assertFalse(list(self.backups.glob(f"{operation}.rejected-*")))
 
     def test_interrupted_offhost_transfer_keeps_reservation_and_backup(self):
         operation = str(uuid4())

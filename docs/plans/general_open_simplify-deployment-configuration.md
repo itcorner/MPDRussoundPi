@@ -5142,3 +5142,41 @@ backup before receiving its blob when same-filesystem restore space and
 headroom were insufficient. After resizing to 100 MiB, receiving and verifying
 the backup succeeded, while the first attempt's manifest remained intact.
 This tests local filesystem pressure, not Pi recovery or concurrent writers.
+
+#### First live Pi handover and native resume, 2026-11-18
+
+The guarded tooling-only upgrade to the reviewed `64996d8` merge commit
+completed without restarting native web, serial, or Docker. The installed
+handover preflight matched the retained native record and validated the
+rehearsed same-revision ARM64 bundle.
+
+The approved live operation transferred and verified both image archives,
+then disabled and stopped the native writers. The Pi copied all 1,300 backup
+files, but the controller's SSH connection timed out before it received any
+backup files or acknowledged custody. The Pi process was still running after
+the transport failure and wrote the target-side manifest roughly 60 minutes
+after it started. The SSH error does not establish why the connection became
+unresponsive. The captured files and manifest were retained on the Pi, not
+accepted as an independently held recovery backup. No image load or
+activation was attempted.
+
+After confirming the original operator had exited and the operation was still
+at the pre-backup boundary, a separately approved native resume restored
+web and serial control without replacing the live data. The original native
+operation is committed, the reservation is clear, the controller is connected,
+and configured playback reports `ok`. The audio stack, playback agent and
+proxy were outside the handover. No Docker cutover or six-hour observation
+was completed.
+
+The backup took much longer than the VM rehearsal. During capture, sampled
+checks took about 0.69 seconds for Docker conflict inspection, 0.34 seconds
+for stopped-writer checks, and 0.08 seconds for a separate unit-status check.
+The capture calls the full guard before and after each entry and again while
+verifying each source entry. The 1,284 files in the native release (out of
+1,300 total) account for nearly all per-file work. Before another trial,
+measure capture, verification, custody transfer and activation separately.
+Review which already-verified immutable release assets can be retained off
+the Pi before the outage, and which expensive checks can be consolidated at
+phase boundaries while preserving writer exclusion, file integrity and
+independently verified custody. Rehearse transport loss on the revised path;
+a five-hour controller budget does not fix SSH responsiveness.

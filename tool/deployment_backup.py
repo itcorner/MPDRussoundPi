@@ -31,6 +31,10 @@ class BackupError(ValueError):
     """Backup or isolated recovery is incomplete; retain all evidence."""
 
 
+class SourceVerificationError(BackupError):
+    """A safely opened source no longer matches the captured copy."""
+
+
 def relative_path(value: Any) -> str:
     if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
         raise BackupError("Invalid backup member path")
@@ -177,13 +181,19 @@ class FileBackup:
     @classmethod
     def capture(cls, parent: Path, operation: str, sources: dict[str, Path], *,
                 verify_quiescent: Callable[[], None], owner_uid: int | None = None,
-                source_owner_uid: int | None = None) -> "FileBackup":
+                source_owner_uid: int | None = None, phase_checks_only: bool = False,
+                byte_limit: int | None = None) -> "FileBackup":
         """Snapshot only after the caller has stopped all relevant writers.
 
         The guard must raise when quiescence is uncertain. It is called before,
         during and after capture; it is not replaced by content comparisons.
+        Callers that fence writers for the entire transaction can opt into
+        phase checks while retaining all per-entry source and integrity checks.
         No automatic retry or cleanup is performed on interruption.
         """
+        byte_limit = MAX_BYTES if byte_limit is None else byte_limit
+        if not 0 <= byte_limit <= MAX_BYTES:
+            raise BackupError("Invalid backup capture byte limit")
         owner = os.getuid() if owner_uid is None else owner_uid
         source_owner = owner if source_owner_uid is None else source_owner_uid
         if (type(source_owner) is not int or source_owner < 0
@@ -211,12 +221,15 @@ class FileBackup:
             entries: list[dict[str, Any]] = []
             observed: dict[str, dict[str, int]] = {}
             total = [0]
+            entry_guard = None if phase_checks_only else verify_quiescent
             with checked_directory(parent / operation, owner) as backup:
                 for name, path in sources.items():
                     with checked_directory(path.parent, source_owner, private=False) as source:
                         cls._capture_entry(source, path.name, name, backup, source_owner,
-                                           entries, observed, total, verify_quiescent)
-                cls._verify_sources(sources, entries, observed, source_owner, verify_quiescent)
+                                           entries, observed, total, byte_limit, entry_guard)
+                if phase_checks_only:
+                    quiescent(verify_quiescent)
+                cls._verify_sources(sources, entries, observed, source_owner, entry_guard)
                 quiescent(verify_quiescent)
                 manifest: dict[str, Any] = {
                     "schema_version": 1, "kind": "deployment-file-backup", "operation": operation,
@@ -239,8 +252,9 @@ class FileBackup:
     @classmethod
     def _capture_entry(cls, parent: int, name: str, relative: str, backup: int, owner: int,
                        entries: list[dict[str, Any]], observed: dict[str, dict[str, int]],
-                       total: list[int], guard: Callable[[], None]) -> None:
-        quiescent(guard)
+                       total: list[int], byte_limit: int, guard: Callable[[], None] | None) -> None:
+        if guard is not None:
+            quiescent(guard)
         if len(entries) >= MAX_ENTRIES or len(PurePosixPath(relative).parts) > 64:
             raise BackupError("Backup tree exceeds entry or depth limits")
         relative_path(relative)
@@ -264,13 +278,13 @@ class FileBackup:
                 children = sorted(os.listdir(fd))
                 for child in children:
                     cls._capture_entry(fd, child, relative + "/" + child, backup, owner,
-                                       entries, observed, total, guard)
+                                       entries, observed, total, byte_limit, guard)
                 if sorted(os.listdir(fd)) != children:
                     raise BackupError("Backup tree membership changed during capture")
             else:
                 total[0] += before.st_size
-                if total[0] > MAX_BYTES:
-                    raise BackupError("Backup exceeds the total byte limit")
+                if total[0] > byte_limit:
+                    raise BackupError("Backup exceeds the capture byte limit")
                 blob = f"{len(entries):06d}.blob"
                 target = os.open(blob, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=backup)
                 try:
@@ -285,36 +299,48 @@ class FileBackup:
             stable(before, os.fstat(fd))
             stable(before, os.stat(name, dir_fd=parent, follow_symlinks=False))
             extended_metadata(fd)
-            quiescent(guard)
+            if guard is not None:
+                quiescent(guard)
         finally:
             os.close(fd)
 
     @staticmethod
     def _verify_sources(sources: dict[str, Path], entries: list[dict[str, Any]],
-                        observed: dict[str, dict[str, int]], owner: int, guard: Callable[[], None]) -> None:
+                        observed: dict[str, dict[str, int]], owner: int,
+                        guard: Callable[[], None] | None) -> None:
         children: dict[str, set[str]] = {}
         for entry in entries:
             path = PurePosixPath(entry["path"])
             children.setdefault(str(path.parent), set()).add(path.name)
         for entry in entries:
-            quiescent(guard)
+            if guard is not None:
+                quiescent(guard)
             parts = PurePosixPath(entry["path"]).parts
             path = sources[parts[0]].joinpath(*parts[1:])
             with checked_directory(path.parent, owner, private=False) as parent:
                 fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
                 try:
                     info = os.fstat(fd)
-                    if attributes(info) != observed[entry["path"]]:
-                        raise BackupError("Backup source changed after it was copied")
+                    source_info(info, owner)
                     extended_metadata(fd)
-                    if entry["type"] == "file":
-                        if copy_stream(fd, None, entry["size"]) != entry["sha256"]:
-                            raise BackupError("Backup source content changed after it was copied")
+                    if stat.S_ISREG(info.st_mode) != (entry["type"] == "file"):
+                        raise BackupError("Backup source type changed after it was copied")
+                    current, captured = attributes(info), observed[entry["path"]]
+                    if any(current[key] != captured[key] for key in ("device", "inode", "uid", "gid", "mode")):
+                        raise BackupError("Backup source identity or permissions changed after it was copied")
+                    if current != captured:
+                        mismatch = "Backup source changed after it was copied"
+                    elif entry["type"] == "file":
+                        mismatch = ("Backup source content changed after it was copied"
+                                    if copy_stream(fd, None, entry["size"]) != entry["sha256"] else None)
                     else:
-                        if set(os.listdir(fd)) != children.get(entry["path"], set()):
-                            raise BackupError("Backup tree membership changed after capture")
-                    stable(info, os.fstat(fd))
-                    stable(info, os.stat(path.name, dir_fd=parent, follow_symlinks=False))
+                        mismatch = ("Backup tree membership changed after capture"
+                                    if set(os.listdir(fd)) != children.get(entry["path"], set()) else None)
+                    for after in (os.fstat(fd), os.stat(path.name, dir_fd=parent, follow_symlinks=False)):
+                        source_info(after, owner)
+                        stable(info, after)
+                    if mismatch:
+                        raise SourceVerificationError(mismatch)
                 finally:
                     os.close(fd)
 
@@ -380,12 +406,15 @@ class FileBackup:
                     "entries": len(manifest["entries"]), "total_bytes": manifest["total_bytes"],
                     "method": manifest["method"], "live_restore_supported": False}
 
-    def restore_new(self, destination: Path, *, verify_quiescent: Callable[[], None]) -> dict[str, Any]:
+    def restore_new(self, destination: Path, *, verify_quiescent: Callable[[], None],
+                    phase_checks_only: bool = False) -> dict[str, Any]:
         """Restore into a new isolated tree, never onto original paths or state.
 
         Ownership restoration requires suitable privilege; no ownership fallback
         is permitted. The caller must validate code/data compatibility and service
         acceptance separately before any approved live cutover.
+        Callers that keep writers fenced can opt into guards before and after
+        staging without changing per-entry integrity and metadata verification.
         """
         with self._verified() as (backup, manifest):
             if destination == self.path.parent or self.path.parent in destination.parents:
@@ -402,7 +431,8 @@ class FileBackup:
             with checked_directory(destination, self.owner_uid) as target:
                 directories: list[dict[str, Any]] = []
                 for entry in manifest["entries"]:
-                    quiescent(verify_quiescent)
+                    if not phase_checks_only:
+                        quiescent(verify_quiescent)
                     parts = PurePosixPath(entry["path"]).parts
                     with self._restore_parent(target, parts[:-1]) as directory:
                         if entry["type"] == "directory":

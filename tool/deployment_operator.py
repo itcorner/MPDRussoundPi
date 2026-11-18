@@ -32,6 +32,8 @@ from tool.deployment_transfer import ssh_arguments
 TOOLS = Path("/opt/mpdrussoundpi-deploy")
 STORAGE = Path("/var/lib/mpdrussoundpi-operations")
 DEPLOY_ACTIONS = ("deploy", "native-deploy", "handover-deploy")
+DEFAULT_CONTROLLER_TIMEOUT = 3600
+MAX_CONTROLLER_TIMEOUT = 5 * 3600
 
 
 @contextmanager
@@ -402,7 +404,10 @@ def interactive(review: dict[str, Any]) -> str | None:
     return review["digest"] if answer == expected else None
 
 
-def remote(args: argparse.Namespace, request: dict[str, Any]) -> dict[str, Any]:
+def remote(args: argparse.Namespace, request: dict[str, Any], *,
+           timeout_seconds: int = DEFAULT_CONTROLLER_TIMEOUT) -> dict[str, Any]:
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= MAX_CONTROLLER_TIMEOUT:
+        raise ChannelError(f"Controller timeout must be between 1 and {MAX_CONTROLLER_TIMEOUT} seconds")
     evidence: Path = args.evidence
     with checked_directory(evidence, os.getuid()):
         pass
@@ -426,7 +431,7 @@ def remote(args: argparse.Namespace, request: dict[str, Any]) -> dict[str, Any]:
         with subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log) as process:
             assert process.stdin is not None and process.stdout is not None
             # Bounded controller lifetime. Killing SSH never proves target work ended.
-            timer = threading.Timer(3600, process.kill)
+            timer = threading.Timer(timeout_seconds, process.kill)
             timer.start()
             try:
                 def approved(review: dict[str, Any]) -> str | None:
@@ -468,7 +473,18 @@ def main() -> int:
     parser.add_argument("--operation")
     parser.add_argument("--backup", type=Path)
     parser.add_argument("--backup-sha256")
+    parser.add_argument("--controller-timeout-seconds", type=int,
+                        help=f"Remote session limit (default {DEFAULT_CONTROLLER_TIMEOUT}, maximum "
+                             f"{MAX_CONTROLLER_TIMEOUT}); does not extend an active session")
     args = parser.parse_args()
+    timeout = args.controller_timeout_seconds
+    if timeout is not None:
+        if args.action == "serve":
+            parser.error("--controller-timeout-seconds applies only to the controller")
+        if not 1 <= timeout <= MAX_CONTROLLER_TIMEOUT:
+            parser.error(f"--controller-timeout-seconds must be between 1 and {MAX_CONTROLLER_TIMEOUT}")
+    else:
+        timeout = DEFAULT_CONTROLLER_TIMEOUT
     try:
         if args.action == "serve":
             if os.geteuid() != 0 or Path(__file__).resolve().parents[1] != TOOLS:
@@ -539,7 +555,7 @@ def main() -> int:
                 if not all((args.deployment, args.operation)):
                     parser.error("resume-original requires --deployment and --operation")
                 request = {"action": args.action, "deployment": args.deployment, "operation": args.operation}
-            print(json.dumps(remote(args, request)))
+            print(json.dumps(remote(args, request, timeout_seconds=timeout)))
         return 0
     except (ComposeError, ChannelError, StateError, NativeError) as error:
         print(str(error) + ". Retain private evidence and inspect target state before retrying.", file=sys.stderr)
