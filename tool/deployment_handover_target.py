@@ -25,7 +25,8 @@ from tool.deployment_images import MAX_METADATA
 from tool.deployment_load import load_reserved_bundle, select_bundle
 from tool.deployment_native_source import NativeError
 from tool.deployment_pi_handover import (
-    capture_backup, check_docker_conflicts, fence_native, inspect_candidate_containers, prepare,
+    HANDOVER_CAPTURE_ATTEMPTS, HANDOVER_STORAGE_MARGIN, capture_backup, check_docker_conflicts,
+    fence_native, inspect_candidate_containers, prepare,
     send_handover_backup,
 )
 from tool.deployment_preflight import check_data, check_port, mode_access, overlap, safe_path
@@ -126,7 +127,8 @@ class HandoverTarget:
         if self.backup_estimate is not None and 2 * size > self.backup_estimate:
             raise NativeError("Handover recovery contents outgrew the reviewed capacity")
         incoming = sum(item["bytes"] for item in self.selection["manifest"]["images"].values())
-        if shutil.disk_usage(self.storage["backups"]).free < 3 * size + incoming + 256 * 1024**2:
+        if shutil.disk_usage(self.storage["backups"]).free < (
+                (HANDOVER_CAPTURE_ATTEMPTS + 2) * size + incoming + HANDOVER_STORAGE_MARGIN):
             raise NativeError("Insufficient space for image transfer, backup and isolated restore")
         if (Path(spec["data_dir"]).parent.stat().st_dev != self.storage["restores"].stat().st_dev
                 or native.RELEASES.stat().st_dev != self.storage["restores"].stat().st_dev

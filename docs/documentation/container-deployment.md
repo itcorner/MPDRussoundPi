@@ -80,6 +80,13 @@ The operator prints the exact review and requires interactive confirmation of
 the operation ID. The example is not authorization to run an unaccepted live
 cutover.
 
+The controller's remote session defaults to one hour. For a reviewed longer
+maintenance window, set `--controller-timeout-seconds 18000` when starting
+the controller (five hours). Any external terminal wrapper must allow at
+least as much time. This does not extend a running session or individual Docker
+command deadlines. A controller timeout does not establish that work on the
+target has ended.
+
 The action reviews an operation-specific Compose project, reserves state,
 transfers and verifies images, fences the native writers, and captures a fresh
 backup. Loading and activation follow only after independently verified
@@ -94,6 +101,28 @@ After fencing, the operator waits up to 75 seconds per native listener for an
 exclusive bind to succeed, allowing TCP TIME_WAIT to expire. A listener still
 unavailable at the deadline fails the handover and retains the reservation;
 it does not authorize an automatic retry or recovery.
+
+For this handover, the backup checks the reservation and stopped-writer
+state before copying, between copying and source verification, and again
+before accepting the result. It hashes each file while copying, then reads
+the source separately to verify hashes, metadata and tree membership. These
+checks do not replace writer exclusion: leave the fenced services stopped
+and do not edit the source directories during the handover.
+
+A source mismatch found in the verification sweep can trigger a fresh
+capture only after the reservation and writer checks pass again. The limit
+is three total captures. Rejected copies are retained privately; only a
+verified capture is sent off-host. Budget target disk space for retained
+attempts as well as recovery. An unsafe source, a failed writer or state
+check, or an interrupted transfer stops the handover without replaying it.
+
+Pi handover backup recovery checks for writers and unexpected deployment or
+Docker state before and after staging the backup in a private directory, and
+again before replacing live data. File checksums, restored-byte readback,
+metadata verification, and post-restart acceptance still run. Keep writers
+fenced throughout recovery: a process that starts and stops between checks
+may go unnoticed. A failed check before replacement leaves live data
+untouched and retains the staged copy and reservation for investigation.
 
 ### Interrupted handover image load
 

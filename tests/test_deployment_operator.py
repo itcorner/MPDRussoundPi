@@ -23,7 +23,7 @@ from tool.deployment_compose import (
     ComposeDeployment, ComposeError, check_host_writers, encoded, paths, specification, validate_runtime_files,
 )
 from tool.deployment_load import select_bundle
-from tool.deployment_operator import controller, interactive, operator_lock, remote
+from tool.deployment_operator import controller, interactive, main, operator_lock, remote
 from tool.deployment_recovery import recovery_assets
 from test_deployment_build import fixture_bundle
 
@@ -101,6 +101,44 @@ class OperatorContractTests(unittest.TestCase):
                                     cwd=ROOT, capture_output=True, text=True, timeout=20)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Another target operator is active", result.stderr)
+
+    def test_controller_timeout_cli_passes_default_and_explicit_limit(self):
+        argv = ["deployment_operator", "resume-original", "--host", "127.0.0.1",
+                "--user", "fixture", "--known-hosts", "known_hosts", "--evidence", "evidence",
+                "--deployment", "fixture", "--operation", str(uuid4())]
+        for options, expected in (([], 3600), (["--controller-timeout-seconds", "18000"], 18000)):
+            with self.subTest(expected=expected), patch.object(sys, "argv", argv + options), \
+                    patch("tool.deployment_operator.remote", return_value={}) as run, patch("builtins.print"):
+                self.assertEqual(main(), 0)
+                self.assertEqual(run.call_args.kwargs["timeout_seconds"], expected)
+        for invalid in ("0", "18001"):
+            with self.subTest(invalid=invalid), \
+                    patch.object(sys, "argv", argv + ["--controller-timeout-seconds", invalid]), \
+                    patch("tool.deployment_operator.remote") as run, patch.object(sys, "stderr", io.StringIO()), \
+                    self.assertRaises(SystemExit) as error:
+                main()
+            self.assertEqual(error.exception.code, 2)
+            run.assert_not_called()
+
+    def test_remote_uses_and_cancels_the_configured_timer(self):
+        trust = self.root / "known_hosts"
+        trust.write_bytes(b"fixture trust snapshot\n")
+        trust.chmod(0o600)
+        args = argparse.Namespace(evidence=self.storage["evidence"], known_hosts=trust,
+                                  host="127.0.0.1", user="fixture", port=22, identity=None,
+                                  bundle=None, backup=None, backup_sha256=None)
+        request = {"action": "resume-original", "operation": str(uuid4())}
+        with patch("tool.deployment_operator.subprocess.Popen") as popen, \
+                patch("tool.deployment_operator.controller", return_value={"event": "recovered"}), \
+                patch("tool.deployment_operator.threading.Timer") as timer:
+            process = popen.return_value.__enter__.return_value
+            process.wait.return_value = 0
+            process.poll.return_value = 0
+            self.assertEqual(remote(args, request, timeout_seconds=18000), {"event": "recovered"})
+        timer.assert_called_once_with(18000, process.kill)
+        timer.return_value.start.assert_called_once_with()
+        timer.return_value.cancel.assert_called_once_with()
+        process.kill.assert_not_called()
 
     def test_prepared_scope_preserves_exact_services_and_rejects_privilege_or_mount_changes(self):
         target = self.target()
