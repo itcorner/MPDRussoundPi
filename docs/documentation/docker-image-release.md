@@ -244,11 +244,16 @@ refreshes alias eligibility and checks the development tip immediately before
 promotion. A process lock rejects simultaneous local publications to the same
 endpoint/namespace. Journal updates use flushed temporary files and atomic
 replacement; preserve the journal and original tested archives after failure.
+After a successful mutable-alias write, the publisher can retry read-back
+within a 25-second budget without repeating the write. It reports mismatched
+digests or missing tags and still fails if the expected digest is not verified.
+Exact-tag and digest writes do not use this retry policy.
 
 Recovery requires `RECOVERY_APPROVED=true` and the existing matching journal.
 Existing exact tags must match the recorded digest; absent exact tags can be
 completed from the original artifacts. Completed tags are verified, not
-overwritten. Normal retries against an existing journal fail. A crashed local
+overwritten. Recovery also leaves aliases that already match untouched.
+Normal retries against an existing journal fail. A crashed local
 process may leave a lock or journal temporary file: inspect the journal and
 verify no publisher is running before manually removing only that stale file.
 Do not silently discard evidence or start a competing publication.
@@ -271,10 +276,13 @@ runtime-smoke-tested. Check the Actions summary for immutable digest references.
 
 Runtime verification pulls each platform's child digest separately, avoiding
 Docker's classic image-store conflict when two platforms share an index
-reference. If uploads completed but this post-publication check failed, use the
+reference. If the run failed during alias read-back or post-publication checks, use the
 [verification-only workflow](../../.github/workflows/verify-development-publication.yml)
-on `main` with the original failed run ID and completed digest journal. It uses
-no Docker Hub secret and performs no publication or recovery writes.
+on `main` with the original failed run ID and retained digest journal. It can
+verify an incomplete journal only if both exact tags and both `dev` aliases
+resolve to the recorded digests before pull and smoke testing. It uses no
+Docker Hub secret, leaves the original failed run and journal unchanged, and
+performs no publication or recovery writes.
 Verification and recovery pass the validated original source through
 `PUBLICATION_SOURCE_SHA`; GitHub's reserved `GITHUB_SHA` remains the trusted
 workflow commit. Ordinary development publishing always uses `GITHUB_SHA`.

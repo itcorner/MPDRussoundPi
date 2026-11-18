@@ -1,6 +1,7 @@
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
 const {spawnSync} = require("node:child_process");
+const {createHash} = require("node:crypto");
 const {mkdtempSync, writeFileSync, rmSync} = require("node:fs");
 const {tmpdir} = require("node:os");
 const path = require("node:path");
@@ -63,6 +64,32 @@ test("missing tags require explicit registry missing-resource errors; auth error
     if (expected) assert.deepEqual(await registry.tags(repository), expected);
     else await assert.rejects(registry.tags(repository), /missing-resource|HTTP/);
   }
+});
+
+test("alias read-back tolerates stale and missing reads without repeating PUT", async t => {
+  const {DockerHubRegistry} = await transport;
+  const bytes = Buffer.from('{"schemaVersion":2}');
+  const stale = Buffer.from('{"schemaVersion":2,"manifests":[]}');
+  const digest = value => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+  const requests = [];
+  let reads = 0;
+  const registry = new DockerHubRegistry("itcornernet", "itcornernet", "test-placeholder", async (url, options) => {
+    if (url.startsWith("https://auth.docker.io/")) return {ok: true, json: async () => ({token})};
+    requests.push(options.method ?? "GET");
+    if (options.method === "PUT") return new Response(null, {status: 201});
+    if (++reads === 2) return Response.json({errors: [{code: "MANIFEST_UNKNOWN"}]}, {status: 404});
+    const body = reads === 1 ? stale : bytes;
+    return new Response(body, {headers: {"docker-content-digest": digest(body)}});
+  });
+  const warn = t.mock.method(console, "warn", () => {});
+  await registry.put(repository, "dev", bytes, undefined, {mutableAlias: true});
+  assert.deepEqual(requests, ["PUT", "GET", "GET", "GET"]);
+  assert.match(warn.mock.calls[0].arguments[0], new RegExp(`expected ${digest(bytes)}, observed ${digest(stale)}`));
+  assert.match(warn.mock.calls[1].arguments[0], /observed 404/);
+  requests.length = 0;
+  reads = 0;
+  await assert.rejects(registry.put(repository, "dev-exact", bytes), /digest verification/);
+  assert.deepEqual(requests, ["PUT", "GET"]);
 });
 
 test("production CLI gate rejects unapproved, manual, stable and main publication before secret access", () => {
@@ -142,6 +169,38 @@ test("published runtime verification pulls distinct platform child digests rathe
   assert.equal(pulls.length, 4);
   assert.equal(reports.length, 2);
   assert.throws(() => verifyPublishedImages({...journal, phase: "prepared"}, "itcornernet", sha), /completed matching/);
+});
+
+test("no-write verification checks all four tags before accepting an incomplete journal", async () => {
+  const {verifyPublishedImages} = await import("../tool/ci/verify-published-images.mjs");
+  const sha = "a".repeat(40);
+  const digest = `sha256:${"b".repeat(64)}`;
+  const exact = `dev-${sha}`;
+  const journal = {phase: "promoted-web-dev", expected: {namespace: "itcornernet", sha,
+    channel: "development", exact, digests: {web: digest, ser2net: digest}}};
+  const tags = ["web", "ser2net"].flatMap(image =>
+    [exact, "dev"].map(tag => `itcornernet/mpdrussoundpi-${image}:${tag}`));
+  let inspected = [];
+  let smokeTests = 0;
+  let mismatch = true;
+  const run = (command, args) => {
+    if (args[4] === "--format") {
+      inspected.push(args[3]);
+      return JSON.stringify({digest: mismatch && args[3] === tags[3] ? `sha256:${"c".repeat(64)}` : digest});
+    }
+    assert.deepEqual(inspected, tags);
+    if (command === "bash") smokeTests++;
+    if (args[0] === "buildx") return JSON.stringify({manifests: ["amd64", "arm64"].map(architecture => ({
+      platform: {os: "linux", architecture}, digest,
+    }))});
+  };
+  assert.throws(() => verifyPublishedImages(journal, "itcornernet", sha, run, {verifyTags: true}),
+    /mpdrussoundpi-ser2net:dev: expected .* observed/);
+  assert.equal(smokeTests, 0);
+  inspected = [];
+  mismatch = false;
+  assert.equal(verifyPublishedImages(journal, "itcornernet", sha, run, {verifyTags: true}).length, 2);
+  assert.equal(smokeTests, 4);
 });
 
 test("verification CLI uses explicit original source rather than the trusted workflow commit", () => {

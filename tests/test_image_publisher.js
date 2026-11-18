@@ -146,6 +146,26 @@ test("partial failure requires approved matching-journal recovery without overwr
   assert.equal((await registry.manifest(`${options.namespace}/mpdrussoundpi-web`, exact)).digest, existing.digest);
 });
 
+test("recovery keeps matching aliases without rewriting them", {skip: !endpoint}, async t => {
+  const {registry, options, publishImages} = await fixture(t);
+  const put = registry.put.bind(registry);
+  registry.put = async (repository, reference, ...args) => {
+    if (repository.endsWith("ser2net") && reference === "dev") {
+      throw new Error("Injected alias failure");
+    }
+    return put(repository, reference, ...args);
+  };
+  await assert.rejects(publishImages(options), /Injected alias failure/);
+  const writes = [];
+  registry.put = async (repository, reference, ...args) => {
+    writes.push([repository, reference]);
+    return put(repository, reference, ...args);
+  };
+  await publishImages({...options, recoveryApproved: true});
+  assert.deepEqual(writes, [[`${options.namespace}/mpdrussoundpi-ser2net`, "dev"]]);
+  assert.equal(JSON.parse(readFileSync(options.journalPath)).phase, "complete");
+});
+
 test("recovery refuses mismatched expected evidence", {skip: !endpoint}, async t => {
   const {options, publishImages} = await fixture(t);
   await publishImages(options);

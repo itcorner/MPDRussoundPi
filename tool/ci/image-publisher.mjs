@@ -4,6 +4,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {execFileSync} from "node:child_process";
 import {pathToFileURL} from "node:url";
+import {setTimeout as wait} from "node:timers/promises";
 import {imagePolicy, imageEventPolicy, validateImageSource} from "./image-policy.mjs";
 import {registryToken} from "./check-registry-access.mjs";
 import {recoveryGate, loadPreparedArtifacts} from "./publication-plan.mjs";
@@ -12,6 +13,7 @@ import {verifyArchive} from "./verify-image-archive.mjs";
 const indexType = "application/vnd.oci.image.index.v1+json";
 const manifestType = "application/vnd.oci.image.manifest.v1+json";
 const digestOf = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+const aliasReadbackDelays = [0, 1000, 2000, 4000, 8000];
 
 export function assembleImage(readers, sha, version) {
   const blobs = new Map();
@@ -59,7 +61,8 @@ class Registry {
   async request(path, options = {}, allowMissing = false) {
     const url = new URL(path, this.endpoint);
     if (url.origin !== this.endpoint.origin) throw new Error("Registry request left the local endpoint");
-    const response = await fetch(url, {...options, redirect: "error", signal: AbortSignal.timeout(120_000)});
+    const response = await fetch(url, {...options, redirect: "error",
+      signal: options.signal ?? AbortSignal.timeout(120_000)});
     if (allowMissing && response.status === 404) return null;
     if (!response.ok) throw new Error(`Local registry request failed: HTTP ${response.status}`);
     return response;
@@ -103,9 +106,9 @@ class Registry {
     return [...tags];
   }
 
-  async manifest(repository, reference) {
+  async manifest(repository, reference, signal) {
     const response = await this.request(this.path(repository, `manifests/${encodeURIComponent(reference)}`),
-      {headers: {Accept: `${indexType}, ${manifestType}`}}, true);
+      {headers: {Accept: `${indexType}, ${manifestType}`}, signal}, true);
     if (!response) return null;
     const bytes = Buffer.from(await response.arrayBuffer());
     const digest = digestOf(bytes);
@@ -130,11 +133,18 @@ class Registry {
     }
   }
 
-  async put(repository, reference, bytes, mediaType = indexType) {
+  async put(repository, reference, bytes, mediaType = indexType, {mutableAlias = false} = {}) {
     await this.request(this.path(repository, `manifests/${encodeURIComponent(reference)}`),
       {method: "PUT", headers: {"Content-Type": mediaType}, body: bytes});
-    const actual = await this.manifest(repository, reference);
-    if (actual?.digest !== digestOf(bytes)) throw new Error("Written registry manifest failed digest verification");
+    const expected = digestOf(bytes);
+    const signal = mutableAlias ? AbortSignal.timeout(25_000) : undefined;
+    for (const delay of mutableAlias ? aliasReadbackDelays : [0]) {
+      if (delay) await wait(delay, undefined, {signal});
+      const actual = await this.manifest(repository, reference, signal);
+      if (actual?.digest === expected) return;
+      console.warn(`Registry read-back ${repository}:${reference}: expected ${expected}, observed ${actual?.digest ?? "404"}`);
+    }
+    throw new Error(`Written registry manifest failed digest verification: ${repository}:${reference}`);
   }
 
   async verify(repository, image, reference) {
@@ -182,18 +192,21 @@ export class DockerHubRegistry extends Registry {
     const repository = match[1];
     let grant = this.tokens.get(repository);
     if (!grant || Date.now() - grant.created > 60_000) {
-      grant = {token: await registryToken(repository, this.username, this.password, this.fetchRequest), created: Date.now()};
+      const fetchToken = (url, init) => this.fetchRequest(url, {...init,
+        signal: options.signal ? AbortSignal.any([options.signal, init.signal]) : init.signal});
+      grant = {token: await registryToken(repository, this.username, this.password, fetchToken), created: Date.now()};
       this.tokens.set(repository, grant);
     }
     let response = await this.fetchRequest(url.href, {...options, redirect: "manual",
-      signal: AbortSignal.timeout(120_000), headers: {...options.headers, Authorization: `Bearer ${grant.token}`}});
+      signal: options.signal ?? AbortSignal.timeout(120_000),
+      headers: {...options.headers, Authorization: `Bearer ${grant.token}`}});
     if ([302, 307].includes(response.status) && ["GET", "HEAD"].includes(options.method ?? "GET")) {
       const location = new URL(response.headers.get("location"), url);
       if (location.protocol !== "https:" || location.username || location.password) {
         throw new Error("Unsafe registry download redirect");
       }
       response = await this.fetchRequest(location.href, {method: options.method ?? "GET",
-        redirect: "error", signal: AbortSignal.timeout(120_000)});
+        redirect: "error", signal: options.signal ?? AbortSignal.timeout(120_000)});
     }
     if (allowMissing && response.status === 404) {
       if (options.method === "HEAD") return null;
@@ -263,8 +276,12 @@ async function publishLocked({registry, namespace, channel, version, sha, images
       if (!imagePolicy(channel, version, sha, freshTags.filter(tag => tag !== exact)).aliases.includes(alias)) {
         throw new Error("Alias eligibility changed during promotion");
       }
+      const alreadyMatches = recoveryApproved &&
+        (await registry.manifest(repository, alias))?.digest === images[image].digest;
       await checkSource(channel === "development");
-      await registry.put(repository, alias, images[image].bytes);
+      if (!alreadyMatches) {
+        await registry.put(repository, alias, images[image].bytes, indexType, {mutableAlias: true});
+      }
       save(`promoted-${image}-${alias}`);
     }
   }
