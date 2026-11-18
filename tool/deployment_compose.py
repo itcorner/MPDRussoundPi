@@ -1,6 +1,6 @@
 """Concrete Linux development deployment for prepared, self-contained Compose inputs.
 
-Only the selected project's web and optional managed gateway are changed.
+Only the selected project's web and/or managed gateway are changed.
 Native services, networks, credentials and data paths are never migrated.
 """
 
@@ -10,19 +10,21 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from tool.deployment_backup import MAX_BYTES, FileBackup, extended_metadata, source_info
 from tool.deployment_build import archive_identity, digest_stream, image_identity, local_engine
 from tool.deployment_files import checked_directory, is_mapping
-from tool.deployment_images import DIGEST
+from tool.deployment_images import DIGEST, components
 from tool.deployment_inputs import attributes, read_file, write_file
 from tool.deployment_local import LOCAL_CANDIDATE
+from tool.deployment_native_source import NATIVE_CANDIDATE, NativeError
 from tool.deployment_preflight import check_data, check_port, check_serial, mode_access, overlap, safe_path
 from tool.deployment_runner import DevelopmentRun, RunHooks
 from tool.deployment_state import StateStore, candidate, identity, operation_id
@@ -78,6 +80,8 @@ def specification(value: Any) -> dict[str, Any]:
             raise ComposeError("Acceptance and adoption choices must be explicit booleans")
     if value["gateway"] == "dummy" and not value["require_controller"]:
         raise ComposeError("Dummy acceptance must require a connected backend route")
+    if value["gateway"] == "standalone" and (value["require_controller"] or value["require_playback"]):
+        raise ComposeError("Standalone acceptance covers the gateway listener; require controller/playback on the web host")
     path = Path(value["compose"]) if isinstance(value["compose"], str) else Path()
     if not path.is_absolute() or ".." in path.parts or path == Path("/"):
         raise ComposeError("Compose input must be an explicit absolute private file")
@@ -86,9 +90,11 @@ def specification(value: Any) -> dict[str, Any]:
 
 class ComposeDeployment:
     def __init__(self, spec: dict[str, Any], selection: dict[str, Any], storage: dict[str, Path],
-                 *, operation: str | None = None):
+                 *, operation: str | None = None, restoring_native: bool = False):
         self.spec = specification(spec)
         candidate(selection)
+        if selection["kind"] == NATIVE_CANDIDATE:
+            raise ComposeError("Native source candidates require the native deployment workflow")
         self.selection = copy.deepcopy(selection)
         metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
         if any(metadata[key] != spec[key] for key in ("gateway", "platform")):
@@ -107,15 +113,24 @@ class ComposeDeployment:
         self.input_attributes = attributes(self.input.stat())
         self.config: dict[str, Any] = json.loads(self.raw)
         self.config.setdefault("name", spec["project"])
-        self.services = {"russound-web": "web"}
-        if spec["gateway"] == "managed":
-            self.services["russound-ser2net"] = "ser2net"
-        elif spec["gateway"] == "dummy":
+        service_names = {"web": "russound-web", "ser2net": "russound-ser2net", "dummy": "russound-dummy"}
+        self.services = {service_names[name]: name for name in components(spec["gateway"])}
+        if spec["gateway"] == "dummy":
             if selection["kind"] != LOCAL_CANDIDATE:
                 raise ComposeError("Dummy requires a pinned local web/dummy image bundle")
-            self.services["russound-dummy"] = "dummy"
         self.committed = self.store.status()["deployments"].get(spec["deployment"], {}).get("committed")
+        if restoring_native:
+            state = self.store.status()
+            pending = state["deployments"].get(spec["deployment"], {}).get("pending")
+            if (not state["blocked"] or pending is None
+                    or pending["candidate"]["kind"] != NATIVE_CANDIDATE
+                    or state["reservation"] != {"schema_version": 1, "deployment": spec["deployment"],
+                                               "operation": pending["operation"]}):
+                raise ComposeError("Native baseline restoration requires its reserved native operation")
+            self.committed = None
         if self.committed is not None:
+            if self.committed["selection"]["candidate"]["kind"] == NATIVE_CANDIDATE:
+                raise ComposeError("Native-to-Docker migration requires explicit native recovery, not Compose apply")
             previous_operation = self.committed["selection"]["operation"]
             previous = json.loads(private_read(storage["runtime"] / previous_operation / "active.json"))
             def without_images(value: dict[str, Any]) -> dict[str, Any]:
@@ -178,7 +193,7 @@ class ComposeDeployment:
         if (not is_mapping(config) or set(config) - {"name", "services", "networks"}
                 or not is_mapping(config.get("services")) or set(config["services"]) != set(self.services)
                 or config.get("name", spec["project"]) != spec["project"]):
-            raise ComposeError("Use one rendered self-contained web/managed-gateway Compose JSON without extra services")
+            raise ComposeError("Use one rendered self-contained Compose JSON with exactly the selected services")
         if b"${" in self.raw:
             raise ComposeError("Compose inputs must be fully rendered, not interpolated at deployment time")
         for name, service in config["services"].items():
@@ -210,12 +225,32 @@ class ComposeDeployment:
                     raise ComposeError("Every mount must be an existing bind strictly inside the approved data root")
                 if Path(mount["source"]) == Path(spec["data_dir"]):
                     raise ComposeError("Mount specific data subdirectories, not the entire data root")
-            if name != "russound-web" and service.get("ports"):
+            if name != "russound-web" and spec["gateway"] != "standalone" and service.get("ports"):
                 raise ComposeError("Managed gateway ports must not be published")
         for network in config.get("networks", {}).values():
             if network.get("driver", "bridge") != "bridge" or set(network) - {
                     "name", "external", "driver", "internal", "enable_ipv6", "ipam", "labels"}:
                 raise ComposeError("Only ordinary bridge or explicitly reused networks are supported")
+        if spec["gateway"] in ("managed", "standalone"):
+            gateway = config["services"]["russound-ser2net"]
+            devices = gateway.get("devices", [])
+            if (len(devices) != 1 or devices[0].get("source") != spec["serial_device"]
+                    or devices[0].get("target") != spec["serial_device"]
+                    or str(spec["serial_gid"]) not in [str(item) for item in gateway.get("group_add", [])]):
+                raise ComposeError("Managed serial device/group differs from reviewed hardware")
+        if spec["gateway"] == "standalone":
+            gateway = config["services"]["russound-ser2net"]
+            self.validate_listener(gateway, 6666)
+            environment = gateway.get("environment", {})
+            if (gateway.get("volumes") or gateway.get("depends_on")
+                    or set(environment) != {"RUSSOUND_SERIAL_DEVICE", "RUSSOUND_SERIAL_OPTIONS",
+                                            "RUSSOUND_SER2NET_BIND", "RUSSOUND_SER2NET_PORT"}
+                    or [str(item) for item in gateway.get("group_add", [])] != [str(spec["serial_gid"])]
+                    or environment.get("RUSSOUND_SERIAL_DEVICE") != spec["serial_device"]
+                    or environment.get("RUSSOUND_SER2NET_BIND") != "0.0.0.0"
+                    or str(environment.get("RUSSOUND_SER2NET_PORT")) != "6666"):
+                raise ComposeError("Standalone gateway must use the reviewed device and listener without mounts or dependencies")
+            return
         web = config["services"]["russound-web"]
         expected = {"/config": "config", "/data": "data", "/logs": "logs", "/run/secrets": "secrets"}
         mounts = {mount["target"]: mount for mount in web.get("volumes", [])}
@@ -224,22 +259,11 @@ class ComposeDeployment:
                 or bool(mounts[target].get("read_only")) != (child == "secrets")
                 for target, child in expected.items()):
             raise ComposeError("Web mounts must preserve exactly config/data/logs/secrets")
-        ports = web.get("ports", [])
-        if (len(ports) != 1 or ports[0].get("target") != 8000
-                or str(ports[0].get("published")) != str(spec["publish_port"])
-                or ports[0].get("host_ip") != spec["publish_host"]):
-            raise ComposeError("Web listener differs from the explicit reviewed host and port")
+        self.validate_listener(web, 8000)
         agents = web.get("environment", {}).get("RUSSOUND_PLAYBACK_AGENTS", "")
         if bool(agents) != spec["require_playback"]:
             raise ComposeError("Configured playback requires acceptance; disabled playback must have no agent input")
-        if spec["gateway"] == "managed":
-            gateway = config["services"]["russound-ser2net"]
-            devices = gateway.get("devices", [])
-            if (len(devices) != 1 or devices[0].get("source") != spec["serial_device"]
-                    or devices[0].get("target") != spec["serial_device"]
-                    or str(spec["serial_gid"]) not in [str(item) for item in gateway.get("group_add", [])]):
-                raise ComposeError("Managed serial device/group differs from reviewed hardware")
-        elif spec["gateway"] == "dummy":
+        if spec["gateway"] == "dummy":
             dummy = config["services"]["russound-dummy"]
             volumes = dummy.get("volumes", [])
             dependencies = web.get("depends_on")
@@ -252,6 +276,15 @@ class ComposeDeployment:
                     or not is_mapping(dependencies.get("russound-dummy"))
                     or dependencies["russound-dummy"].get("condition") != "service_healthy"):
                 raise ComposeError("Dummy requires its isolated writable state bind and web-to-dummy route")
+
+    def validate_listener(self, service: dict[str, Any], port: int) -> None:
+        ports = service.get("ports", [])
+        if (len(ports) != 1 or ports[0].get("target") != port
+                or str(ports[0].get("published")) != str(self.spec["publish_port"])
+                or ports[0].get("host_ip") != self.spec["publish_host"]
+                or ports[0].get("protocol", "tcp") != "tcp"
+                or ports[0].get("mode", "ingress") != "ingress"):
+            raise ComposeError("Listener differs from the explicit reviewed TCP host and port")
 
     def current_signature(self, containers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return sorted([{
@@ -276,15 +309,16 @@ class ComposeDeployment:
             raise ComposeError("Docker daemon identity changed after review")
         self.engine_id = info["ID"]
         check_data(spec)
-        validate_runtime_files(spec, self.config["services"]["russound-web"].get("environment", {}))
-        safe_path(Path(spec["data_dir"]) / "config/russound_config.json")
-        # Parsing the actual config through the application validator is required,
-        # not just accepting any JSON file with a plausible name.
-        from web.config_types import validate_russound_config
-        configuration = json.loads((Path(spec["data_dir"]) / "config/russound_config.json").read_bytes())
-        validate_russound_config(configuration)
-        if spec["require_controller"] and not configuration.get("zones"):
-            raise ComposeError("Controller acceptance requires explicit configured zone mappings")
+        web = self.config["services"].get("russound-web", {})
+        validate_runtime_files(spec, web.get("environment", {}))
+        if spec["gateway"] != "standalone":
+            safe_path(Path(spec["data_dir"]) / "config/russound_config.json")
+            # Validate the actual application configuration, not just its JSON shape.
+            from web.config_types import validate_russound_config
+            configuration = json.loads((Path(spec["data_dir"]) / "config/russound_config.json").read_bytes())
+            validate_russound_config(configuration)
+            if spec["require_controller"] and not configuration.get("zones"):
+                raise ComposeError("Controller acceptance requires explicit configured zone mappings")
         all_containers = self.inspect_all()
         own = self.own(all_containers)
         for item in all_containers:
@@ -294,7 +328,7 @@ class ComposeDeployment:
                    for mount in item.get("Mounts", [])):
                 raise ComposeError("Another container shares deployment data; no writers were stopped")
             devices: list[dict[str, Any]] = item["HostConfig"].get("Devices") or []
-            if spec["gateway"] == "managed" and any(
+            if spec["gateway"] in ("managed", "standalone") and any(
                     device["PathOnHost"] == spec["serial_device"]
                     for device in devices):
                 raise ComposeError("Another container owns the serial adapter")
@@ -322,7 +356,7 @@ class ComposeDeployment:
             raise ComposeError("Reviewed installation disappeared")
         else:
             check_port(spec["publish_host"], spec["publish_port"])
-            if spec["gateway"] == "managed":
+            if spec["gateway"] in ("managed", "standalone"):
                 check_serial(spec)
             self.baseline = []
         if Path(spec["data_dir"]).parent.stat().st_dev != self.storage["restores"].stat().st_dev:
@@ -350,11 +384,13 @@ class ComposeDeployment:
                 "playback_acceptance": self.spec["require_playback"],
                 "listener": {"host": self.spec["publish_host"], "port": self.spec["publish_port"]},
                 "offhost_free_bytes_required": self.backup_estimate,
-                "backend": {key: self.config["services"]["russound-web"].get("environment", {}).get(key)
+                "backend": {key: self.config["services"].get("russound-web", {}).get("environment", {}).get(key)
                             for key in ("RUSSOUND_BACKEND_HOST", "RUSSOUND_BACKEND_PORT")},
                 "native_services": "untouched", "existing_data_and_secrets": "preserved"}
 
-    def stop(self) -> None:
+    def stop(self, *, recovery_operation: str | None = None) -> None:
+        recovery_operation = self.operation if recovery_operation is None else recovery_operation
+        operation_id(recovery_operation)
         self.preflight()
         self.command(self.compose() + ["stop", "--timeout", "30"], timeout=90)
         self.quiescent()
@@ -365,7 +401,7 @@ class ComposeDeployment:
             if item is None:
                 continue
             reference = item["image"]
-            tag = f"mpdrussoundpi-recovery/{component}:{self.operation}"
+            tag = f"mpdrussoundpi-recovery/{component}:{recovery_operation}"
             self.command(["image", "tag", reference, tag])
             archive = self.asset / (component + ".tar")
             with archive.open("xb") as output:
@@ -401,7 +437,7 @@ class ComposeDeployment:
                     for mount in item.get("Mounts", [])):
                 raise ComposeError("A container still writes deployment data")
         check_host_writers(Path(self.spec["data_dir"]))
-        if self.spec["gateway"] == "managed":
+        if self.spec["gateway"] in ("managed", "standalone"):
             check_serial(self.spec)
 
     def checks(self, images: dict[str, str]) -> dict[str, str]:
@@ -438,7 +474,9 @@ class ComposeDeployment:
             protected_inputs={"compose": self.asset / "compose.json"},
             recovery_sources=self.recovery_sources,
             **{name: self.storage[name] for name in ("staging", "runtime", "backups", "evidence")},
-            required_apply=["apply"], required_checks=["containers", "http", "backend", "playback"],
+            required_apply=["apply"], required_checks=(
+                ["containers", "gateway"] if self.spec["gateway"] == "standalone"
+                else ["containers", "http", "backend", "playback"]),
             hooks=RunHooks(self.preflight, self.stop, self.quiescent, verify_backup, self.checks),
             operation=self.operation, selection=self.selection, receive_bundle=receive_bundle,
             scope=self.scope(), source_owner_uid=self.spec["uid"])
@@ -516,16 +554,39 @@ def validate_runtime_files(spec: dict[str, Any], environment: dict[str, Any]) ->
         PlaybackStatusClient(mapped)
 
 
-def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[str, str]:
+class RuntimeTarget(Protocol):
+    spec: dict[str, Any]
+    services: dict[str, str]
+
+    def command(self, args: list[str], *, timeout: int = 60) -> bytes: ...
+    def inspect_all(self) -> list[dict[str, Any]]: ...
+    def own(self, containers: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
+
+def runtime_checks(target: RuntimeTarget, images: dict[str, str]) -> dict[str, str]:
     deadline = time.monotonic() + 60
     expected = {name: images[component] for name, component in target.services.items()}
     while True:
         own = target.own(target.inspect_all())
-        if len(own) != len(expected):
+        if (len(own) != len(expected) or {
+                item["Config"]["Labels"]["com.docker.compose.service"] for item in own} != set(expected)):
             raise ComposeError("Runtime service set differs from approved scope")
         if any(item["Image"] != expected[item["Config"]["Labels"]["com.docker.compose.service"]]
                or not item["State"]["Running"] or item["RestartCount"] for item in own):
             raise ComposeError("Runtime image, running state or restart count failed verification")
+        if target.spec["gateway"] == "standalone":
+            try:
+                if all(item["State"].get("Health", {}).get("Status") == "healthy" for item in own):
+                    with socket.create_connection(
+                            (target.spec["publish_host"], target.spec["publish_port"]), timeout=5):
+                        return dict.fromkeys(("containers", "gateway"), "passed")
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise ComposeError("Published gateway TCP route failed; pending state and backup are retained") from None
+            if time.monotonic() >= deadline:
+                raise ComposeError("Gateway health/routing deadline exceeded; pending state is retained")
+            time.sleep(1)
+            continue
         web = next(item for item in own
                    if item["Config"]["Labels"]["com.docker.compose.service"] == "russound-web")
         script = (
@@ -540,7 +601,8 @@ def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[st
             status = json.loads(target.command(["exec", web["Id"], "python", "-c", script], timeout=20))
             passed = (status["configured"]
                       and (status["backend"] or not target.spec["require_controller"])
-                      and (status["playback"] if target.spec["require_playback"] else not status["playback_configured"])
+                      and (status["playback"] and status["playback_configured"]
+                           if target.spec["require_playback"] else not status["playback_configured"])
                       and all(item["State"].get("Health", {}).get("Status") == "healthy" for item in own))
             if passed:
                 # Check the published host route too, not only container loopback.
@@ -553,6 +615,8 @@ def runtime_checks(target: ComposeDeployment, images: dict[str, str]) -> dict[st
                     if response.status != 200:
                         raise ComposeError("Published host HTTP route did not return 200")
                 return dict.fromkeys(("containers", "http", "backend", "playback"), "passed")
+        except NativeError:
+            raise
         except (ComposeError, OSError, ValueError):
             if time.monotonic() >= deadline:
                 raise ComposeError("Runtime health/routing failed; pending state and backup are retained") from None

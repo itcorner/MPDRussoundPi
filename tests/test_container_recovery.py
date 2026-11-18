@@ -196,9 +196,9 @@ for path in sorted([root, *root.rglob('*')], key=lambda path: len(path.parts), r
                 baseline = run(stack + ["ps", "-q", "russound-web"])
                 run(stack + ["up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "60"])
                 self.assertEqual(run(stack + ["ps", "-q", "russound-web"]), baseline)
-                # Inject an unavailable candidate solely to exercise failure,
-                # not to claim successful registry verification or adoption.
-                candidate = resolve("dummy", "linux/arm64", FixtureRegistry())
+                # Inject an unavailable pinned web candidate solely to exercise
+                # failure, not to claim registry verification or adoption.
+                candidate = resolve("external", "linux/arm64", FixtureRegistry())
                 candidate["platform"] = settings["RUSSOUND_PLATFORM"]
                 state.begin("fixture", operation, candidate, "sha256:" + "d" * 64, ["apply", "routing"])
                 state.advance("fixture", operation, "inputs-verified")

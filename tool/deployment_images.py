@@ -179,10 +179,22 @@ def inspect_image(registry: Registry, name: str, reference: str, platform: str,
 
 
 def validate_request(gateway: str, platform: str) -> None:
-    if gateway not in ("managed", "external", "dummy"):
-        raise SelectionError("Gateway must be managed, external or dummy")
+    if gateway not in ("managed", "external", "dummy", "standalone"):
+        raise SelectionError("Gateway must be managed, external, dummy or standalone")
     if platform not in ("linux/arm64", "linux/amd64"):
         raise SelectionError("Platform must be linux/arm64 or linux/amd64")
+
+
+def components(gateway: str) -> tuple[str, ...]:
+    if gateway == "managed":
+        return ("web", "ser2net")
+    if gateway == "external":
+        return ("web",)
+    if gateway == "dummy":
+        return ("web", "dummy")
+    if gateway == "standalone":
+        return ("ser2net",)
+    raise SelectionError("Unsupported gateway layout")
 
 
 def resolve(gateway: str, platform: str, registry: Registry | None = None) -> dict[str, Any]:
@@ -190,14 +202,14 @@ def resolve(gateway: str, platform: str, registry: Registry | None = None) -> di
     if gateway == "dummy":
         raise SelectionError("Dummy deployments require a verified local web/dummy build bundle; no approved registry artifact")
     registry = registry or Registry()
-    # Select one revision from web, then require both moving aliases and exact tags to agree.
-    web_alias = inspect_image(registry, "web", "dev", platform)
-    revision = web_alias["revision"]
-    names = ("web", "ser2net") if gateway == "managed" else ("web",)
+    names = components(gateway)
+    first = names[0]
+    first_alias = inspect_image(registry, first, "dev", platform)
+    revision = first_alias["revision"]
     images = {}
-    aliases = {"web": web_alias}
+    aliases = {first: first_alias}
     for name in names:
-        if name != "web":
+        if name != first:
             aliases[name] = inspect_image(registry, name, "dev", platform, revision)
         images[name] = inspect_image(registry, name, "dev-" + revision, platform, revision)
         if images[name] != aliases[name]:
@@ -232,7 +244,7 @@ def validate_selection(value: Any, gateway: str, platform: str) -> dict[str, Any
             raise ValueError("Timezone required")
     except ValueError as error:
         raise SelectionError("Invalid image resolution timestamp") from error
-    names = {"web", "ser2net"} if gateway == "managed" else {"web"}
+    names = set(components(gateway))
     if not isinstance(value["images"], dict) or set(value["images"]) != names:
         raise SelectionError("Image selection component set mismatch")
     image_fields = {"repository", "reference", "index_digest", "platform_digest", "config_digest",
@@ -314,7 +326,7 @@ def save_selection(path: Path, value: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("resolve", "reuse", "verify", "check"))
-    parser.add_argument("--gateway", choices=("managed", "external", "dummy"), default="managed")
+    parser.add_argument("--gateway", choices=("managed", "external", "dummy", "standalone"), default="managed")
     parser.add_argument("--platform", choices=("linux/arm64", "linux/amd64"), default="linux/arm64")
     parser.add_argument("--selection", type=Path)
     parser.add_argument("--output", type=Path)

@@ -71,7 +71,8 @@ def select_bundle(path: Path, checksum: str, gateway: str, platform: str) -> dic
 
 
 def load_reserved_bundle(store: StateStore, deployment: str, operation: str, intent_digest: str,
-                         selection: dict[str, Any], bundle: Path, evidence: Path) -> dict[str, str]:
+                         selection: dict[str, Any], bundle: Path, evidence: Path, *,
+                         expected_engine: str | None = None) -> dict[str, str]:
     """Load already-transferred private bytes into the local target daemon once.
 
     Failure after the durable load marker may mean Docker is still working.
@@ -92,6 +93,15 @@ def load_reserved_bundle(store: StateStore, deployment: str, operation: str, int
         info = json.loads(command(docker + ["info", "--format", "{{json .}}"]))
         if not is_mapping(info):
             raise LoadError("Invalid local Docker daemon metadata")
+        if expected_engine is not None and (not expected_engine or info.get("ID") != expected_engine):
+            raise LoadError("Docker daemon differs from the reviewed image-load target")
+
+        def verify_engine() -> None:
+            if expected_engine is not None:
+                current = json.loads(command(docker + ["info", "--format", "{{json .}}"]))
+                if not is_mapping(current) or current.get("ID") != expected_engine:
+                    raise LoadError("Docker daemon changed during image load; retain the reservation")
+
         architecture = info.get("Architecture")
         if not isinstance(architecture, str):
             raise LoadError("Invalid local Docker daemon architecture")
@@ -117,12 +127,15 @@ def load_reserved_bundle(store: StateStore, deployment: str, operation: str, int
                     os.fchmod(log.fileno(), 0o600)
                     os.fsync(log.fileno())
                     os.fsync(directory)
+                    verify_engine()
                     store.start_image_load(deployment, operation, selection, intent_digest)
                     for name, image in manifest["images"].items():
+                        verify_engine()
                         result = subprocess.run(docker + ["image", "load"], stdin=streams[name],
                                                 stdout=log, stderr=log, timeout=600)
                         if result.returncode:
                             raise LoadError("Docker image load failed; inspect private evidence and pending state")
+                        verify_engine()
                         inspected = json.loads(command(docker + ["image", "inspect", image["tag"]]))[0]
                         reference = inspected.get("Id") if is_mapping(inspected) else None
                         if not isinstance(reference, str) or reference not in (image["reference"], configs[name]):
@@ -135,6 +148,7 @@ def load_reserved_bundle(store: StateStore, deployment: str, operation: str, int
                         image_identity(inspected, reference, platform, manifest["revision"])
                     log.flush()
                     os.fsync(log.fileno())
+        verify_engine()
         store.complete_image_load(deployment, operation, selection, intent_digest, loaded)
         return loaded
     except (OSError, ValueError, KeyError, TypeError, IndexError, RecursionError,

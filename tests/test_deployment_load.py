@@ -229,6 +229,52 @@ class ReservedImageLoadTests(unittest.TestCase):
         with self.assertRaises(StateError):
             self.store.begin("different", str(uuid4()), self.selection, INTENT, ["apply"])
 
+    def test_reviewed_daemon_mismatch_blocks_before_image_load(self):
+        self.begin()
+
+        def command(argv):
+            if "info" in argv:
+                return json.dumps({"ID": "other", "OSType": "linux", "Architecture": "arm64",
+                                   "SecurityOptions": []}).encode()
+            return self.fake_command(argv)
+
+        with self.docker(command=command), self.assertRaisesRegex(loads.LoadError, "reviewed image-load target"):
+            self.load(expected_engine="reviewed")
+        self.assertFalse(self.mutations)
+        self.assertFalse(self.store.status()["image_load_started"])
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_daemon_change_during_load_retains_uncertain_reservation(self):
+        self.begin()
+
+        def command(argv):
+            if "info" in argv:
+                engine = "other" if self.mutations else "reviewed"
+                return json.dumps({"ID": engine, "OSType": "linux", "Architecture": "arm64",
+                                   "SecurityOptions": []}).encode()
+            return self.fake_command(argv)
+
+        with self.docker(command=command), self.assertRaisesRegex(loads.LoadError, "changed during image load"):
+            self.load(expected_engine="reviewed")
+        self.assertEqual(len(self.mutations), 1)
+        self.assertTrue(self.store.status()["image_load_started"])
+        self.assertIsNone(self.pending()["loaded_images"])
+        self.assertTrue(self.store.status()["blocked"])
+
+    def test_reviewed_daemon_loads_both_images(self):
+        self.begin()
+
+        def command(argv):
+            if "info" in argv:
+                return json.dumps({"ID": "reviewed", "OSType": "linux", "Architecture": "arm64",
+                                   "SecurityOptions": []}).encode()
+            return self.fake_command(argv)
+
+        with self.docker(command=command):
+            loaded = self.load(expected_engine="reviewed")
+        self.assertEqual(set(loaded), {"web", "ser2net"})
+        self.assertEqual(self.pending()["loaded_images"], loaded)
+
     def test_process_loss_after_durable_marker_blocks_retry(self):
         self.begin()
         code = """

@@ -17,7 +17,7 @@
     - name: Validate layout and image selection inputs
       ansible.builtin.assert:
         that:
-          - russound_gateway in ['managed', 'external', 'dummy']
+          - russound_gateway in ['managed', 'external', 'dummy', 'standalone']
           - russound_image_source in ['hub', 'local-build']
           - russound_local_bundle is string
           - russound_local_manifest_sha256 is string
@@ -36,10 +36,11 @@
             russound_web_image is string and
             (russound_web_image == '' or russound_web_image is match('^itcornernet/mpdrussoundpi-web@sha256:[a-f0-9]{64}$'))
           - >-
-            russound_gateway != 'managed' or
+            russound_gateway not in ['managed', 'standalone'] or
             (russound_ser2net_image is string and
              (russound_ser2net_image == '' or russound_ser2net_image is match('^itcornernet/mpdrussoundpi-ser2net@sha256:[a-f0-9]{64}$')))
           - russound_gateway != 'managed' or (russound_web_image == '') == (russound_ser2net_image == '')
+          - russound_gateway != 'standalone' or (russound_web_image == '' and russound_playback_agents == [])
           - russound_image_selection_file == '' or (russound_web_image == '' and russound_ser2net_image == '')
           - >-
             russound_gateway != 'dummy' or russound_image_source == 'local-build' or
@@ -48,7 +49,7 @@
             russound_gateway != 'external' or
             (russound_backend_host is string and russound_backend_host | trim | length > 0 and
              russound_backend_host == (russound_backend_host | trim))
-          - russound_gateway == 'managed' or russound_ser2net_image == ''
+          - russound_gateway in ['managed', 'standalone'] or russound_ser2net_image == ''
           - russound_gateway == 'dummy' or russound_dummy_image == ''
           - russound_gateway == 'external' or russound_backend_host == ''
           - (russound_publish_port | string) is match('^[0-9]{1,5}$')
@@ -57,10 +58,35 @@
           - russound_backend_port | int >= 1 and russound_backend_port | int <= 65535
           - (russound_uid | string) is match('^[0-9]+$')
           - (russound_gid | string) is match('^[0-9]+$')
-          - russound_gateway != 'managed' or (russound_serial_gid | string) is match('^[0-9]+$')
+          - russound_gateway not in ['managed', 'standalone'] or (russound_serial_gid | string) is match('^[0-9]+$')
           - russound_image_source != 'local-build' or russound_dummy_image == ''
         fail_msg: "Select a supported gateway, absolute data directory and valid numeric ports/IDs. Choose either Hub selection/digests or a verified local bundle with its separately retained manifest SHA-256, never a mixture. Playback references must already be provisioned; this preview never copies credentials."
         quiet: true
+
+    - name: Record the complete target preflight request
+      ansible.builtin.set_fact:
+        russound_preflight_request:
+          gateway: "{{ russound_gateway }}"
+          project: "{{ russound_project }}"
+          platform: "{{ russound_platform }}"
+          data_dir: "{{ russound_data_dir }}"
+          uid: "{{ russound_uid | int }}"
+          gid: "{{ russound_gid | int }}"
+          publish_host: "{{ russound_publish_host }}"
+          publish_port: "{{ russound_publish_port | int }}"
+          serial_device: "{{ russound_serial_device }}"
+          serial_gid: "{{ russound_serial_gid | int if russound_gateway in ['managed', 'standalone'] else none }}"
+
+    - name: Validate the target request without connecting to the target
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "-c"
+          - "import json,sys; from tool.deployment_preflight import validate_request; validate_request(json.load(sys.stdin))"
+        stdin: "{{ russound_preflight_request | to_json }}"
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+      check_mode: false
 
     - name: Reject unsupported legacy source and mode switches
       ansible.builtin.assert:
@@ -84,7 +110,9 @@
       register: russound_image_selection
       changed_when: false
       check_mode: false
-      when: russound_image_source == 'hub' and russound_web_image == ''
+      when: >-
+        russound_image_source == 'hub' and russound_web_image == '' and
+        (russound_gateway != 'standalone' or russound_ser2net_image == '')
 
     - name: Verify controller-built image archives without loading or contacting the target
       ansible.builtin.command:
@@ -110,14 +138,15 @@
     - name: Select resolved image references without overriding operator inputs
       ansible.builtin.set_fact:
         russound_selected_web_image: >-
-          {{ (russound_local_selection.stdout | from_json).images.web if russound_image_source == 'local-build' else
+          {{ '' if russound_gateway == 'standalone' else
+             (russound_local_selection.stdout | from_json).images.web if russound_image_source == 'local-build' else
              russound_web_image if russound_web_image != '' else
              (russound_image_selection.stdout | from_json).images.web.reference }}
         russound_selected_gateway_image: >-
           {{ ((russound_local_selection.stdout | from_json).images.ser2net if russound_image_source == 'local-build' else
               russound_ser2net_image if russound_ser2net_image != '' else
               (russound_image_selection.stdout | from_json).images.ser2net.reference)
-             if russound_gateway == 'managed' else '' }}
+             if russound_gateway in ['managed', 'standalone'] else '' }}
         russound_selected_dummy_image: >-
           {{ ((russound_local_selection.stdout | from_json).images.dummy if russound_image_source == 'local-build'
               else russound_dummy_image) if russound_gateway == 'dummy' else '' }}
@@ -125,7 +154,8 @@
     - name: Select ordered Compose files and the complete interpolation environment
       ansible.builtin.set_fact:
         russound_preview_files: >-
-          {{ [playbook_dir ~ '/../../compose.dev.yml'] +
+          {{ [playbook_dir ~ '/../../compose.backend.yml'] if russound_gateway == 'standalone' else
+             [playbook_dir ~ '/../../compose.dev.yml'] +
              ([playbook_dir ~ '/../../compose.gateway.yml'] if russound_gateway == 'managed' else
               [playbook_dir ~ '/../../compose.dummy.yml'] if russound_gateway == 'dummy' else []) }}
         russound_preview_environment:
@@ -140,6 +170,8 @@
           RUSSOUND_GID: "{{ russound_gid | string }}"
           RUSSOUND_PUBLISH_HOST: "{{ russound_publish_host }}"
           RUSSOUND_PUBLISH_PORT: "{{ russound_publish_port | string }}"
+          RUSSOUND_GATEWAY_PUBLISH_HOST: "{{ russound_publish_host }}"
+          RUSSOUND_GATEWAY_PUBLISH_PORT: "{{ russound_publish_port | string }}"
           RUSSOUND_BACKEND_HOST: "{{ russound_backend_host }}"
           RUSSOUND_BACKEND_PORT: "{{ russound_backend_port | string }}"
           RUSSOUND_SERIAL_DEVICE: "{{ russound_serial_device }}"
@@ -177,12 +209,12 @@
           services: "{{ (russound_preview_render.stdout | from_json).services.keys() | list }}"
           web_image: "{{ russound_selected_web_image }}"
           image_source: "{{ russound_image_source }}"
-          gateway_image: "{{ russound_selected_gateway_image if russound_gateway == 'managed' else 'not-managed' }}"
+          gateway_image: "{{ russound_selected_gateway_image if russound_gateway in ['managed', 'standalone'] else 'not-managed' }}"
           playback: "{{ 'existing-protected-references-only' if russound_playback_agents | length > 0 else 'disabled' }}"
           target_checks: not-run
           image_identity_verification: >-
             {{ 'local-archive-source-platform-checksum' if russound_image_source == 'local-build' else
-               'not-run-explicit-digest-render-only' if russound_web_image != '' else
+               'not-run-explicit-digest-render-only' if russound_web_image != '' or russound_ser2net_image != '' else
                'candidate-schema-only-offline' if russound_image_selection_file != '' else
                'registry-index-platform-config-metadata' }}
           candidate_loaded_from_file: "{{ russound_image_selection_file != '' }}"
@@ -204,13 +236,7 @@
       - "{{ ansible_facts.python.executable }}"
       - "-c"
       - "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../tool/deployment_preflight.py') }}"
-    stdin: >-
-      {{ {'gateway': russound_gateway, 'project': russound_project,
-          'platform': russound_platform, 'data_dir': russound_data_dir,
-          'uid': russound_uid | int, 'gid': russound_gid | int,
-          'publish_host': russound_publish_host, 'publish_port': russound_publish_port | int,
-          'serial_device': russound_serial_device,
-          'serial_gid': russound_serial_gid | int if russound_gateway == 'managed' else none} | to_json }}
+    stdin: "{{ russound_preflight_request | to_json }}"
   register: russound_target_preflight
   changed_when: false
   failed_when: false

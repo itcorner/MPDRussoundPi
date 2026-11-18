@@ -1,7 +1,10 @@
 # Plan: simplify deployment and configuration
 
-Status: **open for implementation; S0–S2 closed as a baseline with documented
-limitations** (2026-11-13). The Waitress/debug change below is authorized
+Status: **open; S0–S4 implementation gates closed; S5 final handover remains open.
+Superseded web/gateway repository paths retired; native lifecycle/reboot
+checks, the operator-approved four-hour observation and representative native
+audible acceptance passed. Final layout/handover remain open** (2026-11-17).
+The Waitress/debug change below is authorized
 separately; this plan does not authorize deployment, service restarts, hardware
 tests, or changes to a live installation.
 
@@ -23,8 +26,18 @@ offline local-build Ansible preview are also implemented;
 see the [container guide](../documentation/container-deployment.md) for actual
 commands and boundaries. Reviewed automated apply, committed image pins and
 explicit recovery now exist for prepared same-layout Linux development deployments.
-Production/native intents, other layout migrations and live acceptance remain
-outstanding. Local candidate state and
+Standalone gateways on prepared hybrid backend hosts now share that reviewed
+workflow; the separate web host uses external-gateway mode. Prepared native
+web/gateway staging, reviewed managed-Docker cutover and recovery are implemented
+and their representative Pi trial passed. Further native acceptance was
+authorized with a one-hour rather than six-hour observation, paused, and later
+resumed after controller/audio recovery fixes. Native release-switch/recovery
+and reboot checks passed; the operator-approved four-hour observation passed.
+Representative audible acceptance passed; the final operating layout remains open.
+Production remains blocked without approved stable images/tooling; automated
+same-host/split-host migration and full fresh-machine provisioning are excluded.
+See the authoritative [support matrix](../documentation/container-deployment.md#support-and-acceptance-boundaries).
+Local candidate state and
 reserved target-local image loading and reviewed SSH artifact handoff are
 implemented internally; human approval/input custody and full apply
 integration across controller and target are implemented by the new operator
@@ -40,11 +53,13 @@ the internal APIs or the still-blocked preview-play apply switch.
 | **Docker development** | Published Hub development images for web and ser2net; detailed, bounded logs. No build. | Select an explicit local build only for source changes. Build on the Ansible controller from identified source and transfer verified images to the target. |
 | **Docker production** | An approved matching pair of stable Hub images; minimal operational logs. | Select a different approved stable pair deliberately. Stable publication is not yet available: report the blocker instead of using dev or building. |
 | **Docker local build** | Explicit dev opt-in, using the same development deployment profile. | Supply a clean, identified source revision; refuse ambiguous or dirty source without deleting or resetting changes. |
-| **Bare metal** | Native web and gateway as selected, with native Pi playback services. | Use when containers are unsuitable. The exact component scope and migration from Docker need design. |
+| **Prepared bare metal** | Sealed native web and dedicated loopback gateway, preserving native Pi playback services. | Use the reviewed native workflow only; matching recorded managed-Docker cutover/recovery is supported. Representative native listening passed; final handover remains open. No fresh-machine/full-stack installer or legacy-native adoption. |
 
-Two Compose files express **development** and **production**; four clear
-Ansible intents cover **dev**, **release**, **dev local build**, and **bare
-metal**, reusing shared tasks. The default Pi layout remains hybrid: web and
+Two Compose files express **development** and **production**, with optional
+gateway/dummy overlays and a standalone backend profile. Development previews,
+reviewed container activation/recovery and sealed native staging/activation
+have distinct entry points; **release** remains a blocked intent, not an
+implemented deployment play. The default Pi layout remains hybrid: web and
 gateway in containers; agent, proxy, MPD and audio on the Pi. Preserve external
 gateways, separate web hosts and the hardware-free dummy backend. No image
 fallback or unattended update is implied. Include a separate managed-gateway
@@ -149,9 +164,13 @@ native on the Pi; “Docker deployment” must not imply all components are
 containerized. Preserve the external serial gateway, separate web host and
 hardware-free dummy layouts without mistaking the dummy for a physical gateway.
 
-## Current complexity and important constraints
+## Initial complexity and important constraints
 
-- [`docker-compose.yml`](../../docker-compose.yml) currently declares both
+The legacy source descriptions in the inventory below are historical evidence,
+not current deployment instructions. Superseded files were removed after the
+prepared-host acceptance trials; see the retirement record at the end.
+
+- The former `docker-compose.yml` declared both
   local `build` and local `image` names. The earlier baseline Docker playbook
   builds on the target; subsequent local work adds an optional registry
   override and flags for published images. Native web deployment is a
@@ -160,7 +179,7 @@ hardware-free dummy layouts without mistaking the dummy for a physical gateway.
   CLI flags, Compose interpolation, Ansible variables, systemd units and
   agent/audio configuration. Some are deployment inputs or secret references,
   not interchangeable application settings. The
-  [effective-configuration idea](./web_done_effective-config-overrides.md)
+  [effective-configuration plan](./web_done_effective-config-overrides.md)
   documents verified examples and depends on accurate source/precedence data.
 - `RUSSOUND_DEBUG` / `--debug` now control diagnostic logging while Waitress
   serves HTTP in both modes. Flask's development server and debugger are not
@@ -191,10 +210,10 @@ token contents, private keys or full stream URLs.
 
 | Path | Current behavior and important boundary |
 |---|---|
-| [Hardware Compose](../../docker-compose.yml) | Local web and ser2net images with build definitions; serial device/group passthrough; web config, data, logs and read-only secrets bind mounts; web port 8000 by default. A Compose environment value may be interpolation only or may be passed to a container. |
-| [Dummy Compose](../../docker-compose.dummy.yml) | Locally built web plus dummy backend for hardware-free development; separate dummy state and port. Its mounts and passed settings differ from hardware Compose. It is not a physical-controller test. |
-| [Docker Ansible play](../../ansible/playbooks/deploy-russound-docker.yml) | Earlier baseline clones/updates the target checkout, generates `.env`, builds there and can use an external gateway. It stops native web and, when managed, native ser2net. Subsequent local changes add explicit published-image references, a registry override, pull policy and optional controller check; they also change missing-device behavior. Review them separately, not as already shipped. |
-| [Native web play](../../ansible/playbooks/deploy-russound-web.yml) | Target checkout and Python venv; systemd web service; optionally installs and restarts native ser2net. Its default Git version is `main`; CLI settings are generated in the unit. |
+| Former hardware Compose (`docker-compose.yml`) | Local web and ser2net images with build definitions; serial device/group passthrough; web config, data, logs and read-only secrets bind mounts; web port 8000 by default. A Compose environment value may be interpolation only or may be passed to a container. |
+| Former dummy Compose (`docker-compose.dummy.yml`) | Locally built web plus dummy backend for hardware-free development; separate dummy state and port. Its mounts and passed settings differ from hardware Compose. It is not a physical-controller test. |
+| Former Docker Ansible play (`deploy-russound-docker.yml`) | Earlier baseline clones/updates the target checkout, generates `.env`, builds there and can use an external gateway. It stops native web and, when managed, native ser2net. Subsequent local changes add explicit published-image references, a registry override, pull policy and optional controller check; they also change missing-device behavior. Review them separately, not as already shipped. |
+| Former native web play (`deploy-russound-web.yml`) | Target checkout and Python venv; systemd web service; optionally installs and restarts native ser2net. Its default Git version is `main`; CLI settings are generated in the unit. |
 | [Audio setup](../../ansible/playbooks/setup-musicpi.yml) | Native Pi MPD/audio, supervisor and native ser2net; tagged setup can restart audio and alter services. This is not a web-only update. |
 | [Agent](../../ansible/playbooks/deploy-playback-agent.yml), [proxy](../../ansible/playbooks/deploy-playback-agent-proxy.yml), [egress](../../ansible/playbooks/deploy-playback-egress.yml) | Independent native plays. Agent/egress source comes from the controller checkout, unlike target Git updates; agent starts only when requested. Proxy requires TLS/CIDR configuration; egress activation can interrupt MPD. The proxy also has subsequent local changes. |
 | Existing Pi acceptance | The [integration record](./general_done_mpd-web-integration.md#6-deployment-acceptance) describes native playback/agent/proxy and containerized web/gateway, plus a locally derived web image. The read-only snapshot below confirms identities and coarse health only. |
@@ -474,8 +493,8 @@ Source of truth for the following rows is the local
 [web server](../../web/russound_server.py),
 [config parser](../../web/config_types.py),
 [agent registry parser](../../web/playback_status.py),
-[hardware Compose](../../docker-compose.yml), and
-[native unit](../../ansible/templates/russound-web.service.j2).
+the former hardware `docker-compose.yml`, and
+the former native `russound-web.service.j2` template.
 Unless noted, runtime environment is read at process start; changing it
 requires restarting the native service or recreating the container. `CLI > env`
 means an explicitly supplied CLI argument, not an Ansible or Compose override.
@@ -623,8 +642,8 @@ precedence specification. Inventory host variables, facts, play variables,
 `set_fact`, extra vars, tags and generated files are separate mechanisms;
 do not assume editing a generated file is durable. A changed input can cause
 recreation or a service restart. Sources:
-[Docker](../../ansible/playbooks/deploy-russound-docker.yml),
-[native web](../../ansible/playbooks/deploy-russound-web.yml),
+the former Docker (`deploy-russound-docker.yml`) and
+native web (`deploy-russound-web.yml`) plays,
 [agent](../../ansible/playbooks/deploy-playback-agent.yml),
 [proxy](../../ansible/playbooks/deploy-playback-agent-proxy.yml),
 [egress](../../ansible/playbooks/deploy-playback-egress.yml),
@@ -744,8 +763,8 @@ finding remain open even if a related symptom has been fixed.
 
 1. **F1 — empty-agent default is rejected.** Both web deployment plays default
    `russound_playback_agents` to `[]`; the
-   [Docker environment template](../../ansible/templates/russound-docker.env.j2)
-   and [native unit](../../ansible/templates/russound-web.service.j2) render
+   former `russound-docker.env.j2` environment template
+   and `russound-web.service.j2` native template render
    that list as `RUSSOUND_PLAYBACK_AGENTS=[]`. The web parser rejects a
    nonblank empty array. A focused selected-interpreter check rendered both
    templates with the default list, then passed the rendered Docker value
@@ -783,7 +802,7 @@ finding remain open even if a related symptom has been fixed.
    the latest development pair does not make production deployment available.
 5. **F5 — reporting can disagree with resolution.** The configuration API
    lists nonblank invalid backend port overrides even when the resolver ignores
-   them; see the [effective-config idea](./web_done_effective-config-overrides.md).
+   them; see the [effective-config plan](./web_done_effective-config-overrides.md).
 6. **F6 — the example turns on protocol audit.** Runtime omission disables
    audit logging, but the Docker play seeds
    [`web/config_example.json`](../../web/config_example.json), which includes
@@ -874,10 +893,10 @@ finding remain open even if a related symptom has been fixed.
     container-gateway host and an external-gateway layout. The playback and
     headless guides now warn about the current staging command.
 14. **F14 — default paths disagree with a changed deploy user.** In the
-    [Docker play](../../ansible/playbooks/deploy-russound-docker.yml),
+    former Docker play (`deploy-russound-docker.yml`),
     `deploy_user` controls ownership, but `app_dir` and
     `russound_registry_override_dir` default from `ansible_user`, not
-    `deploy_user`. In the [native play](../../ansible/playbooks/deploy-russound-web.yml)
+    `deploy_user`. In the former native play (`deploy-russound-web.yml`)
     those paths derive from `deploy_user`, but assume `/home/<user>` and
     the unit uses the username as both user and group. Merely changing the
     deployment user can therefore select an unexpected home or fail for a
@@ -906,7 +925,7 @@ finding remain open even if a related symptom has been fixed.
     single validated value, or reject unsupported path overrides. Test
     install, reload, activation and removal with the same resolved identity.
 17. **F17 — endpoint defaults can hide saved configuration.** Direct
-    [hardware Compose](../../docker-compose.yml) leaves backend environment
+    hardware Compose (`docker-compose.yml`) leaves backend environment
     overrides blank by default, whereas the Docker play writes
     `russound-ser2net:6666` into `.env`; a valid override selects TCP over
     the saved serial endpoint and can make editor changes appear ineffective.
@@ -3317,7 +3336,7 @@ or the remaining S4/S5 deployment gates.
   saved settings. Offline saves preserve saved serial settings, and removing
   overrides restores their runtime selection. No secret/device path is
   included in the new metadata. Full inline read-only UI remains the separate
-  [effective-config idea](./web_done_effective-config-overrides.md).
+  [effective-config plan](./web_done_effective-config-overrides.md).
 - **Credentials:** web and agent share a bounded file parser and validator,
   including exact 32/4096-byte boundaries, printable ASCII and the single
   optional LF/CRLF policy. Native CLI rejects invalid identity/token before
@@ -3645,6 +3664,334 @@ web/ser2net containers remain running; no dummy deployment or dummy observer
 is active. Remaining S4/S5 layout/refactoring/migration work is not closed by
 this scoped manual native activation and real managed-layout rehearsal.
 
+### Guarded tooling upgrade retry (2026-11-14)
+
+The first tooling-only upgrade attempt to `5d60b23d4f645fa93393e22f246cd49027b066ec`
+atomically switched the checkout and installed dependencies, then failed its
+operator `--help` check because Ansible invoked the module outside the checkout
+working directory. The playbook rollback restored the original
+`784e17d0896be54bba3f6c5f7b128ae1bfcf0ec6` checkout, released the reservation,
+and left the failed candidate at
+`/opt/mpdrussoundpi-deploy.upgrade-5d60b23d4f645fa93393e22f246cd49027b066ec`
+for inspection. The incident did not change application services.
+
+PR #48 corrected the operator-check working directory in both upgrade and
+restore playbooks and added a parsed-YAML test. Focused tests, both playbook
+syntax checks, and all CI jobs passed. The merged tooling commit
+`ff2f4281392efacb1cf015534bda588d0dd31e57` was then applied through the guarded
+upgrade play. The active checkout reports that exact revision, its isolated
+environment passes `pip check`, the operator help check passes, and deployment
+state is unblocked with no active reservation. The original checkout remains
+retained at the revision-specific sibling path. Web and ser2net container IDs
+remain `a5c40f5cf5f3` and `745f860c81fa`, both healthy; the playback supervisor,
+three MPD services, playback agent, PipeWire, and WirePlumber remain running.
+No application image, service, configuration, or credential was changed.
+The six-hour observation remains deferred and has not started.
+
+### Isolated backup and recovery rehearsal (2026-11-14)
+
+Reviewed the operator deployment/recovery runbook in
+[`container-deployment.md`](../documentation/container-deployment.md#failure-explicit-recovery-and-retained-evidence)
+against the backup and recovery implementation. It documents stopped-writer
+backup capture, independent off-host verification, separate approval,
+matching code/data restoration, preservation of post-backup trees, one-shot
+failure behavior, and the prohibition on forced unlock or automatic cleanup.
+
+The focused file-backup suite passed **27 tests with one Linux extended-
+attribute test skipped on this host**. The opt-in container recovery rehearsal
+initially found a stale test fixture that tried to resolve a registry dummy
+image, which is intentionally unsupported. The fixture now uses a synthetic
+valid external web-image candidate solely to inject an unavailable image for
+the failed-apply path; it does not claim registry verification or adoption.
+After that correction, the isolated ARM64 Docker rehearsal passed. It used a
+unique temporary Compose project and labeled named volume, verified web-to-
+dummy routing, retained pending state after failed apply, restored the
+synthetic config/data/secret tree into a new isolated path, and verified
+routing and repeat-run stability after restoration. The test cleaned up its
+project and volume.
+
+This validates the bounded local recovery rehearsal only. It is not a Pi
+migration, off-host disaster-recovery exercise, schema-compatibility check,
+physical-controller/audio acceptance, or six-hour observation. S5 live
+acceptance remains open and requires its own approved scope; the six-hour
+observation remains deferred.
+
+### Live Pi routing and playback software check (2026-11-14)
+
+With the operator's approval for S5 verification, performed read-only checks
+against the existing Pi deployment. The deployment state remained unblocked
+with no active reservation. The web and ser2net containers remained healthy
+with their existing IDs. `GET /api/rooms` reported four zones and
+`backend_status.connected: true`; `GET /api/playback/health` reported the
+configured playback integration `ok` with its agent `ok`. Its fresh snapshot
+was not stale (846 ms at observation) and reported all three outputs playing,
+audio-ready and correctly routed. Native `mpdctrl.py --status` and
+`--check-route` agreed for `stereo_front`, `stereo_centerlfe` and `stereo_rear`.
+The non-enforcing audio readiness check found the configured hardware/profile
+and sinks ready. A TCP connection from the actual web container to
+`russound-ser2net:6666` succeeded.
+
+No application service, image, configuration, credential, saved gain or
+playback intention was changed. Because all outputs were already playing, no
+start/stop/gain command was issued that could replace or interrupt the
+operator's current content. These checks verify software/controller routing
+and playback telemetry, not that sound was audibly confirmed in the room.
+Six-hour observation remains deferred and unstarted.
+
+### Six-hour endurance and audible acceptance (2026-11-15)
+
+The subsequent read-only S5 observer completed successfully from **01:53:41
+to 07:53:43 CET**, with **350 samples and zero failed samples** over
+21602 seconds. It checked container identity/health/restarts, native service
+stability, protected configuration, gateway TCP and authenticated agent TLS,
+and playback readiness/freshness/routes. Its persisted completion reported
+`passed: true`; both containers remained healthy with zero restarts at the
+10:14 CET follow-up, and native playback/audio services were active.
+Private evidence remains on the Pi under
+`~/.local/state/mpdrussoundpi-s5-6h-20261115T0154/`.
+No automatic remediation or playback changes were performed by the observer.
+
+The operator then performed guided listening checks in **Living Room**
+(controller 1, zone 1), operating playback, source selection and comfortable
+listening volume themselves. They confirmed the physical connections and
+reported the correct station, clear and uninterrupted audio on all three:
+
+| Pi output | Russound input | Operator result |
+|---|---|---|
+| `stereo_front` | 1 (Radio) | Passed; channels reported normal |
+| `stereo_centerlfe` | 2 (TV) | Passed; all good |
+| `stereo_rear` | 3 (Bluetooth) | Passed; all good |
+
+These are operator-reported audible results, not an automated acoustic
+measurement. Other rooms were not audibly tested. No saved input mapping was
+edited; these connections were confirmed for the test only. The assistant
+issued no playback, power, source or volume mutations.
+
+This closes the deferred six-hour and representative audible acceptance
+items, not the remaining S5 migration/recovery, support-boundary,
+documentation and legacy-retirement gates.
+
+### Prepared split-host development scope (2026-11-15)
+
+The operator explicitly chose **split-host deployment only**, deferring
+same-host ↔ split-host migration. They further chose a **prepared native
+backend**: manage the standalone ser2net container while preserving the existing
+native agent, TLS proxy, supervisor, MPD and audio services. Fresh native
+provisioning/activation/update/recovery is not part of this iteration.
+
+`compose.backend.yml` reuses the existing gateway definition without bringing
+up web. Its published TCP listener requires an explicit backend address and
+port. The operator validates a specific non-loopback LAN listener, exact
+serial device/group and gateway-only service scope. Registry selection and
+local bundles contain only ser2net; Ansible preview/preflight supports the same
+mode without a hidden target build or web dependency.
+
+Both hosts reuse the existing independent reviewed deployment transactions:
+explicit approval, off-host verified backup, pinned images, unchanged reruns,
+explicit updates and failed-operation recovery. Backend acceptance checks the
+gateway container and published TCP route; controller and playback acceptance
+must be required by the external-gateway web deployment. No cross-host atomic
+commit or automatic peer rollback is implied. Credentials, TLS trust and
+Docker-aware firewall/proxy source allowlists must already be prepared.
+See the authoritative
+[split-host procedure](../documentation/container-deployment.md#split-host-deployment-on-prepared-hosts).
+
+This replaces the need for a legacy in-place Docker play for a prepared
+split-host deployment, not the native installation/activation paths. Legacy
+retirement still requires an explicit inventory and retained-entry-point tests.
+The current combined live Pi project is not migrated by this implementation.
+Physical separate-host deployment acceptance remains distinct from synthetic
+controller/TLS routing tests and the prior same-host Pi endurance/audio results.
+
+Local validation:
+
+- Deployment regression discovery: **230 tests run, 220 passed and 10
+  opt-in/platform-dependent skips**. Coverage includes gateway-only registry
+  and local bundles, strict device/listener/service scope, controller-only
+  Ansible previews and layout-specific recovery receipts. The recovery-state
+  boundary now rejects web-only or incomplete receipts for a standalone
+  gateway, and gateway-only receipts for a web deployment.
+- Five retained playbooks passed Ansible syntax checks: development preview,
+  local-build preview, tooling bootstrap, tooling upgrade and tooling restore.
+  Tooling plays now select arbitrary inventory names, with a tested
+  single-host guard before connection instead of a hard-coded `musicpi` target.
+- The explicitly enabled isolated Docker routing test passed on local ARM64.
+  Web and synthetic backend/agent peers used separate Docker networks and
+  published host ports, not shared Docker DNS. It verified controller replies,
+  authenticated CA-verified HTTPS, rejection of untrusted CA/mismatched
+  certificate hostname/missing authentication, unchanged rerun identity,
+  recovery of routing after web recreation, unchanged backend identities and
+  preserved configuration/token bytes. The cached web image ran current
+  mounted source; the controller and audio status were synthetic fixtures,
+  not serial hardware, real native MPD/audio, or an image-release certification.
+- That routing test is wired into the amd64/arm64 container CI matrix; those
+  new GitHub jobs have not yet run for these unpushed changes.
+- No live Pi service, configuration, credential, firewall, proxy or layout was
+  changed during those local tests. The subsequent real-host trial below
+  supplies separate runtime evidence; legacy retirement and the existing native
+  activation/cross-layout migration gates are not closed by either test.
+
+### Real Mac-web / Pi-backend acceptance (2026-11-15)
+
+The operator approved using the existing Mac Docker installation as the
+separate web host and explicitly allowed Pi service interruptions. No additional
+system-wide tools or packages were installed on the Mac or Pi.
+
+The successful bounded trial ran **13:55:53–13:57:37 CET**:
+
+- Stopped the original Pi web and gateway containers, preserving their IDs,
+  images, configuration and project. Native playback services remained active.
+  A temporary gateway-only project used the actual `compose.backend.yml`,
+  existing accepted ARM64 gateway image, USB serial adapter and device group.
+- Published the standalone gateway on the Pi LAN address, TCP 16666, with a
+  temporary Docker-aware rule admitting only the Mac's measured source address
+  in the original connection direction. A Pi-container source was rejected.
+  No SSH tunnel or cross-host Docker DNS was used.
+- Started web on the Mac with `compose.dev.yml`, an isolated copy of the
+  stopped-writer configuration/state and protected credential/CA files, and
+  environment overrides selecting the real Pi gateway and HTTPS agent.
+  The test UI was bound only to `127.0.0.1:18080`. It used the cached accepted
+  ARM64 web image; selected runtime/UI file hashes matched current source.
+- **Ten successful readiness samples** verified real controller communication
+  and authenticated playback health. All three native outputs had fresh,
+  successful audio readiness and correct routes through the Mac web API.
+  This was telemetry verification, not another operator listening test.
+- Unchanged web and gateway reruns preserved their respective container IDs.
+  Explicitly recreating each test container changed its ID and recovered the
+  real controller/playback routes. Native service PIDs/restart counts remained
+  unchanged. No playback, source, volume or power mutation was requested.
+- CA-verified authenticated HTTPS succeeded. Missing authentication was rejected
+  with HTTP 401; missing CA trust failed certificate validation. A wrong TLS
+  server name was rejected at the handshake by the existing Caddy endpoint.
+
+Earlier attempts did not pass: the first temporary firewall rule also filtered
+reply-direction traffic and prevented gateway communication; after correction,
+the negative TLS probe initially expected a certificate-validation exception
+where Caddy instead rejected the wrong SNI during the handshake. Both attempts
+restored the original healthy installation before retrying. Neither failure was
+hidden or counted as a pass; no application workaround was required.
+
+After the successful test, removed the Mac test containers/network and Pi
+standalone project, removed the temporary firewall rule, cancelled the
+Pi-side timed restoration guard and restarted the **original container IDs**.
+Both original containers were healthy; controller and playback checks passed.
+Pi protected web configuration/secret contents and metadata, plus native service
+identities, matched baseline. Temporary copied configuration/state/credentials
+and transfer archives were removed from the Mac; private non-secret result and
+restoration receipts remain in the session evidence.
+
+This closes the representative **real separate-host runtime/routing acceptance**
+for the prepared hybrid scope. It does **not** certify the Linux-root
+deployment operator on macOS, a fresh image build/release, automated cross-layout
+migration, or the full reviewed two-Linux-host apply/failure-recovery lifecycle.
+The trial used explicit manual Compose operations and restored the original
+same-host Pi arrangement. The previously completed six-hour/audio acceptance
+remains separate evidence, not a new split-host endurance claim.
+
+### Prepared native web/gateway scope and implementation (2026-11-15)
+
+The user selected a bounded prepared-Pi native increment: native web and native
+ser2net, preserving the already working native agent, supervisor, MPD, audio,
+proxy and credentials. Fresh-machine/full-native-stack provisioning is not
+included. The scope selection itself did **not** authorize a live cutover.
+Split-host implementation/acceptance was committed separately as `0733d78`.
+
+The [native workflow](../documentation/container-deployment.md#prepared-native-web-and-gateway)
+now has source/venv candidate sealing, root-owned service-readable releases,
+explicit same-layout update and recorded Docker-to-native cutover scope,
+shared host reservation/state, stopped-writer backup, independent off-host
+verification before activation, exact unit/controller/playback checks,
+unchanged-candidate verification, pre-apply original-runtime restart and
+explicit recovery of failed or latest committed native operations. Recovery
+preserves post-backup trees and restores the prior committed selection only
+after checking the prior runtime. It does not change OS packages, the
+distribution ser2net unit/config or the native playback stack.
+
+The old in-place native installer is a non-mutating refusal, not an unsafe
+alternative activation path. Legacy-native adoption, external-native gateways,
+schema/settings/network migrations, OS upgrades and fresh-machine disaster
+recovery remain excluded. Native candidates require an unchanged prepared OS;
+the backup preserves application/environment bytes, not a bootable system.
+
+Local tests exercise approval refusal, shared reservations, candidate drift,
+canonical unit round-trips, off-host failure, explicit recovery, post-backup
+edit preservation, unchanged reruns, previous native environment restoration,
+source/environment byte/mode checks and host HTTP acceptance. Linux-only
+staging was also exercised on the Pi in disposable directories: a separate
+web venv imported successfully as the nonroot service account; all **1454**
+source/environment backup entries restored with the exact original seal;
+the final staging check also used private umask **077**. Generated units passed
+`systemd-analyze verify`; an isolated nonroot process using the actual Pi
+ser2net binary parsed the generated connection/options and passed bidirectional
+TCP-to-PTY byte checks without opening the real USB serial adapter.
+Original live Docker IDs,
+restart/health state and native playback service PIDs/restart counts remained
+unchanged. This used the existing trusted application's available revision,
+not an unpushed new application release. **No native unit was activated.**
+Disposable Pi staging/source/venv/backup/restore trees were removed after
+retaining the verification receipts off Pi.
+
+The full local Python regression passed **901 tests, 13 skipped, no failures**.
+Focused cutover coverage independently verifies archived Docker image identities
+under the native operation ID and restoration of the prior Docker deployment
+record. Failure injection covers partial native unit installation before
+systemd loads it, as well as lost off-host verification and post-start failure.
+Service/Docker control in these local lifecycle tests is simulated; these are
+not substitutes for a real Pi cutover/rollback rehearsal.
+
+### Prepared native live cutover and Docker recovery acceptance (2026-11-15)
+
+The user subsequently authorized committing and testing on the Docker Pi.
+Native implementation was committed as `3e922d8`; exact committed source was
+transferred by verified Git bundle and installed through the guarded tooling
+exchange, retaining prior checkouts. The actual Ansible native staging play
+created sealed release `42d2e3a0-5c9c-4805-b04f-d35601924945` from that commit.
+No global packages or playback/audio/proxy services were changed.
+
+The first reviewed activation safely refused before reservation or interruption:
+ordinary log growth changed the backup-size estimate during approval. Two real
+preflights reproduced growth from 273256848 to 273257506 bytes with otherwise
+identical review scope. Commit `1c574bd` fixes this by retaining a reviewed
+capacity with the existing 64 MiB margin, rejecting excess growth and rechecking
+free space. Focused native tests passed **28 tests**; the full regression passed
+**902 tests, 13 skipped, no failures**. The fix was separately installed with the
+same guarded exchange; no in-place tooling edits or safety-check bypasses were
+used.
+
+Reviewed native operation `76cf7990-eb40-4982-9e01-84b144e6ecbd` completed after
+the controller independently verified and retained the stopped-writer backup.
+Its manifest SHA256 is
+`0a5fab0b44b48b8407adc9d21e008244f7353366ab07ccc32e8284559f5c086a`.
+Both Docker writers stopped; the native units were enabled/active with zero
+restarts and UID/GID 1000. The dedicated gateway listened on `127.0.0.1:6666`,
+web remained on port 8000, and the real controller and authenticated TLS agent
+route passed. All three stereo outputs had fresh, successful readiness/route
+probes reporting ready/correct. This is not a new human audible confirmation.
+
+Same-candidate invocation `3d033f91-94da-41d2-b790-a0872e3c6774` returned
+`unchanged`: identical native unit PIDs/restart counts, no new backup and the
+original committed native operation retained. Deliberate approved recovery
+`fc023589-209d-4d4f-a969-0d1c9285c847` then restored the original Docker runtime
+from the independently held off-Pi backup. Both original container IDs/image
+IDs were healthy with zero restarts; the exact prior committed deployment
+record was restored, with no pending operation/reservation. Native managed
+units were removed/inactive and the native loopback listener was gone.
+Post-backup data was retained under the recovery's `.failed-UUID` tree.
+
+All seven existing audio/agent/supervisor service identities and twelve
+protected file hashes/owners/modes matched baseline before cutover, while
+native ran and after Docker restoration. Final controller/playback and all
+three output probes passed again. The operator explicitly selected **restore
+and retain Docker** as the final layout. Private backup, identity, approval and
+verification receipts remain off Pi; recovery assets and staged native release
+are retained. Named temporary source-bundle transfer files were removed.
+
+This closes the representative prepared-Pi native cutover/rerun/Docker-return
+trial. It does not certify fresh-machine provisioning, live native-to-native
+update/recovery, reboot, a native six-hour observation or new audible output.
+The earlier six-hour/audio acceptance remains Docker evidence only. Broader
+S5 gates and final legacy retirement are not marked complete by this trial.
+
 ## Acceptance and verification
 
 - Render Compose configurations for dev Hub, dev local build and production;
@@ -3675,6 +4022,11 @@ Related: [deployment status](./general_idea_deployment-status-overview.md),
 
 ## Final step: retire legacy deployment paths and artifacts
 
+**Superseded web/gateway repository paths retired on 2026-11-15**, at the
+operator's request. The checklist below is retained as the cleanup contract;
+the implementation and retained-surface inventory follow it. Remaining native
+acceptance was explicitly deferred, not passed or replaced by this cleanup.
+
 After the preceding implementation and acceptance work is complete, remove
 superseded deployment entry points so operators have one clean, documented
 path for each supported deployment intent. This is a planned final cleanup,
@@ -3703,3 +4055,1090 @@ and recovery have been separately approved.
   confirm the published docs expose only supported paths, while documenting
   unsupported layouts and the exact boundary of any remaining compatibility
   support.
+
+### Repository retirement and support-boundary reconciliation (2026-11-15)
+
+Removed the old build-oriented hardware/dummy Compose files, mutable Docker
+installer, already-refusing native web installer, source-only web staging play,
+their three component-default files, three web/Docker templates and unused
+deployment-account role. Their replacements and non-equivalences are listed in
+the authoritative [retirement table](../documentation/container-deployment.md#existing-installations-and-legacy-entry-points).
+In particular, prepared-host deployment does not replace the old installer's
+OS/Docker provisioning side effects, and sealed native staging cannot activate
+old private source-only candidates.
+
+Retained all five current Compose profiles/overlays, image Dockerfiles and
+entrypoints, reviewed operator/recovery/state/backup modules, and all eleven
+Ansible plays: two development previews, three tooling lifecycle plays, sealed
+native staging, audio staging, agent staging/removal, proxy and egress.
+The shared playback-registry task/filter is still called by development
+preview and is retained; only its unused legacy component dispatch was removed.
+Separate audio/agent activation guards and component tooling are not changed
+by web/gateway retirement. Automatic full native-stack provisioning and
+same-host/split-host migration remain excluded, not silently redirected.
+
+Retired-template/source-only-staging tests were removed with their targets.
+Replacement tests exercise playback registry escaping through the actual
+Ansible preview and retained Compose profile, native unit quoting/host-secret
+mapping, absence of retired paths, no retired entry-point references in active
+automation, and syntax of every retained play without target contact. Existing
+profile, transaction, split-host and recovery tests remain applicable.
+
+README, architecture/protocol guidance, runtime-directory notices and the
+authoritative guide now distinguish accepted prepared-host trials, unverified
+two-Linux-host operator acceptance, deferred native update/recovery/reboot/
+endurance/audible checks and blocked stable production. Historical inventory
+remains evidence, not an alternative runbook; links to removed artifacts in
+the deployment/release plans were converted to historical names. The unrelated
+in-progress first-time-setup draft was deliberately preserved unchanged.
+
+No Pi/host command, service, package, configuration, credential, saved override,
+image, deployment record, staged release or backup was changed by this work.
+Legacy runtime-directory notices and ignore rules remain to protect data from
+older checkouts. Cleanup is repository-only; it does not prune recovery assets.
+Further native acceptance is deferred at the operator's direction. S5 still
+requires final evidence/rollback handover and CI for the unpushed changes;
+unavailable stable production and unverified layouts remain explicit limitations.
+
+Validation passed: **54 targeted workflow/input/profile/native tests**, then
+**252 wider deployment tests, 10 skipped, no failures** (overlapping suites).
+All **11 retained Ansible plays** passed syntax checks against a deliberately
+unreachable inventory without target execution. Active automation has no
+references to the retired entry points; defensive Docker ignore patterns and
+historical/retirement records are intentional, not active consumers.
+
+### Further native acceptance: approved one-hour scope (2026-11-15)
+
+The operator subsequently authorized the prepared-Pi native acceptance work,
+explicitly limiting observation to **3600 seconds**, not a six-hour run.
+Structured confirmation additionally approved **one Pi reboot** for native
+startup checks and selected **restore the original Docker deployment** after
+the trial. Listening remains operator-controlled; no automatic playback,
+source, power or volume changes are authorized by the observer.
+
+A fresh private baseline captured the healthy Docker deployment, all seven
+existing native audio/agent/supervisor identities and twelve protected file
+hashes/owners/modes. Trusted Pi tooling remains committed revision `1c574bd`;
+uncommitted repository retirement changes are not installed on the Pi.
+The existing sealed native release from `3e922d8` was reverified and the actual
+Ansible native staging play produced a second sealed source/venv release from
+`1c574bd` for a native-to-native update/recovery rehearsal. Neither staging
+step changes the playback stack.
+
+The planned sequence is reviewed Docker-to-native cutover with a new off-Pi
+backup, native-to-native update and explicit native recovery, unchanged rerun,
+the approved reboot, complete routing/readiness warmup, then the bounded
+read-only observation and reviewed restoration of the captured Docker baseline.
+Every lifecycle operation uses the public operator and independent backup
+verification. Observation failure is recorded, not silently remediated.
+At this point the further acceptance is **in progress, not completed**.
+
+**Subsequently paused at 19:53 CET:** the operator aborted the controller
+session and requested restarting native deployment only, with no tests.
+The retry `fc48434c-1a55-4308-9686-428140fef770` remained pre-apply at
+`inputs-verified`; both native writers were stopped and an orphaned target
+operator was still running. After confirming its exact PID and pre-apply
+state, terminated only that orphan and used the public
+`native-resume-original` action with fresh reviewed approval. Recovery
+preserved current data and returned the committed native operation
+`ae8e2331-772e-4860-aefa-e2048848fffa` to an unblocked state.
+Web and dedicated serial services were active/running with zero restarts;
+Docker writers remained stopped. No observer or deployment operator remained.
+No reboot, acceptance test or timed observation was started after this request.
+The native update candidate was not applied; partial backups/evidence remain
+for inspection. Further tests and final Docker restoration are paused pending
+renewed operator direction.
+
+**Separately approved reboot-only test at 19:56 CET:** performed exactly one
+Pi reboot. Boot ID changed from `73e33fa4-edb2-435d-9b94-3fce13ff02ad` to
+`2614beeb-7a5a-4593-b3c9-3423fdda7a26`. Native web, dedicated ser2net,
+TLS proxy and all seven existing audio/agent/supervisor services started
+automatically, active/running with zero restart counts; Docker writers stayed
+stopped. Protected file hashes/owners/modes matched the pre-reboot snapshot
+and existing user-service command identities matched after excluding dynamic
+systemd timestamps/PIDs.
+
+**Result: failed controller-recovery acceptance, not a passed reboot test.**
+The required runtime check timed out after 60 seconds; subsequent API checks
+still reported `backend_status.connected=false`. Authenticated playback health
+was `ok` and all three output readiness/route probes were fresh, ready and
+correct. Gateway startup journal reported an initial invalid network-address
+error for `tcp,127.0.0.1,6666`, followed by accepter startup ten seconds later.
+Web initially got connection-refused and then logged gateway reconnection,
+but that TCP recovery did not establish controller readiness. The gateway held
+the USB serial device and listened on loopback; web listened on port 8000.
+Root cause is not established by these observations. No additional reboot,
+service restart, native update, playback mutation or observation was performed.
+Private reboot receipts remain with this trial's off-Pi evidence.
+
+**Root-cause diagnosis after 20:02 CET:** no services were restarted or
+reconfigured. USB enumerated normally, ser2net alone held `/dev/ttyUSB0`,
+serial framing was 19200 8N1 with software/hardware flow control off, and the
+web-to-gateway TCP connection was established. The actual sealed web source
+contained the watcher gate
+`should_poll = self._has_active_event_clients() or self.controller.backend_health_snapshot() is None`.
+An initial failed startup poll records disconnected health; subsequent headless
+iterations then skip hardware polling because health is no longer `None`.
+Gateway reconnect reattaches the listener but does not invalidate that failed
+health or request a fresh full poll. Normal health/rooms GETs serve that cached
+failure instead of polling hardware.
+
+Verified the causal trigger on the live Pi: immediately before a read-only
+`/api/events` subscription the controller API still reported disconnected.
+Registering the event client requests a full poll; within the first two-second
+check the API reported connected, with no error message, and remained connected
+after the diagnostic subscription closed. Web/gateway PIDs remained 1194/908,
+with zero restarts. This demonstrates that hardware/serial communication works
+and identifies the persistent failure as application health/poll scheduling
+after delayed gateway startup, not proof of a broken controller or adapter.
+The early ser2net listener delay triggered the startup failure but does not
+explain its indefinite cached status. A source fix and regression validation
+remain required; the read-only subscription is diagnostic evidence, not the
+permanent fix or a passed unattended reboot test. No observation was started.
+
+### Blocking bugfix: unattended controller-health recovery
+
+**Status: CLOSED for controller-health recovery.** Native deployment acceptance
+remains open; the latest reboot exposed a separate audio-readiness blocker.
+Scoped bugfix commit: `060084d936ae31578512756d3907b7e11dab008f`.
+This is shared application behavior,
+not a native-only deployment defect: Docker, native and split-host layouts
+using this watcher can retain a failed startup health result without an event
+client. A read-only native reproduction established this failure; the other
+layouts have not independently reproduced this failure.
+
+This fix and its acceptance evidence are prerequisites for closing the
+deployment plan. They do not replace the remaining native update/recovery,
+reboot, approved one-hour observation and audible acceptance requirements.
+
+#### 1. Reproduce in focused regression tests
+
+- [x] Reproduce failed initial connection followed by gateway availability,
+  with no SSE/browser client throughout. Assert that a real successful
+  hardware-read result, not TCP connection alone, publishes connected health.
+- [x] Cover an established gateway socket with initially silent hardware
+  that later answers, without a socket reconnect or event subscription.
+- [x] Cover loss and reconnection after a previously successful poll, including
+  reconnection when the cached health still says connected.
+- [x] Cover persistent unavailability, healthy idle behavior, active SSE
+  behavior, shutdown and stale-generation/configuration result rejection.
+  Use deterministic synchronization/clock control rather than long sleeps.
+
+#### 2. Fix the shared polling/reconnect producer
+
+- [x] Retry unknown or failed controller health without requiring event
+  clients, using the existing bounded polling cadence and transport backoff.
+  Do not add a busy loop, parallel polling worker or per-request hardware I/O.
+- [x] Ensure a successful gateway reconnect schedules a full hardware poll
+  even when the previous cached health was successful. Preserve the existing
+  healthy-idle optimization outside recovery; continuous headless liveness
+  monitoring is not added by this fix.
+- [x] Keep TCP reachability separate from verified controller responsiveness.
+  An unavailable or silent controller must remain explicitly unhealthy until
+  a successful hardware response; do not clear failure into optimistic health.
+- [x] Preserve state-lock boundaries, generation guards, listener lifecycle,
+  shutdown responsiveness and normal event-driven refresh behavior.
+
+#### 3. Validate locally and package the fix
+
+- [x] Run the failing regressions first, then the related server, controller
+  and connector suites and affected deployment/runtime checks. Verify retry
+  counts/cadence and exact health payloads, not just worker invocation.
+- [x] Update directly related runtime/deployment documentation with the
+  verified behavior and recovery bound. No deployment-specific workaround or
+  service ordering change substitutes for fixing shared application recovery.
+- [x] Once approved for release, produce the sealed native candidate and
+  corresponding container artifacts from the same corrected application
+  revision through the existing reviewed workflows.
+
+#### 4. Live acceptance, separately authorized
+
+- [x] On the Pi, deploy through the reviewed transaction workflow and repeat
+  unattended reboot acceptance with no browser/SSE client open. Require
+  confirmed controller health within the existing 60-second runtime-check
+  window; retain timestamps, service restart counts and controller responses.
+- [x] Exercise delayed gateway availability and recovery from an established
+  but initially nonresponsive controller using controlled test doubles first.
+  Any live service interruption, hardware disruption or additional reboot
+  requires explicit operator approval.
+- [x] Check the corrected container deployment path and routing as well as
+  native behavior; reuse shared application regressions across layouts, but
+  record live results only for the layouts actually exercised.
+- [x] Return the other native acceptance items to the parent plan, preserving
+  their approval boundaries. The one-hour observation remains paused, not
+  replaced by a six-hour test or implied by this bugfix closure.
+
+**Bugfix exit gate:** regression coverage proves autonomous recovery without
+event clients and the corrected deployment passes unattended controller-recovery
+acceptance. The parent deployment plan separately requires its remaining gates
+to have their own evidence.
+A browser-triggered refresh, healthy TCP socket or running service alone is
+not sufficient. Planning this fix authorizes no live mutation, reboot,
+observation, commit or push.
+
+**Implementation and local evidence:** six of the first eight deterministic
+watcher tests failed on the original code; all passed after the scheduling fix.
+The expanded targeted suite ran 217 tests with one opt-in container test skipped
+and no failures. The separately enabled real-container acceptance then passed
+using an immutable, verified Linux ARM64 web/dummy bundle built from `060084d`:
+web started before the dummy gateway with failed controller health, recovered
+without event clients or web replacement after the gateway appeared, and
+passed existing rerun, forced recreation and external-gateway routing checks.
+Production Pylance diagnostics contained no errors or warnings; changed tests
+passed syntax validation.
+
+The operator approved the scoped commit (no push), native update, one further
+unattended reboot and local container acceptance, but not a timed observation.
+Trusted tooling was upgraded by guarded atomic exchange to `060084d`, retaining
+the old checkout. The actual native staging play produced sealed release
+`5b2507b4-f5b1-4d00-807d-6a7c50f76959` with seal
+`b43fc6ce57b33dc33dc46c9ab9ffaa70f5e720f3b98ae7b5439dbc600171699c`.
+Reviewed same-layout update `0eb36b79-8003-4acc-9507-30a9ee37bc53` was approved
+with protected audio/agent/proxy scope unchanged and the off-Pi backup guard
+retained. It completed with all four native runtime checks passed, protected
+configuration/service identities unchanged, Docker writers stopped and no SSE
+clients. All three authenticated playback output/route probes passed after
+the update.
+
+**Measured live controller-recovery acceptance:** the first newly approved
+reboot recovered controller communication without an event client, but the
+session helper then incorrectly queried system rather than user services.
+Read-only correction verified the actual user services; the original elapsed
+samples were not retained, so that run was not used to certify the 60-second
+threshold. The operator separately approved one additional reboot and a
+temporary Pi-local test-only systemd probe.
+
+That probe measured hardware health **10.958475815 seconds after native web
+service activation**, within the required 60 seconds, with zero event clients.
+It used Pi monotonic timestamps and persisted samples independently of laptop
+or SSH delays; its own tests reject success arriving after the deadline and
+reject an active event client. Boot changed from
+`4163d139-21cc-49fd-acb6-606fa6e09c81` to
+`50e8c04a-26ed-4299-9934-f4917e813761`. Web and gateway were active with zero
+restarts. The temporary probe unit was disabled and removed afterward; no
+additional reboot or observation was performed. The corrected application and
+trusted tooling remain at `060084d`; no registry publication or Git push occurred.
+
+**Separate native acceptance blocker, not a controller bugfix failure:** after
+the final reboot, playback API connectivity was healthy but all three outputs
+reported `hardware_profile_unavailable` readiness errors and pending route
+observations. The three MPD output services were retrying startup with restart
+counts of one; PipeWire, WirePlumber, playback agent and supervisor were active
+with zero restarts. Protected configuration, secrets and unit file hashes were
+unchanged, and Docker writers remained stopped. The overall native reboot/audio
+acceptance is therefore **not passed**. Do not start the one-hour observation
+until audio readiness is diagnosed and corrected with appropriate approval.
+No audio configuration, profile, playback setting or protected service was
+manually changed during this bugfix acceptance.
+
+The session-only observer's user/system manager selection was corrected
+locally and its five synthetic tests passed. Its previously installed,
+never-started Pi copy must be refreshed and verified before any future
+observation. Four additional Pi-local probe tests passed. Off-Pi backup,
+container build/runtime, transaction, boot and correction receipts remain
+private session evidence; the first inferred reboot receipt is explicitly
+superseded by its timing correction and the measured Pi-local receipt.
+
+### Audio profile investigation and approved runtime recovery
+
+The subsequent investigation reproduced the readiness failure directly with
+the deployed audio code, using `enforce_profile=False`. USB selection was
+unique and stable (`0d8c:0102`), ALSA enumerated the card, and the complete
+configured downstream graph passed validation. There were no full-speed USB
+reset messages in this boot's kernel journal. Nevertheless, both `pactl` and
+native PipeWire `Profile` parameters reported profile index zero, `off`, while
+the same card still owned an existing six-channel `analog-surround-51` sink.
+WirePlumber's saved default profile already requested
+`output:analog-surround-51`; a wrong saved operator profile was not observed.
+
+This inconsistent live profile state explains why all three MPD services
+remained in their audio-readiness `ExecStartPre` guards: those guards correctly
+require the reported active profile and full downstream topology, not merely
+an existing sink. Repeated ordinary requests to select 5.1 returned success
+without changing the reported profile. The playback API accurately reflected
+this failure; the web controller-health fix was not its source.
+
+The operator approved progressively scoped runtime experiments:
+
+1. Stop only the three failing MPD outputs, issue one serialized selection of
+   the configured profile, and request their startup again. The profile stayed
+   `off`. This experiment **did not prove isolation**: the playback supervisor
+   independently starts those services, and a later stop conflicted with it.
+   The planned second profile experiment aborted before profile mutation.
+2. With separate approval, pause the playback supervisor as well as all three
+   failing outputs, then perform one explicit `off` -> configured 5.1 reset.
+   Explicit `off` removed the stale hardware sink. Selecting 5.1 then recreated
+   the sink and both native PipeWire and PulseAudio consistently reported
+   `output:analog-surround-51` (profile index 15). The state remained correct at
+   the one- and three-second checks. All four services were requested to start
+   again afterward, allowing the supervisor to reconcile saved intentions.
+
+**Verified result:** all seven audio/agent/supervisor services are active and
+running. All three outputs subsequently published fresh readiness `ready=true`
+and route `correct=true` with the exact expected virtual sink. Routes initially
+remained pending and then became fresh/healthy during bounded warmup.
+Controller connectivity remained healthy. The boot ID did not change,
+PipeWire/WirePlumber were not restarted, and protected configuration, secrets
+and unit file hashes were unchanged. No new playback intention, test audio,
+reboot, observation or application fix was introduced. Restart counters now
+reflect the approved manual service lifecycle and do not retroactively pass
+the failed zero-intervention reboot.
+
+**Remaining uncertainty and acceptance consequence:** the failure mechanism
+is a stale/inconsistent audio-server profile state that the current
+same-profile retry cannot clear; the reason this boot entered that state
+(including any startup race or upstream PipeWire/WirePlumber defect) is not
+established. Concurrent readiness guards are a possible startup factor, not a
+proven root cause. The explicit reset is verified runtime recovery, **not an
+implemented permanent fix or unattended reboot pass**. Do not bypass profile
+verification or blindly add repeated `off` resets: they can disrupt working
+outputs. A follow-up should reproduce the inconsistent state and evaluate a
+single coordinated, bounded, identity-checked recovery path before further
+native reboot/endurance acceptance. Private isolation/reset and final fresh
+probe receipts remain with this trial's evidence.
+
+### Extended audio startup isolation: profile restore failure without writers
+
+The operator then authorized further diagnostic reboots and playback changes.
+One additional reboot was performed, from boot
+`50e8c04a-26ed-4299-9934-f4917e813761` to
+`92c983d6-6c58-4461-93b1-9dadfc29e236`. A temporary Pi-local, read-only
+transition recorder captured normal USB initialization on this run:
+no device, then `off` without a sink, then profile 15
+`output:analog-surround-51` with the six-channel sink. All seven services
+started with zero restarts. The recorder unit was disabled and removed.
+This successful run does not erase the earlier intermittent failure.
+
+Controlled trials then paused the supervisor and output services and restarted
+the audio session to isolate profile restoration without further Pi reboots:
+
+- Eight warm-session profile-selection trials, with either one or three
+  simultaneous `pactl` requests, all succeeded. Concurrent profile requests
+  on an already initialized session alone did not reproduce the fault.
+- Cold-session trials reproduced the contradictory `off`/existing-5.1-sink
+  state repeatedly with the deployed readiness guards active. Single-guard,
+  restore-only and additional triple-guard runs also often passed; the
+  failure is intermittent, and verbose logging changes its timing.
+- Tracing the actual deployed guard showed ordinary 5.1 requests returning
+  successfully while both inventories remained `off`. In a failing run,
+  WirePlumber logged selecting the stored 5.1 profile at boot-monotonic
+  707.947 seconds, then route restoration for **`off`** at 707.972 seconds.
+  The first traced application profile request was not until 708.649 seconds.
+  Thus the inconsistent restoration was already visible before that request.
+- Most importantly, a control trial reproduced failed restoration with the
+  supervisor and all MPD outputs stopped and **only read-only readiness
+  clients**. Their mutation function was guarded to raise if called, and
+  recorded profile-write count was zero. In that run WirePlumber selected
+  stored 5.1 at 1098.247 seconds but restored routes for `off` at
+  1098.281 seconds; native and PulseAudio reads continued reporting `off`
+  through the end of the five-second trace.
+
+**Revised causal conclusion:** concurrent MPD startup guards are **not a
+necessary cause**. The fault can originate within the prepared host's
+PipeWire/WirePlumber profile-restoration/notification path without application
+profile mutations. Current versions on this host are PipeWire/Pulse/SPA
+`1.4.2-1+rpt3` and WirePlumber `0.5.8-2`. The correct saved profile is selected,
+but the exposed active-profile state can remain inconsistent with the created
+sink. Same-profile retries do not repair that state; an explicit off/on
+transition does. This narrows the responsible layer, but does **not** establish
+the exact upstream C/Lua defect, a fixed package version, or that a lock around
+the existing MPD guards alone would prevent it. The failure is below the web
+application and is not intrinsically specific to the native web layout.
+
+One extended logging harness exceeded its controller timeout while reading
+journal history. Its temporary debug override was removed and the diagnostic
+process exited; output/supervisor startup was explicitly restored afterward.
+Subsequent journal reads were bounded, results persisted directly, and cleanup
+was verified. This harness issue is not audio acceptance evidence.
+
+**End state verified:** supervisor, all three MPD outputs, PipeWire,
+WirePlumber and playback agent are active/running; each output has fresh
+readiness `ready=true` and exact-route `correct=true`. Controller communication
+is healthy. Protected configuration, secrets and unit files match the initial
+baseline. Temporary boot units and runtime debug drop-ins are absent. Saved
+intentions were reconciled by the existing supervisor; no new application
+playback command was issued. No packages or production code were changed, no
+commit/push was made for this investigation, and no timed observation started.
+
+**Permanent-fix direction:** retain strict profile/topology validation. A
+follow-up must either verify an upstream audio-stack correction against this
+reproducer or add a single, bounded, identity-checked recovery coordinator for
+the demonstrably inconsistent state, avoiding resets of functioning outputs.
+Serialization can protect recovery, but is not by itself a proven fix for the
+restore defect. Add regressions for successful-but-ineffective profile requests,
+transient restoration, missing/ambiguous/replaced hardware and recovery limits,
+then repeat cold-start/reboot acceptance before native endurance validation.
+
+### Guarded audio recovery implementation trial: promotion held
+
+The operator approved the targeted upstream check, bounded shared-host recovery
+if needed, and subsequent acceptance. The available Pi PipeWire candidate is
+`1.4.2-1+rpt5`; its packaging changelog contains libcamera changes only.
+WirePlumber's candidate remains `0.5.8-2`. Public upstream searches/release notes
+did not establish a matching correction. No audio packages were upgraded.
+
+An uncommitted candidate in the shared `lib/audioready.py` now:
+
+- Serializes selector-based profile enforcement using a nonblocking, per-user
+  kernel lock in a validated private `XDG_RUNTIME_DIR`. Read-only observers
+  neither acquire the recovery lock nor mutate profiles/state.
+- Requires agreement between native and Pulse profile observations before
+  declaring selector hardware ready; downstream/sink checks remain mandatory.
+- Recognizes the narrow reproduced `off`/existing valid 5.1 graph inconsistency.
+  Normal profile selection is retained during a five-second observation grace.
+  Healthy readiness cancels the observation.
+- Refuses resets while a sink/playback stream is running or its activity state
+  is unknown, or when hardware identity, topology or native profile inventory
+  cannot be established.
+- Persists one reset attempt per USB device/PipeWire-server generation before
+  issuing off/on. Other guards, service retries and guard crashes cannot
+  replenish that budget. Server cookie, object serial/ID and Pulse index
+  identify the generation. Identity is rechecked before profile changes and
+  after off; server/device replacement aborts re-enable.
+- Requires a subsequent complete readiness check after the reset. Command
+  success is not readiness. Errors and exhausted budgets remain explicit.
+
+**Repository validation:** 205 focused audio and coupled playback tests pass;
+production Pylance diagnostics are clear. Two new regressions fail against
+unchanged HEAD: missing off/on recovery and accepting native/Pulse disagreement.
+Tests also cover grace cancellation, healthy/read-only no-ops, active streams,
+kernel lock exclusion, identity/index reuse, replacement/server restart during
+recovery, per-generation budgets, failed resets and unsafe/corrupt state files.
+
+**Live candidate only, not installation:** the candidate was staged separately
+from the installed audio checkout. Sixty of 61 bounded cold-session trials
+passed with three concurrent candidate guards. Five genuine restoration
+failures, established by a read-only startup phase before candidate execution,
+recovered automatically with exactly one reset each. Fifty-five normal trials
+needed no reset.
+
+**Remaining blocker:** one trial had native Profile inventory cardinality other
+than one. The candidate refused mutation and all three guards timed out.
+Its error identified the cardinality check, but this first harness did not
+retain the raw Profile array; whether it was empty or had multiple entries
+is therefore unknown. Two subsequent bounded capture runs (16 and 20 trials)
+did not reproduce that shape, although they each reproduced and recovered two
+ordinary stale-off failures. These later successes do not supersede the failed
+trial or prove the additional inventory condition resolved.
+
+**Promotion is held**, rather than loosening native-profile validation based on
+an assumption. Capture that inventory variant and establish safe handling (or a
+verified upstream correction), then rerun acceptance. No permanent audio module
+was installed, no Pi reboot was performed in this implementation trial, and no
+one-hour observation was started. All seven original audio services and fresh
+three-output readiness/exact-route probes were verified healthy afterward;
+controller communication and protected configuration are unchanged. The
+installed audio module still matches its pre-trial backup. Diagnostic candidate
+files are retained for follow-up, with no background harness left running.
+
+### Approved session recovery and installed reboot acceptance
+
+The operator authorized the follow-up investigation and explicitly selected
+**one guarded WirePlumber restart while audio is idle** when asked whether to
+expand recovery beyond the previously approved USB off/on reset.
+
+**New real-fault evidence:** the first follow-up capture failed on trial 11
+because the selected USB device's entire profile catalogue disappeared:
+Pulse reported `profiles={}` and `active_profile=null`; `pw-dump` reported an
+empty native `EnumProfile`. A separate direct `pw-cli enum-params` returned no
+EnumProfile entries, although native Profile still had one `off` entry. Pulse
+logged inconsistent port/profile counts, and both desired-profile and cleanup
+off requests returned `No such entity`. Thus this case is not merely our
+Profile-array parser rejecting a healthy card. Restarting WirePlumber restored
+the catalogue and original output services. No package/configuration change
+was needed.
+
+The original earlier non-singleton Profile array was **not** recaptured; its
+exact shape remains unknown. Another 30 bounded read-only-first trials passed,
+including six stale-off recoveries. This does not prove that earlier
+cardinality failure had the same cause as the empty-catalogue failure.
+
+**Approved extension implemented:** under the same kernel lock, missing native
+Profile/EnumProfile or missing Pulse profile inventory must persist across a
+five-second grace and fresh device-identity checks. All inspected sink/playback
+nodes must have a known idle/suspended state. The guard persists a global
+once-per-boot WirePlumber-restart budget before requesting the nonblocking user
+service restart. Changing device/server generations, guard retries and failed
+commands cannot replenish it. A healthy inventory cancels an unspent
+observation. Conflicting Profile entries and missing/ambiguous/replaced
+hardware still fail closed; normal read-only probes never recover audio.
+All configured profile, sink and downstream checks remain required after
+either recovery path.
+
+**Verification before installation:**
+
+- 235 targeted audio, stream and coupled playback tests pass, one skipped.
+  Added regressions cover empty versus conflicting native profiles, transient
+  publication, active/unknown audio, cross-generation boot budgets, failed or
+  timed-out restart requests and read-only isolation. Production Pylance
+  diagnostics and test-file syntax checks are clear.
+- The extended candidate passed 30 further real cold-session trials with three
+  concurrent guards. Seven real stale-off faults recovered with exactly one
+  card reset each; other trials required no reset. Missing inventories did
+  not recur in this set.
+- A separately labelled **reader-only fault injection** substituted empty
+  Profile/EnumProfile arrays in the candidate's observations until the real
+  WirePlumber device generation changed. Three concurrent guards requested
+  **exactly one real WirePlumber restart**, then all passed against fresh,
+  uninjected native/Pulse inventories. This validates the live recovery path,
+  not spontaneous reproduction of the missing-catalogue fault.
+
+**Installed prepared-host fix:** after those gates passed, the exact tested
+module, SHA-256
+`5ff2d9dbb3f111d19f75d960e53fc6341647146ee08e58f6732943481bd6812f`,
+was atomically installed into the existing prepared audio checkout with its
+owner/mode preserved. The previous module was verified unchanged before the
+swap and retained in the private recovery directory with an activation receipt.
+Supervisor/MPD writers were paused, the agent restarted to load the shared
+change, then outputs/supervision restored. No unit, credentials, application
+configuration, audio package, web release or deployment transaction was changed.
+This is a scoped, uncommitted prepared-host audio-module update, not a new
+packaged/native-web release or a claim that the entire audio checkout was
+updated. Preserve the backed-up pre-existing checkout changes.
+
+**Two unattended installed reboots passed:**
+
+1. `92c983d6-6c58-4461-93b1-9dadfc29e236` to
+   `3bd42689-32d4-4fc1-94bf-106ee51ae6a4`.
+2. `3bd42689-32d4-4fc1-94bf-106ee51ae6a4` to
+   `b78f85f7-9a0b-449e-93b3-73b8db16f929`.
+
+Both returned with all seven audio services active/running and zero automatic
+service restarts, fresh three-output readiness/exact routes, healthy controller,
+zero SSE clients and unchanged protected baseline files. The installed module
+hash survived both reboots. Empty recovery records and correctly filtered
+audio-unit journals show no reset/restart was needed on these healthy boots.
+Final native runtime checks passed units, HTTP, backend and playback, with
+committed operation `0eb36b79-8003-4acc-9507-30a9ee37bc53` unchanged and unblocked.
+
+The first receipt collector failed to parse a normally empty recovery-state
+file after the first reboot; it was corrected and resumed receipt collection
+without another reboot. No first-reboot timing is claimed. A self-matching
+journal query was also corrected using actual user-unit fields and normalized
+boot IDs; its correction receipt supersedes the earlier log fields. These
+collector issues are not application failures or timed-endurance evidence.
+
+**Disposition:** the implemented bounded recovery and installed reboot gate
+are validated for the evidence above; native validation can continue. Exact
+upstream internals and the first unknown Profile-array shape remain unproven,
+and conflicting inventories deliberately remain explicit failures rather than
+being accepted. This is a shared-host resilience fix, not an upstream defect
+closure or proof that arbitrary audio failures self-heal. Remaining native
+lifecycle/rollback and audible/endurance acceptance are still open. No timed
+observation or six-hour test was started, and no commit or push was made.
+
+### Resumed native lifecycle and one-hour observation (2026-11-16)
+
+The operator authorized continuing native acceptance and then explicitly
+approved the reviewed update and recovery scopes. To avoid intentionally
+reintroducing the known controller bug, this rehearsal used **two separately
+sealed releases of the same fixed application revision** `060084d`.
+It validates native source/environment release switching and matched-data
+recovery mechanics, not cross-version compatibility. The earlier real
+native-to-native code update to `060084d` remains separate evidence.
+
+- Actual Ansible staging produced release
+  `eb346206-d97f-45be-b8ba-710a114d44f6`, seal
+  `3f54376088d1fd00df35a6640bcc843245bb7a22c9f2e05acf90478716400504`.
+  The original fixed release remained
+  `5b2507b4-f5b1-4d00-807d-6a7c50f76959`.
+- Public-operator update `32258c33-edc1-4e2e-adf0-36268490ae0c` completed
+  after a reviewed, independently verified off-Pi backup. All required
+  units/HTTP/backend/playback checks passed. The backup retained its existing
+  expensive quiescence checks; no checks were bypassed to shorten the outage.
+- Separately reviewed native recovery
+  `0284b449-2041-47eb-9053-1ae15f2aec67` passed matching-data/original-runtime
+  checks, restored the original fixed release and committed operation
+  `0eb36b79-8003-4acc-9507-30a9ee37bc53`, and preserved post-backup trees.
+- Identical rerun `7bf82026-f706-4b61-9a11-03472e540bee` returned
+  **unchanged**, with all required checks passing. Exact recovered runtime
+  identity, service PIDs/restarts, protected files and committed selection
+  remained unchanged. Existing audio/agent services were untouched throughout;
+  the installed guarded audio fix remained in place.
+
+The first local operator invocation refused before target reservation because
+its required evidence directory did not yet exist. Target state was checked
+unblocked before creating that directory and requesting a fresh review. This
+preflight refusal is not an applied update or recovery failure.
+
+**Observation started, not completed:** the refreshed read-only observer was
+staged to a new private Pi directory and its seven deterministic tests passed
+both locally and on the Pi. A fresh complete baseline passed with 20 protected
+files, adding the installed audio-recovery sources/configuration, relevant unit
+drop-ins and the Pulse service. API snapshot/readiness/route observations must
+be strictly younger than 30 seconds; exact three-output and downstream-route
+checks remain required.
+
+Pi systemd unit `mpdrussoundpi-native-1h-20261116.service` started the observer
+at **2026-11-16 00:07:52 UTC / 01:07:52 CET**, with a monotonic **3600-second**
+observation deadline and ten-second sample interval. Expected completion is
+**01:07:52 UTC / 02:07:52 CET**, not evidence that it has completed.
+The first persisted sample and complete runtime/routing checks passed, and the
+unit was verified active/running. Durable Pi-local status/sample files survive
+SSH disconnect or laptop sleep; the temporary Mac sleep inhibitor was stopped
+after the lifecycle transactions completed.
+
+The observer performs no recovery, restart, playback change or rollback;
+failures are persisted and end the run. There is no automatic Docker restore
+scheduled. Native remains active and Docker writers remain stopped pending
+observation results and final-layout review. Audible native confirmation,
+completed observation evidence and final handover remain open. No six-hour
+observation, commit or push was started by this continuation.
+
+**Operator-approved extension:** at approximately 01:10 CET on 2026-11-16,
+the operator extended the observation to **four hours total**, measured from
+the original 01:07:52 CET start. The new expected finish is **05:07:52 CET /
+04:07:52 UTC**. The original one-hour process was left uninterrupted because
+its deadline was fixed at startup. An overlapping Pi-local read-only observer,
+`mpdrussoundpi-native-4h-20261116.service`, continues through the new deadline,
+using an exact copy of the original protected baseline, selection and operation,
+not a newly captured baseline. Both evidence streams must be reviewed together;
+the original one-hour completion alone is no longer sufficient for acceptance.
+The extended observer's nine deterministic tests and initial API/full-runtime
+checks passed on the Pi, and its service was verified active/running. Neither
+observer remediates services or restores Docker. Four-hour completion remains
+pending; native audible confirmation and final handover remain open.
+
+### Completed four-hour observation and current read-only check (2026-11-17)
+
+Both Pi-local observer streams were reviewed after completion. The original
+stream ran from **2026-11-16 01:07:52 to 02:07:52 CET**, completing 341 API
+samples and 57 full checks with zero failed samples. The overlapping extension
+started at **01:09:59 CET** and completed at **05:07:52 CET**, with 1,359 API
+samples and 227 full checks, also with zero failed samples. Both systemd
+services exited successfully. Their protected baselines, native specifications,
+candidate selections and committed operation files matched byte-for-byte; the
+maximum consecutive sample gaps were 13.35 and 13.40 seconds respectively.
+Together the streams cover the approved four-hour window; neither performed
+automatic remediation or Docker restoration.
+
+At **2026-11-17 01:13 CET**, a new read-only API and full baseline check passed:
+controller connectivity, authenticated playback, the three fresh audio
+readiness/routes, deployment selection, runtime identities, protected files and
+stopped Docker writers matched the observation baseline. This is a point-in-time
+check, not continuous monitoring after the observation ended.
+
+The observation establishes monitored health, not audible output. On
+**2026-11-17**, the operator independently operated the web controls and
+confirmed in Living Room that `stereo_front`/source 1,
+`stereo_centerlfe`/source 2 and `stereo_rear`/source 3 each played the correct
+station clearly and uninterrupted on both speakers. The operator was asked to
+listen for about 30 seconds per path at a comfortable volume and reported each
+passed with “all good”; the listening duration was not independently measured.
+This verifies Living Room only, not every room. No assistant-issued playback,
+zone power, source or volume changes were made.
+
+At **01:20 CET**, a fresh read-only API and full baseline check passed after
+listening, with the controller connected and all three outputs ready with
+correct routes. The operator selected restoring the previous Docker layout as
+the desired final state and requested a separate review; no restoration has
+been performed. The committed native selection is newer than the original
+Docker-to-native cutover, and the recovery operator only accepts the latest
+committed operation. Therefore the original cutover cannot simply be recovered
+directly: establish and review a supported return path and preservation of
+current state before any service change. S5 and its evidence/recovery handover
+remain open until the layout and remaining documentation/CI gates are
+addressed. The release-switch rehearsal remains same-revision evidence, not
+proof of cross-version or schema rollback compatibility.
+
+**Recovery-chain inspection (2026-11-17):** the host is unblocked with native
+operation `0eb36b79-8003-4acc-9507-30a9ee37bc53` committed. Both relevant
+off-host backups passed portable-manifest and blob verification against their
+separately retained manifest identities. The current operation's backup
+identifies an earlier native deployment
+`ae8e2331-772e-4860-aefa-e2048848fffa`; that operation's backup identifies the
+previous Compose deployment. Sequential recovery would therefore restore two
+historical data snapshots, preserve post-backup trees separately, and briefly
+run the earlier native release before restoring Docker. It does not merge
+current state into the restored data. Its suitability, the historical Docker
+image's controller-recovery behavior and any current-data migration require
+separate review; no recovery was started and no current data was replaced.
+
+### Proposed current-data-preserving native-to-Docker return (2026-11-17)
+
+The operator selected designing and validating a safe migration instead of
+rolling back historical data. This is a new, separately reviewed cross-layout
+transaction, not a bypass of the existing recovery checks. Ordinary Compose
+apply explicitly refuses a committed native deployment. No currently supported
+operation implements this return while retaining current data; the proposal
+below is not an implemented or approved live migration.
+
+**Image preparation (2026-11-17):** a local `linux/arm64` managed web/ser2net
+bundle was built from commit `e93783bbbb1c0c2c60add80563f03c9766a14093`,
+which includes the controller-health fix. Its separately retained manifest
+identity is `sha256:c6bf9b878327de45f9bb5aef792d3b162638cc5e006e80be3c736aba09a01dd1`.
+Bundle verification, both isolated image smoke tests, and an isolated
+web-to-gateway Docker-network TCP check passed. The gateway used a `stdio`
+connector in the route test, not the physical serial adapter. This is local
+image evidence only, not a registry publication, a schema compatibility
+assessment, a tested migration transaction or live hardware acceptance.
+
+**One-time Pi migration choice (2026-11-17):** the operator selected a
+Pi-specific migration rather than a general cross-layout feature, with a
+tested state handover rather than leaving deployment tooling blocked or its
+committed native record misleading. A second managed ARM64 bundle was built
+from the exact currently committed native revision
+`060084d936ae31578512756d3907b7e11dab008f`; its independently retained
+manifest identity is
+`sha256:eb3312d820745381034ba1e7f6b08fd552abd44dfe15b720e10f6551182453ab`.
+Verification, separate web and gateway smoke tests, and an isolated
+web-to-gateway TCP route check passed. The gateway route test used `stdio`,
+not the serial device. The native and container Python environments are
+different, so matching source revision is not proof of runtime or schema
+compatibility. The one-time handover, fresh quiescent off-host backup,
+failure recovery, live activation and hardware acceptance remain outstanding.
+
+The preparation-only `tool.deployment_pi_handover` derives a managed Compose
+layout from the native scope and requires the same source revision, target
+platform, serial device/framing, listener, data mounts and playback registry.
+It rejects loopback playback endpoints, which would resolve inside a bridge
+container, and Compose interpolation expressions. This helper does not verify
+live provenance, reserve state, transfer or load images, capture a backup,
+activate services or provide recovery. Its derived layout is not authorization
+to perform the one-time handover.
+
+State-layer tests establish that a reserved local image candidate keeps the
+old native selection committed until the required backup, image-load and
+completion boundaries have been recorded. A new internal handover recovery
+state boundary requires the exact native committed record, a matching
+same-revision managed image candidate, the backup phase and both native
+recovery checks. A separate portable-backup verifier checks fresh data roots,
+native units, gateway configuration and sealed release against independently
+retained identities. Neither component stops writers or restores services,
+and state receipts are not proof that those actions occurred. Ordinary image
+recovery now also refuses to clear a pending operation when the committed
+baseline is native; only the explicitly selected handover boundary can do so.
+A backup-capture
+boundary now requires the reserved operation, a quiescence guard and a
+caller-supplied independent off-host verification before recording
+`backup-complete`; a failed transfer retains the pending reservation. Internal
+framed-transfer helpers now verify the received backup against controller-held
+review inputs, persist its manifest identity before acknowledgement, and
+reject an incomplete or mismatched receipt. A duplex test exercises these
+helpers together with the capture boundary. They are not wired into the
+operator or SSH transport and do not stop services. The one-time transaction,
+operator integration, recovery orchestration and live acceptance remain
+unimplemented; do not start a cutover based on these pieces.
+
+An internal native-unit fencing primitive now requires the matching reserved
+operation and committed native assets, verifies the existing native runtime,
+records a one-shot attempt, disables and stops the two native units, and checks
+quiescence and both listeners. It is not wired into an operator, and callers
+must separately review and fence conflicting containers. Its mocked tests do
+not establish Pi or reboot behavior. A separately reviewed
+`handover-resume-original` action handles the reserved pre-backup phase without
+replacing data and clears state only after native runtime checks. Its service
+boundaries have only been mocked, not rehearsed on Linux or the Pi. An internal isolated restore
+preparation verifies the separately retained backup identity and matching
+reservation, repeatedly requires caller-provided writer quiescence, and restores
+only into a new tree. A separately reviewed `handover-recover-backup` action
+uses that restore only at `backup-complete` before apply, with no image load
+or a fully recorded image load, preserves the later data tree, and checks
+native health before state resolution. An incomplete image load blocks recovery.
+Target operator sessions now share an advisory lock, but older tooling and
+other orchestration do not participate. The backup and handover tests pass in
+an isolated Linux container with mocked service boundaries; they do not
+rehearse systemd, Docker ownership, physical serial hardware, or a live cutover.
+An internal transaction coordinator now tests ordering from reservation and
+transfer through native fencing, backup, image loading, activation checks and
+state finalization. Its platform hooks and off-host verification are mocked;
+it has no production operator or target implementation. It cannot safely
+execute a cutover. Do not start a cutover based on these pieces.
+An internal candidate-fencing primitive additionally requires a reserved
+operation, fully recorded image IDs, an exact operation-specific project and
+activation evidence; it checks identities after review and disables restart
+before stopping each candidate. A local Docker test exercised this against two
+temporary labelled containers, but not actual Compose partial activation,
+systemd, daemon interruption or Pi hardware. It is not connected to a cutover
+but post-activation recovery now uses this primitive before an isolated data
+restore and native health checks. A local Docker test exercises the combined
+fencing and restore with temporary containers; state and native systemd
+boundaries remain mocked. This recovery assumes the original activation
+process and its subprocesses have ended, and is not yet rehearsed on a
+representative systemd/Docker host.
+The exact-revision web image (Python 3.12.15) also passed 101 configuration,
+playback-status, and server unit tests against synthetic inputs. This is not
+proof that the Pi's current data, native Python 3.13 environment, or physical
+controller are compatible with an activated container.
+
+1. **Freeze the scope and candidate.** Bind the review to the current native
+   operation, exact native units/release, current data root and ownership,
+   host/ports/device, gateway and proxy settings, plus a verified compatible
+   `linux/arm64` managed-gateway image pair. Require the web image to include
+   the controller-health fix. A retained locally verified `060084d` web image
+   bundle exists, but it is a **dummy-gateway bundle**, not an accepted
+   managed-gateway pair; do not activate it or silently substitute images.
+   The managed pair described above is locally verified; independently
+   establish data/schema compatibility before considering it for activation.
+2. **Implement a dedicated reviewed transaction.** Reuse the durable host-wide
+   reservation and exact identity checks; revalidate scope immediately before
+   stopping only the selected native web/gateway writers. Confirm all writers
+   are quiescent, take a fresh consistent backup of the current data and native
+   source/environment/runtime, and require independent off-host verification
+   before activation. Preserve the active data and credentials in place, never
+   restore either historical snapshot as migration input. Retain the prior
+   native units and recovery evidence; do not change the agent, audio, proxy,
+   OS or unrelated containers.
+3. **Activate and validate the reviewed Docker pair.** Reject incompatible
+   mounts, networks, port/device ownership, target identities and unexpected
+   services instead of guessing. Verify exact loaded image identities, Compose
+   units, web health, physical controller communication and authenticated
+   playback readiness/routes before committing the new selection. Keep the
+   controller fix and do not claim readiness proves audible playback.
+4. **Recover explicitly on failure.** No automatic replay, rollback, data
+   overlay or reservation clearing after uncertain dispatch. Preserve current
+   and failed-state trees, logs and off-host backup; a separately reviewed
+   recovery restores the matching native runtime and corresponding fresh
+   backup. Specify and test each crash/backup/activation boundary before use.
+5. **Validate before target approval.** Add deterministic transaction tests for
+   native-to-Compose identity guards, fresh backup and independent custody,
+   data/config/secret preservation, image/port mismatches, failures before and
+   after mutation, interrupted execution, idempotency, exclusion races and
+   reviewed native recovery. Exercise an isolated representative host first.
+   Only then present an exact live review with interruption, rollback and
+   current-data implications. After any separately authorized cutover, verify
+   actual routing and obtain operator-controlled audible confirmation as
+   appropriate; update the handover and S5 status only from real evidence.
+
+The earlier GitHub CI runs predate deployment commit `e55d9de`; no CI run for
+that commit was found on 2026-11-17. Do not report those older runs as CI for
+the current changes. The implementation and live migration remain outstanding.
+
+On 2026-11-17 a read-only Pi check again found the recorded native operation
+unblocked, its web and gateway units active and enabled, the controller reported
+connected, and playback health reported configured and OK. The managed ARM64
+bundle was reverified against its retained manifest identity and native source
+revision. Its web image validated and reconciled a streamed snapshot of the
+Pi's current configuration and state with no network or writable filesystem.
+This is a point-in-time schema check, not a startup, writer-quiescence,
+hardware, authentication-from-container or audible-playback test.
+
+Two stopped legacy Compose containers still reference the live data and serial
+device. Ordinary Compose preflight rejects such references even while stopped,
+so successful handover and subsequent managed operations cannot be assumed
+until those containers have a separately reviewed, non-destructive resolution.
+The handover conflict inspection now offers a strict prospective-project check
+which rejects any such container and project collision; native recovery retains
+its existing stopped-container behavior. The reserved local image loader can
+also bind its checks to an expected Docker daemon and retains uncertain state
+if that identity changes during a load. Neither guard is yet wired into a real
+handover operator. No container or native service was changed by these checks.
+Real hooks, controller/SSH integration, independent backup custody in the
+transaction, representative systemd/Docker failure and recovery rehearsal,
+and future Compose-operation compatibility remain required before cutover.
+
+The internal handover target now implements read-only native and Docker
+preflight and concrete transfer, native fencing, backup and image-load
+boundaries. It requires the exact reserved candidate and completed transfer
+before fencing, checks that native units remain disabled during quiescence,
+and binds image loading to the reviewed Docker daemon. These boundaries use
+the existing backup and reservation mechanisms and retain uncertain state.
+They are not yet connected to an operator action: activation and runtime
+acceptance hooks, reviewed controller/SSH integration, independently validated
+controller-side backup custody and future Compose compatibility remain open.
+Unit and isolated Linux tests do not establish end-to-end handover or recovery
+on systemd, and no Pi services were interrupted by this implementation.
+
+On 2026-11-17 the operator explicitly approved archiving and removing the
+two stopped legacy `russound-dev` container objects. Before removal, their
+private inspect metadata, logs, filesystem exports and both original images
+were retained off-host. Filesystem exports, image archive and logs matched
+independently regenerated Pi checksums; the image archive's OCI manifests
+and blob hashes were also verified. Docker export does not capture bind-mounted
+live data and is not a replacement for the required fresh cutover backup or a
+proof that the original container objects can be recreated identically.
+
+The one-shot retirement held the target operator lock, checked the recorded
+native baseline, exact Docker daemon and stopped-container metadata, and
+recorded private attempt/completion evidence. The two objects were removed
+without deleting their images, live data or the unrelated stopped container.
+Post-checks found no remaining Docker container referring to the selected data
+root or serial device; native units remained enabled and healthy, the
+controller reported connected and playback reported configured and OK.
+The installed older tooling does not participate in the newer operator lock,
+so process checks did not provide universal exclusion against outside
+orchestration. The other cutover gates, including the operator workflow and a
+demonstrated future Compose operation, remain open.
+
+Backup/recovery testing now includes a reserved handover that transfers a fresh
+fixture backup over a duplex channel, verifies and retains a separate
+controller-side copy, injects an activation failure, and restores from that
+copy while preserving the later data tree. Another test drops the custody
+acknowledgment after the controller has retained the backup: both copies and
+the reservation remain, the backup phase is not advanced and image loading
+does not start. Focused handover, operator and image-load tests passed locally
+and in an isolated Linux container; the real-Docker fencing and activated
+restore tests also passed. The integrated fixture still mocks native/systemd
+and image activation, and its controller copy is a separate local directory,
+not an actual off-host Pi transfer.
+
+An interrupted image load with no completed identity record remains an
+explicitly blocked, uncertain state; the current recovery action deliberately
+refuses it rather than assuming Docker finished. There is no reviewed
+resolution for that boundary yet. The handover operator is not wired, so no
+fresh quiescent live-Pi backup or end-to-end live recovery has been performed.
+These results are useful regression evidence, not completion of the backup
+and recovery acceptance gate.
+
+The experimental `handover-deploy` action now connects the controller's
+independently supplied committed record and native specification to the
+target transaction, verified local image transfer, fresh backup custody,
+activation and runtime checks. Controller review validates the derived scope
+and digest; target acceptance checks candidate Compose hashes, exact image
+identities, native fencing, controller and configured playback. A framed
+controller/target test exercises transfer, independent backup receipt and
+state finalization, with systemd, Docker load and activation mocked. It also
+constructs the next ordinary Compose deployment from the resulting committed
+runtime; it does not prove a real subsequent Compose apply or recovery.
+
+This operator is experimental, not accepted for a live Pi cutover. The
+representative systemd/Docker end-to-end rehearsal, incomplete-load
+investigation procedure and live current-data/route verification remain
+outstanding. The deployment command has not been run on the Pi.
+
+The dedicated `handover-recover-uncertain-load` action now offers reviewed
+backup recovery when a verified transfer reached the one-shot load marker but
+did not record completed IDs and activation evidence is absent. It binds the
+original intent and daemon, inventories operation tags without loading or
+deleting images, preserves partial images and later data, and requires explicit
+operator confirmation that both orchestration and the daemon-side request have
+ended. Inventory and a stable log are not proof that the daemon is idle: if
+the operator cannot establish that fact the reservation must remain blocked.
+This is not an automatic retry or a claim that the load succeeded. Real
+systemd/Docker interruption and recovery rehearsal remains outstanding.
+The full Python suite passed (1,026 tests, 17 skipped); 160 focused tests
+passed in isolated Linux (4 skipped). Read-only inspection also found both
+expected exact-revision operation images on the local Docker daemon. These
+results do not prove a daemon-side interrupted request has ended or exercise
+live native-service restoration.
+
+#### Real systemd/Docker handover rehearsal, 2026-11-17
+
+A disposable ARM64 Debian VM with real systemd, Docker and Compose used a
+virtual serial pair and a synthetic authenticated HTTPS playback agent. The
+controller and target communicated over SSH, with the backup independently
+retained on the controller. A full native-to-Compose transaction and a
+subsequent ordinary unchanged Compose verification passed, including
+container, backend, HTTP and playback checks. This is not a Pi hardware or
+physical audio test. In the successful Compose snapshot, a synthetic zone
+volume command reached the paired serial controller, and restarting the test
+web container produced zone-information and turn-on-volume requests with
+synthetic RNET responses.
+
+The first attempt stopped native units and remained reserved before backup.
+The stopped web port was subsequently observed in TCP TIME_WAIT and could
+not pass the exclusive bind check. Reviewed pre-backup recovery restored the
+native fixture. A bounded exclusive-bind wait was added after fencing and
+the next full handover passed; a real Linux socket test reproduced TIME_WAIT
+and verified that the wait fails closed when the port remains occupied.
+Another pre-backup attempt was interrupted by host sleep; after ending the
+disconnected orchestration, reviewed recovery again restored native service.
+
+An injected post-activation failure left real candidate containers running
+and the reservation blocked. Reviewed backup recovery stopped those exact
+containers, disabled their restart policies, restored native service and
+retained a synthetic post-backup edit separately. A separate injected failure
+after completed image loading but before activation also recovered from the
+independently retained backup and preserved a later edit. A separate injected
+partial-load failure occurred immediately after the first real Docker load
+returned, leaving one operation tag and an incomplete load marker. Ordinary
+backup recovery refused it; reviewed uncertain-load recovery restored native
+service and retained both the partial image and a later synthetic edit.
+The fault was injected after the daemon request completed, not during an
+actively running daemon request. It therefore does not prove that a genuinely
+interrupted daemon-side load has ended; that still requires independent
+evidence before recovery. The full Python suite passed (1,028 tests, 17
+skipped). A modified copy of a real off-host backup and a mismatched real
+Docker daemon identity were rejected.
+
+The guarded backup of this fixture's roughly 1,900 release files took about
+12 minutes in the VM. Actual Pi duration and physical routing remain
+unmeasured. This evidence does not authorize or execute live Pi cutover or
+replace its separately approved observation and audible checks.
+
+#### Pi readiness refresh, 2026-11-17
+
+The native web and gateway units were active and enabled with zero restarts;
+deployment state was unblocked with the same committed native operation.
+Read-only API checks reported configured rooms, a connected backend and
+configured playback OK. The native audio, agent and proxy services were
+active, and the gateway listener remained bound to loopback. Docker was
+active (Engine 29.7.2, Compose 5.5.0), and a separately staged copy of the
+candidate tooling passed the exact-candidate handover preflight without
+replacing installed tooling or stopping services. Its estimated controller
+backup capacity was about 174 MB; the controller and Pi had sufficient free
+space at the time. This is a point-in-time check, not a cutover authorization.
+The successful VM rehearsal used Docker 20.10.24 and Compose 2.32.4, so it
+does not establish Pi-version runtime compatibility. A read-only Pi Compose
+configuration/hash check did accept both derived candidate services; it did
+not create or start containers.
+
+The matching public ARM64 `dev` image pair resolved and verified at revision
+`57e2372358012842c53c48cafc917545c1d88c9e`, whereas the native baseline and
+verified local handover bundle use `060084d936ae31578512756d3907b7e11dab008f`.
+Neither public repository had `latest` or a tag for that native revision.
+Do not silently substitute the different published revision: cross-version
+migration needs its own review and compatibility evidence. The newer operator
+also remains uncommitted and must not be copied over the trusted Pi tooling;
+use the reviewed committed tooling upgrade procedure before a live test.
+
+A source comparison established that the published `57e2372` revision is an
+ancestor of `060084d` and lacks its unattended controller-health recovery fix.
+Running the nine current unattended recovery tests against an isolated checkout
+of the published web source produced six failures; the same nine passed against
+the native revision's source. This is a demonstrated source-level regression,
+not a live test of the published image. The published pair must not replace the
+same-revision candidate without a reviewed image containing the fix and its own
+compatibility validation.
+
+#### Interrupted image upload rehearsal, 2026-11-17
+
+On the disposable VM, a fault-injected loader started a real Docker image load,
+fed 1 MiB of the archive and killed its client during the upload. The
+independently retained backup was present, and the target kept the reservation
+blocked with a started load marker and no completed image IDs. The daemon log
+did not establish whether the original request had finished.
+
+With no candidate containers present, the test stopped the VM's Docker socket,
+Docker daemon and containerd, verified that both original daemon processes
+exited, then restarted them and verified the same persistent Docker daemon ID.
+Separately reviewed uncertain-load recovery restored the native fixture,
+preserved the later data tree and retained the operation images. This
+demonstrates recovery for this controlled interruption and daemon lifecycle,
+not a general proof that a quiet daemon is idle. Restarting Docker or
+containerd on the Pi can disrupt unrelated workloads and is not authorized by
+this rehearsal. If the original daemon request cannot be independently
+established as ended, keep the Pi reservation blocked.
+
+#### Matched Docker/Compose rehearsal, 2026-11-17
+
+The disposable ARM64 Debian 12 VM was upgraded to Docker Engine 29.7.2,
+containerd 2.3.3 and Compose 5.5.0, matching the versions observed on the Pi.
+After restoring its reboot-volatile virtual serial module, the full handover
+passed using the same-revision local image bundle and an independently retained
+backup. Both candidate containers were healthy, the native web and gateway
+units were disabled, and the committed state was unblocked. A subsequent
+ordinary unchanged Compose verification passed container, HTTP, backend and
+playback checks. The VM was shut down and its state snapshotted.
+
+The VM uses Debian 12 and a different kernel and package build from the Pi's
+Debian 13 installation; its synthetic serial and playback fixtures do not
+establish physical hardware, audible output or Pi-specific kernel behavior.
+No live Pi cutover or observation was performed. A final read-only Pi check
+found native web and gateway active and enabled, Docker active, no pending
+operation or reservation, and both rooms and playback health endpoints returning
+HTTP 200.
+
+#### Recovery upload capacity review, 2026-11-18
+
+Review identified that recovery could receive a backup without first checking
+incoming filesystem capacity. Recovery uploads now check capacity before
+metadata, before blob transfer and during writes, including isolated restore
+space and headroom. A failed transfer preserves partial evidence; the check
+cannot reserve space against other writers.
+
+In the disposable Linux VM, a real 80 MiB tmpfs rejected a synthetic 10 MiB
+backup before receiving its blob when same-filesystem restore space and
+headroom were insufficient. After resizing to 100 MiB, receiving and verifying
+the backup succeeded, while the first attempt's manifest remained intact.
+This tests local filesystem pressure, not Pi recovery or concurrent writers.

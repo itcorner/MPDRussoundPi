@@ -19,11 +19,13 @@ from uuid import UUID
 from tool.deployment_images import DIGEST, MAX_METADATA, SelectionError, validate_selection
 from tool.deployment_files import FileSafetyError, checked_directory, directory_info, is_list, is_mapping
 from tool.deployment_local import LOCAL_CANDIDATE, validate_candidate, validate_loaded
+from tool.deployment_native_source import NATIVE_CANDIDATE, NativeError, validate_candidate as native_candidate
 
 
 STATE_ROOT = Path("/var/lib/mpdrussoundpi-deploy")
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
 PHASES = ("prepared", "inputs-verified", "backup-complete", "apply-complete", "checks-complete")
+_UNSET = object()
 
 
 class StateError(ValueError):
@@ -46,6 +48,12 @@ def operation_id(value: Any) -> None:
 def candidate(value: Any) -> None:
     if not is_mapping(value):
         raise StateError("Invalid development image candidate")
+    if value.get("kind") == NATIVE_CANDIDATE:
+        try:
+            native_candidate(value)
+        except NativeError as error:
+            raise StateError(str(error)) from None
+        return
     if value.get("kind") == LOCAL_CANDIDATE:
         try:
             validate_candidate(value)
@@ -250,7 +258,7 @@ class StateStore:
             os.close(reservation)
 
     def begin(self, deployment: str, operation: str, selection: dict[str, Any],
-              intent_digest: str, required: list[str]) -> None:
+              intent_digest: str, required: list[str], *, expected_committed: object = _UNSET) -> None:
         identity(deployment)
         operation_id(operation)
         pending: dict[str, Any] = {
@@ -284,6 +292,8 @@ class StateStore:
                 record = records.get(deployment, {
                     "schema_version": 1, "deployment": deployment, "committed": None, "pending": None,
                 })
+                if expected_committed is not _UNSET and record["committed"] != expected_committed:
+                    raise StateError("Committed deployment changed after review; retain reservation and investigate")
                 record["pending"] = pending
                 self._write(directory, deployment + ".json", record, replace=deployment in records)
         except OSError:
@@ -387,6 +397,16 @@ class StateStore:
         except OSError:
             raise StateError("Image-load intent exists or persistence is uncertain; do not retry") from None
 
+    def verify_image_load_marker(self, deployment: str, operation: str, intent_digest: str) -> None:
+        """Check the durable marker without changing or completing the load."""
+        try:
+            with self._open_directory(self.root) as directory:
+                with self._owned(directory, deployment, operation) as reservation:
+                    if self._image_marker(reservation, operation)["intent_digest"] != intent_digest:
+                        raise StateError("Image-load marker differs from the reserved intent")
+        except OSError:
+            raise StateError("Cannot verify image-load marker; retain the reservation") from None
+
     def complete_image_load(self, deployment: str, operation: str, selection: dict[str, Any],
                             intent_digest: str, images: dict[str, str]) -> None:
         """Record independently inspected target identities, not service completion."""
@@ -457,16 +477,23 @@ class StateStore:
         except OSError:
             raise StateError("Finalization outcome is uncertain; reservation may be absent; do not retry") from None
 
-    def resolve_recovery(self, deployment: str, operation: str, receipt: dict[str, Any]) -> None:
+    def resolve_recovery(self, deployment: str, operation: str, receipt: dict[str, Any], *,
+                         restore_native: bool = False,
+                         native_previous: dict[str, Any] | None = None,
+                         handover_native: bool = False,
+                         handover_resume: bool = False,
+                         handover_uncertain_load: bool = False) -> None:
         """Internal boundary after approved restoration and independently checked runtime.
 
         The caller must durably retain the original record and recovery evidence.
+        For a handover the caller must stop candidate writers and verify the
+        native runtime/data; recovery additionally requires a verified backup.
+        The receipt and state checks do not perform or prove those actions.
         This is not an unlock API and is deliberately absent from the state CLI.
         """
-        expected = {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"}
         absent = {"containers-absent": "passed", "prepared-data-restored": "passed"}
         if (set(receipt) != {"operation", "review_digest", "required"}
-                or receipt["operation"] != operation or receipt["required"] not in (expected, absent)
+                or receipt["operation"] != operation
                 or not isinstance(receipt["review_digest"], str)
                 or not DIGEST.fullmatch(receipt["review_digest"])):
             raise StateError("Recovery requires matching approval and all independent runtime checks")
@@ -476,6 +503,66 @@ class StateStore:
                     record = self._record(directory, deployment)
                     if record["pending"] is None or record["pending"]["operation"] != operation:
                         raise StateError("Recovery does not own the original pending operation")
+                    selection = record["pending"]["candidate"]
+                    native = selection["kind"] == NATIVE_CANDIDATE
+                    committed = record["committed"]
+                    if handover_native and handover_resume:
+                        raise StateError("Select exactly one handover recovery mode")
+                    incomplete_load = ("image-load.json" in os.listdir(reservation)
+                                       and record["pending"].get("loaded_images") is None)
+                    if handover_uncertain_load != (handover_native and incomplete_load):
+                        raise StateError("Uncertain handover image load requires its dedicated reviewed recovery")
+                    if handover_uncertain_load and self._image_marker(reservation, operation)["intent_digest"] != record["pending"]["intent_digest"]:
+                        raise StateError("Uncertain image-load marker differs from the reserved intent")
+                    if (not native and committed is not None
+                            and committed["selection"]["candidate"]["kind"] == NATIVE_CANDIDATE
+                            and not (handover_native or handover_resume)):
+                        raise StateError("A native baseline requires explicit handover recovery")
+                    if handover_native or handover_resume:
+                        previous = committed
+                        if (not restore_native or native or selection.get("kind") != LOCAL_CANDIDATE
+                                or previous is None or native_previous != previous
+                                or previous["selection"]["candidate"]["kind"] != NATIVE_CANDIDATE):
+                            raise StateError("Native handover recovery requires the matching committed baseline")
+                        if handover_native and (record["pending"]["backup"] != operation
+                                or PHASES.index(record["pending"]["phase"]) < PHASES.index("backup-complete")):
+                            raise StateError("Native handover recovery requires the matching committed baseline and backup")
+                        if handover_resume and (record["pending"]["phase"] != "inputs-verified"
+                                or record["pending"]["backup"] is not None
+                                or record["pending"]["loaded_images"] is not None
+                                or "image-load.json" in os.listdir(reservation)):
+                            raise StateError("Native handover resume requires an unmodified pre-backup operation")
+                        native_selection = previous["selection"]["candidate"]
+                        image = selection["manifest"]
+                        platform = {"aarch64": "linux/arm64", "x86_64": "linux/amd64"}[
+                            native_selection["runtime"]["machine"]]
+                        if (image["gateway"] != "managed" or image["platform"] != platform
+                                or image["revision"] != native_selection["revision"]):
+                            raise StateError("Native handover recovery candidate identity differs from its baseline")
+                    if native or handover_native or handover_resume:
+                        expected = ({"original-runtime": "passed", "data-preserved": "passed"}
+                                    if handover_resume else
+                                    {"original-runtime": "passed", "matching-data": "passed"})
+                    else:
+                        metadata = selection["manifest"] if selection["kind"] == LOCAL_CANDIDATE else selection
+                        expected = ({"containers": "passed", "gateway": "passed"}
+                                    if metadata["gateway"] == "standalone" else
+                                    {"containers": "passed", "http": "passed", "backend": "passed", "playback": "passed"})
+                    if receipt["required"] != expected and (native or handover_native or handover_resume
+                                                             or receipt["required"] != absent):
+                        raise StateError("Recovery requires matching approval and all independent runtime checks")
+                    if restore_native:
+                        if not native and not (handover_native or handover_resume):
+                            raise StateError("Only native recovery may restore its captured prior committed selection")
+                        if native_previous is not None:
+                            if set(native_previous) != {"selection", "completion"}:
+                                raise StateError("Invalid previous native deployment baseline")
+                            previous = native_previous["selection"]
+                            pending_record(previous)
+                            if previous["phase"] != "checks-complete":
+                                raise StateError("Previous native baseline was not committed")
+                            completion_record(native_previous["completion"], previous)
+                        record["committed"] = native_previous
                     self._write(reservation, "finalizing.json", receipt)
                     record["pending"] = None
                     if record["committed"] is None:

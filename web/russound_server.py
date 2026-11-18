@@ -668,6 +668,8 @@ class RussoundHTTPServer:
         if reconnected:
             logging.getLogger("russound.health").info("Russound gateway connection re-established")
             self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
+            self._full_poll_requested.set()
+            self._zone_refresh_requested.set()
             return
         self._next_reconnect_at = now + self._reconnect_delay_seconds
         self._reconnect_delay_seconds = min(self._reconnect_delay_seconds * 2, MAX_RECONNECT_DELAY_SECONDS)
@@ -760,11 +762,18 @@ class RussoundHTTPServer:
                 except Exception as exc:
                     logging.debug("Keypad-triggered zone refresh failed: %s", exc)
                 continue
+            full_poll_requested = self._full_poll_requested.is_set()
             self._full_poll_requested.clear()
             iteration_started_at = time.monotonic()
             try:
-                # Without a recorded poll result the hardware health would be a guess, so poll even without UI clients.
-                should_poll = self._has_active_event_clients() or self.controller.backend_health_snapshot() is None
+                # Retry failed health without UI clients; a gateway reconnect must also verify hardware.
+                health = self.controller.backend_health_snapshot()
+                should_poll = (
+                    full_poll_requested
+                    or self._has_active_event_clients()
+                    or health is None
+                    or not health.get("connected")
+                )
                 if should_poll and self._sync_backend_state_if_changed():
                     logging.debug("Detected out-of-band hardware state change; broadcasting SSE update")
                     self.broadcast_state_change()

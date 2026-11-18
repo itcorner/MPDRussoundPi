@@ -5,17 +5,11 @@ from typing import Any
 from uuid import UUID
 
 from tool.deployment_files import is_mapping
-from tool.deployment_images import DIGEST, REVISION, SelectionError, validate_request
+from tool.deployment_images import DIGEST, REVISION, SelectionError, components, validate_request
 
 
 MAX_ARCHIVE = 8 * 1024**3
 LOCAL_CANDIDATE = "local-development-image-candidate"
-
-
-def components(gateway: str) -> tuple[str, ...]:
-    if gateway not in ("managed", "external", "dummy"):
-        raise SelectionError("Unsupported local gateway layout")
-    return ("web", "ser2net") if gateway == "managed" else ("web", "dummy") if gateway == "dummy" else ("web",)
 
 
 def validate_manifest(value: Any, gateway: str, platform: str) -> dict[str, Any]:

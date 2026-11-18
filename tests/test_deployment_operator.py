@@ -14,16 +14,16 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from tool.deployment_backup import FileBackup
-from tool.deployment_channel import Channel, ChannelError, portable_backup, receive_backup, send_backup
+from tool.deployment_channel import BACKUP_HEADROOM, Channel, ChannelError, portable_backup, receive_backup, send_backup
 from tool.deployment_compose import (
     ComposeDeployment, ComposeError, check_host_writers, encoded, paths, specification, validate_runtime_files,
 )
 from tool.deployment_load import select_bundle
-from tool.deployment_operator import controller, interactive, remote
+from tool.deployment_operator import controller, interactive, operator_lock, remote
 from tool.deployment_recovery import recovery_assets
 from test_deployment_build import fixture_bundle
 
@@ -76,6 +76,32 @@ class OperatorContractTests(unittest.TestCase):
         with patch("tool.deployment_compose.local_engine", return_value="default"):
             return ComposeDeployment(self.spec, self.selection, self.storage)
 
+    def test_operator_lock_excludes_other_operations_and_releases_on_exit(self):
+        with operator_lock(self.storage["evidence"]):
+            with self.assertRaisesRegex(ChannelError, "Another target operator"):
+                with operator_lock(self.storage["evidence"]):
+                    self.fail("Concurrent operator acquired the lock")
+        with operator_lock(self.storage["evidence"]):
+            pass
+
+    def test_operator_lock_rejects_unsafe_existing_lock(self):
+        path = self.storage["evidence"] / "operator.lock"
+        path.write_text("")
+        path.chmod(0o644)
+        with self.assertRaisesRegex(ChannelError, "Unsafe target operator lock"):
+            with operator_lock(self.storage["evidence"]):
+                self.fail("Unsafe lock was accepted")
+
+    def test_operator_lock_excludes_a_separate_process(self):
+        script = ("from pathlib import Path\n"
+                  "from tool.deployment_operator import operator_lock\n"
+                  "with operator_lock(Path(__import__('sys').argv[1])): print('acquired')\n")
+        with operator_lock(self.storage["evidence"]):
+            result = subprocess.run([sys.executable, "-c", script, str(self.storage["evidence"])],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Another target operator is active", result.stderr)
+
     def test_prepared_scope_preserves_exact_services_and_rejects_privilege_or_mount_changes(self):
         target = self.target()
         with self.assertRaises(ComposeError):
@@ -93,6 +119,18 @@ class OperatorContractTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ComposeError):
                 self.target()
         self.assertFalse(any(self.storage["state"].glob("reservation")))
+
+    def test_compose_apply_rejects_committed_native_layout_without_mutation(self):
+        from tool.deployment_native_source import NATIVE_CANDIDATE
+
+        committed = {"selection": {"candidate": {"kind": NATIVE_CANDIDATE}}}
+        status = {"deployments": {self.spec["deployment"]: {"committed": committed}}}
+        with patch("tool.deployment_compose.local_engine", return_value="default"), \
+                patch("tool.deployment_compose.StateStore.status", return_value=status):
+            with self.assertRaisesRegex(ComposeError, "Native-to-Docker migration"):
+                ComposeDeployment(self.spec, self.selection, self.storage)
+        self.assertFalse(any(self.storage["assets"].iterdir()))
+        self.assertFalse((self.storage["state"] / "reservation").exists())
 
     def test_explicit_adoption_acceptance_and_no_hidden_dummy_build(self):
         for key, value in (("adopt", "yes"), ("require_playback", None),
@@ -273,6 +311,93 @@ class OperatorContractTests(unittest.TestCase):
             portable_backup(received, backup.operation, checksum)
         with self.assertRaises(ChannelError):
             portable_backup(backup.path, backup.operation, "0" * 64)
+
+    def test_backup_receive_checks_space_before_metadata_and_blobs_and_during_writes(self):
+        source = self.root / "space-source"
+        source.mkdir(mode=0o700)
+        (source / "config").write_bytes(b"fixture data")
+        (source / "config").chmod(0o600)
+        with patch("tool.deployment_backup.os.listxattr", return_value=[], create=True):
+            backup = FileBackup.capture(self.storage["backups"], str(uuid4()), {"data": source},
+                                        verify_quiescent=lambda: None)
+        wire = io.BytesIO()
+        send_backup(Channel(io.BytesIO(), wire), backup.path, backup.operation, backup.manifest_sha256)
+        total = len(b"fixture data")
+        for scenario, free_values, message, metadata, blob in (
+            ("metadata", [0], "metadata", False, False),
+            ("restore", [BACKUP_HEADROOM + 8 * 1024**2, BACKUP_HEADROOM + 2 * total - 1],
+             "headroom", True, False),
+            ("write", [BACKUP_HEADROOM + 8 * 1024**2, BACKUP_HEADROOM + 2 * total,
+                       BACKUP_HEADROOM + 2 * total, BACKUP_HEADROOM + 2 * total - 1],
+             "exhausted", True, True),
+        ):
+            parent = self.storage["incoming"] / scenario
+            parent.mkdir(mode=0o700)
+            receiver = Channel(io.BytesIO(wire.getvalue()), io.BytesIO())
+            header = receiver.receive()
+            with self.subTest(scenario=scenario), \
+                    patch("tool.deployment_channel.shutil.disk_usage",
+                          side_effect=[Mock(free=value) for value in free_values]), \
+                    self.assertRaisesRegex(ChannelError, message):
+                receive_backup(receiver, parent, header, restore_root=self.storage["restores"])
+            received = parent / backup.operation
+            self.assertEqual((received / "manifest.json").exists(), metadata)
+            self.assertEqual(any(received.glob("*.blob")) if received.exists() else False, blob)
+            if blob:
+                self.assertEqual(next(received.glob("*.blob")).stat().st_size, 0)
+
+    def test_backup_receive_accepts_exact_space_for_transfer_and_same_filesystem_restore(self):
+        source = self.root / "exact-space-source"
+        source.mkdir(mode=0o700)
+        (source / "data").write_bytes(b"abc")
+        (source / "data").chmod(0o600)
+        with patch("tool.deployment_backup.os.listxattr", return_value=[], create=True):
+            backup = FileBackup.capture(self.storage["backups"], str(uuid4()), {"data": source},
+                                        verify_quiescent=lambda: None)
+        wire = io.BytesIO()
+        send_backup(Channel(io.BytesIO(), wire), backup.path, backup.operation, backup.manifest_sha256)
+        receiver = Channel(io.BytesIO(wire.getvalue()), io.BytesIO())
+        header = receiver.receive()
+        values = [BACKUP_HEADROOM + 8 * 1024**2, *([BACKUP_HEADROOM + 6] * 3)]
+        with patch("tool.deployment_channel.shutil.disk_usage",
+                   side_effect=[Mock(free=value) for value in values]):
+            received, checksum = receive_backup(receiver, self.storage["incoming"], header,
+                                                restore_root=self.storage["restores"])
+        self.assertEqual(checksum, backup.manifest_sha256)
+        self.assertEqual(portable_backup(received, backup.operation, checksum)["total_bytes"], 3)
+
+    def test_backup_receive_checks_a_separate_restore_filesystem(self):
+        source = self.root / "separate-space-source"
+        source.mkdir(mode=0o700)
+        (source / "data").write_bytes(b"abc")
+        (source / "data").chmod(0o600)
+        with patch("tool.deployment_backup.os.listxattr", return_value=[], create=True):
+            backup = FileBackup.capture(self.storage["backups"], str(uuid4()), {"data": source},
+                                        verify_quiescent=lambda: None)
+        wire = io.BytesIO()
+        send_backup(Channel(io.BytesIO(), wire), backup.path, backup.operation, backup.manifest_sha256)
+        receiver = Channel(io.BytesIO(wire.getvalue()), io.BytesIO())
+        header = receiver.receive()
+        original_stat = Path.stat
+
+        def stat_on_separate_device(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            if path == self.storage["restores"]:
+                fields = list(info)
+                fields[2] += 1
+                return os.stat_result(fields)
+            return info
+
+        with patch.object(Path, "stat", stat_on_separate_device), \
+                patch("tool.deployment_channel.shutil.disk_usage",
+                      side_effect=[Mock(free=BACKUP_HEADROOM + 8 * 1024**2),
+                                   Mock(free=BACKUP_HEADROOM + 3),
+                                   Mock(free=BACKUP_HEADROOM + 2)]), \
+                self.assertRaisesRegex(ChannelError, "isolated restore space"):
+            receive_backup(receiver, self.storage["incoming"], header, restore_root=self.storage["restores"])
+        received = self.storage["incoming"] / backup.operation
+        self.assertTrue((received / "manifest.json").exists())
+        self.assertFalse(any(received.glob("*.blob")))
 
     def test_controller_rejects_unreviewed_mutation_and_wrong_scope(self):
         operation = str(uuid4())

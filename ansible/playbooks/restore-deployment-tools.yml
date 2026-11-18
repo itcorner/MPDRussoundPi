@@ -1,10 +1,16 @@
 ---
 - name: Restore a retained deployment-tool checkout
-  hosts: musicpi
+  hosts: all
   become: true
   gather_facts: false
   any_errors_fatal: true
   pre_tasks:
+    - name: Require exactly one explicitly selected tooling host
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+        fail_msg: "Select exactly one tooling target using a dedicated inventory or --limit."
+      tags: always
     - name: Require immutable active and retained tooling revisions
       ansible.builtin.assert:
         that:

@@ -258,6 +258,35 @@ From the web host, `GET /api/playback` must report the agent `ok`, fresh playbac
 and correct routes/gains. The HTTP/container healthcheck checks web availability,
 not audio or Russound readiness.
 
+### Bounded USB profile recovery
+
+Selector-based readiness requires matching native PipeWire/Pulse profiles as
+well as the configured sink/channel graph. Read-only agent observations never
+change the profile or restart audio services.
+
+Enforcing startup checks share a per-user kernel lock and recovery record at
+`$XDG_RUNTIME_DIR/mpdrussoundpi-audio-profile.lock`; the runtime directory must
+be absolute, owned by the audio user and mode `0700`. After a five-second grace:
+
+- A persistently reported `off` profile with an otherwise valid 5.1 graph can
+  receive one off/on reset per device/PipeWire-server generation.
+- Persistently missing profile inventories can request one nonblocking
+  `wireplumber.service` user-service restart per boot, across all guarded cards.
+  This approved fallback affects the host session, not only one USB device.
+
+Both recoveries require fresh unique device identities and refuse running or
+unknown-state audio. Conflicting native Profile entries are not resolved by
+picking one. Budgets are persisted before mutation, including when a command
+fails; service retries or WirePlumber restarts do not replenish the boot-scoped
+budget. A subsequent complete readiness check is required before startup
+succeeds. Inspect the audio unit journal for the recovery reason or exhausted
+budget; do not delete the lock/state file to force another attempt.
+
+The deployed recovery is resilience for observed audio-stack publication/
+restoration failures, not an upstream PipeWire/WirePlumber patch. See the
+[acceptance record](../plans/general_open_simplify-deployment-configuration.md#approved-session-recovery-and-installed-reboot-acceptance)
+for real-fault, explicitly injected-fault and unattended reboot evidence.
+
 | Symptom | Check |
 | --- | --- |
 | TLS error | SAN matches URL, pinned cert mounted/readable, certificate not expired |

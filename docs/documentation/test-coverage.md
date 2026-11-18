@@ -81,6 +81,69 @@ This short run is not six-hour acceptance; no additional observation was started
 Startup pending-route samples precede timing and are not represented as a
 completed pass. See the [real deployment record](../plans/general_open_simplify-deployment-configuration.md#approved-real-s3-deployment-and-observation-2026-11-14).
 
+## Prepared native deployment increment (2026-11-15)
+
+[Native deployment tests](../../tests/test_deployment_native.py) cover distinct
+source/environment candidate identity, strict prepared-host scope, nonroot
+units/host secret mapping, serial option parity, private-umask source
+permissions, byte/mode drift, shared host reservations, controller scope
+substitution, approval refusal, off-host failure, unchanged reruns, explicit
+recovery and rollback, post-backup data preservation, previous native venv
+restoration and partial unit-install recovery. A cutover fixture uses real
+verified Docker archive bytes and the native operation identity while
+simulating service/Docker control; it verifies restoration of the original
+committed Docker record. Existing Compose recovery tests still cover the
+shared image-loading implementation.
+
+Full local Python regression: **902 tests, 13 skipped, no failures**. Both
+native entry points pass Ansible syntax checks. On the Pi, a disposable source
+and venv release imported as the nonroot service identity under umask 077;
+all 1454 backup entries restored with the exact release seal, and generated
+units passed `systemd-analyze verify`. The real native ser2net binary also
+passed bidirectional TCP/PTY routing with generated configuration as nonroot,
+without using the real serial device or changing units. Protected live
+container/native playback identities were unchanged; temporary trees were
+removed.
+
+A separately authorized live Pi trial then passed Ansible source/venv staging,
+reviewed Docker-to-native activation, physical controller routing and
+authenticated TLS playback health. All three output readiness/route probes were
+fresh, ready and correct. Both native units ran enabled as UID/GID 1000 with
+zero restarts; the gateway listened only on loopback. An identical-candidate
+rerun returned unchanged with the same PIDs, no new backup and no new committed
+selection. A real approval-time log-growth failure was reproduced before any
+runtime change, fixed and covered by bounded-growth/capacity-exhaustion tests.
+
+Explicit recovery from the independently retained off-Pi backup restored the
+original Docker container/image identities, healthy zero-restart services and
+exact prior committed record, with no pending reservation. Native web/gateway
+units were removed; post-backup data was preserved. All seven existing
+audio/agent/supervisor service identities and twelve protected file
+hashes/owners/modes matched baseline throughout. Docker remains active at the
+operator's request. These are routing/readiness checks, not a new audible
+confirmation. Native reboot/endurance and native-to-native live update/recovery
+remain unverified. See the
+[native support boundary](./container-deployment.md#prepared-native-web-and-gateway).
+
+## Deployment retirement validation (2026-11-15)
+
+The superseded web/Docker installers, build-oriented Compose stacks, source-only
+web staging and their unused defaults/templates/account role have been removed.
+[Workflow tests](../../tests/test_deployment_workflows.py) require their absence,
+reject references to removed entry points in active automation and syntax-check
+all **11 retained Ansible plays** without contacting a target.
+The shared playback-registry task/filter remains used by preview; actual
+Ansible/Compose registry rendering and native unit quoting now cover its
+replacement consumers rather than deleted templates.
+
+The combined targeted workflow/input/profile/native suite passed **54 tests**.
+The wider deployment suite then ran **252 tests, 10 skipped, no failures**,
+covering image/source candidates, transfer, state, transactions, backup and
+recovery as well as retirement. Counts overlap; this is not a new whole-project
+coverage measurement or a native live-acceptance run. No host deployment was
+performed. Native acceptance remains deferred, and the unpushed changes still
+need GitHub CI. See the [support matrix](./container-deployment.md#support-and-acceptance-boundaries).
+
 ## Blind Spots
 
 - `web/config_types.py` has no dedicated tests for malformed configuration, boolean-vs-integer rejection, endpoint defaults, or controller-limit normalization.
@@ -319,8 +382,12 @@ explicitly; restore never overwrites an existing destination or clears pending.
 On macOS these unit fixtures shim the unavailable Linux xattr API to an empty
 attribute set; Linux runs exercise real inspection and extended-attribute
 rejection. This does not certify target power-loss durability or live recovery.
-[Template integration](../../tests/test_deployment_render_integration.py) uses
-actual Ansible and Compose rendering for agent configuration and preflight.
+[Profile tests](../../tests/test_container_profiles.py) use the actual retained
+Ansible preview and Compose rendering to verify empty and configured playback
+registries, special-character path preservation and rejection of invalid input
+without target contact. [Native tests](../../tests/test_deployment_native.py)
+cover the replacement generated-unit quoting and protected host-secret mapping.
+Tests of the removed legacy templates/installers were retired with those files.
 
 [Web lifecycle tests](../../tests/test_web_lifecycle.py) use actual Waitress
 subprocesses, SIGTERM/SIGINT and open SSE streams, requiring exit 0 within

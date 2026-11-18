@@ -5,6 +5,7 @@ target Python interpreter. This check never provisions paths or starts services.
 """
 
 import errno
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -34,7 +35,7 @@ def validate_request(value: Any) -> dict[str, Any]:
               "publish_host", "publish_port", "serial_device", "serial_gid"}
     if not is_mapping(value) or set(value) != fields:
         raise PreflightError("Invalid target preflight request")
-    if (value["gateway"] not in ("managed", "external", "dummy")
+    if (value["gateway"] not in ("managed", "external", "dummy", "standalone")
             or value["platform"] not in ("linux/arm64", "linux/amd64")
             or not isinstance(value["project"], str)
             or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", value["project"])):
@@ -51,12 +52,17 @@ def validate_request(value: Any) -> dict[str, Any]:
         socket.inet_pton(family, value["publish_host"])
     except OSError:
         raise PreflightError("Publish host must be an explicit IPv4 or IPv6 address") from None
+    if value["gateway"] == "standalone":
+        address = ipaddress.ip_address(value["publish_host"])
+        if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
+            raise PreflightError("Standalone gateway requires an explicit non-loopback LAN listener")
     for key in ("data_dir", "serial_device"):
         if not isinstance(value[key], str) or not value[key].startswith("/") or ".." in Path(value[key]).parts:
             raise PreflightError("Target data and device paths must be absolute without traversal")
     if value["data_dir"] == "/":
         raise PreflightError("Filesystem root cannot be a deployment data directory")
-    if value["gateway"] == "managed" and (type(value["serial_gid"]) is not int or value["serial_gid"] < 0):
+    if value["gateway"] in ("managed", "standalone") and (
+            type(value["serial_gid"]) is not int or value["serial_gid"] < 0):
         raise PreflightError("Managed gateway requires a numeric serial group")
     return value
 
@@ -139,7 +145,7 @@ def check_containers(request: dict[str, Any], containers: Any) -> None:
                 raise PreflightError("Deployment data overlaps an existing container mount")
         devices: list[dict[str, Any]] = container.get("HostConfig", {}).get("Devices") or []
         for device in devices:
-            if request["gateway"] == "managed" and device.get("PathOnHost") == request["serial_device"]:
+            if request["gateway"] in ("managed", "standalone") and device.get("PathOnHost") == request["serial_device"]:
                 raise PreflightError("Serial adapter is assigned to an existing container")
 
 
@@ -208,13 +214,13 @@ def preflight(request: Any) -> dict[str, Any]:
     check_containers(request, containers)
     data = check_data(request)
     check_port(request["publish_host"], request["publish_port"])
-    if request["gateway"] == "managed":
+    if request["gateway"] in ("managed", "standalone"):
         check_serial(request)
     return {
         "kind": "development-target-preflight", "action": "read-only-first-install",
         "platform": request["platform"], "project": "absent", "data": data,
         "compose_version": compose["version"],
-        "publish_listener": "available-at-check", "serial": "unclaimed-at-check" if request["gateway"] == "managed"
+        "publish_listener": "available-at-check", "serial": "unclaimed-at-check" if request["gateway"] in ("managed", "standalone")
         else "not-managed", "proxy": "not-checked-playback-unsupported",
         "container_routing": "not-tested", "safe_to_apply": False,
     }

@@ -56,9 +56,8 @@ class DeploymentInputFilterTests(unittest.TestCase):
                 filters.deployment_agents(value)
 
     def test_component_defaults_are_below_inventory_and_audio_does_not_own_gateway(self):
-        for name in ("deploy-russound-web.yml", "deploy-russound-docker.yml", "deploy-playback-agent.yml",
-                     "deploy-playback-agent-proxy.yml", "deploy-playback-egress.yml", "setup-musicpi.yml",
-                     "stage-russound-web.yml"):
+        for name in ("deploy-playback-agent.yml", "deploy-playback-agent-proxy.yml",
+                     "deploy-playback-egress.yml", "setup-musicpi.yml"):
             raw = yaml.safe_load((ROOT / "ansible/playbooks" / name).read_text())[0]
             self.assertNotIn("vars", raw, name)
             self.assertEqual(raw["pre_tasks"][0]["ansible.builtin.import_role"]["name"], "../roles/deployment_inputs")
@@ -162,7 +161,7 @@ class DeploymentInputRoleIntegrationTests(unittest.TestCase):
                 "playback_proxy_allowed_cidr": "192.0.2.0/24",
                 "playback_egress_resolvers": ["192.0.2.53"],
             }}}}))
-            for component in ("docker", "web", "agent", "proxy", "egress", "audio", "web_stage"):
+            for component in ("agent", "proxy", "egress", "audio"):
                 with self.subTest(component=component):
                     defaults = yaml.safe_load(
                         (ROLE / "defaults" / f"{component}.yml").read_text())

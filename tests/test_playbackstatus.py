@@ -126,7 +126,10 @@ class PlaybackStatusTests(unittest.TestCase):
         }
         card = {"index": 1234, "name": "alsa_card.example.3",
                 "active_profile": "output:analog-surround-51", "properties": properties}
-        graph = [{"id": 10, "type": "PipeWire:Interface:Device", "info": {"props": properties}}]
+        graph = [{"id": 10, "type": "PipeWire:Interface:Device", "info": {
+            "props": properties,
+            "params": {"Profile": [{"index": 15, "name": "output:analog-surround-51"}]},
+        }}]
         self.readiness.side_effect = ready.audio_ready_config
         def pactl(*args):
             if args == ("--format=json", "list", "cards"):

@@ -335,7 +335,9 @@ are never the source of a desired state.
   `compose.prod.yml` defines the production logging layout, not an available
   release workflow. The new bind mounts use one explicit deployment data root.
   See the [container guide](container-deployment.md) for available operations
-  and limitations. The older `docker-compose*.yml` files remain legacy layouts.
+  and limitations. The older build-oriented Compose stacks and in-place web
+  installers have been removed; existing host data is not migrated by that
+  repository cleanup.
 - Python tests in [tests/](../../tests/) cover the connector, backend,
   controller, server routes, the playback client and the Pi libraries. The
   JavaScript tests (`node --test tests/*.js`) cover the page rendering logic.

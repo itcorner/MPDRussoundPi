@@ -94,6 +94,41 @@ class ContainerProfileTests(unittest.TestCase):
                     self.render(overlay=overlay)
 
     @unittest.skipUnless(ANSIBLE.is_file(), "local Ansible is required")
+    def test_preview_preserves_playback_registry_through_shared_validation_and_compose(self):
+        agent = {"agent_id": "musicpi", "url": "https://audio.example:8443",
+                 "token_file": "/run/secrets/token", "tls_ca_file": "/run/secrets/ca.crt"}
+        special_agent = {**agent, "token_file": "/run/secrets/\\'token-${HOME}-%-é"}
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / "inventory.yml"
+            inventory.write_text(yaml.safe_dump({"all": {"hosts": {"preview": {
+                "ansible_connection": "ssh", "ansible_host": "invalid.example",
+                "russound_gateway": "external", "russound_backend_host": "gateway.example",
+                "russound_data_dir": "/tmp/playback-preview", "russound_web_image": WEB,
+            }}}}))
+            play = Path(directory) / "preview.yml"
+            play.write_text(yaml.safe_dump([{
+                "ansible.builtin.import_playbook": str(ROOT / "ansible/playbooks/deploy-dev.yml"),
+            }, {
+                "hosts": "all", "gather_facts": False,
+                "tasks": [{"ansible.builtin.assert": {"that": [
+                    "((russound_preview_render.stdout | from_json).services"
+                    "['russound-web'].environment.RUSSOUND_PLAYBACK_AGENTS"
+                    " | replace('$$', '$') | default('[]', true) | from_json)"
+                    " == russound_playback_agents",
+                ]}}],
+            }]))
+            for value, succeeds in (([], True), ([agent], True), ([special_agent], True),
+                                    ({}, False), ("[]", False), ([None], False)):
+                with self.subTest(value=value):
+                    result = subprocess.run(
+                        [str(ANSIBLE), "-i", str(inventory), str(play), "-e",
+                         json.dumps({"russound_playback_agents": value})],
+                        capture_output=True, text=True, env=compose_environment(), timeout=60,
+                    )
+                    self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+                    self.assertNotIn("changed=1", result.stdout)
+
+    @unittest.skipUnless(ANSIBLE.is_file(), "local Ansible is required")
     def test_preview_respects_inventory_and_never_uses_target_connection(self):
         with tempfile.TemporaryDirectory() as directory:
             inventory = Path(directory) / "inventory.yml"

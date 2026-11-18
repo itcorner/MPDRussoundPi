@@ -73,3 +73,10 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: bash tool/ci/smoke-web-image.sh "mpdrussoundpi-web:ci-$ARCH" "$ARCH"
+      - name: Verify split-network gateway and authenticated agent TLS routing
+        env:
+          ARCH: ${{ matrix.arch }}
+          RUSSOUND_RUN_CONTAINER_TESTS: "1"
+        run: |
+          export RUSSOUND_TEST_WEB_IMAGE="$(docker image inspect --format '{{.Id}}' "mpdrussoundpi-web:ci-$ARCH")"
+          python3 -m unittest discover -s tests -p 'test_deployment_split_runtime.py' -v

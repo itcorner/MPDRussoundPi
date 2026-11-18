@@ -164,6 +164,7 @@ An offline hardware warning is separate from web service health.
 | --- | --- |
 | Run locally from source | Quick start above |
 | New development container, external/managed/dummy gateway | [Container deployment guide](docs/documentation/container-deployment.md) |
+| Separate web host and prepared hybrid gateway/audio host | [Split-host development deployment](docs/documentation/container-deployment.md#split-host-deployment-on-prepared-hosts) |
 | Select matching published dev images without pulling or deploying | [Image selection](docs/documentation/container-deployment.md#select-published-development-images) |
 | Preview the new development layout without changing a host | [Ansible preview](docs/documentation/container-deployment.md#ansible-preview) |
 | Inspect prerequisites for a new Linux target without deploying | [Explicit target preflight](docs/documentation/container-deployment.md#explicit-target-preflight) |
@@ -263,9 +264,10 @@ See [the module-by-module coverage review](docs/documentation/test-coverage.md) 
 
 ## Docker
 
-The web image is built and deployed. The full USB serial-container provisioning
-path still needs target acceptance; do not treat web health as proof of serial
-device access or physical controller communication.
+Prepared-Pi web and USB gateway deployment, controller/playback routing,
+recovery and six-hour observation passed. This is not a fresh-machine
+provisioning guarantee; web HTTP health alone never proves serial or audio
+readiness. See the [support matrix](docs/documentation/container-deployment.md#support-and-acceptance-boundaries).
 
 Each part runs in its own container:
 
@@ -284,10 +286,10 @@ explicit approval, verified local or pinned registry images, independently held
 backups, controlled apply and separately approved recovery. Production and
 automatic dummy-artifact deployment are not available yet.
 
-The old `docker-compose.yml` and `docker-compose.dummy.yml` remain legacy
-build-oriented stacks for existing users. They have not been silently changed
-to the new layouts. Do not mix the two workflows or use either to migrate the
-running Pi without a reviewed backup and explicit approval.
+The old build-oriented Compose stacks and in-place web/Docker Ansible installers
+have been removed. Use explicit retained Compose files and the reviewed
+operator, not bare `docker compose up`. Existing host data and recovery inputs
+are untouched; see the [retirement and migration boundary](docs/documentation/container-deployment.md#existing-installations-and-legacy-entry-points).
 
 ### First-run setup and recovery
 
@@ -354,7 +356,7 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_SERIAL_OPTIONS` | Serial line settings (ser2net container) | `19200n81` |
 | `RUSSOUND_SER2NET_BIND` | ser2net bind address | `0.0.0.0` |
 | `RUSSOUND_SER2NET_PORT` | ser2net listening port | `6666` |
-| `RUSSOUND_SERIAL_GID` | Host GID owning the serial device | required in new gateway overlay; legacy default `20` |
+| `RUSSOUND_SERIAL_GID` | Host GID owning the serial device | required in the managed/standalone gateway layouts |
 | `RUSSOUND_CONFIG` | Config file path | `/config/russound_config.json` |
 | `RUSSOUND_STATE` | State file path | `/data/russound_state.json` |
 | `RUSSOUND_DEBUG` | Enable debug logging; Waitress remains the HTTP server and Flask's debugger is not enabled | image `false`; new dev profile `true`, prod layout `false` |
@@ -367,9 +369,8 @@ Remove an explicit override to let browser edits take effect for that field.
 
 Core server settings also have command-line flags (`--host`, `--port`,
 `--config`, `--state`, `--debug`). Explicit host, port, config and state flags
-override their environment defaults. Debug is enabled if either `--debug` or
-`RUSSOUND_DEBUG` enables it; there is no CLI flag to override a true
-environment value with false. `--debug` and `RUSSOUND_DEBUG` only control
+override their environment defaults. `--debug` / `--no-debug` override
+`RUSSOUND_DEBUG`, including an invalid environment value. These settings only control
 diagnostic logging; they do not enable Flask's development server or
 interactive debugger. Debug logs may include detailed protocol and connection
 data, so protect and rotate them.
@@ -380,33 +381,29 @@ On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the
 
 ### Raspberry Pi provisioning
 
-The [new Ansible preview](docs/documentation/container-deployment.md#ansible-preview)
-does not change or contact the Pi. The old
-`ansible/playbooks/deploy-russound-docker.yml` remains a legacy provisioning
-play, not the new workflow. It can install Docker, update a target checkout,
-rewrite `.env` and stop native services. See the
-[compatibility boundary](docs/documentation/container-deployment.md#existing-installations-and-legacy-entry-points)
-before using it. In particular, it does not preserve the current Pi's extra
-Compose override automatically.
+The [Ansible preview](docs/documentation/container-deployment.md#ansible-preview)
+does not change or contact the Pi. The
+[reviewed operator](docs/documentation/container-deployment.md#reviewed-development-deployment-and-recovery)
+deploys to a prepared Linux host; it does not install Docker, provision the OS,
+or replace the audio stack. The former provisioning play was removed, not
+redirected. Existing overrides and local-only images must be retained for
+reviewed adoption/recovery; see the
+[migration boundary](docs/documentation/container-deployment.md#existing-installations-and-legacy-entry-points).
 
 ### Native web deployment
 
-Use this instead of Docker, not alongside another web process on port 8000:
-
-```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-russound-web.yml
-```
-
-The play installs a separate web venv under `~/.local/share/russound-web/venv`,
-starts native ser2net and installs `russound-web.service`. It retains configuration
-in `~/.config/russound-web/russound_config.json` and runtime state in
-`~/.local/state/russound-web/russound_state.json`, outside the Git checkout.
-On first launch, open `http://<pi>:8000/config` to configure the gateway/layout.
-Configure `russound_playback_agents` with native token/certificate paths when
-adding playback integration. Changing deployment type does not automatically
-copy a previous web config/state; back up and copy those files explicitly.
-For an external gateway, set `russound_manage_serial_gateway=false`; the native
-web play then leaves ser2net configuration and service state untouched.
+The [prepared native workflow](docs/documentation/container-deployment.md#prepared-native-web-and-gateway)
+stages sealed source/venv releases, then separately reviews activation,
+off-host backup and recovery. It manages native web and a loopback-only
+ser2net unit while preserving the Pi's existing native agent/audio/proxy stack.
+Docker-to-native cutover requires an explicit matching recorded deployment;
+it is never an ordinary redeploy. The old in-place installer and source-only
+web staging play have been removed, not redirected.
+Fresh audio provisioning, legacy-native adoption, external-native gateways,
+OS upgrades and schema migration are not supported by this workflow.
+Prepared-Pi native cutover, unchanged rerun and Docker rollback passed live
+acceptance. Native reboot/endurance and fresh-machine provisioning are not
+certified; the trial Pi was returned to Docker at the operator's request.
 
 ## Deployment Notes
 

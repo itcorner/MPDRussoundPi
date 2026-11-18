@@ -5,9 +5,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import struct
-from typing import Any, BinaryIO, IO
+from typing import Any, BinaryIO, Callable, IO
 
 from tool.deployment_backup import MAX_BYTES, MAX_MANIFEST, manifest_value
 from tool.deployment_files import checked_directory, is_mapping
@@ -19,11 +20,15 @@ class ChannelError(ValueError):
     """Transport is incomplete or uncertain; retain both endpoints."""
 
 
+BACKUP_HEADROOM = 64 * 1024**2
+
+
 class Channel:
     def __init__(self, source: IO[bytes], destination: IO[bytes]):
         self.source, self.destination = source, destination
 
-    def exact(self, count: int, output: BinaryIO | None = None) -> bytes:
+    def exact(self, count: int, output: BinaryIO | None = None, *,
+              before_write: Callable[[int], None] | None = None) -> bytes:
         value = bytearray()
         while count:
             block = self.source.read(min(count, 1024**2))
@@ -32,8 +37,11 @@ class Channel:
             count -= len(block)
             if output is None:
                 value.extend(block)
-            elif output.write(block) != len(block):
-                raise ChannelError("Deployment output write was incomplete")
+            else:
+                if before_write is not None:
+                    before_write(len(block))
+                if output.write(block) != len(block):
+                    raise ChannelError("Deployment output write was incomplete")
         return bytes(value)
 
     def send(self, value: dict[str, Any]) -> None:
@@ -73,7 +81,8 @@ class Channel:
                     raise ChannelError("Source file changed during deployment transfer")
 
     def receive_file(self, parent: Path, expected: str, *, size: int | None = None,
-                     checksum: str | None = None, maximum: int = MAX_BYTES) -> None:
+                     checksum: str | None = None, maximum: int = MAX_BYTES,
+                     before_write: Callable[[int], None] | None = None) -> None:
         header = self.receive()
         if (set(header) != {"file", "bytes", "sha256"} or header["file"] != expected
                 or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", expected)
@@ -88,7 +97,7 @@ class Channel:
             fd = os.open(expected, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
             with os.fdopen(fd, "wb") as target:
                 os.fchmod(target.fileno(), 0o600)
-                self.exact(header["bytes"], target)
+                self.exact(header["bytes"], target, before_write=before_write)
                 target.flush()
                 os.fchmod(target.fileno(), 0o400)
                 os.fsync(target.fileno())
@@ -150,13 +159,16 @@ def send_backup(channel: Channel, path: Path, operation: str, checksum: str) -> 
     portable_backup(path, operation, checksum)
 
 
-def receive_backup(channel: Channel, parent: Path, header: dict[str, Any]) -> tuple[Path, str]:
+def receive_backup(channel: Channel, parent: Path, header: dict[str, Any], *,
+                   restore_root: Path | None = None) -> tuple[Path, str]:
     if set(header) != {"event", "operation", "manifest_sha256"} or header["event"] != "backup":
         raise ChannelError("Missing off-host recovery header")
     operation, checksum = header["operation"], header["manifest_sha256"]
     operation_id(operation)
     if not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
         raise ChannelError("Invalid backup manifest identity")
+    if shutil.disk_usage(parent).free < MAX_MANIFEST + BACKUP_HEADROOM:
+        raise ChannelError("Insufficient space to receive backup metadata; retain existing evidence")
     with checked_directory(parent, os.getuid()) as directory:
         os.mkdir(operation, 0o700, dir_fd=directory)
         os.fsync(directory)
@@ -166,8 +178,32 @@ def receive_backup(channel: Channel, parent: Path, header: dict[str, Any]) -> tu
     if hashlib.sha256(raw).hexdigest() != checksum:
         raise ChannelError("Received manifest differs from target identity")
     manifest = manifest_value(json.loads(raw), operation)
+    remaining = manifest["total_bytes"]
+    restore_bytes = manifest["total_bytes"] if restore_root is not None else 0
+    same_filesystem = restore_root is not None and path.stat().st_dev == restore_root.stat().st_dev
+
+    def check_capacity() -> None:
+        required = remaining + BACKUP_HEADROOM + (restore_bytes if same_filesystem else 0)
+        if shutil.disk_usage(path).free < required:
+            raise ChannelError("Insufficient space to receive backup and retain recovery headroom")
+        if (restore_root is not None and not same_filesystem
+                and shutil.disk_usage(restore_root).free < restore_bytes + BACKUP_HEADROOM):
+            raise ChannelError("Insufficient isolated restore space; retain existing evidence")
+
+    def check_chunk(size: int) -> None:
+        required = size + BACKUP_HEADROOM + (restore_bytes if same_filesystem else 0)
+        if shutil.disk_usage(path).free < required:
+            raise ChannelError("Backup transfer exhausted recovery headroom; retain partial evidence")
+        if (restore_root is not None and not same_filesystem
+                and shutil.disk_usage(restore_root).free < restore_bytes + BACKUP_HEADROOM):
+            raise ChannelError("Isolated restore space changed during backup transfer")
+
+    check_capacity()
     for entry in manifest["entries"]:
         if entry["type"] == "file":
-            channel.receive_file(path, entry["blob"], size=entry["size"], checksum=entry["sha256"])
+            check_capacity()
+            channel.receive_file(path, entry["blob"], size=entry["size"], checksum=entry["sha256"],
+                                 before_write=check_chunk)
+            remaining -= entry["size"]
     portable_backup(path, operation, checksum)
     return path, checksum
