@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Original failed development publication run with a completed digest journal
+        description: Original failed development publication run with a retained digest journal
         type: string
         required: true
 
@@ -40,8 +40,9 @@ jobs:
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: arm64
-      - name: Verify completed digests without publication or recovery writes
+      - name: Verify exact and dev tags, then smoke-test published digests without writes
         env:
+          VERIFY_PUBLICATION_TAGS: "true"
           PUBLICATION_SOURCE_SHA: ${{ steps.source.outputs.sha }}
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
           PUBLICATION_JOURNAL: ${{ runner.temp }}/evidence/publication-journal.json
