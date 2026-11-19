@@ -284,7 +284,7 @@ budget; do not delete the lock/state file to force another attempt.
 
 The deployed recovery is resilience for observed audio-stack publication/
 restoration failures, not an upstream PipeWire/WirePlumber patch. See the
-[acceptance record](../plans/general_open_simplify-deployment-configuration.md#approved-session-recovery-and-installed-reboot-acceptance)
+[acceptance record](../plans/general_done_simplify-deployment-configuration.md#approved-session-recovery-and-installed-reboot-acceptance)
 for real-fault, explicitly injected-fault and unattended reboot evidence.
 
 | Symptom | Check |

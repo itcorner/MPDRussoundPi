@@ -11,7 +11,7 @@ the compact backend-only mockup: effective connection mode/host/port now appear
 in their existing fields with inline source badges and accessible explanations.
 Environment-controlled values are read-only; the existing API write contract
 is unchanged. See the
-[S3 record](./general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14)
+[S3 record](./general_done_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14)
 and current implementation below.
 
 ## Goal

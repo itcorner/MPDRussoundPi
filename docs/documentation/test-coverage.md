@@ -50,7 +50,7 @@ network-isolated startup/API/metadata/SIGTERM checks on Python 3.12.15 with
 Flask 3.1.3 and Waitress 3.0.2. Python regression/audio-env checks used local
 Python 3.13. These are local runtime/packaging checks, not Pi hardware,
 live credential-rotation or every-version-within-range certification.
-See the [S3 completion record](../plans/general_open_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14).
+See the [S3 completion record](../plans/general_done_simplify-deployment-configuration.md#s3-runtime-configuration-and-logging-completion-2026-11-14).
 
 **Subsequent approved Pi rehearsal:** clean committed ARM64 S3 images passed
 isolated web/dummy deployment, actual authenticated agent TLS routing,
@@ -62,7 +62,7 @@ Original live identities/protected files remained unchanged. A durable
 subsequently stopped it after 22 passing samples, before completion, to test
 the real deployment instead. This does not
 certify live S3 activation or the unfinished S4 operator/dummy path. See the
-[rehearsal record](../plans/general_open_simplify-deployment-configuration.md#isolated-s3-pi-deployment-and-background-observation-2026-11-14).
+[rehearsal record](../plans/general_done_simplify-deployment-configuration.md#isolated-s3-pi-deployment-and-background-observation-2026-11-14).
 
 **Approved real S3 activation:** the public reviewed operator updated the real
 ARM64 web/managed-gateway pair after independently verified off-Pi backup.
@@ -79,7 +79,7 @@ also passed: real routing, unchanged protected files/native sources/service
 identities and zero container restarts. Completed evidence was copied off Pi.
 This short run is not six-hour acceptance; no additional observation was started.
 Startup pending-route samples precede timing and are not represented as a
-completed pass. See the [real deployment record](../plans/general_open_simplify-deployment-configuration.md#approved-real-s3-deployment-and-observation-2026-11-14).
+completed pass. See the [real deployment record](../plans/general_done_simplify-deployment-configuration.md#approved-real-s3-deployment-and-observation-2026-11-14).
 
 ## Prepared native deployment increment (2026-11-15)
 

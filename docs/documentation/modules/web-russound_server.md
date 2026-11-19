@@ -24,7 +24,7 @@ Linux ARM64 container with no event client and measured native physical
 controller readiness 10.96 seconds after web service activation on reboot.
 This closes controller-health recovery, not full native acceptance: that
 reboot separately exposed USB-audio profile readiness errors. See the
-[deployment plan](../../plans/general_open_simplify-deployment-configuration.md)
+[deployment plan](../../plans/general_done_simplify-deployment-configuration.md)
 for remaining audio, rollback and observation gates.
 
 When run on the main thread, the server handles SIGTERM and SIGINT, including
