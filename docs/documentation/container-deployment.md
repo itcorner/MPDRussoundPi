@@ -12,7 +12,7 @@ remain preview/preflight only; do not bypass their apply gate.
 An explicitly approved manual Pi trial reached real controller communication,
 then required a separately approved agent proxy allowlist change after the
 Docker subnet changed. Repeated checks passed after that correction; see the
-[target-check record](../plans/general_open_simplify-deployment-configuration.md#early-raspberry-pi-target-check-2026-11-13).
+[target-check record](../plans/general_done_simplify-deployment-configuration.md#early-raspberry-pi-target-check-2026-11-13).
 That early trial is not a general migration procedure. Later representative
 acceptance and the exact supported boundaries are summarized below.
 
@@ -25,7 +25,8 @@ acceptance and the exact supported boundaries are summarized below.
 | Hardware-free dummy development | [Dummy layout](#dummy-no-hardware) | Explicit local dummy build and isolated Compose startup; synthetic routing/recovery tests are not physical hardware evidence. Automated dummy-artifact deployment is not supported. |
 | Controller preview / target inspection | `deploy-dev.yml`, `deploy-dev-build.yml` | Preview renders locally; explicit `russound_action=preflight` inspects a target read-only. Neither activates services. Use the operator for apply/recovery. |
 | Trusted deployment tooling | `bootstrap-deployment.yml`, `upgrade-deployment.yml`, `restore-deployment-tools.yml` | Install or switch only the reviewed tooling checkout/environment with its reservation and recovery guards; no web/audio deployment or OS provisioning. |
-| Prepared native web plus dedicated native gateway | [Sealed staging and native operator](#prepared-native-web-and-gateway) | Cutover, native release-switch/recovery, unchanged rerun, reboot, four-hour observation and representative audible checks passed on the Pi after controller and guarded audio-recovery fixes. Final handover remains open; the release-switch rehearsal is not cross-version compatibility evidence. |
+| Prepared native web plus dedicated native gateway | [Sealed staging and native operator](#prepared-native-web-and-gateway) | Cutover, native release-switch/recovery, unchanged rerun, reboot, four-hour observation and representative audible checks passed on the Pi. The final Pi layout returned to managed Docker; the native release-switch rehearsal is not cross-version compatibility evidence. |
+| One-time Pi return from native to same-revision managed Docker | [Reviewed Pi handover](#experimental-pi-native-to-docker-handover) | Live rollback of an unsuccessful attempt, followed by a committed cutover and six-hour routing and health observation on the prepared Pi. Not a general native-to-Docker migration path. |
 | Production containers | `compose.prod.yml` | Layout/rendering only; no approved stable image pair or production deployment workflow. Fail rather than substitute development images. |
 | Existing audio/agent/proxy/egress | `setup-musicpi.yml`, `deploy-playback-agent.yml`, `remove-playback-agent.yml`, `deploy-playback-agent-proxy.yml`, `deploy-playback-egress.yml`; [playback guide](./playback-agent-deployment.md), [audio guide](./mpd-headless-deployment.md) | Separate component-specific tooling and approval boundaries; web/gateway deployment preserves these services. Audio and agent candidate staging is not a full native-stack installer. |
 
@@ -37,18 +38,30 @@ entire stack on a fresh machine.
 
 **Excluded:** automatic same-host/split-host conversion, data movement between
 hosts, legacy-native adoption, external-native gateways, OS/package or schema
-migration, credential rotation and fresh-machine disaster recovery. The one
-accepted cross-layout exception is the explicitly reviewed matching
-managed-Docker-to-native cutover and recovery of its recorded baseline.
+migration, credential rotation and fresh-machine disaster recovery. The
+cross-layout exceptions are the explicitly reviewed matching
+managed-Docker-to-native cutover and recovery of its recorded baseline, and the
+one-time same-revision Pi handover documented below.
 Changing layout is not an ordinary rerun. Missing releases or untested
 acceptance are limitations, never success-shaped fallbacks.
 
 ## Experimental Pi native-to-Docker handover
 
-The internal `handover-deploy` operator action is **not yet accepted for a live
-cutover**. It needs representative systemd/Docker rehearsal, including the
-reviewed uncertain-image-load recovery. Do not treat the presence of the
-command as evidence that those gates have passed.
+The `handover-deploy` operator action passed a **reviewed, one-time live
+handover on the prepared Raspberry Pi**. The final layout runs web and ser2net
+in Docker while leaving the playback agent, TLS proxy and audio services
+native. The full six-hour observation ended on November 19, 2026, with **361
+passing samples and zero failures**. See the
+[acceptance and rollback record](../plans/general_done_simplify-deployment-configuration.md#final-s5-acceptance-and-rollback-handover-2026-11-19).
+This does not establish support for arbitrary hosts or revisions, or new
+audible or reboot acceptance on that exact cutover.
+
+For later same-layout operation, retain the successful private review's
+`compose_spec` and `compose_config` as the baseline. The ordinary `deploy`
+operator verifies the running Compose project and generation against the
+supplied baseline; do not substitute a stock development render for the
+handover's generated project, network or service settings. This handover's
+acceptance does not establish a subsequent image update on the Pi.
 
 The controller requires a private copy of the exact native specification
 (`--spec`), the full committed deployment record (`--selection`), the separately
@@ -65,7 +78,7 @@ mode `0400` or `0600`; `--selection` is the complete committed state record,
 not just its nested image or native candidate. The known-hosts file has the
 same ownership and mode requirements, and the evidence directory must be
 private. Both the controller checkout and the trusted installed target tooling
-must contain this implementation. Once its acceptance gates have been met, the
+must contain this implementation. For a separately reviewed operation, the
 command shape is:
 
 ```sh
@@ -77,8 +90,7 @@ python -m tool.deployment_operator handover-deploy \
 ```
 
 The operator prints the exact review and requires interactive confirmation of
-the operation ID. The example is not authorization to run an unaccepted live
-cutover.
+the operation ID. The example does not authorize a live cutover.
 
 For a Pi-local playback TLS proxy, reserve an unused RFC1918 `/28` or `/29`
 and explicitly add that exact CIDR to `playback_proxy_additional_allowed_cidrs`
@@ -139,6 +151,26 @@ fenced throughout recovery: a process that starts and stops between checks
 may go unnoticed. A failed check before replacement leaves live data
 untouched and retains the staged copy and reservation for investigation.
 
+### Choose the recovery action for a pending handover
+
+Read the pending state and retain evidence before choosing an action. Confirm
+that the original operator, its subprocesses and any competing orchestration
+have stopped. All recovery actions require a separate interactive approval.
+
+| Last verified boundary | Reviewed action |
+|---|---|
+| Before backup completion; no image load or activation | `handover-resume-original`: verify and restart the original native runtime without replacing current data. |
+| Backup complete; activation not attempted and no uncertain image load | `handover-recover-backup`: restore the matching native backup. |
+| Activation attempted; matching activation evidence retained | `handover-recover-activated`: verify and fence the candidate containers before restoring the matching native backup. |
+| Image load started but completion is uncertain; activation not attempted | `handover-recover-uncertain-load`, with the additional checks below. |
+
+Use the same SSH trust flags as for deployment, a new private evidence
+directory, `--deployment` and the original pending `--operation`. All three
+backup recovery actions also require `--backup` and `--backup-sha256` with
+the **bare 64-character hexadecimal** `manifest_sha256` from the independently
+retained backup-identity record (not the image bundle digest). Skip these
+two flags only for `handover-resume-original`.
+
 ### Interrupted handover image load
 
 If the reservation records a started image load without completed image
@@ -167,7 +199,7 @@ python -m tool.deployment_operator handover-recover-uncertain-load \
   --host PI_HOST --user PI_USER --known-hosts /private/known_hosts \
   --evidence /private/recovery-evidence --deployment DEPLOYMENT_ID \
   --operation ORIGINAL_OPERATION --backup /private/OFFHOST_BACKUP_DIRECTORY \
-  --backup-sha256 sha256:BACKUP_MANIFEST_DIGEST
+  --backup-sha256 BARE_64_CHARACTER_MANIFEST_DIGEST
 ```
 
 The recovery review requires the separate `confirm load-ended ORIGINAL_OPERATION`
@@ -178,7 +210,10 @@ image-load request and after a client was killed during an upload. In the
 latter case the test stopped and restarted its otherwise unused Docker daemon
 and containerd before recovery. This does not establish a general method for
 proving that an interrupted daemon-side request has ended, or authorize a
-daemon restart on the Pi. The handover is not yet accepted for live Pi cutover.
+daemon restart on the Pi. These recovery actions are for a pending operation,
+not for undoing a committed cutover. Retain the independently verified off-Pi
+backup and its manifest identity; review any later layout change separately
+against the current state and data.
 
 ## What is available
 
@@ -188,7 +223,7 @@ daemon restart on the Pi. The handover is not yet accepted for live Pi cutover.
 | Development, managed USB gateway | `compose.dev.yml`, `compose.gateway.yml` | Matching published web/gateway digests |
 | Development, separate prepared backend host | `compose.backend.yml` on backend; `compose.dev.yml` on web host | Gateway-only and web-only pins; see [split-host deployment](#split-host-deployment-on-prepared-hosts) |
 | Development, no hardware | `compose.dev.yml`, `compose.dummy.yml` | Published web digest and explicitly built local dummy |
-| Development, explicit local-build preview | Same development files for the selected gateway | Verified controller-built image archives; no target transfer/load/apply |
+| Development, explicit local build | Same development files for the selected gateway | Verified controller-built image archives. Ansible preview never transfers or applies them; reviewed `deploy` accepts bundles for the supported non-dummy layouts. |
 | Production | `compose.prod.yml`, optional `compose.gateway.yml` | Layout only; blocked until approved stable images and deployment tooling exist |
 
 Include **one gateway overlay at most**. External mode has no gateway service,
@@ -271,7 +306,7 @@ trial replaced that pair with ARM64 builds of revision `161853e` and verified
 web exit 0 in 2.23 seconds with an open SSE connection. It preserved config,
 secrets, the project network and native playback services; real controller/
 agent routing and LAN HTTP passed. See the
-[local-image trial record](../plans/general_open_simplify-deployment-configuration.md#approved-local-image-pi-trial-2026-11-13).
+[local-image trial record](../plans/general_done_simplify-deployment-configuration.md#approved-local-image-pi-trial-2026-11-13).
 This does not enable automated apply or certify ser2net graceful shutdown.
 
 Native `audiosetup.py` and `mpdsetup.py` now initialize logging only when
@@ -433,6 +468,12 @@ approval, protected inputs, artifact transfer, reservation, apply and recovery;
 do not invoke its internal runner APIs directly.
 
 ## 1. Prepare one deployment file
+
+This is the manual Compose path for a **new, isolated development project**.
+For managed setup, adoption, updates or recovery on a prepared Linux host,
+use the [reviewed operator](#reviewed-development-deployment-and-recovery)
+instead. The first-run browser editor is application setup, not host
+provisioning or a substitute for the operator's prepared configuration checks.
 
 Run commands from the repository root. Create a private environment file
 outside the checkout, for example `$HOME/.config/russound/demo.env`.
@@ -784,7 +825,7 @@ run the web container against a prepared Pi backend without installing native
 services or additional system-wide tools. A manual Mac-web/Pi-backend trial
 verified real controller responses, authenticated CA-verified agent HTTPS,
 fresh audio readiness/routes and reconnection after test-container recreation;
-see the [acceptance record](../plans/general_open_simplify-deployment-configuration.md#real-mac-web--pi-backend-acceptance-2026-11-15).
+see the [acceptance record](../plans/general_done_simplify-deployment-configuration.md#real-mac-web--pi-backend-acceptance-2026-11-15).
 Keep the Mac UI localhost-only and its data/credentials isolated, and remove
 the test project and copied credentials afterward. This validates cross-host
 runtime behavior, **not** the Linux-only root/Docker deployment operator on
@@ -966,6 +1007,11 @@ transfer, backup or recreation. Different candidates require **`--update`** plus
 the explicit candidate/bundle and new approval. Settings, mounts, network and
 credential changes are deliberately not smuggled into an image update.
 
+For adoption of an existing unrecorded project, set `"adopt": true` in the
+private target specification. Adoption is only for a matching running layout:
+the operator compares the actual services and Compose generation before
+proceeding. It is not a conversion from a legacy project or native service.
+
 Before interruption, the target validates layout/adoption, configuration,
 service file access, credentials, daemon/platform, conflicting containers,
 space and first-install listener/device prerequisites. After reservation it
@@ -988,7 +1034,8 @@ is reported as such, not as verified hardware.
 On any uncertain result, **stop and inspect both hosts**. Do not retry deployment,
 delete reservation files, prune images, invoke legacy playbooks, or assume a
 timeout means remote work ended. The controlled Ansible deadline is ten minutes;
-the SSH controller lifetime is bounded to one hour. Docker or target work may
+the SSH controller defaults to one hour and can be set for a new session with
+`--controller-timeout-seconds` (maximum `18000`). Docker or target work may
 outlive either client. Use the fixed target tooling's read-only status command
 and inspect related processes, Docker activity and private evidence first:
 
@@ -1338,7 +1385,8 @@ does not authorize replacing or removing the working playback stack.
 cutover, physical controller/authenticated playback routing, unchanged rerun
 and independently backed-up rollback to Docker. Later native reboot, release
 switch/recovery and four-hour observation also passed as documented below; representative
-native audible checks passed in Living Room. Final handover remains outstanding.
+native audible checks passed in Living Room. The Pi subsequently returned to
+managed Docker through the [reviewed handover](#experimental-pi-native-to-docker-handover).
 Use the reviewed tooling installation/upgrade procedure above to install these
 committed tools first. Never copy unfinished code into the live tooling checkout.
 This workflow manages only `russound-web.service` and the dedicated
@@ -1489,7 +1537,7 @@ retained manifest identity:
   --evidence /absolute/private/native-recovery-evidence \
   --deployment russound-dev --operation ORIGINAL_OPERATION_UUID \
   --backup /absolute/private/native-evidence/ORIGINAL_OPERATION_UUID \
-  --backup-sha256 SEPARATELY_RETAINED_MANIFEST_SHA256
+  --backup-sha256 BARE_64_CHARACTER_MANIFEST_DIGEST
 ```
 
 This needs fresh approval, matching pending/latest state and no outstanding
@@ -1512,24 +1560,11 @@ Ordinary Compose apply cannot switch a committed native deployment back to
 Docker; only the explicit, latest-operation recovery described above covers
 the recorded cutover baseline.
 
-The experimental Pi handover recovery actions are not a migration procedure.
-`handover-resume-original` is limited to the reserved pre-backup phase.
-`handover-recover-backup` requires a separately retained matching backup and
-manifest identity. It allows a completed image load, but refuses an uncertain
-or interrupted load and any started apply.
-It preserves the post-backup data tree and checks the native runtime before
-clearing state. These actions have mocked service tests only; post-activation
-recovery now has an experimental `handover-recover-activated` action that
-reviews the candidate identities, disables their restart policies, stops them,
-and preserves post-backup data before restoring native services. Its service
-boundaries are mocked, although local tests exercise fencing and data restore
-with temporary real Docker containers. It requires matching activation evidence and the
-operator must first establish that the original activation process and its
-subprocesses have ended. The native-to-Docker transaction is not yet
-implemented. Never begin a cutover on the assumption that these actions cover
-it. The target
-operator lock serializes cooperating current-version sessions only; establish
-that older tooling and any other orchestration have stopped before recovery.
+For recovery from a pending Pi handover, use the phase-specific actions in the
+[reviewed handover procedure](#experimental-pi-native-to-docker-handover).
+The target operator lock serializes cooperating current-version sessions only;
+establish that older tooling and any other orchestration have stopped before
+recovery.
 
 The following paragraphs are a chronological record; intermediate blockers
 and pending observation statements describe their status at that time, not
@@ -1656,14 +1691,14 @@ backups have been independently reverified: the current operation points to an
 earlier native deployment, whose backup points to Compose. Sequential recovery
 would activate historical data snapshots rather than merge current state, and
 requires explicit review of state preservation and runtime compatibility.
-The operator chose a separately designed current-data-preserving migration;
-it is not yet implemented or approved for live execution. See the
-[proposed return transaction](../plans/general_open_simplify-deployment-configuration.md#proposed-current-data-preserving-native-to-docker-return-2026-11-17).
-S5 handover remains open.
+The operator then chose a separate current-data-preserving migration instead
+of those historical restores. The
+[final S5 closeout](../plans/general_done_simplify-deployment-configuration.md#final-s5-acceptance-and-rollback-handover-2026-11-19)
+records the subsequent approved rollback, successful Docker cutover and
+six-hour observation.
 
 The Pi's extra Compose override and local-only web image need explicit
 preservation. Continue to treat adoption as a separately approved migration.
-The [implementation plan](../plans/general_open_simplify-deployment-configuration.md)
-records completed evidence, deferred native acceptance and remaining S5/CI
-handover gates. The split-host Linux-operator and stable-production limitations
-above are not closed by the native trial or by repository cleanup.
+The [implementation plan](../plans/general_done_simplify-deployment-configuration.md)
+records the completed S5 handover and its limits. The split-host Linux-operator
+and stable-production limitations above still apply.

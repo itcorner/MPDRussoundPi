@@ -163,13 +163,14 @@ An offline hardware warning is separate from web service health.
 | Goal | Procedure |
 | --- | --- |
 | Run locally from source | Quick start above |
-| New development container, external/managed/dummy gateway | [Container deployment guide](docs/documentation/container-deployment.md) |
+| New isolated development containers, external/managed/dummy gateway | [Manual Compose setup](docs/documentation/container-deployment.md#1-prepare-one-deployment-file) |
 | Separate web host and prepared hybrid gateway/audio host | [Split-host development deployment](docs/documentation/container-deployment.md#split-host-deployment-on-prepared-hosts) |
 | Select matching published dev images without pulling or deploying | [Image selection](docs/documentation/container-deployment.md#select-published-development-images) |
 | Preview the new development layout without changing a host | [Ansible preview](docs/documentation/container-deployment.md#ansible-preview) |
 | Inspect prerequisites for a new Linux target without deploying | [Explicit target preflight](docs/documentation/container-deployment.md#explicit-target-preflight) |
-| Deploy or recover a prepared development target with reviewed approval | [Reviewed remote deployment](docs/documentation/container-deployment.md#reviewed-development-deployment-and-recovery) |
+| Set up, adopt, rerun, update or recover a prepared Linux development target | [Reviewed deployment and recovery](docs/documentation/container-deployment.md#reviewed-development-deployment-and-recovery) |
 | Native Linux web service | [Native web deployment](#native-web-deployment) |
+| One-time return of a matching prepared Pi from native web/gateway to Docker | [Reviewed Pi handover](docs/documentation/container-deployment.md#experimental-pi-native-to-docker-handover) |
 | Pi playback, agent, TLS and outbound enforcement | [Playback deployment](docs/documentation/playback-agent-deployment.md) |
 
 Web deployment does not install MPD/audio. Pi playback setup is separate and
@@ -379,7 +380,7 @@ token/certificate file paths; see the [playback guide](docs/documentation/playba
 
 On Linux hosts, set `RUSSOUND_UID`/`RUSSOUND_GID` to your `id -u`/`id -g` so the container may write the bind-mounted directories.
 
-### Raspberry Pi provisioning
+### Deployment on a prepared Raspberry Pi
 
 The [Ansible preview](docs/documentation/container-deployment.md#ansible-preview)
 does not change or contact the Pi. The
@@ -401,9 +402,10 @@ it is never an ordinary redeploy. The old in-place installer and source-only
 web staging play have been removed, not redirected.
 Fresh audio provisioning, legacy-native adoption, external-native gateways,
 OS upgrades and schema migration are not supported by this workflow.
-Prepared-Pi native cutover, unchanged rerun and Docker rollback passed live
-acceptance. Native reboot/endurance and fresh-machine provisioning are not
-certified; the trial Pi was returned to Docker at the operator's request.
+Prepared-Pi native cutover, unchanged rerun, release-switch recovery, reboot,
+and a four-hour observation passed. The later one-time return to managed
+Docker preserved current data and passed a separate six-hour observation.
+Neither establishes fresh-machine provisioning or arbitrary version migration.
 
 ## Deployment Notes
 

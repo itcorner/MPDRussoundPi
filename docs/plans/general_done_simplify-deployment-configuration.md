@@ -1,12 +1,10 @@
 # Plan: simplify deployment and configuration
 
-Status: **open; S0–S4 implementation gates closed; S5 final handover remains open.
-Superseded web/gateway repository paths retired; native lifecycle/reboot
-checks, the operator-approved four-hour observation and representative native
-audible acceptance passed. Final layout/handover remain open** (2026-11-17).
-The Waitress/debug change below is authorized
-separately; this plan does not authorize deployment, service restarts, hardware
-tests, or changes to a live installation.
+Status: **closed (S0–S5), 2026-11-19.** The accepted Pi layout runs web and
+ser2net in Docker and keeps the playback agent, TLS proxy and audio stack native.
+See the [final S5 acceptance and rollback handover](#final-s5-acceptance-and-rollback-handover-2026-11-19).
+This plan does not authorize deployment, service restarts, hardware tests, or
+changes to a live installation.
 
 ## Goal
 
@@ -33,7 +31,8 @@ and their representative Pi trial passed. Further native acceptance was
 authorized with a one-hour rather than six-hour observation, paused, and later
 resumed after controller/audio recovery fixes. Native release-switch/recovery
 and reboot checks passed; the operator-approved four-hour observation passed.
-Representative audible acceptance passed; the final operating layout remains open.
+Representative native audible acceptance passed. The subsequent return to
+managed Docker passed live routing and the full six-hour observation.
 Production remains blocked without approved stable images/tooling; automated
 same-host/split-host migration and full fresh-machine provisioning are excluded.
 See the authoritative [support matrix](../documentation/container-deployment.md#support-and-acceptance-boundaries).
@@ -53,7 +52,7 @@ the internal APIs or the still-blocked preview-play apply switch.
 | **Docker development** | Published Hub development images for web and ser2net; detailed, bounded logs. No build. | Select an explicit local build only for source changes. Build on the Ansible controller from identified source and transfer verified images to the target. |
 | **Docker production** | An approved matching pair of stable Hub images; minimal operational logs. | Select a different approved stable pair deliberately. Stable publication is not yet available: report the blocker instead of using dev or building. |
 | **Docker local build** | Explicit dev opt-in, using the same development deployment profile. | Supply a clean, identified source revision; refuse ambiguous or dirty source without deleting or resetting changes. |
-| **Prepared bare metal** | Sealed native web and dedicated loopback gateway, preserving native Pi playback services. | Use the reviewed native workflow only; matching recorded managed-Docker cutover/recovery is supported. Representative native listening passed; final handover remains open. No fresh-machine/full-stack installer or legacy-native adoption. |
+| **Prepared bare metal** | Sealed native web and dedicated loopback gateway, preserving native Pi playback services. | Use the reviewed native workflow only. Representative native listening passed; the Pi's final operating layout is managed Docker. No fresh-machine/full-stack installer or legacy-native adoption. |
 
 Two Compose files express **development** and **production**, with optional
 gateway/dummy overlays and a standalone backend profile. Development previews,
@@ -2391,12 +2390,13 @@ let those interfaces independently define precedence.
   migration controls. Rendering, source/pull behavior, idempotence and failure
   paths pass local/CI tests and Ansible checks for available modes. See
   [S4 controller-side acceptance](#s4-controller-side-acceptance-2026-11-14).
-- [ ] **S5 — Migration, documentation and acceptance.** Update authoritative
+- [x] **S5 — Migration, documentation and acceptance.** Update authoritative
   guides and examples, rehearse backup/restore and approved layout changes,
   and verify end-to-end routing and health. Live changes require a separate
   maintenance-window approval. Exit: evidence, limitations and rollback
   handover recorded; unavailable stable releases or hardware remain explicit
-  blockers/limitations rather than simulated passes.
+  blockers/limitations rather than simulated passes. See the
+  [final closeout](#final-s5-acceptance-and-rollback-handover-2026-11-19).
 
 S0 precedes S1; S1 precedes S2 and remaining implementation. The explicitly
 requested Waitress/debug change is an exception. S3 and S4 otherwise depend
@@ -5180,3 +5180,39 @@ the Pi before the outage, and which expensive checks can be consolidated at
 phase boundaries while preserving writer exclusion, file integrity and
 independently verified custody. Rehearse transport loss on the revised path;
 a five-hour controller budget does not fix SSH responsiveness.
+
+### Final S5 acceptance and rollback handover (2026-11-19)
+
+- **Rollback exercised on the Pi.** The first Docker activation reached web
+  and serial but returned HTTP 403 for playback: the dynamically allocated
+  Docker subnet was outside the local Caddy allowlist. The approved rollback
+  restored the verified native baseline in about 36 seconds from approval
+  and preserved the post-activation data tree separately. It did not merge
+  the two trees.
+- **Cutover committed.** After the [backup/restore optimization](https://github.com/itcorner/MPDRussoundPi/pull/51)
+  and [explicit bridge subnet fix](https://github.com/itcorner/MPDRussoundPi/pull/52),
+  the approved retry reused live data in place and used the reviewed ARM64
+  bundle built from the same source revision as the native baseline. A fresh
+  backup was verified independently off-Pi before image load. Container and
+  published HTTP checks, the physical serial backend connection, and
+  authenticated playback through the Caddy proxy passed. Project subnet and
+  proxy allowlist matched; TLS and token checks remained enabled.
+- **Six-hour acceptance passed.** The uninterrupted run from 22:26 CET on
+  November 18 to 04:26 CET on November 19 logged **361 passing samples, zero
+  failures**. Both containers remained healthy; the serial backend and
+  configured playback stayed healthy; the native web and serial units stayed
+  inactive and the native proxy stayed active. Both containers were still
+  healthy at the 07:48 CET check. Earlier interrupted samples do not count
+  toward the six-hour result.
+- **Recovery handover.** Keep the private off-Pi backup, independent manifest
+  identity, review and result records, and rollback evidence. The
+  [operator guide](../documentation/container-deployment.md#experimental-pi-native-to-docker-handover)
+  describes the recovery actions for a **pending** handover. Do not replay
+  those actions on the committed cutover or overwrite current data with the
+  old backup. A future return to native requires a fresh review against the
+  then-current committed state and a plan to preserve current data.
+- **Scope and follow-ups.** This closes the tested Pi handover, not production
+  support, generic cross-host migration, or a fresh-machine installer. No
+  new audible or reboot acceptance was performed on this exact cutover.
+  Ethernet comparison and SSH compression benchmarking are deferred
+  performance follow-ups, not acceptance gates.
