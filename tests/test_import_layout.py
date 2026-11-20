@@ -1,4 +1,4 @@
-"""Guards the single-module-name layout (docs/plans/general_new_package-layout.md)."""
+"""Guards the single-module-name layout (see the package layout plan in docs/plans/)."""
 
 import ast
 from pathlib import Path

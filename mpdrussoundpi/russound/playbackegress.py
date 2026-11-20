@@ -11,7 +11,7 @@ import time
 
 if not __package__:
     # Run as a file: import the library by its canonical package name only
-    # (docs/plans/general_new_package-layout.md).
+    # (see the package layout plan in docs/plans/).
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
