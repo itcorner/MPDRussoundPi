@@ -37,6 +37,17 @@ implementation proof still needed.
 | 2026-11-20 | [PR #55](https://github.com/itcorner/MPDRussoundPi/pull/55): the config API may change only `host`, `port`, `device`, `baud` and `poll_interval_seconds`; other backend fields (e.g. `protocol_audit_log_file`) are accepted only unchanged; a changed `device` must be a serial device path. | Partial D4; I3 guard that the API rejects managed-field changes instead of dropping them | Precedes the planned opaque provisioned-device IDs (section 5); raw saved paths are still shown to the editor. |
 | 2026-11-20 | [PR #56](https://github.com/itcorner/MPDRussoundPi/pull/56): `GET /api/config` returns `configuration.load_state` (`missing`, `valid`, `invalid`, `unreadable`) and `configuration.revision`. `POST /api/config` requires `X-Config-Revision`: missing returns `428 config_precondition_required`, stale returns `409 config_conflict`, both with `save_outcome: "not-saved"`. The editor sends the revision and keeps edits on conflict. Config/state writes sync file and directory and keep permissions. Config responses are `no-store`. | D5; load states from I1; revision/structured-error part of I3; single-file durability toward I2; image smoke test extended | See deviations below. |
 
+| 2026-11-20 | Config and state store ([config_store.py](../../web/config_store.py)), all three migration steps: the controller reads and writes both files only through the stores; poll commits compare `file_generations()` instead of reloading both files; `config_error`, the per-call path arguments, the global controller and the module-level wrappers are gone. Steady-state reads cost one `stat()` per file (before: up to six config and three state parses per poll). | First step of I2 | Files changed within the last two seconds are compared byte for byte, like git's racy-clean check, so coarse timestamps cannot hide a same-size rewrite. |
+
+**I0 inventory, config/state scope (2026-11-20):** while the web service runs,
+it is the only writer of both files (`persist_state` from commands, keypad
+updates and polls; config save and its `.invalid-*.bak` copy). Deployment
+backup/restore stops the runtime first and requires writer quiescence. The
+deployment preflight, native and handover tools only read and validate the
+config at deploy time. Operator hand edits are the only non-cooperating writer.
+The dummy backend uses its own state file. The full I0 inventory (startup paths,
+supported mounts, failure reproductions) is still open.
+
 Deviations from the section 5 design, recorded so later batches build on what exists:
 
 - **No transition release.** The only first-party writer is the configuration
@@ -54,10 +65,9 @@ Deviations from the section 5 design, recorded so later batches build on what ex
   config, each atomically and durably; there is no pending record, cooperating
   cross-process lock or startup reconciliation yet (I2).
 
-Next: I0 writer/reader inventory and failure reproductions, then the
-[config and state store](#config-and-state-store-first-step-of-i2) as the first
-step of I2, then I1 candidate extraction and preview, then the I2 transaction
-protocol.
+Next: the rest of I0 (startup paths, supported mounts, failure reproductions),
+then I1 candidate extraction and preview, then the I2 transaction protocol inside
+the [config and state store](#config-and-state-store-first-step-of-i2).
 
 ## 1. Goal and completion criteria
 
@@ -475,6 +485,9 @@ durability boundary; network filesystems and unsupported single-file mounts
 need explicit rejection/documentation, not an unverified power-loss guarantee.
 
 ### Config and state store (first step of I2)
+
+**Implemented 2026-11-20** as described below; the measurements describe the
+code before the change.
 
 Measured on 2026-11-20 with six zones, the web application re-reads and
 re-validates the JSON files on every access: `GET /api/rooms` reads the config

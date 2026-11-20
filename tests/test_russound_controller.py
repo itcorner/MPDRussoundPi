@@ -7,21 +7,10 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from web.russound_controller import (
-    apply_shortcut,
     ConfigConflictError,
-    build_config_editor_payload,
-    build_view_payload,
-    get_controller,
-    handle_zone_setting_change,
-    load_state,
-    persist_state,
     RussoundBackend,
     RussoundController,
     RussoundState,
-    set_shared_source,
-    update_config_zones,
-    update_system_power,
-    update_zone_setting,
     Zone,
 )
 
@@ -272,11 +261,7 @@ class RussoundControllerTests(unittest.TestCase):
                 self.assertTrue(payload["config_required"])
                 self.assertIn("unreadable config", payload["message"])
 
-    def test_controller_is_a_singleton_and_loads_state_as_russoundstate(self):
-        controller = get_controller()
-
-        self.assertIsInstance(controller, RussoundController)
-        self.assertIs(controller, get_controller())
+    def test_controller_loads_state_as_russoundstate(self):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.json"
@@ -291,7 +276,8 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = controller.load_state(config_path, state_path, refresh_backend=False)
+            controller = RussoundController(config_path, state_path)
+            state = controller.load_state(refresh_backend=False)
 
             self.assertIsInstance(state, RussoundState)
             self.assertEqual(state.zones[0].name, "Living Room")
@@ -318,7 +304,9 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_state(config_path, state_path)
+            controller = RussoundController(config_path, state_path)
+
+            state = controller.load_state()
 
             self.assertFalse(state["system_power"])
             self.assertEqual(state["zones"][0].name, "Living Room")
@@ -367,7 +355,9 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_state(config_path, state_path, refresh_backend=False)
+            controller = RussoundController(config_path, state_path)
+
+            state = controller.load_state(refresh_backend=False)
 
             self.assertTrue(state["system_power"])
             self.assertTrue(state["zones"][0].power)
@@ -392,7 +382,7 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            payload = handle_zone_setting_change(config_path, state_path, controller_id=1, zone_number=1, setting="volume", value=42)
+            payload = RussoundController(config_path, state_path).handle_zone_setting_change(controller_id=1, zone_number=1, setting="volume", value=42)
 
             self.assertEqual(payload["state"]["zones"][0]["volume"], 42)
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -445,7 +435,7 @@ class RussoundControllerTests(unittest.TestCase):
             )
 
             with patch.object(RussoundBackend, "_connect", return_value=None):
-                payload = build_view_payload(config_path, state_path, refresh_backend=False)
+                payload = RussoundController(config_path, state_path).build_view_payload(refresh_backend=False)
 
             self.assertFalse(payload["backend_status"]["connected"])
             self.assertIn("currently unavailable", payload["backend_status"]["message"])
@@ -558,7 +548,7 @@ class RussoundControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             state_path = Path(tmp_dir) / "state.json"
 
-            payload = build_view_payload(None, state_path)
+            payload = RussoundController(None, state_path).build_view_payload()
 
             self.assertTrue(payload["config_required"])
             self.assertIsNone(payload["config"])
@@ -583,7 +573,7 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            payload = build_view_payload(config_path, state_path, refresh_backend=False)
+            payload = RussoundController(config_path, state_path).build_view_payload(refresh_backend=False)
 
             self.assertEqual([(zone["controller"], zone["zone"]) for zone in payload["config"]["zones"]], [(1, 1)])
             self.assertEqual([(zone["controller"], zone["zone"]) for zone in payload["state"]["zones"]], [(1, 1)])
@@ -605,7 +595,7 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            payload = build_view_payload(config_path, state_path, refresh_backend=False)
+            payload = RussoundController(config_path, state_path).build_view_payload(refresh_backend=False)
             state_zone = payload["state"]["zones"][0]
 
             self.assertEqual(payload["config"]["zones"][0]["name"], "Living Room")
@@ -635,10 +625,8 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            response = update_config_zones(
-                config_path,
-                state_path,
-                {
+            response = RussoundController(config_path, state_path).update_config_zones(
+                payload=                {
                     "zone_slots": [
                         {"controller": 1, "zone": 1, "keypad_id": 2, "enabled": True, "visible": True, "name": "Lounge"},
                         {"controller": 1, "zone": 2, "keypad_id": 1, "enabled": True, "visible": False, "name": "Patio"},
@@ -675,7 +663,7 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            payload = build_config_editor_payload(config_path)
+            payload = RussoundController(config_path).build_config_editor_payload()
 
             self.assertEqual(len(payload["zone_slots"]), 3)
             self.assertTrue(payload["zone_slots"][0]["enabled"])
@@ -710,8 +698,9 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            editor_payload = build_config_editor_payload(config_path)
-            state = load_state(config_path, refresh_backend=False)
+            editor_payload = RussoundController(config_path).build_config_editor_payload()
+            controller = RussoundController(config_path)
+            state = controller.load_state(refresh_backend=False)
 
             self.assertEqual(editor_payload["source_slots"][1], {"id": 2, "name": "TV", "enabled": False})
             self.assertEqual(state.inputs, [{"id": 1, "name": "Radio"}])
@@ -730,10 +719,8 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            update_config_zones(
-                config_path,
-                None,
-                {
+            RussoundController(config_path, None).update_config_zones(
+                payload=                {
                     "zone_slots": [{"controller": 1, "zone": 1, "enabled": True, "visible": True, "name": "Living Room"}],
                     "source_slots": [
                         {"id": 1, "name": "Radio", "enabled": True},
@@ -761,10 +748,8 @@ class RussoundControllerTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValueError, "source id must be from 1 to 6"):
-                update_config_zones(
-                    config_path,
-                    state_path,
-                    {
+                RussoundController(config_path, state_path).update_config_zones(
+                    payload=                    {
                         "zone_slots": [
                             {"controller": 1, "zone": 1, "enabled": True, "visible": True, "name": "Living Room"},
                         ],
@@ -823,16 +808,18 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_state(config_path, state_path)
-            update_zone_setting(state, 1, 1, "power", True)
-            set_shared_source(state, 1)
-            update_zone_setting(state, 1, 1, "volume", 45)
+            controller = RussoundController(config_path, state_path)
+
+            state = controller.load_state()
+            controller.update_zone_setting(1, 1, "power", True, state)
+            controller.set_shared_source(1, state)
+            controller.update_zone_setting(1, 1, "volume", 45, state)
             with patch.object(RussoundBackend, "set_zone_bass", return_value=True), patch.object(RussoundBackend, "set_zone_treble", return_value=True), patch.object(RussoundBackend, "set_zone_loudness", return_value=True), patch.object(RussoundBackend, "set_zone_balance", return_value=True):
-                update_zone_setting(state, 1, 1, "bass", -5)
-                update_zone_setting(state, 1, 1, "treble", 4)
-                update_zone_setting(state, 1, 1, "loudness", True)
-                update_zone_setting(state, 1, 1, "balance", -3)
-            persist_state(state_path, state)
+                controller.update_zone_setting(1, 1, "bass", -5, state)
+                controller.update_zone_setting(1, 1, "treble", 4, state)
+                controller.update_zone_setting(1, 1, "loudness", True, state)
+                controller.update_zone_setting(1, 1, "balance", -3, state)
+            controller.persist_state(state)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertTrue(persisted["system_power"])
@@ -861,12 +848,14 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_state(config_path, state_path)
+            controller = RussoundController(config_path, state_path)
+
+            state = controller.load_state()
             with patch.object(RussoundBackend, "set_zone_bass", return_value=True), patch.object(RussoundBackend, "set_zone_treble", return_value=True), patch.object(RussoundBackend, "set_zone_loudness", return_value=True), patch.object(RussoundBackend, "set_zone_balance", return_value=True):
-                update_zone_setting(state, 1, 2, "bass", 6)
-                update_zone_setting(state, 1, 2, "treble", 5)
-                update_zone_setting(state, 1, 2, "loudness", True)
-                update_zone_setting(state, 1, 2, "balance", -4)
+                controller.update_zone_setting(1, 2, "bass", 6, state)
+                controller.update_zone_setting(1, 2, "treble", 5, state)
+                controller.update_zone_setting(1, 2, "loudness", True, state)
+                controller.update_zone_setting(1, 2, "balance", -4, state)
 
             self.assertEqual(state["zones"][0].bass, 0)
             self.assertEqual(state["zones"][0].treble, 0)
@@ -891,9 +880,11 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_state(config_path, state_path)
+            controller = RussoundController(config_path, state_path)
+
+            state = controller.load_state()
             with patch.object(RussoundBackend, "set_zone_bass", return_value=False):
-                payload = update_zone_setting(state, 1, 1, "bass", 7)
+                payload = controller.update_zone_setting(1, 1, "bass", 7, state)
 
             self.assertEqual(payload.zones[0].bass, 7)
 
@@ -915,8 +906,10 @@ class RussoundControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_state(config_path, state_path)
-            update_zone_setting(state, 1, 1, "source", 2)
+            controller = RussoundController(config_path, state_path)
+
+            state = controller.load_state()
+            controller.update_zone_setting(1, 1, "source", 2, state)
             self.assertEqual(state["zones"][0].source, 2)
             self.assertEqual(state["zones"][1].source, 1)
             self.assertEqual(state["zones"][2].source, 1)
@@ -950,8 +943,10 @@ class RussoundControllerTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                state = load_state(config_path, state_path)
-                update_zone_setting(state, 1, 1, "source", 2)
+                controller = RussoundController(config_path, state_path)
+
+                state = controller.load_state()
+                controller.update_zone_setting(1, 1, "source", 2, state)
 
                 self.assertEqual(dummy_client.calls[0], (1, 1, 1))
 
@@ -985,8 +980,10 @@ class RussoundControllerTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                state = load_state(config_path, state_path)
-                update_zone_setting(state, 2, 3, "power", True)
+                controller = RussoundController(config_path, state_path)
+
+                state = controller.load_state()
+                controller.update_zone_setting(2, 3, "power", True, state)
 
                 self.assertEqual(dummy_client.calls[0], (2, 3, 1))
 
@@ -995,8 +992,9 @@ class RussoundControllerTests(unittest.TestCase):
             config_path = Path(tmp_dir) / "config.json"
             state_path = Path(tmp_dir) / "state.json"
             config_path.write_text(json.dumps({"zones": [{"name": "Living Room", "controller": 1, "zone": 1}], "inputs": [{"id": 1, "name": "Radio"}]}), encoding="utf-8")
-            state = load_state(config_path, state_path)
-            update_zone_setting(state, 1, 1, "power", True)
+            controller = RussoundController(config_path, state_path)
+            state = controller.load_state()
+            controller.update_zone_setting(1, 1, "power", True, state)
             self.assertTrue(state["system_power"])
 
     def test_system_power_can_only_be_turned_off_globally(self):
@@ -1004,13 +1002,14 @@ class RussoundControllerTests(unittest.TestCase):
             config_path = Path(tmp_dir) / "config.json"
             state_path = Path(tmp_dir) / "state.json"
             config_path.write_text(json.dumps({"zones": [{"name": "Living Room", "controller": 1, "zone": 1}], "inputs": [{"id": 1, "name": "Radio"}]}), encoding="utf-8")
-            state = load_state(config_path, state_path)
-            update_zone_setting(state, 1, 1, "power", True)
+            controller = RussoundController(config_path, state_path)
+            state = controller.load_state()
+            controller.update_zone_setting(1, 1, "power", True, state)
             with patch.object(RussoundBackend, "turn_all_zones_on", return_value=True):
-                update_system_power(state, True)
+                controller.update_system_power(True, state)
             self.assertTrue(state["system_power"])
             with patch.object(RussoundBackend, "turn_all_zones_off", return_value=True):
-                update_system_power(state, False)
+                controller.update_system_power(False, state)
             self.assertFalse(state["system_power"])
             self.assertFalse(state["zones"][0].power)
 
@@ -1019,9 +1018,10 @@ class RussoundControllerTests(unittest.TestCase):
             config_path = Path(tmp_dir) / "config.json"
             state_path = Path(tmp_dir) / "state.json"
             config_path.write_text(json.dumps({"zones": [{"id": "living", "name": "Living Room", "controller": 1, "zone": 1}, {"id": "patio", "name": "Patio", "controller": 1, "zone": 2}], "inputs": [{"id": 1, "name": "Radio"}, {"id": 2, "name": "TV"}]}), encoding="utf-8")
-            state = load_state(config_path, state_path)
+            controller = RussoundController(config_path, state_path)
+            state = controller.load_state()
             shortcut = {"zone_addresses": [{"controller": 1, "zone": 1}, {"controller": 1, "zone": 2}], "source": 2}
-            apply_shortcut(state, shortcut)
+            controller.apply_shortcut(shortcut, state)
             self.assertTrue(state["system_power"])
             self.assertTrue(state["zones"][0].power)
             self.assertTrue(state["zones"][1].power)

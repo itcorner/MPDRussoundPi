@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
 
 from web.config_types import backend_endpoint_metadata, coerce_russound_config, env_port, env_str, resolve_backend_endpoint, resolve_backend_poll_interval_seconds, resolve_backend_protocol_audit_log_file
 from web.russound_backend import RussoundBackend
-from web.russound_controller import ConfigConflictError, get_controller
+from web.russound_controller import ConfigConflictError, RussoundController
 from web.russound_state import RussoundState
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
@@ -182,7 +182,7 @@ class RussoundHTTPServer:
         # None means unlimited until run() derives a limit from the worker thread count.
         self._max_event_streams = max_event_streams
         self._event_stream_max_seconds = EVENT_STREAM_MAX_SECONDS
-        self.controller = get_controller(config_path, state_path)
+        self.controller = RussoundController(config_path, state_path)
         self._state_payload = self.controller.build_view_payload(refresh_backend=False)
         self._event_clients_lock = threading.Lock()
         self._event_client_id = 0
@@ -821,6 +821,7 @@ class RussoundHTTPServer:
             config = self.controller.load_config()
             if config is None:
                 return False
+            file_generations = self.controller.file_generations()
             with self._event_backend_lock:
                 shared_backend = self._event_backend
                 backend_generation = self._backend_generation
@@ -828,7 +829,7 @@ class RussoundHTTPServer:
             current_state, config, shared_backend, zone_addresses
         )
         return self._commit_backend_refresh(
-            state_payload, config, shared_backend, backend_generation, refreshed_state
+            state_payload, file_generations, shared_backend, backend_generation, refreshed_state
         )
 
     def _sync_backend_state_if_changed(self) -> bool:
@@ -838,6 +839,7 @@ class RussoundHTTPServer:
             config = self.controller.load_config()
             if config is None:
                 return False
+            file_generations = self.controller.file_generations()
             health_before = self.controller.backend_health_snapshot()
             with self._event_backend_lock:
                 shared_backend = self._event_backend
@@ -848,7 +850,7 @@ class RussoundHTTPServer:
         )
         return self._commit_backend_refresh(
             state_payload,
-            config,
+            file_generations,
             shared_backend,
             backend_generation,
             refreshed_state,
@@ -859,7 +861,7 @@ class RussoundHTTPServer:
     def _commit_backend_refresh(
         self,
         state_payload: dict[str, Any],
-        config: dict[str, Any],
+        file_generations: tuple[int, int],
         backend: RussoundBackend | None,
         backend_generation: int,
         refreshed_state: RussoundState,
@@ -870,10 +872,8 @@ class RussoundHTTPServer:
             with self._event_backend_lock:
                 if self._backend_generation != backend_generation or self._event_backend is not backend:
                     return False
-            if self.controller.load_config() != config:
-                return False
-            current_state = self.controller.load_state(refresh_backend=False)
-            if current_state.to_payload() != state_payload:
+            # Any config or state write since the read makes this hardware result stale.
+            if self.controller.file_generations() != file_generations:
                 return False
             health_changed = False
             if refreshed_health is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from copy import deepcopy
 import errno
 import hashlib
 import hmac
@@ -15,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
+from .config_store import ConfigStore, FileSnapshot, JsonFileStore
 from .config_types import backend_endpoint_metadata, coerce_russound_config, env_str, validate_russound_config
 from .russound_backend import RussoundBackend
 from .russound_state import RussoundState
@@ -42,48 +44,62 @@ class ConfigConflictError(Exception):
 
 
 class RussoundController:
-    """Singleton-style controller that owns config, state, and persistence behavior."""
+    """Application logic over the config and state files, which its stores own."""
 
     def __init__(self, config_path: str | Path | None = None, state_path: str | Path | None = None) -> None:
+        # Keys the config revision so it does not expose a plain fingerprint of
+        # the config bytes. A restart deliberately invalidates open editors.
+        self._revision_key = secrets.token_bytes(32)
+        self._config_store: ConfigStore | None = None
+        self._state_store: JsonFileStore | None = None
         self.config_path = _resolve_config_path(config_path)
         self.state_path = _resolve_state_path(state_path)
         self._backend_health: dict[str, Any] | None = None
         self._shared_backend: RussoundBackend | None = None
-        # Keys the config revision so it does not expose a plain fingerprint of
-        # the config bytes. A restart deliberately invalidates open editors.
-        self._revision_key = secrets.token_bytes(32)
+
+    # The stores own the files; assigning a different path starts a new store.
+    @property
+    def config_path(self) -> Path | None:
+        return self._config_store.path if self._config_store is not None else None
+
+    @config_path.setter
+    def config_path(self, path: str | Path | None) -> None:
+        resolved = _resolve_config_path(path)
+        if resolved != self.config_path:
+            self._config_store = (None if resolved is None
+                                  else ConfigStore(resolved, validate_russound_config, self._revision_key))
+
+    @property
+    def state_path(self) -> Path:
+        assert self._state_store is not None
+        return self._state_store.path
+
+    @state_path.setter
+    def state_path(self, path: str | Path | None) -> None:
+        resolved = _resolve_state_path(path)
+        if self._state_store is None or resolved != self._state_store.path:
+            self._state_store = JsonFileStore(resolved, error_prefix="Cannot load state")
+
+    def config_snapshot(self) -> FileSnapshot:
+        """The current config file contents as one consistent snapshot."""
+        if self._config_store is None:
+            return _NO_CONFIG_PATH
+        return self._config_store.current()
+
+    def file_generations(self) -> tuple[int, int]:
+        """Change counters of the config and state files; equal values mean unchanged content."""
+        assert self._state_store is not None
+        return self.config_snapshot().generation, self._state_store.current().generation
 
     def config_revision(self) -> str:
         """Opaque token for the exact config bytes, or for their absence."""
-        resolved = _resolve_config_path(self.config_path)
-        if resolved is None:
-            material = b"no-path"
-        else:
-            try:
-                material = b"present\0" + resolved.read_bytes()
-            except FileNotFoundError:
-                material = b"absent"
-            except OSError:
-                material = b"unreadable"
-        target = str(resolved).encode("utf-8", "surrogateescape")
-        return hmac.new(self._revision_key, target + b"\0" + material, hashlib.sha256).hexdigest()[:32]
+        if self._config_store is None:
+            return hmac.new(self._revision_key, b"None\0no-path", hashlib.sha256).hexdigest()[:32]
+        return self._config_store.revision()
 
     def config_load_state(self) -> str:
         """Classify the config file as missing, valid, invalid or unreadable."""
-        resolved = _resolve_config_path(self.config_path)
-        if resolved is None:
-            return "missing"
-        try:
-            text = resolved.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return "missing"
-        except (OSError, UnicodeDecodeError):
-            return "unreadable"
-        try:
-            validate_russound_config(json.loads(text))
-        except ValueError:
-            return "invalid"
-        return "valid"
+        return self.config_snapshot().load_state
 
     def configuration_metadata(self) -> dict[str, str]:
         return {"load_state": self.config_load_state(), "revision": self.config_revision()}
@@ -94,29 +110,22 @@ class RussoundController:
         self._backend_health = None
 
     def load_config(self) -> dict[str, Any] | None:
-        self.config_error = None
-        resolved = _resolve_config_path(self.config_path)
-        if resolved is None or not resolved.exists():
-            self.config_error = "A config file is required. Complete setup on the Configuration page."
+        """A private copy of the valid configuration, or None (see ``config_message``)."""
+        snapshot = self.config_snapshot()
+        if snapshot.load_state != "valid":
             return None
-        try:
-            with resolved.open("r", encoding="utf-8") as handle:
-                data: Any = json.load(handle)
-                validate_russound_config(data)
-                return cast(dict[str, Any], data)
-        except (ValueError, OSError) as exc:
-            self.config_error = f"Cannot load configuration: {exc}"
-        return None
+        return cast(dict[str, Any], deepcopy(snapshot.value))
+
+    def config_message(self) -> str | None:
+        """Why no valid configuration is available, or None when it is."""
+        snapshot = self.config_snapshot()
+        if snapshot.load_state == "missing":
+            return "A config file is required. Complete setup on the Configuration page."
+        return snapshot.error
 
     def build_config_editor_payload(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
     ) -> dict[str, Any]:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         config = self.load_config()
         config_required = config is None
         if config is None:
@@ -168,7 +177,7 @@ class RussoundController:
         return {
             "config": {key: value for key, value in config.items() if key != "notes"},
             "config_required": config_required,
-            "message": self.config_error if config_required else "",
+            "message": self.config_message() if config_required else "",
             "config_writable": self.config_path is not None,
             "effective_backend": backend_endpoint_metadata(None if config_required else coerce_russound_config(config)),
             "backend_overrides": {
@@ -182,8 +191,6 @@ class RussoundController:
 
     def update_config_zones(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         payload: dict[str, Any] | None = None,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
@@ -192,10 +199,6 @@ class RussoundController:
         With ``expected_revision`` the save only proceeds if the config file is
         still exactly the one the editor loaded; callers serialize writers.
         """
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         if payload is None:
             raise ValueError("Invalid request body")
         if expected_revision is not None and not hmac.compare_digest(
@@ -411,7 +414,9 @@ class RussoundController:
                 backup_path = Path(backup.name)
             shutil.copyfile(self.config_path, backup_path)
             _fsync_path(backup_path)
-        persist_config(self.config_path, updated_config)
+        _persist_config(self.config_path, updated_config)
+        assert self._config_store is not None
+        self._config_store.record_write()
         return self.build_config_editor_payload()
 
     def _sync_system_power(self, state: RussoundState) -> RussoundState:
@@ -514,32 +519,20 @@ class RussoundController:
 
     def load_state(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         refresh_backend: bool = True,
         backend: RussoundBackend | None = None,
     ) -> RussoundState:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         config = self.load_config()
         if config is None:
             return RussoundState()
 
-        resolved_state_path = _resolve_state_path(self.state_path)
-        if resolved_state_path.exists():
-            try:
-                with resolved_state_path.open("r", encoding="utf-8") as handle:
-                    data: Any = json.load(handle)
-                if isinstance(data, dict):
-                    state_data = cast(dict[str, Any], data)
-                    state = self.ensure_state_matches_config(state_data, config)
-                    if refresh_backend:
-                        return self._sync_state_from_backend(state, config, backend)
-                    return self._sync_system_power(state)
-            except (json.JSONDecodeError, OSError):
-                pass
+        assert self._state_store is not None
+        data = self._state_store.value()
+        if isinstance(data, dict):
+            state = self.ensure_state_matches_config(cast(dict[str, Any], data), config)
+            if refresh_backend:
+                return self._sync_state_from_backend(state, config, backend)
+            return self._sync_system_power(state)
 
         inputs: list[dict[str, Any]] = [
             {"id": input_item["id"], "name": input_item["name"]}
@@ -622,10 +615,12 @@ class RussoundController:
         return self._sync_system_power(state)
 
     def persist_state(self, state: RussoundState | dict[str, Any] | None = None) -> Path:
-        resolved_state_path = _resolve_state_path(self.state_path)
+        assert self._state_store is not None
         payload = state if state is not None else RussoundState()
         prepared_payload = _prepare_state_payload_for_persistence(payload)
-        return _persist_json_file(resolved_state_path, prepared_payload)
+        path = _persist_json_file(self._state_store.path, prepared_payload)
+        self._state_store.record_write()
+        return path
 
     def _backend_for_config(self, config: dict[str, Any] | None = None) -> RussoundBackend | None:
         if self._shared_backend is not None:
@@ -700,14 +695,8 @@ class RussoundController:
 
     def handle_system_power_change(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         power: bool | None = None,
     ) -> dict[str, Any]:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         if power is None:
             raise ValueError("Power value is required")
         state = self.load_state(refresh_backend=False)
@@ -717,14 +706,8 @@ class RussoundController:
 
     def handle_source_change(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         source: int | None = None,
     ) -> dict[str, Any]:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         if source is None:
             raise ValueError("Source value is required")
         state = self.load_state(refresh_backend=False)
@@ -736,14 +719,8 @@ class RussoundController:
 
     def handle_shortcut_activation(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         shortcut_id: str | None = None,
     ) -> dict[str, Any]:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         if shortcut_id is None:
             raise ValueError("Shortcut id is required")
         state = self.load_state(refresh_backend=False)
@@ -770,17 +747,11 @@ class RussoundController:
 
     def handle_zone_setting_change(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         controller_id: int | None = None,
         zone_number: int | None = None,
         setting: str | None = None,
         value: Any = None,
     ) -> dict[str, Any]:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         if controller_id is None or zone_number is None or setting is None:
             raise ValueError("Zone target and setting are required")
         state = self.load_state(refresh_backend=False)
@@ -797,14 +768,8 @@ class RussoundController:
 
     def build_view_payload(
         self,
-        config_path: str | Path | None = None,
-        state_path: str | Path | None = None,
         refresh_backend: bool = True,
     ) -> dict[str, Any]:
-        if config_path is not None:
-            self.config_path = _resolve_config_path(config_path)
-        if state_path is not None:
-            self.state_path = _resolve_state_path(state_path)
         config = self.load_config()
         state = self.load_state(refresh_backend=refresh_backend)
         backend_status = self._backend_status(config, probe=refresh_backend)
@@ -812,7 +777,7 @@ class RussoundController:
             return {
                 "config": None,
                 "config_required": True,
-                "message": self.config_error or "Complete setup on the Configuration page.",
+                "message": self.config_message() or "Complete setup on the Configuration page.",
                 "backend_status": backend_status,
                 "state": state.to_payload(),
             }
@@ -833,6 +798,9 @@ def _check_api_backend_fields(backend: dict[str, Any], saved_backend: dict[str, 
     device = backend.get("device")
     if device and device != saved_backend.get("device") and not _SERIAL_DEVICE_PATTERN.fullmatch(device):
         raise ValueError("Backend device must be a serial device such as /dev/ttyUSB0 or /dev/serial/by-id/...")
+
+
+_NO_CONFIG_PATH = FileSnapshot("missing", None, None, None, None, 0)
 
 
 def _resolve_config_path(path: str | Path | None) -> Path | None:
@@ -1011,154 +979,9 @@ def _persist_json_file(destination: Path, payload: Any) -> Path:
     return destination
 
 
-def persist_config(config_path: str | Path | None, config: dict[str, Any]) -> Path:
+def _persist_config(config_path: str | Path | None, config: dict[str, Any]) -> Path:
     resolved_config_path = _resolve_config_path(config_path)
     if resolved_config_path is None:
         raise ValueError("A config path is required to persist configuration")
     prepared_config = _prepare_config_payload_for_persistence(config)
     return _persist_json_file(resolved_config_path, prepared_config)
-
-
-def load_config(config_path: str | Path | None = None) -> dict[str, Any] | None:
-    return get_controller(config_path=config_path).load_config()
-
-
-def load_state(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-    refresh_backend: bool = True,
-) -> RussoundState:
-    return get_controller(config_path=config_path, state_path=state_path).load_state(refresh_backend=refresh_backend)
-
-
-def ensure_state_matches_config(state: dict[str, Any] | RussoundState, config: dict[str, Any]) -> RussoundState:
-    return get_controller().ensure_state_matches_config(state, config)
-
-
-def persist_state(state_path: str | Path | None, state: RussoundState | dict[str, Any]) -> Path:
-    return get_controller(state_path=state_path).persist_state(state)
-
-
-def update_system_power(state: RussoundState | dict[str, Any], power: bool) -> RussoundState:
-    return get_controller().update_system_power(power, state if isinstance(state, RussoundState) else None)
-
-
-def set_shared_source(state: RussoundState | dict[str, Any], source: int | None) -> RussoundState:
-    return get_controller().set_shared_source(source, state if isinstance(state, RussoundState) else None)
-
-
-def update_zone_setting(
-    state: RussoundState | dict[str, Any],
-    controller_id: int,
-    zone_number: int,
-    setting: str,
-    value: Any,
-) -> RussoundState:
-    return get_controller().update_zone_setting(controller_id, zone_number, setting, value, state if isinstance(state, RussoundState) else None)
-
-
-def apply_shortcut(state: RussoundState | dict[str, Any], shortcut: dict[str, Any]) -> RussoundState:
-    return get_controller().apply_shortcut(shortcut, state if isinstance(state, RussoundState) else None)
-
-
-def handle_system_power_change(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-    power: bool | None = None,
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).handle_system_power_change(
-        config_path=config_path,
-        state_path=state_path,
-        power=power,
-    )
-
-
-def handle_source_change(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-    source: int | None = None,
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).handle_source_change(
-        config_path=config_path,
-        state_path=state_path,
-        source=source,
-    )
-
-
-def handle_shortcut_activation(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-    shortcut_id: str | None = None,
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).handle_shortcut_activation(
-        config_path=config_path,
-        state_path=state_path,
-        shortcut_id=shortcut_id,
-    )
-
-
-def handle_zone_setting_change(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-    controller_id: int | None = None,
-    zone_number: int | None = None,
-    setting: str | None = None,
-    value: Any = None,
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).handle_zone_setting_change(
-        config_path=config_path,
-        state_path=state_path,
-        controller_id=controller_id,
-        zone_number=zone_number,
-        setting=setting,
-        value=value,
-    )
-
-
-def build_view_payload(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-    refresh_backend: bool = True,
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).build_view_payload(
-        config_path=config_path,
-        state_path=state_path,
-        refresh_backend=refresh_backend,
-    )
-
-
-def build_config_editor_payload(
-    config_path: str | Path | None = None,
-    state_path: str | Path | None = None,
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).build_config_editor_payload(
-        config_path=config_path,
-        state_path=state_path,
-    )
-
-
-def update_config_zones(
-    config_path: str | Path | None,
-    state_path: str | Path | None,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    return get_controller(config_path=config_path, state_path=state_path).update_config_zones(
-        config_path=config_path,
-        state_path=state_path,
-        payload=payload,
-    )
-
-
-def get_controller(config_path: str | Path | None = None, state_path: str | Path | None = None) -> RussoundController:
-    global _controller
-    if _controller is None:
-        _controller = RussoundController(config_path=config_path, state_path=state_path)
-        return _controller
-    if config_path is not None:
-        _controller.config_path = _resolve_config_path(config_path)
-    if state_path is not None:
-        _controller.state_path = _resolve_state_path(state_path)
-    return _controller
-
-
-_controller: RussoundController | None = None
