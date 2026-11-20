@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from playbackfixtures import installed_commands
 from unittest.mock import Mock, patch
 
 
@@ -18,7 +19,8 @@ with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
 
 class MPDSetupTests(unittest.TestCase):
     def run_cli(self, option, home, runtime, run, config="config.json"):
-        with patch.object(sys, "argv", ["mpdsetup.py", option, config]):
+        with installed_commands(home, "mpd-supervisor", "audio-ready"), \
+                patch.object(sys, "argv", ["mpdsetup.py", option, config]):
             with patch.dict(os.environ, {"HOME": home, "XDG_RUNTIME_DIR": runtime}):
                 with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
                     with patch("subprocess.run", side_effect=run), patch("time.sleep"), patch(
@@ -127,7 +129,8 @@ class MPDSetupTests(unittest.TestCase):
 
     def test_instance_and_supervisor_units_include_headless_recovery(self):
         instance = mpdsetup.MPDInstance("Stereo Front", 6601)
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, \
+                installed_commands(directory, "mpd-supervisor", "audio-ready") as bin_dir:
             with patch.object(mpdsetup, "SYSTEMD_USER_CONFIG_DIR", directory):
                 mpdsetup.create_mpd_systemd_service(instance, "/home/user/audio config.json")
                 mpdsetup.create_supervisor_service("/home/user/audio config.json")
@@ -144,7 +147,9 @@ class MPDSetupTests(unittest.TestCase):
         self.assertIn("RestartSec=5", unit)
         self.assertIn("TimeoutStopSec=120", unit)
         self.assertIn("StartLimitBurst=10", unit)
-        self.assertIn("mpdsupervisor.py", supervisor)
+        # Units run the package's console commands from the installing environment.
+        self.assertIn(f"ExecStart={mpdsetup.systemd_quote(str(bin_dir / 'mpd-supervisor'))} ", supervisor)
+        self.assertIn(f"ExecStartPre={mpdsetup.systemd_quote(str(bin_dir / 'audio-ready'))} ", unit)
         self.assertEqual(available, ["mpd_stereo_front.service"])
 
     def test_output_generator_uses_software_mixer_for_startup_gate(self):

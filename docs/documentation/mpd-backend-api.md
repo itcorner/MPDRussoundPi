@@ -74,8 +74,8 @@ Output IDs match `[a-z][a-z0-9_-]{0,63}` and name the MPD units
 the admin. The CLI selects outputs by ID:
 
 ```sh
-python mpdctrl.py --config-revision ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --set-gain -6.1 --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
+mpdctrl --config-revision ~/.config/mpdrussoundpi/config.json
+mpdctrl --set-gain -6.1 --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
 ```
 
 ## Read-only detailed observations (S02)
@@ -172,10 +172,11 @@ Create a private service-token file outside the checkout (mode 0600, private
 parent directory), containing a cryptographically random token of at least
 32 ASCII characters without whitespace. Never pass credentials on the command
 line or commit them. The token is read once on startup; rotation requires restart.
-For local testing, use a separate migrated config with persisted output IDs/labels:
+For local testing, install the package (`pip install -e ".[agent]"` from the
+repository root) and use a separate migrated config with persisted output IDs/labels:
 
 ```sh
-python mpdrussoundpi/russound/playbackagent.py migrated-test-config.json \
+playback-agent migrated-test-config.json \
   --agent-id musicpi --token-file /private/path/playback-agent-token
 ```
 

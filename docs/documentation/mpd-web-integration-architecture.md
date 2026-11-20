@@ -159,7 +159,7 @@ are invalidations without the view payload.
 - Generated MPD configs always bind `127.0.0.1` and have no MPD password;
   only local processes (agent, supervisor, audit, CLI) connect. Remote MPD
   clients are intentionally unsupported. Existing installs must rerun
-  `mpdsetup.py --install` and restart MPD to drop the earlier all-interface
+  `mpd-setup --install` and restart MPD to drop the earlier all-interface
   binding.
 
 ## 4. Architecture choices
@@ -477,7 +477,7 @@ derived the stream name, output ID and label from the configured sink (for
 example `stereo_front` / `Stereo Front`) and renames intention keys. It is an
 offline maintenance step: stop the agent, supervisor and MPD units, run it,
 remove the old `mpd_*` units/configs and regenerate them with
-`mpdsetup.py --install`. Ports, sinks, gain and selected sources are unchanged;
+`mpd-setup --install`. Ports, sinks, gain and selected sources are unchanged;
 historical operations keep their former output IDs. The dashboard shows the
 selected station (TuneIn name, else MPD's ICY station name) next to the state. Superseded by the [configuration split](../plans/mpd_done_config-split.md): the tool was removed, outputs are now keyed by `id` in `config.json` and runtime state lives in `playback.json`.
 

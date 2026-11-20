@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mpdrussoundpi.russound.lib.runtimelogging import SafeFormatter, configure_console
-from mpdrussoundpi.russound.lib.servicecredentials import read_service_token, validate_service_token
+from mpdrussoundpi.common.runtimelogging import SafeFormatter, configure_console
+from mpdrussoundpi.common.servicecredentials import read_service_token, validate_service_token
 from web.config_types import backend_endpoint_metadata, coerce_russound_config, env_port, resolve_backend_endpoint
 from web.playback_status import PlaybackAgentConfig, PlaybackStatusClient
 from web.russound_server import _configure_logging, main

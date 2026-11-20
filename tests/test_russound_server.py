@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 from web.russound_server import RussoundHTTPServer, RussoundRequestHandler, _configure_logging, _connection_socket_options
 from web.russound_state import RussoundState
 from web.zone import Zone
-from mpdrussoundpi.russound.lib.tunein import TuneInError
+from mpdrussoundpi.common.tunein import TuneInError
 
 
 def _revision(editor: dict) -> dict[str, str]:

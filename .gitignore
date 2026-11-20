@@ -20,3 +20,8 @@ docker/logs/*
 docker/secrets/*
 russound_capture.log.bak
 .vscode/settings.json
+
+# Written into the checkout by (editable) package installs; the candidate
+# staging check requires an otherwise clean checkout.
+*.egg-info/
+/build/

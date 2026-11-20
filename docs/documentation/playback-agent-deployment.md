@@ -100,12 +100,17 @@ stations are deliberately unsupported. See the
 On the Pi, initialize/reconcile once, then enable supervision:
 
 ```sh
-cd ~/MPDRussoundPi/mpdrussoundpi/russound
-~/russound-venv/bin/python mpdsupervisor.py --once ~/.config/mpdrussoundpi/config.json
+~/russound-venv/bin/mpd-supervisor --once ~/.config/mpdrussoundpi/config.json
 systemctl --user enable --now mpd_meta_control.service mpd_playback_supervisor.service
 ```
 
 Do not start supervision after a failed reconciliation; inspect diagnostics.
+`mpd-supervisor` is one of the console scripts of the installed `mpdrussoundpi` package in
+the audio environment (`~/russound-venv/bin/`). In an environment installed
+before the package layout change, run the same arguments as
+`python <script>.py` from `~/MPDRussoundPi/mpdrussoundpi/russound/` instead
+(for example `python mpdctrl.py` for `mpdctrl`).
+
 
 ## 3. Stage an immutable agent candidate
 

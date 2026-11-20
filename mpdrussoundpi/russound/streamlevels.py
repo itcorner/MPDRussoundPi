@@ -26,7 +26,7 @@ if not __package__:
 from mpdrussoundpi.russound.lib.outputconfig import parse_configuration
 from mpdrussoundpi.russound.lib.playbackstate import read_state
 from mpdrussoundpi.russound.lib.streamgain import validate_gain_db
-from mpdrussoundpi.russound.lib.tunein import TuneInCatalog, TuneInError
+from mpdrussoundpi.common.tunein import TuneInCatalog, TuneInError
 
 
 JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]

@@ -1,14 +1,17 @@
 # Plan: package layout and single module names
 
-Status: **open** (2026-11-20). Phase 1 is implemented and verified locally; it
-reaches the Pi with the next reviewed deployment. Phase 2 changes how the Pi
-services are installed and needs a separately reviewed Pi rollout.
+Status: **open** (2026-11-20). Phases 1 and 2 are implemented and verified
+locally; neither is deployed. Both reach the Pi with one reviewed rollout (see
+the [Phase 2 rollout checklist](#phase-2-rollout-checklist)). Phase 3 removes
+the transition bootstrap after that rollout is accepted.
 
 ## Progress
 
 | Date | Change | Evidence |
 |---|---|---|
 | 2026-11-20 | Phase 1 implemented (steps 1-7). | Full test run loads no `lib.*` module and nothing twice (before: four). Full Python/Node suites, the web image smoke test and all 9 scripts run by file path pass. [Guard tests](../../tests/test_import_layout.py) build the egress install and preflight trees from the playbook and run them. |
+
+| 2026-11-20 | Phase 2 implemented in code (see deviations below). | `pyproject.toml`; `mpdrussoundpi.common`; staging playbooks install the candidate editable and run its commands; generated units and the agent template use console commands. Editable install in a fresh venv runs all 10 commands from another directory and leaves the checkout clean; a regular wheel contains the static web files, Lua policies and seed config. CI runs the same check. |
 
 **Pi rollout notes for Phase 1:** agent, supervisor, setup and audit scripts
 keep their commands, paths and virtual environments; the new code works from
@@ -105,6 +108,58 @@ virtual environment and units, as today.
 **Exit criteria:** Pi services, egress and the web image run from installed
 packages with no file lists or `sys.path` edits; deployment and profile tests
 cover the new commands; a reviewed Pi rollout and observation pass.
+
+### Phase 2 as implemented: deviations
+
+- **Editable installs on the Pi.** Each candidate already has its own immutable
+  checkout next to its venv, so `pip install -e "<source>[agent|audio]"` gives
+  the same isolation as a copy. The code keeps running from the checkout, so
+  `__file__`-relative resources (Lua policies, the audit's git revision probe)
+  need no special handling. `*.egg-info/` and `/build/` are ignored so the
+  staging "clean checkout" verification still holds.
+- **Docker copies two directories instead of `pip install .`.** The web image
+  contains `web/` and `mpdrussoundpi/common/` only; installing the whole
+  package would ship the Pi code too. A guard test keeps `web` from importing
+  anything but `mpdrussoundpi.common`, so the image needs no file list.
+- **Egress keeps root-owned copied files instead of a root venv.** The filter
+  uses only the standard library and `common/` (4 files). A venv would run pip
+  and a build backend as root during deployment for no dependency benefit. The
+  copy list stays in the playbook, and a guard test builds and runs that tree.
+- **The `sys.path` bootstrap stays until the rollout is accepted.** Units
+  installed before Phase 2 run the scripts by path; keeping the bootstrap lets
+  them work until they are regenerated, and keeps rollback simple. Removing it
+  is Phase 3.
+- Dependency lists stay in the requirements files; `pyproject.toml` reads them
+  as optional dependencies (`web`, `agent`, `audio`).
+
+### Phase 2 rollout checklist
+
+Agent and audio activation are not automated in this repository; the reviewed
+rollout performs these steps on the Pi:
+
+1. **Audio:** stage a candidate (`setup-musicpi.yml --tags stage`; it now
+   verifies `mpd-setup`, `audio-setup`, `mpd-supervisor` and `audio-ready`).
+   During activation run `<venv>/bin/mpd-setup --install <config>` from the
+   activated environment so the MPD and supervisor units are regenerated with
+   `audio-ready` and `mpd-supervisor`; then `mpd-supervisor --once` before
+   enabling supervision. Existing units keep working until regenerated.
+2. **Agent:** stage a candidate (it now verifies `playback-agent --help`);
+   install the unit from the template, whose `ExecStart` is
+   `{{ playback_agent_venv }}/bin/playback-agent`; restart and verify health
+   through the proxy.
+3. **Egress:** run `deploy-playback-egress.yml`. It installs
+   `mpdrussoundpi/{russound/playbackegress.py,common/…}`, rewrites the unit and
+   MPD drop-ins and removes the earlier layouts.
+4. **Audit service**, if installed: rerun `playback-audit --install-service`.
+5. **Web:** deploy an image built from this revision (Dockerfile changed).
+6. Observe, then start Phase 3.
+
+## Phase 3: remove the transition bootstrap
+
+After the Phase 2 rollout is accepted: remove the `if not __package__`
+bootstrap from the entry scripts, run scripts only through console commands or
+`python -m`, drop the guard test for running a script by file path, and remove
+the "installed before the package layout change" notes from the guides.
 
 ## Out of scope
 

@@ -32,8 +32,8 @@ from web.russound_controller import ConfigConflictError, RussoundController
 from web.russound_state import RussoundState
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
-from mpdrussoundpi.russound.lib.tunein import TuneInCatalog, TuneInError
-from mpdrussoundpi.russound.lib.runtimelogging import SafeFormatter, configure_console
+from mpdrussoundpi.common.tunein import TuneInCatalog, TuneInError
+from mpdrussoundpi.common.runtimelogging import SafeFormatter, configure_console
 
 WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"

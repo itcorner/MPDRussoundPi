@@ -106,10 +106,20 @@
           - "{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/venv"
       tags: stage
 
-    - name: Install only bounded agent dependencies into the candidate environment
+    # Editable: the venv runs the code of this candidate's own immutable checkout.
+    - name: Install the candidate package with only its bounded agent dependencies
       ansible.builtin.pip:
-        requirements: "{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/source/mpdrussoundpi/russound/requirements-agent.txt"
+        name: "{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/source[agent]"
+        editable: true
         virtualenv: "{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/venv"
+      tags: stage
+
+    - name: Verify the candidate's agent command starts
+      ansible.builtin.command:
+        argv: ["{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/venv/bin/playback-agent", --help]
+      environment:
+        PYTHONDONTWRITEBYTECODE: "1"
+      changed_when: false
       tags: stage
 
     - name: Verify the staged source is clean
@@ -147,11 +157,9 @@
           - -c
           - >-
             import sys;
-            sys.path.insert(0, sys.argv[1]);
-            from lib.mpdbackend import MPDBackend;
-            backend = MPDBackend(sys.argv[2]);
+            from mpdrussoundpi.russound.lib.mpdbackend import MPDBackend;
+            backend = MPDBackend(sys.argv[1]);
             print(len(backend.list_outputs()))
-          - "{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/source/mpdrussoundpi/russound"
           - "{{ playback_agent_config }}"
       environment:
         PYTHONDONTWRITEBYTECODE: "1"

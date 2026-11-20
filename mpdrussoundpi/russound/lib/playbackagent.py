@@ -15,7 +15,7 @@ from .mpdbackend import BackendError, MPDBackend
 from .playbackstatus import OutputObservation, PlaybackCollector
 from .playbackoperations import ACTIONS, FAVORITE_ACTIONS, OperationError, OperationManager
 from .stations import Station
-from .servicecredentials import validate_service_token
+from mpdrussoundpi.common.servicecredentials import validate_service_token
 
 
 AUDIO_REFRESH_INTERVAL_SECONDS = 20.0

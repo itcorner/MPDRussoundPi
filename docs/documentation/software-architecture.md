@@ -62,7 +62,8 @@ configuration maps that input to its playback output.
 | Playback agent | `playback-agent.service` behind `playback-agent-proxy.service` (Caddy) | [playbackagent.py](../../mpdrussoundpi/russound/playbackagent.py), `lib/playback*.py` | Versioned read and operations API for the local MPD outputs |
 | Playback supervisor | `mpd_playback_supervisor.service` (systemd user unit) | [mpdsupervisor.py](../../mpdrussoundpi/russound/mpdsupervisor.py), [lib/playbackwatchdog.py](../../mpdrussoundpi/russound/lib/playbackwatchdog.py) | Starts each `mpd_<output>.service`, restores the saved playback intention and restarts instances the stall watchdog finds hung or frozen |
 | Audio and MPD setup | One-shot scripts run by Ansible | [audiosetup.py](../../mpdrussoundpi/russound/audiosetup.py), [mpdsetup.py](../../mpdrussoundpi/russound/mpdsetup.py) | Create PipeWire sinks per USB device and one MPD instance per output |
-| Egress enforcement | `playback-egress.service` | [playbackegress.py](../../mpdrussoundpi/russound/playbackegress.py), [publicnetwork.py](../../mpdrussoundpi/russound/lib/publicnetwork.py) | MPD-only packet filter that allows public stream destinations only |
+| Egress enforcement | `playback-egress.service` | [playbackegress.py](../../mpdrussoundpi/russound/playbackegress.py), [publicnetwork.py](../../mpdrussoundpi/common/publicnetwork.py) | MPD-only packet filter that allows public stream destinations only |
+| Packaging | `pyproject.toml` | [pyproject.toml](../../pyproject.toml), [common/](../../mpdrussoundpi/common/) | Installs `web` and `mpdrussoundpi` with console commands (`playback-agent`, `mpd-supervisor`, `mpd-setup`, …). The web application may import only `mpdrussoundpi.common`; Pi venvs install the candidate checkout editable |
 | Diagnostics | CLI on the Pi | [playbackaudit.py](../../mpdrussoundpi/russound/playbackaudit.py), [streamlevels.py](../../mpdrussoundpi/russound/streamlevels.py), [mpdctrl.py](../../mpdrussoundpi/russound/mpdctrl.py) | Endurance recording, stream loudness measurement, manual MPD control |
 | Dummy backend | `russound-dummy` container | [tool/dummy_backend/](../../tool/dummy_backend/) | RNET simulator with keypad TUI for hardware-free testing |
 | Capture tool | CLI | [tool/russound_capture.py](../../tool/russound_capture.py) | Decodes RNET traffic from serial, TCP or hex dumps |
@@ -281,9 +282,9 @@ flowchart TB
   never evaluates Russound state.
 - `audiosetup.py` and `mpdsetup.py` generate the PipeWire sinks and MPD
   instances from `config.json`. They run from Ansible, not continuously.
-- Station resolution ([tunein.py](../../mpdrussoundpi/russound/lib/tunein.py))
+- Station resolution ([tunein.py](../../mpdrussoundpi/common/tunein.py))
   and the MPD packet filter share
-  [publicnetwork.py](../../mpdrussoundpi/russound/lib/publicnetwork.py), so the
+  [publicnetwork.py](../../mpdrussoundpi/common/publicnetwork.py), so the
   agent's fetches and MPD's own connections follow the same rule: public
   destinations only.
 

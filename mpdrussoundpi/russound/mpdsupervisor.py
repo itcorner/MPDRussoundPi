@@ -11,7 +11,7 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from mpdrussoundpi.russound.lib.mpdbackend import BackendError, MPDBackend
 from mpdrussoundpi.russound.lib.playbackwatchdog import create_watchdog
-from mpdrussoundpi.russound.lib.runtimelogging import configure_console
+from mpdrussoundpi.common.runtimelogging import configure_console
 
 
 def main() -> None:

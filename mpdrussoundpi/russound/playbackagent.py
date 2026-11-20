@@ -15,8 +15,8 @@ if not __package__:
 from mpdrussoundpi.russound.lib.playbackagent import AgentObserver, create_app
 from mpdrussoundpi.russound.lib.mpdbackend import MPDBackend
 from mpdrussoundpi.russound.lib.playbackoperations import OperationManager
-from mpdrussoundpi.russound.lib.servicecredentials import read_service_token
-from mpdrussoundpi.russound.lib.runtimelogging import configure_console
+from mpdrussoundpi.common.servicecredentials import read_service_token
+from mpdrussoundpi.common.runtimelogging import configure_console
 
 
 def main() -> None:

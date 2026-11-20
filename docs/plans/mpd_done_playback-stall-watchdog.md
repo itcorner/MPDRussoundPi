@@ -282,7 +282,7 @@ Optional, admin-owned, all fields optional with the defaults shown:
 ### State file
 
 `$XDG_STATE_HOME/mpdrussoundpi/watchdog.json`, written atomically via
-[`atomicjson`](../../mpdrussoundpi/russound/lib/atomicjson.py) on every
+[`atomicjson`](../../mpdrussoundpi/common/atomicjson.py) on every
 watchdog action or deferral transition (not on healthy probes). History is
 bounded (last 20 entries per list). Consumption by the playback agent
 snapshot and the web health status is a follow-up item.

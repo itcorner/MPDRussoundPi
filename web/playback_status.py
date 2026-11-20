@@ -13,9 +13,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
-from mpdrussoundpi.russound.lib.tunein import TuneInCatalog
+from mpdrussoundpi.common.tunein import TuneInCatalog
 from web.config_types import env_str
-from mpdrussoundpi.russound.lib.servicecredentials import read_service_token
+from mpdrussoundpi.common.servicecredentials import read_service_token
 
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0

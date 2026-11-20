@@ -44,9 +44,14 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         reserve = next(task["ansible.builtin.command"]["argv"] for task in self.deploy["tasks"]
                        if "Atomically reserve" in task["name"])
         self.assertIn("/usr/bin/mkdir", reserve)
-        self.assertIn("requirements-agent.txt", next(
-            task["ansible.builtin.pip"]["requirements"] for task in self.deploy["tasks"]
-            if "ansible.builtin.pip" in task))
+        pip = next(task["ansible.builtin.pip"] for task in self.deploy["tasks"] if "ansible.builtin.pip" in task)
+        # The candidate's own checkout, installed editable with only the agent extra.
+        self.assertEqual(pip["name"], "{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/source[agent]")
+        self.assertTrue(pip["editable"])
+        command = next(task["ansible.builtin.command"]["argv"] for task in self.deploy["tasks"]
+                       if task["name"] == "Verify the candidate's agent command starts")
+        self.assertEqual(command, ["{{ playback_agent_candidate_root }}/{{ playback_agent_revision }}/venv/bin/playback-agent",
+                                   "--help"])
         mode = next(task["ansible.builtin.assert"]["that"] for task in self.deploy["pre_tasks"]
                     if "Require explicit revision-pinned" in task["name"])
         self.assertIn("playback_agent_mode == 'stage'", mode)
