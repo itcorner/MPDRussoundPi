@@ -99,7 +99,8 @@ flowchart TB
 | Module | Role |
 |---|---|
 | [russound_server.py](../../web/russound_server.py) | Owns the process: Flask routes served by Waitress, the SSE client registry, the background threads, the state revision counter and the cross-site request checks. All hardware-touching handlers run under one `state_lock`. |
-| [russound_controller.py](../../web/russound_controller.py) | Application logic: loads and saves `russound_config.json` and `russound_state.json`, applies zone and shortcut changes through the backend, and builds the view payload that every page consumes. Also tracks hardware health. |
+| [russound_controller.py](../../web/russound_controller.py) | Application logic: applies zone and shortcut changes through the backend, saves configuration edits, and builds the view payload that every page consumes. Also tracks hardware health. |
+| [config_store.py](../../web/config_store.py) | Sole in-process owner of `russound_config.json` and `russound_state.json`: cached parsed files revalidated by `stat()`, load states, change generations and the config revision. |
 | [russound_state.py](../../web/russound_state.py), [zone.py](../../web/zone.py) | In-memory model of zones, inputs and shortcuts, with conversion to and from the persisted payload. |
 | [config_types.py](../../web/config_types.py) | Typed configuration, validation and environment overrides (backend endpoint, poll interval, audit log). |
 | [russound_backend.py](../../web/russound_backend.py) | Translates zone operations into connector calls and reads complete zone state, including the extended sound parameters. |

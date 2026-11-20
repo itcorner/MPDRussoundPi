@@ -276,27 +276,49 @@ class RussoundServerTests(unittest.TestCase):
             _close_server(server)
 
     def test_backend_poll_does_not_commit_over_concurrent_state_change(self):
+        # (config generation, state generation) before and after the unlocked hardware read.
+        for label, generations in (("state written", [(1, 1), (1, 2)]), ("config written", [(1, 1), (2, 1)])):
+            with self.subTest(label):
+                server = RussoundHTTPServer(None, None)
+                try:
+                    captured_state = Mock()
+                    captured_state.to_payload.return_value = {"system_power": False, "zones": []}
+                    stale_poll = Mock()
+                    stale_poll.to_payload.return_value = {"system_power": True, "zones": []}
+                    controller = Mock()
+                    controller.load_state.return_value = captured_state
+                    controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
+                    controller.file_generations.side_effect = generations
+                    controller.read_state_from_backend.return_value = (
+                        stale_poll,
+                        {"connected": True, "message": ""},
+                    )
+                    server.controller = controller
+
+                    self.assertFalse(server._sync_backend_state_if_changed())
+
+                    controller.persist_state.assert_not_called()
+                    controller.set_backend_health_snapshot.assert_not_called()
+                finally:
+                    _close_server(server)
+
+    def test_backend_poll_commits_when_files_are_unchanged(self):
         server = RussoundHTTPServer(None, None)
         try:
             captured_state = Mock()
             captured_state.to_payload.return_value = {"system_power": False, "zones": []}
-            changed_state = Mock()
-            changed_state.to_payload.return_value = {"system_power": False, "zones": [{"volume": 30}]}
-            stale_poll = Mock()
-            stale_poll.to_payload.return_value = {"system_power": True, "zones": []}
+            polled = Mock()
+            polled.to_payload.return_value = {"system_power": True, "zones": []}
             controller = Mock()
-            controller.load_state.side_effect = [captured_state, changed_state]
+            controller.load_state.return_value = captured_state
             controller.load_config.return_value = {"backend": {"host": "127.0.0.1", "port": 6666}}
-            controller.read_state_from_backend.return_value = (
-                stale_poll,
-                {"connected": True, "message": ""},
-            )
+            controller.file_generations.return_value = (3, 7)
+            controller.read_state_from_backend.return_value = (polled, {"connected": True, "message": ""})
             server.controller = controller
 
-            self.assertFalse(server._sync_backend_state_if_changed())
+            self.assertTrue(server._sync_backend_state_if_changed())
 
-            controller.persist_state.assert_not_called()
-            controller.set_backend_health_snapshot.assert_not_called()
+            controller.persist_state.assert_called_once_with(polled)
         finally:
             _close_server(server)
 
