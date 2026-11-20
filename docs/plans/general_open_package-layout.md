@@ -1,16 +1,15 @@
 # Plan: package layout and single module names
 
-Status: **open** (2026-11-20). Phases 1 and 2 are implemented and verified
-locally; neither is deployed. Both reach the Pi with one reviewed rollout (see
-the [Phase 2 rollout checklist](#phase-2-rollout-checklist)). Phase 3 removes
-the transition bootstrap after that rollout is accepted.
+Status: **open** (2026-11-20). Phases 1 and 2 are implemented and deployed to
+the Pi at revision `5ed0e04` (see the [rollout record](#pi-rollout-2026-11-20)).
+Phase 3 removes the transition bootstrap once the rollout is accepted after an
+observation period.
 
 ## Progress
 
 | Date | Change | Evidence |
 |---|---|---|
 | 2026-11-20 | Phase 1 implemented (steps 1-7). | Full test run loads no `lib.*` module and nothing twice (before: four). Full Python/Node suites, the web image smoke test and all 9 scripts run by file path pass. [Guard tests](../../tests/test_import_layout.py) build the egress install and preflight trees from the playbook and run them. |
-
 | 2026-11-20 | Phase 2 implemented in code (see deviations below). | `pyproject.toml`; `mpdrussoundpi.common`; staging playbooks install the candidate editable and run its commands; generated units and the agent template use console commands. Editable install in a fresh venv runs all 10 commands from another directory and leaves the checkout clean; a regular wheel contains the static web files, Lua policies and seed config. CI runs the same check. |
 
 **Pi rollout notes for Phase 1:** agent, supervisor, setup and audit scripts
@@ -18,7 +17,7 @@ keep their commands, paths and virtual environments; the new code works from
 the existing checkout layout. The egress playbook changes the installed script
 path to `{{ playback_egress_install }}/mpdrussoundpi/russound/playbackegress.py`,
 rewrites the unit and MPD drop-ins, restarts the filter and MPD as before, and
-removes the old flat files afterwards. Not yet exercised on the Pi.
+removes the old flat files afterwards. Exercised on the Pi on 2026-11-20.
 
 ## Goal
 
@@ -153,6 +152,28 @@ rollout performs these steps on the Pi:
 4. **Audit service**, if installed: rerun `playback-audit --install-service`.
 5. **Web:** deploy an image built from this revision (Dockerfile changed).
 6. Observe, then start Phase 3.
+
+### Pi rollout (2026-11-20)
+
+Revision `5ed0e045b2aaf713ab5aa5cf94d5d5980dca50c9` (develop after PRs #55-#59).
+Baseline before and after: all three outputs playing the same stations, routes
+and readiness ok, unchanged gains, all user and system units active.
+
+| Step | Result |
+|---|---|
+| Backup | User units and drop-ins, MPD configs, egress files and root unit archived on the Pi (`~/MPDRussoundPi-deploy-backups/pre-package-layout-20261120T205227/`) and off-host, checksums verified. The previous checkout `~/MPDRussoundPi` (with uncommitted live changes, all of which are in `develop`) and the previous agent copy were left untouched for rollback. |
+| Stage | `setup-musicpi.yml --tags stage` and `deploy-playback-agent.yml --tags stage`: editable installs, clean checkouts, commands start, live config validated (3 outputs). |
+| Audio | `mpd-setup --install` first refused: `~/.config/mpd` was group-writable and the units, MPD configs and egress drop-ins predated the ownership markers. After the [documented migration](../documentation/mpd-headless-deployment.md#migrating-units-written-before-ownership-markers) (diff proved generator output; markers added, group write removed) it rewrote only the marker lines and command paths. Supervisor restarted from the candidate after `mpd-supervisor --once`. |
+| Egress | `deploy-playback-egress.yml`: package-shaped install, unit and drop-ins rewritten, filter and MPD restarted (both start checks passed), old flat files removed. |
+| Agent | Unit `ExecStart` switched to the candidate's `playback-agent` with unchanged arguments; health, capabilities and web playback health ok. |
+| Web | Reviewed `deploy --update` with the handover's `compose_spec` and resolved `dev` images at `5ed0e04` (operation `d5edfa95-095c-4ee7-a03c-a988faacff53`): containers, HTTP, backend, playback and apply checks passed. Live: config revision and `428` without it, `no-store`, escaped Status page. |
+
+Two playback interruptions occurred (MPD restart by the egress playbook,
+supervisor restart); both recovered on their own. Left unchanged:
+`playback_audit.service` (enabled, inactive, left over from the 72-hour run)
+still runs the previous checkout. **Rollback:** restore the archives above,
+`systemctl --user daemon-reload`, restart the affected units and the egress
+service; for the web, the operator's retained backup and recovery actions.
 
 ## Phase 3: remove the transition bootstrap
 
