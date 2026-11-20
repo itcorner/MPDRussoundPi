@@ -8,8 +8,7 @@ from unittest.mock import patch
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    ready = importlib.import_module("lib.audioready")
+ready = importlib.import_module("mpdrussoundpi.russound.lib.audioready")
 
 
 class AudioReadinessTests(unittest.TestCase):

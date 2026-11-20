@@ -1,4 +1,4 @@
-from lib.sink import Sink
+from .sink import Sink
 import logging
 
 

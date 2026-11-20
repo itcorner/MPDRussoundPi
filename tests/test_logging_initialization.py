@@ -14,7 +14,7 @@ class LoggingInitializationTests(unittest.TestCase):
     def run_isolated(self, code, *arguments):
         with tempfile.TemporaryDirectory(prefix="russound-logging-") as directory:
             result = subprocess.run(
-                [sys.executable, "-B", "-c", code, str(SCRIPTS), *arguments],
+                [sys.executable, "-B", "-c", code, str(ROOT), *arguments],
                 cwd=directory, capture_output=True, text=True, timeout=15,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -31,7 +31,9 @@ for name in sys.argv[2:]:
     importlib.import_module(name)
     assert (root.level, tuple(root.handlers)) == before, name
 """
-        for modules in itertools.permutations(("lib.audiodevice", "audiosetup", "mpdsetup")):
+        for modules in itertools.permutations((
+            "mpdrussoundpi.russound.lib.audiodevice", "mpdrussoundpi.russound.audiosetup", "mpdrussoundpi.russound.mpdsetup",
+        )):
             with self.subTest(order=modules):
                 self.run_isolated(code, *modules)
 
@@ -43,13 +45,14 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 logging.basicConfig(level=logging.CRITICAL)
 if sys.argv[2] == 'audio':
-    import audiosetup
+    from mpdrussoundpi.russound import audiosetup
     audiosetup.setup_lock = lambda: nullcontext()
     audiosetup.cleanup_configs = lambda processor: None
     audiosetup.main(['--cleanup', *sys.argv[3:]])
 else:
+    script = Path(sys.argv[1]) / 'mpdrussoundpi/russound/mpdsetup.py'
     sys.argv = ['mpdsetup.py', 'unused.json', *sys.argv[3:]]
-    runpy.run_path(str(Path(__import__('mpdsetup').__file__)), run_name='__main__')
+    runpy.run_path(str(script), run_name='__main__')
 logging.debug('diagnostic-marker')
 logging.info('operational-marker')
 logging.warning('warning-marker')
@@ -68,7 +71,7 @@ logging.warning('warning-marker')
 import runpy, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-script = Path(sys.argv[1]) / (sys.argv[2] + '.py')
+script = Path(sys.argv[1]) / 'mpdrussoundpi/russound' / (sys.argv[2] + '.py')
 sys.argv = [str(script), '--help']
 runpy.run_path(str(script), run_name='__main__')
 """

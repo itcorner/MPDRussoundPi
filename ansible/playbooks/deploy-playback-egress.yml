@@ -52,15 +52,21 @@
             prefix: mpdrussoundpi-ownership-
           register: playback_egress_preflight
 
+        - name: Create the package path for the ownership validator
+          ansible.builtin.file:
+            path: "{{ playback_egress_preflight.path }}/mpdrussoundpi/russound"
+            state: directory
+            mode: "0700"
+
         - name: Stage shared ownership validator without changing playback sources
           ansible.builtin.copy:
             src: "{{ playback_egress_source }}/lib/"
-            dest: "{{ playback_egress_preflight.path }}/lib/"
+            dest: "{{ playback_egress_preflight.path }}/mpdrussoundpi/russound/lib/"
             mode: "0700"
 
         - name: Validate configured outputs and effective owned unit paths
           ansible.builtin.command:
-            argv: [/usr/bin/python3, -m, lib.mpdownership, --config, "{{ playback_egress_config }}"]
+            argv: [/usr/bin/python3, -m, mpdrussoundpi.russound.lib.mpdownership, --config, "{{ playback_egress_config }}"]
             chdir: "{{ playback_egress_preflight.path }}"
           register: playback_egress_selection
           changed_when: false
@@ -75,22 +81,23 @@
             state: absent
           when: playback_egress_preflight.path is defined
 
-    - name: Create root-owned filter source directory
+    - name: Create root-owned filter package directory
       ansible.builtin.file:
-        path: "{{ playback_egress_install }}/lib"
+        path: "{{ playback_egress_install }}/mpdrussoundpi/russound/lib"
         state: directory
         owner: root
         group: root
         mode: "0755"
 
+    # Mirrors the source package so the filter imports its canonical module names.
     - name: Copy the root-owned filter and shared address policy
       ansible.builtin.copy:
         src: "{{ playback_egress_source }}/{{ item }}"
-        dest: "{{ playback_egress_install }}/{{ item }}"
+        dest: "{{ playback_egress_install }}/mpdrussoundpi/russound/{{ item }}"
         owner: root
         group: root
         mode: "0644"
-      loop: [playbackegress.py, lib/publicnetwork.py, lib/sourceurl.py]
+      loop: [playbackegress.py, lib/__init__.py, lib/publicnetwork.py, lib/sourceurl.py]
 
     - name: Create the persistent MPD cgroup slice
       ansible.builtin.copy:
@@ -120,7 +127,7 @@
           # Managed by MPDRussoundPi; component=egress; schema=1
           [Service]
           Slice=mpdstreams.slice
-          ExecStartPre=/usr/bin/python3 {{ playback_egress_install }}/playbackegress.py --wait
+          ExecStartPre=/usr/bin/python3 {{ playback_egress_install }}/mpdrussoundpi/russound/playbackegress.py --wait
       loop: "{{ playback_egress_units }}"
 
     - name: Install root-managed enforcement service
@@ -165,3 +172,9 @@
           - "{{ item.path | basename }}"
       loop: "{{ playback_egress_units }}"
       changed_when: true
+
+    - name: Remove the filter files of the earlier flat install layout
+      ansible.builtin.file:
+        path: "{{ playback_egress_install }}/{{ item }}"
+        state: absent
+      loop: [playbackegress.py, lib]

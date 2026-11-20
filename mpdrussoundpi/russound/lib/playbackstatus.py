@@ -10,13 +10,13 @@ import threading
 import time
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
-from lib.audioready import audio_ready_config
-from lib.audioidentity import HardwareUnavailable
-from lib.mpdbackend import BackendError, JSONValue, MPDBackend, MPDConnection, OutputSettings
-from lib.streamgain import read_sink_gain
-from lib.streamroute import inspect_route
-from lib.stations import Station
-from lib.sourceurl import source_display
+from .audioready import audio_ready_config
+from .audioidentity import HardwareUnavailable
+from .mpdbackend import BackendError, JSONValue, MPDBackend, MPDConnection, OutputSettings
+from .streamgain import read_sink_gain
+from .streamroute import inspect_route
+from .stations import Station
+from .sourceurl import source_display
 
 
 class ReadValue(Protocol):

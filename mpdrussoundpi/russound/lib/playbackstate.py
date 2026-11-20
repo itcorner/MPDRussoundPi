@@ -5,11 +5,11 @@ import json
 from pathlib import Path
 from typing import cast
 
-from lib.atomicjson import write_json
-from lib.outputconfig import Configuration
-from lib.sourceurl import validate_source_url
-from lib.stations import MAX_STATIONS, Station, parse_station_list
-from lib.streamgain import validate_gain_db
+from .atomicjson import write_json
+from .outputconfig import Configuration
+from .sourceurl import validate_source_url
+from .stations import MAX_STATIONS, Station, parse_station_list
+from .streamgain import validate_gain_db
 
 
 INTENTIONS = ("play", "pause", "stop")

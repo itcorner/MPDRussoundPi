@@ -8,8 +8,7 @@ from unittest.mock import Mock, patch
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "mpdrussoundpi" / "russound"
-with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-    routes = importlib.import_module("lib.streamroute")
+routes = importlib.import_module("mpdrussoundpi.russound.lib.streamroute")
 
 
 SINKS = [{"index": 43, "name": "sink.stereo_front"}, {"index": 296, "name": "usb_master"}]

@@ -15,8 +15,7 @@ from unittest.mock import Mock, patch
 from test_playbackstatus import status
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    agent = importlib.import_module("lib.playbackagent")
+agent = importlib.import_module("mpdrussoundpi.russound.lib.playbackagent")
 
 TOKEN = "test-service-token-" + "x" * 32
 
@@ -475,7 +474,7 @@ class PlaybackAgentTests(unittest.TestCase):
 class PlaybackFavoritesAgentTests(unittest.TestCase):
     def setUp(self):
         import test_mpdbackend as backend_tests
-        from lib.playbackoperations import OperationManager
+        from mpdrussoundpi.russound.lib.playbackoperations import OperationManager
         backend_tests.MPDBackendTests.setUp(self)
         self.config["outputs"][1].pop("default_station")
         self.path.write_text(json.dumps(self.config))

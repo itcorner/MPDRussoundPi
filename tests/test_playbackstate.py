@@ -9,10 +9,9 @@ from unittest.mock import patch
 from playbackfixtures import configuration
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    outputconfig = importlib.import_module("lib.outputconfig")
-    state = importlib.import_module("lib.playbackstate")
-    Station = importlib.import_module("lib.stations").Station
+outputconfig = importlib.import_module("mpdrussoundpi.russound.lib.outputconfig")
+state = importlib.import_module("mpdrussoundpi.russound.lib.playbackstate")
+Station = importlib.import_module("mpdrussoundpi.russound.lib.stations").Station
 
 
 class PlaybackStateTests(unittest.TestCase):

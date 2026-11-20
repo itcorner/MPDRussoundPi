@@ -10,17 +10,17 @@ from typing import Protocol, TypeAlias, TypeGuard, Union, cast
 
 import mpd  # pyright: ignore[reportMissingTypeStubs]
 
-from lib.setuplock import setup_lock
-from lib.audioready import wait_for_audio
-from lib.mpdinstance import MPD_HOST
-from lib.outputconfig import Configuration, parse_configuration
-from lib.playbackstate import (
+from .setuplock import setup_lock
+from .audioready import wait_for_audio
+from .mpdinstance import MPD_HOST
+from .outputconfig import Configuration, parse_configuration
+from .playbackstate import (
     FavoritesFull, OutputState, PlaybackState, read_state, write_state,
 )
-from lib.stations import Station
-from lib.tunein import TuneInCatalog, TuneInError
-from lib.streamgain import set_sink_gain, validate_gain_db
-from lib.streamroute import StreamRoute, inspect_route, recover_route
+from .stations import Station
+from .tunein import TuneInCatalog, TuneInError
+from .streamgain import set_sink_gain, validate_gain_db
+from .streamroute import StreamRoute, inspect_route, recover_route
 
 
 JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]

@@ -8,9 +8,9 @@ from jinja2 import Environment, StrictUndefined
 import yaml
 from deploymentfixtures import playbook
 
+from mpdrussoundpi.russound import playbackegress
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-sys.path.insert(0, str(SCRIPTS))
-import playbackegress
 
 
 class PlaybackEgressTests(unittest.TestCase):
@@ -54,23 +54,23 @@ class PlaybackEgressTests(unittest.TestCase):
                 playbackegress.ruleset(uid, resolvers)
 
     def test_startup_fails_closed_when_filter_is_not_active(self):
-        with patch("playbackegress.time.monotonic", side_effect=[0, 0, 31]):
-            with patch("playbackegress.time.sleep"), patch("playbackegress.subprocess.run") as run:
+        with patch("mpdrussoundpi.russound.playbackegress.time.monotonic", side_effect=[0, 0, 31]):
+            with patch("mpdrussoundpi.russound.playbackegress.time.sleep"), patch("mpdrussoundpi.russound.playbackegress.subprocess.run") as run:
                 run.return_value.returncode = 3
                 with self.assertRaisesRegex(RuntimeError, "refusing to start"):
                     playbackegress.wait_for_filter()
 
     def test_startup_rejects_an_active_filter_for_a_recreated_cgroup(self):
-        with patch("playbackegress.subprocess.run") as run:
+        with patch("mpdrussoundpi.russound.playbackegress.subprocess.run") as run:
             run.return_value.returncode = 0
-            with patch("playbackegress.verify_scope", side_effect=RuntimeError("MPD cgroup changed")):
+            with patch("mpdrussoundpi.russound.playbackegress.verify_scope", side_effect=RuntimeError("MPD cgroup changed")):
                 with self.assertRaisesRegex(RuntimeError, "cgroup changed"):
                     playbackegress.wait_for_filter()
 
     def test_scope_record_must_match_current_uid_and_cgroup_inode(self):
         scope = Mock()
         scope.stat.return_value.st_ino = 123
-        with patch("playbackegress.cgroup_path", return_value=scope):
+        with patch("mpdrussoundpi.russound.playbackegress.cgroup_path", return_value=scope):
             with patch.object(Path, "read_text", return_value='{"uid":1000,"cgroup_inode":123}'):
                 playbackegress.verify_scope(1000)
             for state in ('{"uid":1000,"cgroup_inode":122}', '{"uid":1001,"cgroup_inode":123}', '{}'):

@@ -8,9 +8,8 @@ from unittest.mock import patch
 from playbackfixtures import configuration
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    outputconfig = importlib.import_module("lib.outputconfig")
-    stations = importlib.import_module("lib.stations")
+outputconfig = importlib.import_module("mpdrussoundpi.russound.lib.outputconfig")
+stations = importlib.import_module("mpdrussoundpi.russound.lib.stations")
 
 
 class OutputConfigurationTests(unittest.TestCase):

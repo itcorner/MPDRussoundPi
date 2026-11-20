@@ -24,12 +24,18 @@ from typing import TypeVar, cast
 
 import mpd  # pyright: ignore[reportMissingTypeStubs]
 
-from lib.atomicjson import write_json
-from lib.audioready import audio_ready
-from lib.mpdbackend import JSONValue, MPDBackend, MPDConnection, OutputSettings
-from lib.mpdinstance import MPD_HOST
-from lib.setuplock import setup_lock
-from lib.streamroute import inspect_route
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (see the package layout plan in docs/plans/).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.atomicjson import write_json
+from mpdrussoundpi.russound.lib.audioready import audio_ready
+from mpdrussoundpi.russound.lib.mpdbackend import JSONValue, MPDBackend, MPDConnection, OutputSettings
+from mpdrussoundpi.russound.lib.mpdinstance import MPD_HOST
+from mpdrussoundpi.russound.lib.setuplock import setup_lock
+from mpdrussoundpi.russound.lib.streamroute import inspect_route
 
 
 UNIT = "playback_audit.service"

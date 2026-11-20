@@ -5,10 +5,10 @@ import json
 import math
 from typing import cast
 
-from lib.audioidentity import validate_hardware_devices
-from lib.playbackidentity import output_id, output_label
-from lib.stations import Station, parse_station_list
-from lib.streamgain import validate_gain_db
+from .audioidentity import validate_hardware_devices
+from .playbackidentity import output_id, output_label
+from .stations import Station, parse_station_list
+from .streamgain import validate_gain_db
 
 
 OLD_FORMAT_MESSAGE = "old config format; see docs/documentation/mpd-headless-deployment.md"

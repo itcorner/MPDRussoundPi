@@ -9,7 +9,13 @@ import re
 import subprocess
 import time
 
-from lib.publicnetwork import blocked_networks
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (see the package layout plan in docs/plans/).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.publicnetwork import blocked_networks
 
 
 SERVICE = "mpdrussoundpi-egress.service"

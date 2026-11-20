@@ -1,7 +1,13 @@
-from lib.audiodevice import AudioDevice, config2audiodevice
-from lib.setuplock import setup_lock
-from lib.audioready import hardware_preflight, wait_for_audio
-from lib.audioidentity import object_mapping, validate_hardware_devices
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (see the package layout plan in docs/plans/).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.audiodevice import AudioDevice, config2audiodevice
+from mpdrussoundpi.russound.lib.setuplock import setup_lock
+from mpdrussoundpi.russound.lib.audioready import hardware_preflight, wait_for_audio
+from mpdrussoundpi.russound.lib.audioidentity import object_mapping, validate_hardware_devices
 import argparse
 import json
 import os

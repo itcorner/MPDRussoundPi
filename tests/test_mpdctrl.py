@@ -6,9 +6,8 @@ from unittest.mock import Mock, patch
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "mpdrussoundpi" / "russound"
-with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-    with patch.dict(sys.modules, {"mpd": Mock()}):
-        mpdctrl = importlib.import_module("mpdctrl")
+with patch.dict(sys.modules, {"mpd": Mock()}):
+    mpdctrl = importlib.import_module("mpdrussoundpi.russound.mpdctrl")
 
 
 class MPDControlTests(unittest.TestCase):

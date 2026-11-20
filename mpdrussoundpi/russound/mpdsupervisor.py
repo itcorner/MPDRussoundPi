@@ -3,9 +3,15 @@ import logging
 import time
 import subprocess
 
-from lib.mpdbackend import BackendError, MPDBackend
-from lib.playbackwatchdog import create_watchdog
-from lib.runtimelogging import configure_console
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (see the package layout plan in docs/plans/).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.mpdbackend import BackendError, MPDBackend
+from mpdrussoundpi.russound.lib.playbackwatchdog import create_watchdog
+from mpdrussoundpi.russound.lib.runtimelogging import configure_console
 
 
 def main() -> None:

@@ -9,7 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import TextIO, TypeAlias, Union, cast
-from lib.audioidentity import (
+from .audioidentity import (
     HardwareSelector, HardwareUnavailable, hardware_configuration, object_mapping,
     graph_properties, resolve_hardware_card, unique_card, validate_downstream, validate_hardware_devices,
 )

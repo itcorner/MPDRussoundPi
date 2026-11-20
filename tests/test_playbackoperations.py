@@ -15,10 +15,9 @@ from web.russound_server import RussoundHTTPServer
 import test_mpdbackend as backend_tests
 
 backend = backend_tests.backend
-with patch.object(sys, "path", [str(backend_tests.SCRIPTS_DIR), *sys.path]):
-    with patch.dict(sys.modules, {"lib.mpdbackend": backend}):
-        operations = importlib.reload(importlib.import_module("lib.playbackoperations"))
-        agent = importlib.reload(importlib.import_module("lib.playbackagent"))
+with patch.dict(sys.modules, {"mpdrussoundpi.russound.lib.mpdbackend": backend}):
+    operations = importlib.reload(importlib.import_module("mpdrussoundpi.russound.lib.playbackoperations"))
+    agent = importlib.reload(importlib.import_module("mpdrussoundpi.russound.lib.playbackagent"))
 
 
 class PlaybackOperationTests(unittest.TestCase):

@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import re
 from typing import Literal, cast
 
-from lib.sourceurl import validate_source_url
-from lib.tunein import TuneInCatalog
+from .sourceurl import validate_source_url
+from .tunein import TuneInCatalog
 
 
 MAX_STATIONS = 20
