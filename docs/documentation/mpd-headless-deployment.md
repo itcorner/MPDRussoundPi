@@ -224,6 +224,34 @@ requires MPDRussoundPi ownership markers and matching effective systemd
 fragment/drop-in paths. Legacy or overridden units are refused for explicit
 migration; unrelated/stale matching units are reported and left unchanged.
 
+### Migrating units written before ownership markers
+
+Units, MPD configs and egress drop-ins written by releases before the ownership
+markers start without a `# Managed by MPDRussoundPi; …` line, and older setups
+may have left `~/.config/mpd` or the files group-writable. `mpd-setup` and the
+egress playbook then refuse with "Unsafe MPD directory" or "Unowned, unsafe or
+legacy file". Migrate only after proving the files are generator output:
+
+1. Back up `~/.config/systemd/user` and `~/.config/mpd`.
+2. Generate the expected files into a temporary directory with the target
+   environment's code (`mpdsetup.create_mpd_config`, `create_mpd_systemd_service`,
+   `create_mpd_metaservice` and `create_supervisor_service` with
+   `SYSTEMD_USER_CONFIG_DIR` and `MPD_CONFIG_DIR` pointed at it) and diff them
+   against the live files. Proceed only if the differences are the marker line,
+   the command paths and the temporary config path.
+3. Prepend `# Managed by MPDRussoundPi; component=mpd; schema=1` to the five
+   units and the MPD configs, and
+   `# Managed by MPDRussoundPi; component=egress; schema=1` to each
+   `50-egress.conf`; remove group/other write from the files, the drop-in
+   directories and `~/.config/mpd`; run `systemctl --user daemon-reload`.
+4. Confirm with the read-only preflight
+   `python -m mpdrussoundpi.russound.lib.mpdownership --config <config>`, then
+   run `mpd-setup --install <config>`.
+
+Anything else in the diff (other settings, extra drop-ins, overridden fragment
+paths) needs separate inspection; do not add markers to files you did not
+prove equivalent.
+
 Cleanup requires no JSON file or running audio server. Omitting
 `--audio-processor` checks both backends. It uses the audio setup lock and
 removes only the known generated PipeWire/WirePlumber fragments whose ownership
