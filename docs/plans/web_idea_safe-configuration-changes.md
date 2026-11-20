@@ -5,12 +5,13 @@ Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
 **Implemented subset (2026-11-20):** `GET /api/config` returns
 `configuration.load_state` and an opaque, process-keyed `configuration.revision`
 for the exact config bytes or their absence. The configuration page sends it as
-`X-Config-Revision`; a stale save returns `409 config_conflict` and writes
-nothing. Saves without the header stay unconditional for a transition release.
+`X-Config-Revision`, which every save requires: a missing header returns
+`428 config_precondition_required` and a stale one `409 config_conflict`; neither
+writes anything. No transition release with unconditional saves was shipped.
 Config and state writes now sync the file before the rename and the directory
-after it, and keep existing permissions. **Still open:** requiring the header
-(`428`), a preview endpoint, coordination with external/CLI writers, and a
-recoverable two-file (config + state) transaction.
+after it, and keep existing permissions. **Still open:** a preview endpoint,
+coordination with external/CLI writers, and a recoverable two-file
+(config + state) transaction.
 
 ## Goal
 
@@ -60,7 +61,7 @@ selecting a persistence design.
   a restore is an explicit validated change with conflict handling, not a
   silent overwrite. Coordinate with the
   [deployment migration and rollback](./general_done_simplify-deployment-configuration.md)
-  design and [guided setup](./general_idea_guided-first-time-setup.md).
+  design and [guided setup](./general_open_guided-first-time-setup.md).
 
 ## Decisions and acceptance
 

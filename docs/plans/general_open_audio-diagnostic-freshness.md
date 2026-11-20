@@ -190,4 +190,4 @@ checks; it does not certify audible output, unobserved between-sample events or
 the future setup feature. The original failed run remains a failed record.
 
 Related: [coverage and Pi acceptance](../documentation/test-coverage.md),
-[guided setup implementation gate](./general_idea_guided-first-time-setup.md).
+[guided setup implementation gate](./general_open_guided-first-time-setup.md).

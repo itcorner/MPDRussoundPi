@@ -59,9 +59,9 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
-| [Guided first-time setup](./plans/general_idea_guided-first-time-setup.md) | Idea, not scheduled; setup and example-data migration need design |
+| [Guided first-time setup](./plans/general_open_guided-first-time-setup.md) | Open; config revision checks, load states and durable writes implemented; next: writer inventory, preview and config/state transaction before the wizard UI |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
-| [Safe configuration change handling](./plans/web_idea_safe-configuration-changes.md) | Idea, not scheduled; concurrency and save recovery need design |
+| [Safe configuration change handling](./plans/web_idea_safe-configuration-changes.md) | Idea; required revision checks and durable single-file writes implemented via guided setup; save recovery still needs design |
 | [User-triggered Docker image updates](./plans/general_idea_user-triggered-image-updates.md) | Idea, depends on versioned deployment images; not scheduled |
 | [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
 | [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |

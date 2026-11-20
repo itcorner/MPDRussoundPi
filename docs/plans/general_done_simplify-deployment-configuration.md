@@ -64,7 +64,7 @@ gateways, separate web hosts and the hardware-free dummy backend. No image
 fallback or unattended update is implied. Include a separate managed-gateway
 overlay only when the deployment manages the gateway.
 
-Future [guided first-time setup](./general_idea_guided-first-time-setup.md#future-gateway-discovery)
+Future [guided first-time setup](./general_open_guided-first-time-setup.md#optional-mdns-milestone)
 will use gateway mDNS announcements to suggest discovered instances when no
 configuration overlay is supplied. This is a later feature, not a dependency
 or implementation task for the current deployment rework.
@@ -811,7 +811,7 @@ finding remain open even if a related symptom has been fixed.
    approved migration after being informed; new deployments default it off.
    Back up the prior setting and do not change the live installation before
    approval. Coordinate opt-in with
-   [guided setup](./general_idea_guided-first-time-setup.md).
+   [guided setup](./general_open_guided-first-time-setup.md).
 7. **F7 — file and save validation differ.** File-load validation accepts
    incomplete shortcuts and partial TCP backend settings that editor saves
    reject; the partial endpoint can resolve to the default instead. Pi root
@@ -2402,7 +2402,7 @@ S0 precedes S1; S1 precedes S2 and remaining implementation. The explicitly
 requested Waitress/debug change is an exception. S3 and S4 otherwise depend
 on the reviewed S2 design; S5 follows both and the relevant release/hardware
 prerequisites. Coordinate UX separately with
-[first-time setup](./general_idea_guided-first-time-setup.md),
+[first-time setup](./general_open_guided-first-time-setup.md),
 [diagnostics](./general_idea_guided-diagnostics.md) and
 [safe configuration changes](./web_idea_safe-configuration-changes.md);
 this plan defines the deployment contract, not those features.
