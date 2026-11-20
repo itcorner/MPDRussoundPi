@@ -17,12 +17,11 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
 fake_mpd = types.ModuleType("mpd")
 fake_mpd.MPDError = type("MPDError", (Exception,), {})
 fake_mpd.MPDClient = Mock()
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    with patch.dict(sys.modules, {"mpd": fake_mpd}):
-        status = importlib.import_module("lib.playbackstatus")
-        backend = importlib.import_module("lib.mpdbackend")
-        ready = importlib.import_module("lib.audioready")
-        gain = importlib.import_module("lib.streamgain")
+with patch.dict(sys.modules, {"mpd": fake_mpd}):
+    status = importlib.import_module("mpdrussoundpi.russound.lib.playbackstatus")
+    backend = importlib.import_module("mpdrussoundpi.russound.lib.mpdbackend")
+    ready = importlib.import_module("mpdrussoundpi.russound.lib.audioready")
+    gain = importlib.import_module("mpdrussoundpi.russound.lib.streamgain")
 
 
 class PlaybackStatusTests(unittest.TestCase):

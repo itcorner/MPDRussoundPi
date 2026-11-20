@@ -13,9 +13,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "mpdrussoundpi" / "russound"
 fake_mpd = types.ModuleType("mpd")
 fake_mpd.MPDError = type("MPDError", (Exception,), {})
 fake_mpd.MPDClient = Mock()
-with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-    with patch.dict(sys.modules, {"mpd": fake_mpd}):
-        backend = importlib.import_module("lib.mpdbackend")
+with patch.dict(sys.modules, {"mpd": fake_mpd}):
+    backend = importlib.import_module("mpdrussoundpi.russound.lib.mpdbackend")
 
 
 class MPDBackendTests(unittest.TestCase):

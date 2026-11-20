@@ -94,8 +94,8 @@ Use a separate migrated fixture configuration for local testing.
 
 ```python
 import time
-from lib.mpdbackend import MPDBackend
-from lib.playbackstatus import PlaybackCollector
+from mpdrussoundpi.russound.lib.mpdbackend import MPDBackend
+from mpdrussoundpi.russound.lib.playbackstatus import PlaybackCollector
 
 backend = MPDBackend("migrated-test-config.json")
 collector = PlaybackCollector(backend)
@@ -226,11 +226,12 @@ They do not certify real-Pi scheduling latency or provision production transport
 ## Usage
 
 Run as the audio-owning user with the same Python environment as the controller
-(`python-mpd2` required). From `mpdrussoundpi/russound/`, or with that directory
-on your application's Python import path:
+(`python-mpd2` required). Run from the repository root, or with the repository
+root on your application's Python import path; the library imports only as
+`mpdrussoundpi.russound.lib`:
 
 ```python
-from lib.mpdbackend import BackendError, MPDBackend
+from mpdrussoundpi.russound.lib.mpdbackend import BackendError, MPDBackend
 
 from pathlib import Path
 

@@ -11,11 +11,11 @@ from uuid import uuid4
 from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from lib.mpdbackend import BackendError, MPDBackend
-from lib.playbackstatus import OutputObservation, PlaybackCollector
-from lib.playbackoperations import ACTIONS, FAVORITE_ACTIONS, OperationError, OperationManager
-from lib.stations import Station
-from lib.servicecredentials import validate_service_token
+from .mpdbackend import BackendError, MPDBackend
+from .playbackstatus import OutputObservation, PlaybackCollector
+from .playbackoperations import ACTIONS, FAVORITE_ACTIONS, OperationError, OperationManager
+from .stations import Station
+from .servicecredentials import validate_service_token
 
 
 AUDIO_REFRESH_INTERVAL_SECONDS = 20.0

@@ -11,22 +11,20 @@ from unittest.mock import Mock, patch
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "mpdrussoundpi" / "russound"
-with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-    # Unit generation does not use an MPD protocol connection.
-    with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
-        mpdsetup = importlib.import_module("mpdsetup")
+# Unit generation does not use an MPD protocol connection.
+with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
+    mpdsetup = importlib.import_module("mpdrussoundpi.russound.mpdsetup")
 
 
 class MPDSetupTests(unittest.TestCase):
     def run_cli(self, option, home, runtime, run, config="config.json"):
-        with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-            with patch.object(sys, "argv", ["mpdsetup.py", option, config]):
-                with patch.dict(os.environ, {"HOME": home, "XDG_RUNTIME_DIR": runtime}):
-                    with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
-                        with patch("subprocess.run", side_effect=run), patch("time.sleep"), patch(
-                            "lib.mpdownership.preflight", return_value=["mpd_stereo_front.service"]
-                        ):
-                            runpy.run_path(str(SCRIPTS_DIR / "mpdsetup.py"), run_name="__main__")
+        with patch.object(sys, "argv", ["mpdsetup.py", option, config]):
+            with patch.dict(os.environ, {"HOME": home, "XDG_RUNTIME_DIR": runtime}):
+                with patch("logging.basicConfig"), patch.dict(sys.modules, {"mpd": Mock()}):
+                    with patch("subprocess.run", side_effect=run), patch("time.sleep"), patch(
+                        "mpdrussoundpi.russound.lib.mpdownership.preflight", return_value=["mpd_stereo_front.service"]
+                    ):
+                        runpy.run_path(str(SCRIPTS_DIR / "mpdsetup.py"), run_name="__main__")
 
     def test_mpd_lock_contention_release_and_audio_independence(self):
         with tempfile.TemporaryDirectory() as directory:

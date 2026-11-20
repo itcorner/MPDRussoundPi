@@ -10,9 +10,8 @@ from unittest.mock import patch
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "mpdrussoundpi" / "russound"
-with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-    with patch("logging.basicConfig"):
-        audiosetup = importlib.import_module("audiosetup")
+with patch("logging.basicConfig"):
+    audiosetup = importlib.import_module("mpdrussoundpi.russound.audiosetup")
 
 
 class AudioSetupTests(unittest.TestCase):
@@ -380,7 +379,7 @@ class AudioSetupTests(unittest.TestCase):
         code = (
             "from unittest.mock import patch\n"
             "with patch('logging.basicConfig'):\n"
-            "    import audiosetup\n"
+            "    from mpdrussoundpi.russound import audiosetup\n"
             "with audiosetup.setup_lock():\n"
             "    print('locked', flush=True)\n"
             "    import sys\n"
@@ -390,7 +389,7 @@ class AudioSetupTests(unittest.TestCase):
             environment = {
                 **os.environ,
                 "XDG_RUNTIME_DIR": directory,
-                "PYTHONPATH": str(SCRIPTS_DIR),
+                "PYTHONPATH": str(SCRIPTS_DIR.parents[1]),
             }
             with subprocess.Popen(
                 [sys.executable, "-c", code], env=environment,

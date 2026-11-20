@@ -10,9 +10,8 @@ import unittest
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    watchdog_module = importlib.import_module("lib.playbackwatchdog")
-    outputconfig = importlib.import_module("lib.outputconfig")
+watchdog_module = importlib.import_module("mpdrussoundpi.russound.lib.playbackwatchdog")
+outputconfig = importlib.import_module("mpdrussoundpi.russound.lib.outputconfig")
 
 ProbeResult = watchdog_module.ProbeResult
 PLAYING = ProbeResult(True, "play", 1.0, "7")

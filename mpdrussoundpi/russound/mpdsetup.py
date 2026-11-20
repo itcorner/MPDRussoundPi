@@ -1,11 +1,17 @@
-from lib.outputconfig import parse_configuration
-from lib.mpdinstance import MPDInstance, config2mpd
-from lib.setuplock import setup_lock
-from lib.mpdownership import MARKER, CONTROL_UNITS, configured_units, preflight as ownership_preflight
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (docs/plans/general_new_package-layout.md).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.outputconfig import parse_configuration
+from mpdrussoundpi.russound.lib.mpdinstance import MPDInstance, config2mpd
+from mpdrussoundpi.russound.lib.setuplock import setup_lock
+from mpdrussoundpi.russound.lib.mpdownership import MARKER, CONTROL_UNITS, configured_units, preflight as ownership_preflight
 import argparse
 import os
 import subprocess
-import lib.sink as sink
+from mpdrussoundpi.russound.lib import sink
 import logging
 import time
 import sys

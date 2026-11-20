@@ -7,9 +7,8 @@ import subprocess
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    with patch.dict(sys.modules, {"mpd": Mock()}):
-        supervisor = importlib.import_module("mpdsupervisor")
+with patch.dict(sys.modules, {"mpd": Mock()}):
+    supervisor = importlib.import_module("mpdrussoundpi.russound.mpdsupervisor")
 
 
 class SupervisorTests(unittest.TestCase):

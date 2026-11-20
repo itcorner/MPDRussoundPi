@@ -11,9 +11,8 @@ from unittest.mock import Mock, patch
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "mpdrussoundpi" / "russound"
-with patch.object(sys, "path", [str(SCRIPTS_DIR), *sys.path]):
-    levels = importlib.import_module("streamlevels")
-    gain = importlib.import_module("lib.streamgain")
+levels = importlib.import_module("mpdrussoundpi.russound.streamlevels")
+gain = importlib.import_module("mpdrussoundpi.russound.lib.streamgain")
 
 
 SUMMARY = """
@@ -217,10 +216,10 @@ class StreamLevelTests(unittest.TestCase):
             source.write_text(json.dumps(config))
             configuration = levels.parse_configuration(source.read_bytes())
             state = levels.read_state(levels.state_path(), configuration)[0]
-            from lib.stations import Station
+            from mpdrussoundpi.russound.lib.stations import Station
             station = Station.tunein("s99", "Current Radio")
             state = state.with_output(config["outputs"][0]["id"], station=station, intention="play")
-            from lib.playbackstate import write_state
+            from mpdrussoundpi.russound.lib.playbackstate import write_state
             write_state(levels.state_path(), state)
             measurement = levels.Measurement(config["outputs"][0]["id"], -18.2, 4.3, -2.5, 900, [])
             with patch.object(levels.shutil, "which", return_value="ffmpeg"), \

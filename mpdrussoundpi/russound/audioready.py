@@ -1,7 +1,13 @@
 import argparse
 import logging
 
-from lib.audioready import wait_for_audio
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (docs/plans/general_new_package-layout.md).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.audioready import wait_for_audio
 
 
 def main() -> None:

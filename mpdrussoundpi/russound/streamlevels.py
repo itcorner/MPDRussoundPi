@@ -17,10 +17,16 @@ import time
 from typing import TextIO, TypeAlias, Union
 from urllib.parse import urlparse
 
-from lib.outputconfig import parse_configuration
-from lib.playbackstate import read_state
-from lib.streamgain import validate_gain_db
-from lib.tunein import TuneInCatalog, TuneInError
+if not __package__:
+    # Run as a file: import the library by its canonical package name only
+    # (docs/plans/general_new_package-layout.md).
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+from mpdrussoundpi.russound.lib.outputconfig import parse_configuration
+from mpdrussoundpi.russound.lib.playbackstate import read_state
+from mpdrussoundpi.russound.lib.streamgain import validate_gain_db
+from mpdrussoundpi.russound.lib.tunein import TuneInCatalog, TuneInError
 
 
 JSONValue: TypeAlias = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]

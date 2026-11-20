@@ -10,8 +10,7 @@ from unittest.mock import Mock, patch
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    ownership = importlib.import_module("lib.mpdownership")
+ownership = importlib.import_module("mpdrussoundpi.russound.lib.mpdownership")
 
 
 class MPDOwnershipTests(unittest.TestCase):
@@ -101,7 +100,7 @@ class MPDOwnershipTests(unittest.TestCase):
             ("playbackegress.py", ["--wait", "--user", "musicpi"]),
             ("playbackegress.py", ["--wait", "--resolver", "1.1.1.1"]),
         ):
-            with self.subTest(script=script, args=args), patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
+            with self.subTest(script=script, args=args):
                 with patch.object(sys, "argv", [script, *args]), patch.dict(sys.modules, {"mpd": Mock()}):
                     with patch("subprocess.run") as run:
                         with self.assertRaises(SystemExit) as error:

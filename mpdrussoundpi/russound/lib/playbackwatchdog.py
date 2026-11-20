@@ -14,11 +14,11 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Protocol, cast
 
-from lib.atomicjson import write_json
-from lib.outputconfig import WatchdogConfig
+from .atomicjson import write_json
+from .outputconfig import WatchdogConfig
 
 if TYPE_CHECKING:
-    from lib.mpdbackend import MPDBackend, OutputSettings
+    from .mpdbackend import MPDBackend, OutputSettings
 
 
 RESTART_START_MARGIN = 60.0
@@ -253,8 +253,8 @@ def _parse_elapsed(value: object) -> float | None:
 
 def create_watchdog(backend: "MPDBackend", config: WatchdogConfig) -> StallWatchdog:
     """Wire a watchdog to a live MPDBackend, systemctl and the audio readiness check."""
-    from lib.audioready import audio_ready
-    from lib.mpdbackend import BackendError
+    from .audioready import audio_ready
+    from .mpdbackend import BackendError
 
     restart_timeout = 120.0 + RESTART_START_MARGIN
 

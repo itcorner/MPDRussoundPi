@@ -11,9 +11,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "mpdrussoundpi/russound"
-with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
-    identity = importlib.import_module("lib.audioidentity")
-    ready = importlib.import_module("lib.audioready")
+identity = importlib.import_module("mpdrussoundpi.russound.lib.audioidentity")
+ready = importlib.import_module("mpdrussoundpi.russound.lib.audioready")
 
 
 class GraphFixture:

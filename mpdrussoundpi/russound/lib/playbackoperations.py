@@ -15,13 +15,13 @@ import time
 from typing import Any, cast
 from uuid import uuid4
 
-from lib.mpdbackend import (
+from .mpdbackend import (
     FAVORITE_ACTIONS, OUTPUT_ACTIONS, AudioOperationError, BackendBusy, BackendError,
     FavoriteNotFound, FavoritesFullError, GainPersistenceError, MPDBackend, MPDOperationError,
     NoStationError, RevisionConflict, StationUnavailableError,
 )
-from lib.playbackidentity import output_id
-from lib.stations import MAX_STATIONS, Station
+from .playbackidentity import output_id
+from .stations import MAX_STATIONS, Station
 
 
 ACTIONS = OUTPUT_ACTIONS + FAVORITE_ACTIONS

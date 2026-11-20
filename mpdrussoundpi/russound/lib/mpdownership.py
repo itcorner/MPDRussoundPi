@@ -7,7 +7,7 @@ import shlex
 import stat
 import subprocess
 
-from lib.outputconfig import parse_configuration
+from .outputconfig import parse_configuration
 
 
 MARKER = "# Managed by MPDRussoundPi; component=mpd; schema=1\n"
