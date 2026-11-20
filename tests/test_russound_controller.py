@@ -97,6 +97,51 @@ class RussoundControllerTests(unittest.TestCase):
             self.assertEqual(config_path.read_text(), "{broken")
             self.assertEqual(list(Path(directory).glob("*.bak")), [])
 
+    def test_config_api_cannot_change_admin_owned_backend_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            saved_backend = {"host": "gateway", "port": 6666, "protocol_audit_log_file": "/data/logs/rnet.log"}
+            config_path.write_text(json.dumps({
+                "backend": saved_backend, "controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": [],
+            }))
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            base = {"zone_slots": [], "source_slots": []}
+            saved = config_path.read_text()
+            for backend in (
+                {"host": "gateway", "port": 6666, "protocol_audit_log_file": "/data/config/russound_config.json"},
+                {"host": "gateway", "port": 6666, "unexpected": "value"},
+                {"device": "/etc/passwd", "baud": 19200},
+                {"device": "/dev/sda", "baud": 19200},
+                {"device": "/dev/serial/by-id/../../sda", "baud": 19200},
+            ):
+                with self.subTest(backend=backend), self.assertRaises(ValueError):
+                    controller.update_config_zones(payload={**base, "backend": backend})
+                self.assertEqual(config_path.read_text(), saved)
+
+            # The editor may echo the saved backend back unchanged.
+            controller.update_config_zones(payload={**base, "backend": {**saved_backend, "poll_interval_seconds": 3}})
+            self.assertEqual(controller.load_config()["backend"]["protocol_audit_log_file"], "/data/logs/rnet.log")
+            for device in ("/dev/ttyUSB0", "/dev/ttyAMA0", "/dev/serial/by-id/usb-Prolific_USB-Serial-if00-port0",
+                           "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1:1.0-port0", "/dev/cu.PL2303G-USBtoUART1110"):
+                with self.subTest(device=device):
+                    controller.update_config_zones(payload={**base, "backend": {"device": device, "baud": 19200}})
+                    backend = controller.load_config()["backend"]
+                    self.assertEqual(backend["device"], device)
+                    self.assertEqual(backend["protocol_audit_log_file"], "/data/logs/rnet.log")
+
+    def test_config_api_keeps_an_admin_set_device_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps({
+                "backend": {"device": "/dev/pts/7", "baud": 19200},
+                "controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": [],
+            }))
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            controller.update_config_zones(payload={
+                "zone_slots": [], "source_slots": [], "backend": {"device": "/dev/pts/7", "baud": 9600},
+            })
+            self.assertEqual(controller.load_config()["backend"], {"device": "/dev/pts/7", "baud": 9600})
+
     def test_setup_state_write_failure_preserves_config(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.json"

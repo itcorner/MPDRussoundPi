@@ -209,6 +209,7 @@ class RussoundHTTPServer:
         self._full_poll_requested = threading.Event()
         self._next_reconnect_at = 0.0
         self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
+        self._last_listener_error: str | None = None
         self._zone_refresh_lock = threading.Lock()
         self._zone_refresh_addresses: set[tuple[int, int]] = set()
         self._helpers = RussoundRequestHandler()
@@ -742,10 +743,24 @@ class RussoundHTTPServer:
             self._zone_refresh_addresses.clear()
         return addresses
 
+    def _check_update_listener(self) -> None:
+        """Keep the watcher alive whatever the connection check raises; it is the only reconnect path."""
+        try:
+            self._ensure_update_listener()
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            if error != self._last_listener_error:
+                logging.exception("Russound gateway connection check failed; retrying")
+            else:
+                logging.debug("Russound gateway connection check failed again: %s", error)
+            self._last_listener_error = error
+        else:
+            self._last_listener_error = None
+
     def _backend_change_watcher_loop(self) -> None:
         next_full_poll_at = time.monotonic()
         while not self._shutdown_requested.is_set():
-            self._ensure_update_listener()
+            self._check_update_listener()
             wait_seconds = min(max(0.0, next_full_poll_at - time.monotonic()), UPDATE_LISTENER_CHECK_SECONDS)
             woken = self._zone_refresh_requested.wait(wait_seconds)
             if self._shutdown_requested.is_set():
