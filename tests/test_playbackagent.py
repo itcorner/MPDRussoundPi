@@ -99,10 +99,10 @@ class PlaybackAgentTests(unittest.TestCase):
                                     ("musicpi", TOKEN + "\n\n")):
                 token.write_text(value)
                 result = subprocess.run([
-                    sys.executable, str(SCRIPTS / "playbackagent.py"), str(config),
+                    sys.executable, "-m", "mpdrussoundpi.russound.playbackagent", str(config),
                     "--agent-id", identity, "--token-file", str(token),
                     "--operations-db", str(ledger),
-                ], capture_output=True, text=True, timeout=5)
+                ], capture_output=True, text=True, timeout=5, cwd=SCRIPTS.parents[1])
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("Invalid agent identity or service token file", result.stderr)
                 self.assertNotIn(value.strip(), result.stdout + result.stderr)
@@ -442,10 +442,10 @@ class PlaybackAgentTests(unittest.TestCase):
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
             process = subprocess.Popen([
-                sys.executable, str(SCRIPTS / "playbackagent.py"),
+                sys.executable, "-m", "mpdrussoundpi.russound.playbackagent",
                 str(Path(directory) / "missing.json"), "--agent-id", "musicpi",
                 "--token-file", str(token_file), "--port", str(port),
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=SCRIPTS.parents[1])
             try:
                 deadline = time.monotonic() + 5
                 while True:

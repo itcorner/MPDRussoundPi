@@ -100,16 +100,16 @@ stations are deliberately unsupported. See the
 On the Pi, initialize/reconcile once, then enable supervision:
 
 ```sh
-~/russound-venv/bin/mpd-supervisor --once ~/.config/mpdrussoundpi/config.json
+AUDIO_BIN=$(dirname "$(systemctl --user show -p ExecStart --value mpd_playback_supervisor.service | sed -n 's/.*path=\([^ ;]*\).*/\1/p')")
+"$AUDIO_BIN/mpd-supervisor" --once ~/.config/mpdrussoundpi/config.json
 systemctl --user enable --now mpd_meta_control.service mpd_playback_supervisor.service
 ```
 
 Do not start supervision after a failed reconciliation; inspect diagnostics.
-`mpd-supervisor` is one of the console scripts of the installed `mpdrussoundpi` package in
-the audio environment (`~/russound-venv/bin/`). In an environment installed
-before the package layout change, run the same arguments as
-`python <script>.py` from `~/MPDRussoundPi/mpdrussoundpi/russound/` instead
-(for example `python mpdctrl.py` for `mpdctrl`).
+`AUDIO_BIN` is the `bin` directory of the active audio candidate
+(`~/.local/share/mpdrussoundpi/audio-candidates/<revision>/venv/bin`), read
+from the supervisor unit so it always matches the running revision. The
+commands are console scripts of the installed `mpdrussoundpi` package.
 
 
 ## 3. Stage an immutable agent candidate

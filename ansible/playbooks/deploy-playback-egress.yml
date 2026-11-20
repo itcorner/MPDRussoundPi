@@ -139,7 +139,7 @@
           # Managed by MPDRussoundPi; component=egress; schema=1
           [Service]
           Slice=mpdstreams.slice
-          ExecStartPre=/usr/bin/python3 {{ playback_egress_install }}/mpdrussoundpi/russound/playbackegress.py --wait
+          ExecStartPre=/usr/bin/env PYTHONPATH={{ playback_egress_install }} /usr/bin/python3 -P -m mpdrussoundpi.russound.playbackegress --wait
       loop: "{{ playback_egress_units }}"
 
     - name: Install root-managed enforcement service

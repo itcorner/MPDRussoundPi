@@ -24,12 +24,6 @@ from typing import TypeVar, cast
 
 import mpd  # pyright: ignore[reportMissingTypeStubs]
 
-if not __package__:
-    # Run as a file: import the library by its canonical package name only
-    # (see the package layout plan in docs/plans/).
-    import sys as _sys
-    from pathlib import Path as _Path
-    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from mpdrussoundpi.common.atomicjson import write_json
 from mpdrussoundpi.russound.lib.audioready import audio_ready
 from mpdrussoundpi.russound.lib.commands import installed_command
