@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from web.russound_controller import (
     apply_shortcut,
+    ConfigConflictError,
     build_config_editor_payload,
     build_view_payload,
     get_controller,
@@ -128,6 +131,97 @@ class RussoundControllerTests(unittest.TestCase):
                     backend = controller.load_config()["backend"]
                     self.assertEqual(backend["device"], device)
                     self.assertEqual(backend["protocol_audit_log_file"], "/data/logs/rnet.log")
+
+    def test_config_revision_tracks_exact_bytes_and_absence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            absent = controller.config_revision()
+            config_path.write_text('{"controllers": [{"id": 1, "zone_count": 6}]}')
+            present = controller.config_revision()
+            self.assertNotEqual(absent, present)
+            self.assertEqual(present, controller.config_revision())
+            # Whitespace-only edits are still different bytes.
+            config_path.write_text('{"controllers": [{"id": 1, "zone_count": 6}]}\n')
+            self.assertNotEqual(present, controller.config_revision())
+            # The token is keyed per process, so it is not a plain content hash.
+            other = RussoundController(config_path, Path(directory) / "state.json")
+            self.assertNotEqual(controller.config_revision(), other.config_revision())
+
+    def test_config_load_state_distinguishes_missing_invalid_unreadable_and_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            self.assertEqual(controller.config_load_state(), "missing")
+            for text in ("{broken", "[]", "{}", '{"backend":"bad"}'):
+                config_path.write_text(text)
+                with self.subTest(text=text):
+                    self.assertEqual(controller.config_load_state(), "invalid")
+            config_path.write_bytes(b"\xff\xfe")
+            self.assertEqual(controller.config_load_state(), "unreadable")
+            config_path.write_text('{"controllers": [{"id": 1, "zone_count": 6}]}')
+            self.assertEqual(controller.config_load_state(), "valid")
+            self.assertEqual(controller.build_config_editor_payload()["configuration"], {
+                "load_state": "valid", "revision": controller.config_revision(),
+            })
+
+    def test_stale_config_revision_is_rejected_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            state_path = Path(directory) / "state.json"
+            config_path.write_text(json.dumps({"controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": []}))
+            controller = RussoundController(config_path, state_path)
+            payload = {"zone_slots": [{"controller": 1, "zone": 1, "name": "Kitchen", "enabled": True, "visible": True}]}
+            loaded = controller.build_config_editor_payload()["configuration"]["revision"]
+
+            saved = controller.update_config_zones(payload=payload, expected_revision=loaded)
+            new_revision = saved["configuration"]["revision"]
+            self.assertNotEqual(new_revision, loaded)
+
+            # A second editor still holding the first revision must not overwrite the save.
+            current = config_path.read_text()
+            for stale in (loaded, "", "not-a-revision"):
+                with self.subTest(stale=stale), self.assertRaises(ConfigConflictError):
+                    controller.update_config_zones(
+                        payload={"zone_slots": [{"controller": 1, "zone": 1, "name": "Den", "enabled": True, "visible": True}]},
+                        expected_revision=stale)
+                self.assertEqual(config_path.read_text(), current)
+            self.assertFalse(state_path.exists() and "Den" in state_path.read_text())
+            controller.update_config_zones(payload=payload, expected_revision=new_revision)
+
+    def test_missing_config_revision_conflicts_once_the_file_appears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            controller = RussoundController(config_path, Path(directory) / "state.json")
+            absent = controller.build_config_editor_payload()["configuration"]
+            self.assertEqual(absent["load_state"], "missing")
+            config_path.write_text(json.dumps({"controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": []}))
+            with self.assertRaises(ConfigConflictError):
+                controller.update_config_zones(payload={
+                    "backend": {"host": "gateway", "port": 6666}, "controllers": [{"id": 1, "zone_count": 6}],
+                    "zone_slots": [],
+                }, expected_revision=absent["revision"])
+
+    def test_json_persistence_keeps_permissions_syncs_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "state.json"
+            persist = RussoundController(None, target).persist_state
+            persist({"zones": []})
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+            target.chmod(0o640)
+            with patch("web.russound_controller.os.fsync", wraps=os.fsync) as fsync:
+                persist({"zones": [], "system_power": True})
+            # File content before the rename, then the directory after it.
+            self.assertGreaterEqual(fsync.call_count, 2)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+            self.assertTrue(json.loads(target.read_text())["system_power"])
+
+            before = target.read_text()
+            with patch("web.russound_controller.json.dump", side_effect=OSError(28, "No space left on device")):
+                with self.assertRaises(OSError):
+                    persist({"zones": []})
+            self.assertEqual(target.read_text(), before)
+            self.assertEqual(sorted(path.name for path in Path(directory).iterdir()), ["state.json"])
 
     def test_config_api_keeps_an_admin_set_device_unchanged(self):
         with tempfile.TemporaryDirectory() as directory:

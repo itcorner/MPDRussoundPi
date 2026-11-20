@@ -113,7 +113,8 @@ class InputPlaybackTests(unittest.TestCase):
                 self.assertEqual(client.get("/api/rooms").json["inputs"][0]["display_name"], "Radio 88.6")
                 self.assertEqual(path.read_bytes(), before)
                 with patch.object(server, "broadcast_state_change"):
-                    saved = client.post("/api/config", json={"zone_slots": [], "source_slots": editor["source_slots"]})
+                    saved = client.post("/api/config", headers={"X-Config-Revision": editor["configuration"]["revision"]},
+                                        json={"zone_slots": [], "source_slots": editor["source_slots"]})
                 self.assertEqual(saved.status_code, 200)
                 self.assertEqual(saved.json["resolved_inputs"][0]["display_name"], "Radio 88.6")
                 agent.poll_once.assert_not_called()

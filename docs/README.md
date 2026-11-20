@@ -59,9 +59,9 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
-| [Guided first-time setup](./plans/general_idea_guided-first-time-setup.md) | Idea, not scheduled; setup and example-data migration need design |
+| [Guided first-time setup](./plans/general_open_guided-first-time-setup.md) | Open; config revision checks, load states and durable writes implemented; next: writer inventory, preview and config/state transaction before the wizard UI |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
-| [Safe configuration change handling](./plans/web_idea_safe-configuration-changes.md) | Idea, not scheduled; concurrency and save recovery need design |
+| [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |
 | [User-triggered Docker image updates](./plans/general_idea_user-triggered-image-updates.md) | Idea, depends on versioned deployment images; not scheduled |
 | [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
 | [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |
@@ -70,4 +70,4 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [USB audio recovery](./plans/usb_done_audio-recovery.md) | Deployed 2026-10-16 |
 | [Web UI live-update rerender fix](./plans/web_done_live-update-rerender.md) | Implemented 2026-10-24 |
 | [API payload cleanup](./plans/web_done_api-payload-cleanup.md) | Implemented and deployed 2026-11-02; deprecated `/api/state` removed the same day |
-| [Long-uptime reliability backlog](./plans/web_open_reliability-backlog.md) | 7 of 12 items done |
+| [Long-uptime reliability backlog](./plans/web_done_reliability-backlog.md) | All 13 items done |
