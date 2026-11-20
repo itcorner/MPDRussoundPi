@@ -8,7 +8,8 @@ PartOf=user@{{ playback_egress_uid }}.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/python3 {{ playback_egress_install }}/mpdrussoundpi/russound/playbackegress.py --user {{ playback_egress_user }} --uid {{ playback_egress_uid }}{% for resolver in playback_egress_resolvers %} --resolver {{ resolver }}{% endfor %}
+Environment=PYTHONPATH={{ playback_egress_install }}
+ExecStart=/usr/bin/python3 -P -m mpdrussoundpi.russound.playbackegress --user {{ playback_egress_user }} --uid {{ playback_egress_uid }}{% for resolver in playback_egress_resolvers %} --resolver {{ resolver }}{% endfor %}
 
 [Install]
 WantedBy=multi-user.target

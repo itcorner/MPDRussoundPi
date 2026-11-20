@@ -36,18 +36,19 @@ FFmpeg with Pulse input, pactl, systemctl, journalctl, lsusb and Git must be
 available. A private `XDG_RUNTIME_DIR` is required for the recorder's own
 nonblocking lock. The production operational configuration is used below.
 
-From the script directory on the Pi:
+On the Pi (see [`AUDIO_BIN`](./mpd-headless-deployment.md) for the active
+audio environment):
 
 ```sh
 CONFIG="$HOME/.config/mpdrussoundpi/config.json"
 RUN="$HOME/.local/state/mpdrussoundpi/audits/$(date +%Y%m%d-%H%M%S)"
-PYTHON="$HOME/russound-venv/bin/python3"
+AUDIO_BIN=$(dirname "$(systemctl --user show -p ExecStart --value mpd_playback_supervisor.service | sed -n 's/.*path=\([^ ;]*\).*/\1/p')")
 
 # Optional one-pass smoke test; use a separate output directory.
-"$PYTHON" playbackaudit.py "$CONFIG" --output "${RUN}-smoke" --once
+"$AUDIO_BIN/playback-audit" "$CONFIG" --output "${RUN}-smoke" --once
 
 # Generate the user unit. This does NOT enable/start it.
-"$PYTHON" playbackaudit.py "$CONFIG" --output "$RUN" --hours 72 --install-service
+"$AUDIO_BIN/playback-audit" "$CONFIG" --output "$RUN" --hours 72 --install-service
 systemctl --user enable --now playback_audit.service
 ```
 

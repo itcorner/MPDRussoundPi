@@ -2,6 +2,7 @@
 
 import ast
 import importlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -79,10 +80,21 @@ print(len({modules!r}))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(int(result.stdout), len(LIBRARY_MODULES) + len(COMMON_MODULES) + len(ENTRY_SCRIPTS))
 
-    def test_entry_script_runs_by_file_path_from_another_directory(self):
-        # systemd starts the scripts as `python /path/to/script.py`.
+    def test_package_code_never_edits_sys_path(self):
+        # Scripts run as console commands or `python -m`; nothing may patch the import path.
+        offenders = [f"{path.relative_to(ROOT)}:{number}"
+                     for path in (ROOT / "mpdrussoundpi").rglob("*.py") if "__pycache__" not in path.parts
+                     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                     if "sys.path" in line]
+        self.assertEqual(offenders, [])
+
+    def test_entry_script_runs_as_a_module_from_another_directory(self):
         with tempfile.TemporaryDirectory() as directory:
-            result = run_python([str(PACKAGE / "mpdctrl.py"), "--help"], cwd=directory, isolated=False)
+            result = subprocess.run(
+                [sys.executable, "-P", "-m", "mpdrussoundpi.russound.mpdctrl", "--help"],
+                cwd=directory, capture_output=True, text=True, timeout=60,
+                env={**os.environ, "PYTHONPATH": str(ROOT)},
+            )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("usage: mpdctrl.py", result.stdout)
 
@@ -97,10 +109,20 @@ print(len({modules!r}))
                 target = Path(install) / "mpdrussoundpi" / item["dest"]
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile((PACKAGE / item["src"]).resolve(), target)
-            script = Path(install) / "mpdrussoundpi/russound/playbackegress.py"
-            result = run_python([str(script), "--help"], cwd=elsewhere, isolated=False)
+            # Run exactly like the unit and the MPD drop-in: module form, install root on PYTHONPATH.
+            result = subprocess.run(
+                [sys.executable, "-P", "-m", "mpdrussoundpi.russound.playbackegress", "--help"],
+                cwd=elsewhere, capture_output=True, text=True, timeout=60,
+                env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": install},
+            )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("usage: playbackegress.py", result.stdout)
+        self.assertIn("playbackegress", result.stdout)
+        unit = (ROOT / "ansible/templates/playback-egress.service.j2").read_text()
+        self.assertIn("Environment=PYTHONPATH={{ playback_egress_install }}\n"
+                      "ExecStart=/usr/bin/python3 -P -m mpdrussoundpi.russound.playbackegress ", unit)
+        dropin = tasks["Scope MPD to the protected slice and gate process startup"]["ansible.builtin.copy"]["content"]
+        self.assertIn("ExecStartPre=/usr/bin/env PYTHONPATH={{ playback_egress_install }} "
+                      "/usr/bin/python3 -P -m mpdrussoundpi.russound.playbackegress --wait", dropin)
 
     def test_egress_ownership_preflight_layout_runs(self):
         playbook = yaml.safe_load((ROOT / "ansible/playbooks/deploy-playback-egress.yml").read_text())

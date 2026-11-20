@@ -1,9 +1,9 @@
 # Plan: package layout and single module names
 
-Status: **open** (2026-11-20). Phases 1 and 2 are implemented and deployed to
-the Pi at revision `5ed0e04` (see the [rollout record](#pi-rollout-2026-11-20)).
-Phase 3 removes the transition bootstrap once the rollout is accepted after an
-observation period.
+Status: **done** (2026-11-20). Phases 1 and 2 are deployed to the Pi at revision
+`5ed0e04` (see the [rollout record](#pi-rollout-2026-11-20)); the rollout was
+accepted and the retired installation removed. Phase 3 removed the transition
+bootstrap.
 
 ## Progress
 
@@ -175,12 +175,33 @@ still runs the previous checkout. **Rollback:** restore the archives above,
 `systemctl --user daemon-reload`, restart the affected units and the egress
 service; for the web, the operator's retained backup and recovery actions.
 
-## Phase 3: remove the transition bootstrap
+### Cleanup after acceptance (2026-11-20)
 
-After the Phase 2 rollout is accepted: remove the `if not __package__`
-bootstrap from the entry scripts, run scripts only through console commands or
-`python -m`, drop the guard test for running a script by file path, and remove
-the "installed before the package layout change" notes from the guides.
+The previous checkout `~/MPDRussoundPi` (including its untracked notes,
+configs and secrets) and the previous agent copy were archived on the Pi in
+`~/MPDRussoundPi-deploy-backups/retired-20261120/` (entry counts and checksums
+verified), then removed together with `~/russound-venv`, the superseded staged
+candidates and the stale `playback_audit.service`. Its recorded endurance data
+in `~/.local/state/mpdrussoundpi/` was kept.
+
+## Phase 3: remove the transition bootstrap (done)
+
+- The `if not __package__` bootstrap is gone from all entry scripts; a guard test
+  forbids `sys.path` edits anywhere in the package.
+- Scripts run only as console commands or `python -m`. Egress, which runs root
+  owned copied files without a venv, uses
+  `PYTHONPATH=<install> /usr/bin/python3 -P -m mpdrussoundpi.russound.playbackegress`
+  in its unit and MPD drop-ins (`-P` keeps the working directory off the import
+  path). The guard test runs the installed tree exactly that way.
+- Guides use `AUDIO_BIN`, the active audio candidate's `bin` directory read from
+  the supervisor unit, instead of the removed `~/russound-venv` and checkout.
+- Deployed 2026-11-20 by rerunning `deploy-playback-egress.yml` from the PR
+  tree (egress files backed up first in
+  `~/MPDRussoundPi-deploy-backups/pre-phase3-egress-*`): the filter loaded with
+  exit status 0 and its nftables table present; the MPD instances restarted
+  through the module-form start check, and all outputs returned to playing with
+  routes ok. The other services needed no change, as they already run console
+  commands.
 
 ## Out of scope
 

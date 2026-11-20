@@ -121,8 +121,8 @@ The setup play installs this bounded manifest without an unconditional upgrade.
 It still targets its configured environment; **do not run it against a working
 installation merely to prepare an environment**.
 
-For a candidate, choose a new unused path and leave existing service units and
-`~/russound-venv` untouched. From a reviewed checkout on the intended host:
+For a candidate, choose a new unused path and leave the active candidate and its
+service units untouched. From a reviewed checkout on the intended host:
 
 ```sh
 test ! -e "$HOME/russound-audio-candidate" &&
@@ -143,19 +143,17 @@ not Pi hardware acceptance.
 
 Use the operational configuration for **all** control and calibration commands:
 
-Run the following commands on the Pi as the audio user with its playback
-environment activated. The commands are console scripts of the installed `mpdrussoundpi` package in
-the audio environment (`~/russound-venv/bin/`). In an environment installed
-before the package layout change, run the same arguments as
-`python <script>.py` from `~/MPDRussoundPi/mpdrussoundpi/russound/` instead
-(for example `python mpdctrl.py` for `mpdctrl`).
+Run the following commands on the Pi as the audio user. `AUDIO_BIN` is the `bin` directory of the active audio candidate
+(`~/.local/share/mpdrussoundpi/audio-candidates/<revision>/venv/bin`), read
+from the supervisor unit so it always matches the running revision. The
+commands are console scripts of the installed `mpdrussoundpi` package.
 
 ```sh
-. ~/russound-venv/bin/activate
-mpdctrl --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
-mpdctrl --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
-mpdctrl --start ~/.config/mpdrussoundpi/config.json
-mpdctrl --check-route ~/.config/mpdrussoundpi/config.json
+AUDIO_BIN=$(dirname "$(systemctl --user show -p ExecStart --value mpd_playback_supervisor.service | sed -n 's/.*path=\([^ ;]*\).*/\1/p')")
+"$AUDIO_BIN/mpdctrl" --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/mpdctrl" --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/mpdctrl" --start ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/mpdctrl" --check-route ~/.config/mpdrussoundpi/config.json
 ```
 
 `--start` without `--output` starts every output that has a station.
@@ -201,7 +199,7 @@ required.
 loginctl show-user "$USER" -p Linger
 systemctl --user status mpd_playback_supervisor.service
 journalctl --user -u mpd_playback_supervisor.service -n 60 --no-pager
-mpd-supervisor --once ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/mpd-supervisor" --once ~/.config/mpdrussoundpi/config.json
 ```
 
 `--once` is useful while the supervisor is stopped; concurrent mutations use
@@ -215,8 +213,8 @@ MPD instances first during an approved maintenance window; otherwise they will
 keep trying to restore outputs whose virtual sinks you are removing:
 
 ```sh
-mpd-setup --stop ~/.config/mpdrussoundpi/config.json
-audio-setup --cleanup --audio-processor pipewire
+"$AUDIO_BIN/mpd-setup" --stop ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/audio-setup" --cleanup --audio-processor pipewire
 ```
 
 The MPD stop command selects exact output IDs from the supplied config and
@@ -277,8 +275,8 @@ service and retry its restart before reinstalling or resuming playback.
 Reinstall using the operational configuration, then restart MPD/supervision:
 
 ```sh
-audio-setup --install --audio-processor pipewire ~/.config/mpdrussoundpi/config.json
-mpd-setup --start ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/audio-setup" --install --audio-processor pipewire ~/.config/mpdrussoundpi/config.json
+"$AUDIO_BIN/mpd-setup" --start ~/.config/mpdrussoundpi/config.json
 ```
 
 ## Audio graph and hardware notes

@@ -17,12 +17,6 @@ import time
 from typing import TextIO, TypeAlias, Union
 from urllib.parse import urlparse
 
-if not __package__:
-    # Run as a file: import the library by its canonical package name only
-    # (see the package layout plan in docs/plans/).
-    import sys as _sys
-    from pathlib import Path as _Path
-    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from mpdrussoundpi.russound.lib.outputconfig import parse_configuration
 from mpdrussoundpi.russound.lib.playbackstate import read_state
 from mpdrussoundpi.russound.lib.streamgain import validate_gain_db
