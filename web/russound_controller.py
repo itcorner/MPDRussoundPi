@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -14,6 +15,15 @@ from .zone import Zone
 _BACKEND_UNAVAILABLE_MESSAGE = "Communication with Russound hardware is currently unavailable."
 _BACKEND_SILENT_MESSAGE = "The Russound gateway is reachable, but the hardware is not responding."
 _SOURCE_SLOT_COUNT = 6
+# Backend fields the configuration API may change. Anything else (for example
+# protocol_audit_log_file) is a file-system path owned by the administrator: the
+# API accepts it only unchanged, so editor round-trips keep working.
+_API_EDITABLE_BACKEND_FIELDS = frozenset({"host", "port", "device", "baud", "poll_interval_seconds"})
+# The API opens a changed serial device on the server, so restrict it to serial
+# device nodes (Linux tty/serial links, macOS cu devices).
+_SERIAL_DEVICE_PATTERN = re.compile(
+    r"/dev/(?:tty[A-Za-z0-9._-]+|cu\.[A-Za-z0-9._-]+|serial/by-(?:id|path)/[A-Za-z0-9._:+-]+)"
+)
 
 
 class RussoundController:
@@ -141,6 +151,7 @@ class RussoundController:
             if not isinstance(backend, dict):
                 raise ValueError("backend must be an object")
             validate_russound_config({"backend": backend})
+            _check_api_backend_fields(backend, config.get("backend") or {})
             if not backend.get("device") and (not isinstance(backend.get("host"), str) or not backend["host"].strip() or "port" not in backend):
                 raise ValueError("Backend host and port are required")
             config["backend"] = {**config.get("backend", {}), **backend}
@@ -745,6 +756,16 @@ class RussoundController:
             "backend_status": backend_status,
             "state": _filter_state_for_overview(state, visible_zone_addresses),
         }
+
+
+def _check_api_backend_fields(backend: dict[str, Any], saved_backend: dict[str, Any]) -> None:
+    """Reject backend changes the configuration API must not make."""
+    for field in sorted(set(backend) - _API_EDITABLE_BACKEND_FIELDS):
+        if backend[field] != saved_backend.get(field):
+            raise ValueError(f"Backend {field} cannot be changed through the web configuration")
+    device = backend.get("device")
+    if device and device != saved_backend.get("device") and not _SERIAL_DEVICE_PATTERN.fullmatch(device):
+        raise ValueError("Backend device must be a serial device such as /dev/ttyUSB0 or /dev/serial/by-id/...")
 
 
 def _resolve_config_path(path: str | Path | None) -> Path | None:

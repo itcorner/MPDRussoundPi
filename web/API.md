@@ -581,6 +581,12 @@ Omitting `shortcuts` preserves the existing shortcuts, pruning removed zone targ
   zone counts are integers from `1` to `6`; TCP ports are from `1` to `65535`.
 - `backend.poll_interval_seconds` is a finite number of at least `1` second
   (default `2`). Fractional seconds are supported; saves apply it to the watcher immediately.
+- A changed `backend.device` must be a serial device path: `/dev/tty*`,
+  `/dev/serial/by-id/*`, `/dev/serial/by-path/*` or macOS `/dev/cu.*`. A device
+  already saved in the config file may be sent back unchanged.
+- Other backend fields, such as `protocol_audit_log_file`, are administrator-owned
+  file paths. The API accepts them only when absent or equal to the saved value,
+  and otherwise returns `400`; change them in the config file.
 - Saves perform no hardware I/O. Endpoint or protocol-audit-log changes detach
   the old connection and reconnect through the watcher. Other edits keep the
   connection and recorded health, updating controller scope and poll interval in

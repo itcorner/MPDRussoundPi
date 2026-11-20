@@ -1290,6 +1290,27 @@ class UnattendedBackendRecoveryTests(unittest.TestCase):
         self.assertEqual(health, {"connected": True, "message": ""})
         self.assertIsNotNone(self.backend.client)
 
+    def test_unexpected_connection_check_error_does_not_stop_the_watcher(self):
+        original = self.server._ensure_update_listener
+        calls = []
+
+        def flaky_check():
+            calls.append(True)
+            if len(calls) <= 3:
+                raise RuntimeError("unexpected listener failure")
+            original()
+
+        # The gateway only appears at t=10 s, so recovery proves the watcher outlived the failures.
+        with patch.object(self.server, "_ensure_update_listener", side_effect=flaky_check), \
+                patch("web.russound_server.logging.exception") as log_exception:
+            polls, _, health = self.run_watcher(transport_ready=lambda now: now >= 10.0)
+        self.assertGreater(len(calls), 4)
+        self.assertEqual(polls[-1], 10.0)
+        self.assertEqual(health, {"connected": True, "message": ""})
+        # The repeated error is logged with a traceback only once.
+        log_exception.assert_called_once()
+        self.assertIsNone(self.server._last_listener_error)
+
     def test_persistent_silence_retries_only_at_poll_cadence(self):
         polls, _, health = self.run_watcher(hardware_ready=lambda now: False)
         self.assertEqual(polls, [0.0, 10.0, 20.0, 30.0])
