@@ -2,6 +2,16 @@
 
 Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
 
+**Implemented subset (2026-11-20):** `GET /api/config` returns
+`configuration.load_state` and an opaque, process-keyed `configuration.revision`
+for the exact config bytes or their absence. The configuration page sends it as
+`X-Config-Revision`; a stale save returns `409 config_conflict` and writes
+nothing. Saves without the header stay unconditional for a transition release.
+Config and state writes now sync the file before the rename and the directory
+after it, and keep existing permissions. **Still open:** requiring the header
+(`428`), a preview endpoint, coordination with external/CLI writers, and a
+recoverable two-file (config + state) transaction.
+
 ## Goal
 
 Prevent lost edits and partial configuration saves, and make consequential

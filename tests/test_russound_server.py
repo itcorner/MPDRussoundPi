@@ -50,6 +50,50 @@ class RussoundServerTests(unittest.TestCase):
             finally:
                 _close_server(server)
 
+    def test_config_save_with_stale_revision_returns_conflict(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps({
+                "backend": {"host": "gateway", "port": 6666},
+                "controllers": [{"id": 1, "zone_count": 6}], "zones": [], "inputs": [], "shortcuts": [],
+            }))
+            server = RussoundHTTPServer(config_path, Path(directory) / "state.json")
+            try:
+                client = server.app.test_client()
+                loaded = client.get("/api/config")
+                self.assertEqual(loaded.headers["Cache-Control"], "no-store")
+                self.assertEqual(loaded.json["configuration"]["load_state"], "valid")
+                revision = loaded.json["configuration"]["revision"]
+
+                def save(name, revision_header):
+                    slots = [dict(slot) for slot in loaded.json["zone_slots"]]
+                    slots[0].update(enabled=True, name=name)
+                    headers = {} if revision_header is None else {"X-Config-Revision": revision_header}
+                    with patch("web.russound_controller.RussoundBackend.connect",
+                               side_effect=AssertionError("Save must not contact hardware")):
+                        return client.post("/api/config", headers=headers, json={
+                            "zone_slots": slots, "source_slots": loaded.json["source_slots"],
+                        })
+
+                first = save("Kitchen", revision)
+                self.assertEqual(first.status_code, 200)
+                self.assertEqual(first.headers["Cache-Control"], "no-store")
+                self.assertNotEqual(first.json["configuration"]["revision"], revision)
+
+                saved = config_path.read_text()
+                stale = save("Den", revision)
+                self.assertEqual(stale.status_code, 409)
+                self.assertEqual(stale.json["code"], "config_conflict")
+                self.assertEqual(stale.json["save_outcome"], "not-saved")
+                self.assertIn("another tab", stale.json["error"])
+                self.assertEqual(config_path.read_text(), saved)
+
+                # Transition release: saves without the header remain unconditional.
+                self.assertEqual(save("Den", None).status_code, 200)
+                self.assertEqual(json.loads(config_path.read_text())["zones"][0]["name"], "Den")
+            finally:
+                _close_server(server)
+
     def test_effective_endpoint_metadata_preserves_saved_serial_configuration(self):
         for overrides in ({"RUSSOUND_BACKEND_HOST": "gateway.local"},
                           {"RUSSOUND_BACKEND_PORT": "7000"}):

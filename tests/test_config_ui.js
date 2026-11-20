@@ -304,6 +304,50 @@ test("saving unrelated changes omits an unchanged incomplete backend", async () 
   assert.match(messages.at(-1)[0], /Remove or change the environment override/);
 });
 
+test("saving sends the loaded config revision and keeps edits on conflict", async () => {
+  const requests = [];
+  const messages = [];
+  let rendered = false;
+  const context = {
+    saveInFlight: false,
+    hasUnsavedChanges: true,
+    configPayload: {
+      config_required: false,
+      config: { backend: { host: "gateway", port: 6666 } },
+      effective_backend: { mode: { source: "saved" } },
+      configuration: { load_state: "valid", revision: "rev-1" },
+    },
+    collectBackend: () => ({ host: "gateway", port: 6666, poll_interval_seconds: 2 }),
+    backendMode: { value: "tcp" },
+    collectControllers: () => [{ id: 1, zone_count: 6 }],
+    collectZoneSlots: () => [],
+    collectSourceSlots: () => [],
+    collectShortcuts: () => [],
+    updateSaveButtonState() {},
+    setMessage: (...args) => messages.push(args),
+    renderEditor() { rendered = true; },
+    apiFetch: async (url, options) => {
+      requests.push(options.headers);
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({ code: "config_conflict", error: "The configuration was changed in another tab." }),
+      };
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(save, context);
+  await context.saveConfig();
+  assert.equal(requests[0]["X-Config-Revision"], "rev-1");
+  assert.deepEqual(messages.at(-1), ["The configuration was changed in another tab.", true]);
+  assert.equal(rendered, false);
+  assert.equal(context.hasUnsavedChanges, true);
+
+  delete context.configPayload.configuration;
+  await context.saveConfig();
+  assert.equal(Object.hasOwn(requests[1], "X-Config-Revision"), false);
+});
+
 test("partial saved endpoint stays inactive under an independent environment override", () => {
   const payload = {
     config_required: false,

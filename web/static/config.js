@@ -752,9 +752,15 @@ async function saveConfig() {
   updateSaveButtonState();
   setMessage("");
   try {
+    // The revision makes the server reject the save if the config changed since
+    // this page loaded it (409), instead of overwriting newer edits.
+    const revision = configPayload?.configuration?.revision;
     const response = await apiFetch("/api/config", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(revision ? { "X-Config-Revision": revision } : {}),
+      },
       body: JSON.stringify({
         ...(preserveIncompleteEndpoint ? {} : { backend }),
         controllers: collectControllers(),

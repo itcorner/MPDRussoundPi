@@ -449,6 +449,12 @@ Returns the editable zone-configuration payload used by the configuration page.
   These defaults are not persisted or used to connect to hardware until saved.
 - `config_writable` indicates whether a destination path is configured, not an
   OS permission check; save errors describe filesystem/permission failures.
+- `configuration.load_state` is `missing`, `valid`, `invalid` (not JSON or
+  failing validation) or `unreadable`.
+- `configuration.revision` is an opaque token for the exact config file bytes
+  (or their absence). Send it back as `X-Config-Revision` on `POST /api/config`.
+  It is keyed per server process, so a restart invalidates it.
+- Responses use `Cache-Control: no-store`.
 - `backend_overrides` lists non-empty `RUSSOUND_BACKEND_HOST` and
   `RUSSOUND_BACKEND_PORT` values. Environment overrides take precedence over saved settings.
 - `effective_backend` is additive, allowlisted runtime metadata from the actual
@@ -572,7 +578,16 @@ numeric `source`, and at least one unique enabled target in `zone_addresses`
 (`{"controller": 1, "zone": 1}`). Invalid references return `400` before saving.
 Omitting `shortcuts` preserves the existing shortcuts, pruning removed zone targets.
 
-- Returns the updated config-editor payload.
+- Returns the updated config-editor payload, including the new
+  `configuration.revision`.
+- `X-Config-Revision` (from `GET /api/config`) makes the save conditional: if the
+  config file changed since it was loaded (another tab, device or a file edit),
+  the server returns `409` with `code: "config_conflict"`,
+  `save_outcome: "not-saved"` and the usual `error` text, and writes nothing. The
+  configuration page always sends it. Saves without the header remain
+  unconditional during a transition release; they will later be rejected.
+- Config and state files are replaced atomically: the new file is synced before
+  the rename and the directory after it, and existing file permissions are kept.
 - Rejects invalid controller/zone slots with `400 Bad Request`.
 - Only slots within each controller's configured `zone_count` can be enabled, so the frontend cannot create more zones than the controller supports.
 - Initial setup requires `backend` and a non-empty `controllers` list. They are

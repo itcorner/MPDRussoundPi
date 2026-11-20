@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
 
 from web.config_types import backend_endpoint_metadata, coerce_russound_config, env_port, env_str, resolve_backend_endpoint, resolve_backend_poll_interval_seconds, resolve_backend_protocol_audit_log_file
 from web.russound_backend import RussoundBackend
-from web.russound_controller import get_controller
+from web.russound_controller import ConfigConflictError, get_controller
 from web.russound_state import RussoundState
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
@@ -48,6 +48,8 @@ EVENT_STREAM_RETRY_MS = 2000
 EVENT_QUEUE_MAXSIZE = 8
 # Worker threads always kept free for page loads and API calls.
 RESERVED_REQUEST_THREADS = 4
+# Carries the opaque revision from GET /api/config back on save.
+CONFIG_REVISION_HEADER = "X-Config-Revision"
 DEFAULT_WAITRESS_THREADS = 24
 DEFAULT_TCP_USER_TIMEOUT_SECONDS = 30
 MAX_TCP_USER_TIMEOUT_SECONDS = (2**31 - 1) // 1000
@@ -378,7 +380,7 @@ class RussoundHTTPServer:
             with self.state_lock:
                 payload = self.controller.build_config_editor_payload()
             payload = self._with_playback_editor(payload)
-            return jsonify(payload)
+            return self._no_store(jsonify(payload))
 
         @app.get("/api/status")
         def api_status():
@@ -399,11 +401,14 @@ class RussoundHTTPServer:
         @app.post("/api/config")
         def api_update_config():
             payload = self._read_json_body()
+            # Optional during the transition release; first-party editors always send it.
+            expected_revision = request.headers.get(CONFIG_REVISION_HEADER)
             old_backend = None
             try:
                 with self.state_lock:
                     previous_config = coerce_russound_config(self.controller.load_config())
-                    response_payload = self.controller.update_config_zones(payload=payload)
+                    response_payload = self.controller.update_config_zones(
+                        payload=payload, expected_revision=expected_revision)
                     updated_config = coerce_russound_config(response_payload["config"])
                     reconnect_required = (
                         previous_config is None
@@ -424,6 +429,10 @@ class RussoundHTTPServer:
                         self._reconnect_delay_seconds = UPDATE_LISTENER_CHECK_SECONDS
                     self._backend_poll_interval_seconds = self._resolve_backend_poll_interval_seconds()
                     self._publish_state_payload_locked()
+            except ConfigConflictError as exc:
+                return self._no_store(jsonify({
+                    "error": str(exc), "code": "config_conflict", "message": str(exc), "save_outcome": "not-saved",
+                })), 409
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
             except OSError as exc:
@@ -437,7 +446,7 @@ class RussoundHTTPServer:
             self._zone_refresh_requested.set()
             self.record_frontend_event(self._request_ip(), request.path, payload)
             self.broadcast_state_change()
-            return jsonify(self._with_playback_editor(response_payload))
+            return self._no_store(jsonify(self._with_playback_editor(response_payload)))
 
         @app.post("/api/system/power")
         def api_system_power():
@@ -869,6 +878,11 @@ class RussoundHTTPServer:
             self.controller.persist_state(refreshed_state)
             self._publish_state_payload_locked()
             return True
+
+    @staticmethod
+    def _no_store(response: Response) -> Response:
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     def _read_json_body(self) -> dict[str, Any]:
         payload = request.get_json(silent=True)

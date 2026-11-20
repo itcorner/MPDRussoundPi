@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from contextlib import suppress
+import errno
+import hashlib
+import hmac
 import json
+import logging
+import os
 import re
+import secrets
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any, cast
@@ -26,6 +34,13 @@ _SERIAL_DEVICE_PATTERN = re.compile(
 )
 
 
+LOGGER = logging.getLogger(__name__)
+
+
+class ConfigConflictError(Exception):
+    """The configuration changed after the editor loaded it."""
+
+
 class RussoundController:
     """Singleton-style controller that owns config, state, and persistence behavior."""
 
@@ -34,6 +49,44 @@ class RussoundController:
         self.state_path = _resolve_state_path(state_path)
         self._backend_health: dict[str, Any] | None = None
         self._shared_backend: RussoundBackend | None = None
+        # Keys the config revision so it does not expose a plain fingerprint of
+        # the config bytes. A restart deliberately invalidates open editors.
+        self._revision_key = secrets.token_bytes(32)
+
+    def config_revision(self) -> str:
+        """Opaque token for the exact config bytes, or for their absence."""
+        resolved = _resolve_config_path(self.config_path)
+        if resolved is None:
+            material = b"no-path"
+        else:
+            try:
+                material = b"present\0" + resolved.read_bytes()
+            except FileNotFoundError:
+                material = b"absent"
+            except OSError:
+                material = b"unreadable"
+        target = str(resolved).encode("utf-8", "surrogateescape")
+        return hmac.new(self._revision_key, target + b"\0" + material, hashlib.sha256).hexdigest()[:32]
+
+    def config_load_state(self) -> str:
+        """Classify the config file as missing, valid, invalid or unreadable."""
+        resolved = _resolve_config_path(self.config_path)
+        if resolved is None:
+            return "missing"
+        try:
+            text = resolved.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return "missing"
+        except (OSError, UnicodeDecodeError):
+            return "unreadable"
+        try:
+            validate_russound_config(json.loads(text))
+        except ValueError:
+            return "invalid"
+        return "valid"
+
+    def configuration_metadata(self) -> dict[str, str]:
+        return {"load_state": self.config_load_state(), "revision": self.config_revision()}
 
     def set_shared_backend(self, backend: RussoundBackend | None) -> None:
         """Use the server-owned backend for all controller hardware operations."""
@@ -124,6 +177,7 @@ class RussoundController:
             },
             "zone_slots": zone_slots,
             "source_slots": source_slots,
+            "configuration": self.configuration_metadata(),
         }
 
     def update_config_zones(
@@ -131,13 +185,25 @@ class RussoundController:
         config_path: str | Path | None = None,
         state_path: str | Path | None = None,
         payload: dict[str, Any] | None = None,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]:
+        """Validate and save the editor payload.
+
+        With ``expected_revision`` the save only proceeds if the config file is
+        still exactly the one the editor loaded; callers serialize writers.
+        """
         if config_path is not None:
             self.config_path = _resolve_config_path(config_path)
         if state_path is not None:
             self.state_path = _resolve_state_path(state_path)
         if payload is None:
             raise ValueError("Invalid request body")
+        if expected_revision is not None and not hmac.compare_digest(
+                expected_revision.encode("utf-8", "surrogateescape"), self.config_revision().encode()):
+            raise ConfigConflictError(
+                "The configuration was changed in another tab or by another device. "
+                "Reload the page to load the latest configuration, then reapply your changes."
+            )
         config = self.load_config()
         replacing_invalid = config is None
         if config is None:
@@ -344,6 +410,7 @@ class RussoundController:
             with tempfile.NamedTemporaryFile(dir=self.config_path.parent, prefix=f"{self.config_path.name}.invalid-", suffix=".bak", delete=False) as backup:
                 backup_path = Path(backup.name)
             shutil.copyfile(self.config_path, backup_path)
+            _fsync_path(backup_path)
         persist_config(self.config_path, updated_config)
         return self.build_config_editor_payload()
 
@@ -895,20 +962,52 @@ def _prepare_config_payload_for_persistence(config: dict[str, Any]) -> dict[str,
     return prepared_config
 
 
+def _fsync_path(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make a completed rename durable; filesystems without directory sync only get a warning."""
+    try:
+        fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError as exc:
+        LOGGER.warning("Cannot open %s to sync the directory: %s", directory, exc.strerror)
+        return
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno not in (errno.EINVAL, errno.ENOTSUP, errno.EBADF):
+            LOGGER.warning("Directory sync failed for %s: %s", directory, exc.strerror)
+    finally:
+        os.close(fd)
+
+
 def _persist_json_file(destination: Path, payload: Any) -> Path:
+    """Replace ``destination`` atomically and durably, keeping its permissions.
+
+    The new content is synced before the rename and the directory afterwards, so
+    a power loss leaves either the old or the new file, never a truncated one.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=destination.parent,
-        prefix=f".{destination.stem}.",
-        suffix=".tmp",
-        delete=False,
-    ) as handle:
-        json.dump(payload, handle, indent=2)
-        handle.flush()
-        tmp_path = Path(handle.name)
-    tmp_path.replace(destination)
+    try:
+        mode: int | None = stat.S_IMODE(destination.stat().st_mode)
+    except FileNotFoundError:
+        mode = None  # mkstemp creates new files private (0600).
+    fd, temporary = tempfile.mkstemp(dir=destination.parent, prefix=f".{destination.stem}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
+            json.dump(payload, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    except BaseException:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
+        raise
+    _fsync_directory(destination.parent)
     return destination
 
 
