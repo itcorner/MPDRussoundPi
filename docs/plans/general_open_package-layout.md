@@ -1,8 +1,21 @@
 # Plan: package layout and single module names
 
-Status: **new, planned** (2026-11-20). Phase 1 is a code-only change; Phase 2
-changes how the Pi services are installed and needs a separately reviewed Pi
-rollout.
+Status: **open** (2026-11-20). Phase 1 is implemented and verified locally; it
+reaches the Pi with the next reviewed deployment. Phase 2 changes how the Pi
+services are installed and needs a separately reviewed Pi rollout.
+
+## Progress
+
+| Date | Change | Evidence |
+|---|---|---|
+| 2026-11-20 | Phase 1 implemented (steps 1-7). | Full test run loads no `lib.*` module and nothing twice (before: four). Full Python/Node suites, the web image smoke test and all 9 scripts run by file path pass. [Guard tests](../../tests/test_import_layout.py) build the egress install and preflight trees from the playbook and run them. |
+
+**Pi rollout notes for Phase 1:** agent, supervisor, setup and audit scripts
+keep their commands, paths and virtual environments; the new code works from
+the existing checkout layout. The egress playbook changes the installed script
+path to `{{ playback_egress_install }}/mpdrussoundpi/russound/playbackegress.py`,
+rewrites the unit and MPD drop-ins, restarts the filter and MPD as before, and
+removes the old flat files afterwards. Not yet exercised on the Pi.
 
 ## Goal
 
@@ -10,7 +23,7 @@ Every Python module has exactly one import name, on every target and in tests.
 Deployments install code as a package instead of hand-picked file lists, and
 the web application depends only on an explicit shared subset of the Pi code.
 
-## Current state (2026-11-20)
+## Starting point (2026-11-20, before Phase 1)
 
 - Pi scripts run as `python …/mpdrussoundpi/russound/<script>.py`. Python puts
   the script directory on `sys.path`, so the shared library imports as a
