@@ -2404,7 +2404,7 @@ on the reviewed S2 design; S5 follows both and the relevant release/hardware
 prerequisites. Coordinate UX separately with
 [first-time setup](./general_open_guided-first-time-setup.md),
 [diagnostics](./general_idea_guided-diagnostics.md) and
-[safe configuration changes](./web_idea_safe-configuration-changes.md);
+[safe configuration changes](./web_open_safe-configuration-changes.md);
 this plan defines the deployment contract, not those features.
 
 ## Local implementation iteration log

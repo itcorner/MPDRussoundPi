@@ -1,5 +1,10 @@
 # Web and delivery reliability backlog
 
+Status: **done** (2026-11-20). All 13 items are implemented and verified; no
+open items remain. Later hardening of the backend watcher (an unexpected
+connection-check error no longer stops it) landed in
+[PR #55](https://github.com/itcorner/MPDRussoundPi/pull/55).
+
 Findings from the web reliability review (2026-10-10), reassessed against
 `develop` on 2026-11-06. The list covers long-uptime runtime behavior and
 delivery-pipeline reliability. Tick items only after implementation and
@@ -232,10 +237,11 @@ for each finding is recorded in the table below.
 ## Not issues (checked)
 
 Rechecked on 2026-11-06; no new long-uptime runtime issue was confirmed in this
-bounded pass beyond the open items above.
+bounded pass.
 
 - `_event_history` is a `deque(maxlen=50)`.
-- State/config persistence writes are atomic (temp file + `replace`).
+- State/config persistence writes are atomic (temp file + `replace`); since
+  2026-11-20 they also sync the file and directory.
 - Application log uses `RotatingFileHandler` (10 MB × 5).
 - Frontend uses event delegation on static containers; re-rendering does not
   accumulate listeners.

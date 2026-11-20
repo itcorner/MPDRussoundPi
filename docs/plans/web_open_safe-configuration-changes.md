@@ -1,8 +1,11 @@
-# Idea: safe configuration change handling
+# Plan: safe configuration change handling
 
-Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
+Status: **open, partly implemented** (2026-11-20). Proposed as an idea on
+2026-11-12; the first parts were delivered as prerequisites of
+[guided first-time setup](./general_open_guided-first-time-setup.md#implementation-progress),
+which tracks the remaining batches.
 
-**Implemented subset (2026-11-20):** `GET /api/config` returns
+**Implemented (2026-11-20, [PR #56](https://github.com/itcorner/MPDRussoundPi/pull/56)):** `GET /api/config` returns
 `configuration.load_state` and an opaque, process-keyed `configuration.revision`
 for the exact config bytes or their absence. The configuration page sends it as
 `X-Config-Revision`, which every save requires: a missing header returns

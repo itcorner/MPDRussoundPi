@@ -383,7 +383,7 @@ Every reapplication requires a new preview and explicit save.
 ### Safe-save dependency
 
 Implement the necessary subset of
-[safe configuration changes](./web_idea_safe-configuration-changes.md) first:
+[safe configuration changes](./web_open_safe-configuration-changes.md) first:
 
 1. Enumerate config/state writers, including polling, CLI helpers, both editors
    and external files. Reproduce stale-editor and failure-between-writes cases.
@@ -834,7 +834,7 @@ before wizard markup. Passing the six-hour test certified only the observed
 existing deployment, not the new setup feature.
 Do not use the running configured Pi as an empty-config setup fixture.
 
-Related: [safe configuration changes](./web_idea_safe-configuration-changes.md),
+Related: [safe configuration changes](./web_open_safe-configuration-changes.md),
 [effective overrides](./web_done_effective-config-overrides.md),
 [guided diagnostics](./general_idea_guided-diagnostics.md),
 [deployment simplification](./general_done_simplify-deployment-configuration.md),

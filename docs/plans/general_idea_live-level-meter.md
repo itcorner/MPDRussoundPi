@@ -29,7 +29,7 @@ keeping. The rest does not fit our architecture or has bugs:
 | 7 | Interleaved channels averaged together | Our outputs are channel pairs of a 5.1 card; report per channel (L/R). |
 | 8 | Lifecycle race: last tab closes → `kill()`, but the entry is deleted again in the async `close` handler | A tab that connects between kill and exit gets a new process whose map entry is then deleted by the old process's `close`: orphaned `pw-record`. Key entries by process instance. |
 | 9 | Process death not propagated, no `error` handler | When `pw-record` exits (USB loss, PipeWire restart) clients stay connected but silent; a missing binary emits an unhandled `error` and crashes the server. Need explicit "meter unavailable" state and bounded restart/backoff. |
-| 10 | No backpressure | `ws.send` ignores `bufferedAmount`; slow clients grow memory (same class as [backlog #8](web_open_reliability-backlog.md#8-unbounded-per-client-sse-queues-m)). Drop frames, keep only the latest. |
+| 10 | No backpressure | `ws.send` ignores `bufferedAmount`; slow clients grow memory (same class as [backlog #8](web_done_reliability-backlog.md#8-unbounded-per-client-sse-queues-m)). Drop frames, keep only the latest. |
 
 ## Architecture-conformant sketch
 
