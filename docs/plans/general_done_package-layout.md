@@ -195,6 +195,13 @@ in `~/.local/state/mpdrussoundpi/` was kept.
   path). The guard test runs the installed tree exactly that way.
 - Guides use `AUDIO_BIN`, the active audio candidate's `bin` directory read from
   the supervisor unit, instead of the removed `~/russound-venv` and checkout.
+- Deployed 2026-11-20 by rerunning `deploy-playback-egress.yml` from the PR
+  tree (egress files backed up first in
+  `~/MPDRussoundPi-deploy-backups/pre-phase3-egress-*`): the filter loaded with
+  exit status 0 and its nftables table present; the MPD instances restarted
+  through the module-form start check, and all outputs returned to playing with
+  routes ok. The other services needed no change, as they already run console
+  commands.
 
 ## Out of scope
 
