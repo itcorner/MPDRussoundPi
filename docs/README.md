@@ -59,6 +59,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
+| [Package layout and single module names](./plans/general_new_package-layout.md) | Planned; Phase 1 code-only, Phase 2 needs a reviewed Pi rollout |
 | [Guided first-time setup](./plans/general_open_guided-first-time-setup.md) | Open; config revision checks, load states and durable writes implemented; next: writer inventory, preview and config/state transaction before the wizard UI |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |

@@ -54,8 +54,10 @@ Deviations from the section 5 design, recorded so later batches build on what ex
   config, each atomically and durably; there is no pending record, cooperating
   cross-process lock or startup reconciliation yet (I2).
 
-Next: I0 writer/reader inventory and failure reproductions, then I1 candidate
-extraction and preview, then the I2 transaction protocol.
+Next: I0 writer/reader inventory and failure reproductions, then the
+[config and state store](#config-and-state-store-first-step-of-i2) as the first
+step of I2, then I1 candidate extraction and preview, then the I2 transaction
+protocol.
 
 ## 1. Goal and completion criteria
 
@@ -472,6 +474,40 @@ Local filesystems with working rename/file/directory sync are the initial
 durability boundary; network filesystems and unsupported single-file mounts
 need explicit rejection/documentation, not an unverified power-loss guarantee.
 
+### Config and state store (first step of I2)
+
+Measured on 2026-11-20 with six zones, the web application re-reads and
+re-validates the JSON files on every access: `GET /api/rooms` reads the config
+twice and the state once; one unchanged hardware poll (every 2 s while a browser
+is open) reads the config six times and the state three times; one volume
+command reads them four and two times. That is cheap on a Pi, but no component
+owns the current configuration: concurrent changes are detected by comparing
+whole dictionaries, errors travel through `config_error`, the state is matched to
+the config on every read, and controller methods accept per-call path overrides
+for a global controller. The I2 transaction needs a single owner instead.
+
+Introduce `web/config_store.py` before the transaction protocol:
+
+- `ConfigStore.current()` returns an immutable snapshot with `load_state`,
+  validated `config`, `error`, `revision`, a `generation` counter and the file
+  signature `(st_ino, st_size, st_mtime_ns)`. Each access costs one `stat()`;
+  the file is reparsed only when the signature changes, so hand edits are still
+  detected and the revision still follows the exact bytes.
+- `ConfigStore.replace(config, expected_revision)` checks the revision, writes
+  durably and updates the cached snapshot.
+- `StateStore` keeps `russound_state.json` in memory: it is loaded once, written
+  through on change and, unlike the config, written only by this process. The
+  state matched to the configuration is recomputed only when the config
+  generation changes.
+
+Migrate in behavior-preserving steps: (1) `load_config()` and `load_state()`
+read from the stores with unchanged signatures; (2) generation comparisons
+replace whole-dictionary comparisons in `_commit_backend_refresh` and the save
+path, and `config_error` goes away; (3) the per-call path arguments, the global
+controller and the test-only module-level wrappers are removed. The pending
+transaction record, cross-process lock and startup reconciliation are then added
+inside the stores rather than around them.
+
 ### Compatibility rollout
 
 **Resolved 2026-11-20:** the revision is required on `POST /api/config` from the
@@ -767,7 +803,7 @@ shared behavior.
 |---|---|---|
 | I0 / G0: baseline and contracts | After section 12.1 passes, inspect the current worktree/branch and preserve unrelated changes. Inventory all config/state writers, readers, startup paths, locks and supported mount types. Resolve remaining product decisions and the unconditional-client migration release. Add reproductions for stale save, state-before-config failure, invalid-vs-missing classification and invalid override display. | Repros in [controller tests](../../tests/test_russound_controller.py), [server tests](../../tests/test_russound_server.py) and [connector tests](../../tests/test_russound_connector.py). Record the selected lock/recovery protocol and any design amendments before I2. No live Pi repros. |
 | I1 / G1: preparation and metadata | Extract the pure candidate/impact builder from [controller updates](../../web/russound_controller.py). Add explicit load states and shared effective-field metadata in [config types](../../web/config_types.py); preserve existing saved/private/unknown values. Keep existing editor behavior until its migration. | Existing offline-save, topology, playback binding and reconnect tests pass; preview preparation has no file writes, backend reconnects or control calls. Resolver/UI metadata agrees for independent host/port overrides and serial mode. |
-| I2 / G1: persistence and recovery | Implement the chosen section 5 persistence protocol; route every app-owned writer through the coordination boundary. Reconcile before startup polling or commands and block unsafe recovery explicitly. Preserve owner/mode, absence and latest surviving runtime state. | Fault injection at each staging, record, replace and sync boundary; concurrent cooperating state/config writers; restart recovery, private backup handling and unsupported mounts. Unexpected external edits block rather than disappear. Do not declare durability from a normal save test alone. |
+| I2 / G1: persistence and recovery | First introduce the [config and state store](#config-and-state-store-first-step-of-i2) as the single owner of both files. Then implement the chosen section 5 persistence protocol inside it; route every app-owned writer through the coordination boundary. Reconcile before startup polling or commands and block unsafe recovery explicitly. Preserve owner/mode, absence and latest surviving runtime state. | Fault injection at each staging, record, replace and sync boundary; concurrent cooperating state/config writers; restart recovery, private backup handling and unsupported mounts. Unexpected external edits block rather than disappear. Do not declare durability from a normal save test alone. |
 | I3 / G1: API and existing-editor migration | **Partly done 2026-11-20:** required revision checks, `409`/`428` envelopes and editor migration. Remaining: add preview, structured field errors and save/activation separation to [server](../../web/russound_server.py). Migrate [configuration editor](../../web/static/config.js) and relevant [API helpers](../../web/static/api.js). Complete the documented compatibility transition before enabling the wizard. | Two tabs, concurrent first creation, private-field edit, process restart, missing header, changed constraints and timeout reconciliation. Existing editor remains usable; final writes recompute candidates under lock. Required preconditions cannot be bypassed by another supported HTTP writer. |
 | I4 / G2: truthful first install | Update [Compose adapter](../../tool/deployment_compose.py) and existing deployment workflow surfaces with reviewed absent-config intent and configured activation. Sample seeding is already gone: the legacy Docker and native web playbooks were retired on 2026-11-16. Confirm in the inventory that no new path reintroduces it, and replace the Rooms page hint that tells operators to copy the example. Preserve existing files. | Extend deployment input/preflight/state/workflow/operator tests and [profile tests](../../tests/test_container_profiles.py). Prove empty config acceptance, first-install absence recovery, strict configured updates and reviewed post-save activation. Existing configuration removal never re-enters an exemption. |
 | I5 / G3: responsive setup | Reuse/extract the editor's in-memory model, add guided mode to the existing config route/UI, and reuse [styles](../../web/static/styles.css). Missing config enters setup; valid config offers explicit review; invalid/unreadable shows guidance. Add steps, optional stable-ID playback selection, preview, discard guard and conflict review. No browser storage layer. | Add focused setup/editor Node tests following [rooms UI tests](../../tests/test_rooms_ui.js). API/UI parity for allowed fields and managed values; Back/Next/Skip/error preserve memory edits; reload starts from server; no draft persistence access or premature hardware/config writes. |
