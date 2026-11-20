@@ -400,9 +400,16 @@ class RussoundHTTPServer:
 
         @app.post("/api/config")
         def api_update_config():
-            payload = self._read_json_body()
-            # Optional during the transition release; first-party editors always send it.
+            # Every save is conditional, so no client can overwrite edits it never saw.
             expected_revision = request.headers.get(CONFIG_REVISION_HEADER)
+            if expected_revision is None:
+                message = (f"Configuration saves require the {CONFIG_REVISION_HEADER} header from GET /api/config. "
+                           "Reload the page and save again.")
+                return self._no_store(jsonify({
+                    "error": message, "code": "config_precondition_required", "message": message,
+                    "save_outcome": "not-saved",
+                })), 428
+            payload = self._read_json_body()
             old_backend = None
             try:
                 with self.state_lock:

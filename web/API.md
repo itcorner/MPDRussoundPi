@@ -580,12 +580,14 @@ Omitting `shortcuts` preserves the existing shortcuts, pruning removed zone targ
 
 - Returns the updated config-editor payload, including the new
   `configuration.revision`.
-- `X-Config-Revision` (from `GET /api/config`) makes the save conditional: if the
-  config file changed since it was loaded (another tab, device or a file edit),
-  the server returns `409` with `code: "config_conflict"`,
-  `save_outcome: "not-saved"` and the usual `error` text, and writes nothing. The
-  configuration page always sends it. Saves without the header remain
-  unconditional during a transition release; they will later be rejected.
+- Requires the `X-Config-Revision` header with `configuration.revision` from
+  `GET /api/config`; every save is conditional:
+  - Header missing: `428` with `code: "config_precondition_required"`.
+  - Config file changed since it was loaded (another tab, device or a file
+    edit): `409` with `code: "config_conflict"`.
+  - Both errors include `save_outcome: "not-saved"` and the usual `error` text, and
+    write nothing. Reload with `GET /api/config` and reapply the changes; there is
+    no force option or wildcard revision.
 - Config and state files are replaced atomically: the new file is synced before
   the rename and the directory after it, and existing file permissions are kept.
 - Rejects invalid controller/zone slots with `400 Bad Request`.

@@ -17,6 +17,11 @@ from web.zone import Zone
 from mpdrussoundpi.russound.lib.tunein import TuneInError
 
 
+def _revision(editor: dict) -> dict[str, str]:
+    """Precondition header for saving over the config an editor payload was loaded from."""
+    return {"X-Config-Revision": editor["configuration"]["revision"]}
+
+
 def _close_server(server: RussoundHTTPServer) -> None:
     close_fn = getattr(server, "server_close", None)
     if callable(close_fn):
@@ -40,7 +45,7 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertEqual(editor["effective_backend"]["host"]["value"], "127.0.0.1")
                 with patch("web.russound_controller.RussoundBackend.connect",
                            side_effect=AssertionError("Save must not contact hardware")):
-                    response = client.post("/api/config", json={
+                    response = client.post("/api/config", headers=_revision(editor), json={
                         "controllers": editor["config"]["controllers"],
                         "zone_slots": editor["zone_slots"], "source_slots": editor["source_slots"],
                     })
@@ -88,8 +93,18 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertIn("another tab", stale.json["error"])
                 self.assertEqual(config_path.read_text(), saved)
 
-                # Transition release: saves without the header remain unconditional.
-                self.assertEqual(save("Den", None).status_code, 200)
+                # Saves without the precondition are refused, before any validation or write.
+                missing = save("Den", None)
+                self.assertEqual(missing.status_code, 428)
+                self.assertEqual(missing.json["code"], "config_precondition_required")
+                self.assertEqual(missing.json["save_outcome"], "not-saved")
+                self.assertEqual(missing.headers["Cache-Control"], "no-store")
+                self.assertEqual(config_path.read_text(), saved)
+                invalid_without_header = client.post("/api/config", json={"backend": {}, "controllers": []})
+                self.assertEqual(invalid_without_header.status_code, 428)
+
+                current = client.get("/api/config").json
+                self.assertEqual(save("Den", current["configuration"]["revision"]).status_code, 200)
                 self.assertEqual(json.loads(config_path.read_text())["zones"][0]["name"], "Den")
             finally:
                 _close_server(server)
@@ -117,7 +132,7 @@ class RussoundServerTests(unittest.TestCase):
                     self.assertEqual(client.get("/api/config/state").json["effective_backend"], metadata)
                     with patch("web.russound_controller.RussoundBackend.connect",
                                side_effect=AssertionError("Save must not contact hardware")):
-                        response = client.post("/api/config", json={
+                        response = client.post("/api/config", headers=_revision(editor), json={
                             "backend": editor["config"]["backend"],
                             "controllers": editor["config"]["controllers"],
                             "zone_slots": editor["zone_slots"], "source_slots": editor["source_slots"],
@@ -417,7 +432,7 @@ class RussoundServerTests(unittest.TestCase):
             server._event_backend = old_backend
             server.controller.set_shared_backend(old_backend)
             with patch("web.russound_controller.RussoundBackend.connect", side_effect=AssertionError("Save must be offline")) as connect:
-                response = client.post("/api/config", json={
+                response = client.post("/api/config", headers=_revision(client.get("/api/config").json), json={
                     "backend": {"host": "new-gateway", "port": 7777, "poll_interval_seconds": 7.5},
                     "controllers": [{"id": 1, "zone_count": 6}],
                     "zone_slots": [], "source_slots": [],
@@ -464,7 +479,7 @@ class RussoundServerTests(unittest.TestCase):
             server.controller._record_backend_health(True, True, 1)
             generation = server._backend_generation
             client = server.app.test_client()
-            response = client.post("/api/config", json={
+            response = client.post("/api/config", headers=_revision(client.get("/api/config").json), json={
                 "backend": {"host": "gateway", "port": 6666, "poll_interval_seconds": 7.5},
                 "controllers": [{"id": 1, "zone_count": 4}],
                 "zone_slots": [{"controller": 1, "zone": 1, "name": "Kitchen", "enabled": True, "visible": True}],
@@ -484,7 +499,7 @@ class RussoundServerTests(unittest.TestCase):
         server = RussoundHTTPServer(None, None)
         server.controller = Mock()
         server.controller.update_config_zones.side_effect = PermissionError("read-only volume")
-        response = server.app.test_client().post("/api/config", json={})
+        response = server.app.test_client().post("/api/config", headers={"X-Config-Revision": "rev"}, json={})
         self.assertEqual(response.status_code, 500)
         self.assertIn("permissions", response.json["error"])
         self.assertIn("read-only volume", response.json["error"])

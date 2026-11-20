@@ -66,13 +66,12 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def request(path, payload=None):
+def request(path, payload=None, revision=None):
     data = None if payload is None else json.dumps(payload).encode()
-    req = Request(
-        "http://127.0.0.1:8000" + path,
-        data=data,
-        headers={"Content-Type": "application/json"} if data is not None else {},
-    )
+    headers = {"Content-Type": "application/json"} if data is not None else {}
+    if revision is not None:
+        headers["X-Config-Revision"] = revision
+    req = Request("http://127.0.0.1:8000" + path, data=data, headers=headers)
     with urlopen(req, timeout=10) as response:
         require(response.status == 200, f"{path}: unexpected HTTP status")
         return response.read().decode()
@@ -100,9 +99,25 @@ editor = json.loads(request("/api/config"))
 require(editor["config_required"] is True, "Empty config must enter setup")
 require(editor["config_writable"] is True, "Setup must allow saving configuration")
 require(json.loads(request("/api/rooms"))["config_required"] is True, "Rooms snapshot must report setup")
+require(editor["configuration"]["load_state"] == "missing", "Empty config must report a missing load state")
+revision = editor["configuration"]["revision"]
+
+setup = {
+    "backend": {"host": "127.0.0.1", "port": 9, "poll_interval_seconds": 2},
+    "controllers": [{"id": 1, "zone_count": 6}],
+    "zone_slots": [],
+    "source_slots": [],
+}
+try:
+    request("/api/config", setup)
+except HTTPError as error:
+    require(error.code == 428, f"Save without revision returned HTTP {error.code}, expected 428")
+else:
+    raise RuntimeError("Save without a config revision was accepted")
+require(not Path("/config/russound_config.json").exists(), "Save without revision wrote configuration")
 
 try:
-    request("/api/config", {"backend": {}, "controllers": []})
+    request("/api/config", {"backend": {}, "controllers": []}, revision)
 except HTTPError as error:
     require(error.code == 400, f"Invalid setup returned HTTP {error.code}, expected 400")
     require("error" in json.loads(error.read()), "Invalid setup must return a JSON error")
@@ -110,16 +125,17 @@ else:
     raise RuntimeError("Invalid setup was accepted")
 require(not Path("/config/russound_config.json").exists(), "Invalid setup wrote configuration")
 
-saved = json.loads(request("/api/config", {
-    "backend": {"host": "127.0.0.1", "port": 9, "poll_interval_seconds": 2},
-    "controllers": [{"id": 1, "zone_count": 6}],
-    "zone_slots": [],
-    "source_slots": [],
-}))
+saved = json.loads(request("/api/config", setup, revision))
 require(saved["config_required"] is False, "Valid offline setup was not accepted")
 persisted = json.loads(Path("/config/russound_config.json").read_text())
 require(persisted["backend"]["host"] == "127.0.0.1", "Saved backend was not persisted")
 require(persisted["backend"]["port"] == 9, "Saved backend port was not persisted")
 require(json.loads(request("/api/rooms"))["config_required"] is False, "Rooms snapshot did not leave setup")
-print(f"PASS: {sys.argv[1]} health, UI, setup validation, offline save and persistence")
+try:
+    request("/api/config", setup, revision)
+except HTTPError as error:
+    require(error.code == 409, f"Stale revision returned HTTP {error.code}, expected 409")
+else:
+    raise RuntimeError("Save with a stale config revision was accepted")
+print(f"PASS: {sys.argv[1]} health, UI, setup validation, revision checks, offline save and persistence")
 PY
