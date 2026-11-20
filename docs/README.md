@@ -61,6 +61,8 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
 | [Package layout and single module names](./plans/general_done_package-layout.md) | Done 2026-11-20; one module name, installable package, deployed; transition bootstrap removed |
 | [Guided first-time setup](./plans/general_open_guided-first-time-setup.md) | Open; config revision checks, load states, durable writes and the config/state store implemented; next: rest of the I0 inventory, preview and the config/state transaction before the wizard UI |
+| [Wi-Fi bootstrap on the Raspberry Pi](./plans/general_idea_wifi-bootstrap.md) | Idea; no solution chosen; options (Comitup, wifi-connect, own component, out-of-band) and a test plan collected |
+| [Moving the installation to another network](./plans/general_idea_network-relocation.md) | Idea; inventory of address, DNS, certificate and subnet dependencies and what breaks per scenario |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |
 | [User-triggered Docker image updates](./plans/general_idea_user-triggered-image-updates.md) | Idea, depends on versioned deployment images; not scheduled |
