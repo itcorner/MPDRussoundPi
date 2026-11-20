@@ -14,7 +14,7 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Protocol, cast
 
-from .atomicjson import write_json
+from mpdrussoundpi.common.atomicjson import write_json
 from .outputconfig import WatchdogConfig
 
 if TYPE_CHECKING:

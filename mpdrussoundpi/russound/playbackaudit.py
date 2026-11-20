@@ -30,8 +30,9 @@ if not __package__:
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
-from mpdrussoundpi.russound.lib.atomicjson import write_json
+from mpdrussoundpi.common.atomicjson import write_json
 from mpdrussoundpi.russound.lib.audioready import audio_ready
+from mpdrussoundpi.russound.lib.commands import installed_command
 from mpdrussoundpi.russound.lib.mpdbackend import JSONValue, MPDBackend, MPDConnection, OutputSettings
 from mpdrussoundpi.russound.lib.mpdinstance import MPD_HOST
 from mpdrussoundpi.russound.lib.setuplock import setup_lock
@@ -381,7 +382,7 @@ def install_service(config: Path, output: Path, hours: float) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_symlink() or (target.exists() and not target.read_text().startswith(UNIT_HEADER)):
         raise ValueError(f"Refusing to replace unowned audit service: {target}")
-    argv = [sys.executable, str(Path(__file__).resolve()), str(config.resolve()),
+    argv = [installed_command("playback-audit"), str(config.resolve()),
             "--output", str(output.resolve()), "--hours", str(hours)]
     target.write_text(
         UNIT_HEADER + "[Unit]\nDescription=Read-only MPD endurance and USB recovery audit\n"

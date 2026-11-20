@@ -7,6 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
+from playbackfixtures import installed_commands
 from unittest.mock import Mock, patch
 
 
@@ -162,10 +163,12 @@ class PlaybackAuditTests(unittest.TestCase):
         self.assertEqual(json.loads((self.output / "summary.json").read_text())["status"], "snapshot")
 
     def test_service_is_independent_of_playback_units_and_not_started(self):
-        with patch.object(audit.Path, "home", return_value=self.directory):
+        with patch.object(audit.Path, "home", return_value=self.directory), \
+                installed_commands(self.directory, "playback-audit") as bin_dir:
             with patch.object(audit.subprocess, "run") as run:
                 path = audit.install_service(self.config, self.output, 72)
         text = path.read_text()
+        self.assertIn(f'ExecStart="{bin_dir / "playback-audit"}" ', text)
         self.assertIn("Restart=on-failure", text)
         self.assertIn("--output", text)
         self.assertNotIn("Requires=", text)

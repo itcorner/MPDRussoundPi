@@ -12,6 +12,7 @@ import argparse
 import os
 import subprocess
 from mpdrussoundpi.russound.lib import sink
+from mpdrussoundpi.russound.lib.commands import installed_command
 import logging
 import time
 import sys
@@ -36,8 +37,9 @@ def systemd_quote(value: str) -> str:
 
 def create_supervisor_service(config_path: str):
     os.makedirs(SYSTEMD_USER_CONFIG_DIR, exist_ok=True)
-    script = str(Path(__file__).resolve().with_name("mpdsupervisor.py"))
-    command = " ".join(systemd_quote(value) for value in (sys.executable, script, str(Path(config_path).resolve())))
+    command = " ".join(systemd_quote(value) for value in (
+        installed_command("mpd-supervisor"), str(Path(config_path).resolve()),
+    ))
     with open(os.path.join(SYSTEMD_USER_CONFIG_DIR, SYSTEMD_MPD_SUPERVISOR), "w") as output:
         output.write(
             MARKER + "[Unit]\nDescription=MPD intended playback reconciliation\n"
@@ -113,9 +115,8 @@ def create_mpd_systemd_service(mpd_instance: MPDInstance, config_path: str = "co
         f.write("Wants=pipewire.service pipewire-pulse.service wireplumber.service\n"
                 "After=pipewire.service pipewire-pulse.service wireplumber.service\n"
                 "StartLimitIntervalSec=60\nStartLimitBurst=10\n\n")
-        readiness = str(Path(__file__).resolve().with_name("audioready.py"))
         command = " ".join(systemd_quote(value) for value in (
-            sys.executable, readiness, str(Path(config_path).resolve()),
+            installed_command("audio-ready"), str(Path(config_path).resolve()),
         ))
         f.write(f"[Service]\nExecStartPre={command}\n")
         f.write(f"ExecStart=/usr/bin/mpd --no-daemon {systemd_quote(config_file)}\n"
@@ -233,7 +234,7 @@ def load_configuration(path: str, parser: argparse.ArgumentParser) -> dict:
         parser.error(f"Invalid configuration {path}: {error}")
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description='Setup multiple MPD instances')
     parser.add_argument('--install', action='store_true', help='Install MPD configuration')
     parser.add_argument('--start', action='store_true', help='Start all MPD instances')
@@ -245,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument('--cleanup', action='store_true', help='Stop all MPD instances and remove all auto-generated config files')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('json', help='Path to JSON configuration file')    
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     actions = [args.start, args.stop, args.restart, args.enable, args.disable, args.killmpd, args.cleanup]
     if sum(actions) > 1 or (args.install and (args.stop or args.killmpd or args.cleanup)):
         parser.error("Select at most one action; --install may be combined with start, restart, enable or disable")
@@ -272,7 +273,7 @@ if __name__ == "__main__":
         time.sleep(2)
         # Kill any remaining MPD processes that may not have been stopped by systemd services
         kill_all_mpd_instances()
-        exit(0)
+        sys.exit(0)
     elif args.cleanup:
         with setup_lock('mpd_setup.lock'):
             select_services()
@@ -282,7 +283,7 @@ if __name__ == "__main__":
             time.sleep(2)
             disable_all_mpd_services()
             cleanup_all()
-        exit(0)
+        sys.exit(0)
     elif args.install:
         with setup_lock('mpd_setup.lock'):
             select_services()
@@ -312,19 +313,19 @@ if __name__ == "__main__":
         # Start all MPD instances using systemd services
         start_all_mpd_services()
         subprocess.run(["systemctl", "--user", "start", SYSTEMD_MPD_SUPERVISOR], check=True)
-        exit(0)
+        sys.exit(0)
     elif args.stop:
         # Stop all MPD instances using systemd services
         if os.path.isfile(os.path.join(SYSTEMD_USER_CONFIG_DIR, SYSTEMD_MPD_SUPERVISOR)):
             subprocess.run(["systemctl", "--user", "stop", SYSTEMD_MPD_SUPERVISOR], check=True)
         stop_all_mpd_services()
-        exit(0)
+        sys.exit(0)
     elif args.restart:
         config = load_configuration(args.json, parser)
         subprocess.run(["systemctl", "--user", "restart", *[
             mpd_service_filename(entry["id"]) for entry in config["outputs"]
         ]], check=True)
-        exit(0)
+        sys.exit(0)
 
     if args.enable:
         # Enable all MPD systemd services to start on boot
@@ -332,3 +333,7 @@ if __name__ == "__main__":
     elif args.disable:
         # Disable all MPD systemd services from starting on boot
         disable_all_mpd_services()
+
+
+if __name__ == "__main__":
+    main()

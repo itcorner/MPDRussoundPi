@@ -18,7 +18,7 @@ from .playbackstate import (
     FavoritesFull, OutputState, PlaybackState, read_state, write_state,
 )
 from .stations import Station
-from .tunein import TuneInCatalog, TuneInError
+from mpdrussoundpi.common.tunein import TuneInCatalog, TuneInError
 from .streamgain import set_sink_gain, validate_gain_db
 from .streamroute import StreamRoute, inspect_route, recover_route
 

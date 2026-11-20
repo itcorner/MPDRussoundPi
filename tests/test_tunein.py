@@ -4,11 +4,11 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 
-from mpdrussoundpi.russound.lib.tunein import (
+from mpdrussoundpi.common.tunein import (
     MAX_PLAYLIST_BYTES, MAX_RESPONSE_BYTES, TuneInCatalog, TuneInError,
 )
 
-TUNEIN_MODULE = "mpdrussoundpi.russound.lib.tunein"
+TUNEIN_MODULE = "mpdrussoundpi.common.tunein"
 
 
 def feed(body, *, status="200"):
@@ -30,7 +30,7 @@ class FakeResponse:
 class TuneInCatalogTests(unittest.TestCase):
     def setUp(self):
         resolver = patch(
-            "mpdrussoundpi.russound.lib.publicnetwork.socket.getaddrinfo",
+            "mpdrussoundpi.common.publicnetwork.socket.getaddrinfo",
             return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
         )
         resolver.start()

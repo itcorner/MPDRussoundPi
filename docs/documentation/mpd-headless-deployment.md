@@ -143,16 +143,19 @@ not Pi hardware acceptance.
 
 Use the operational configuration for **all** control and calibration commands:
 
-Run the following commands on the Pi as the audio user, from the script
-directory with its playback environment activated:
+Run the following commands on the Pi as the audio user with its playback
+environment activated. The commands are console scripts of the installed `mpdrussoundpi` package in
+the audio environment (`~/russound-venv/bin/`). In an environment installed
+before the package layout change, run the same arguments as
+`python <script>.py` from `~/MPDRussoundPi/mpdrussoundpi/russound/` instead
+(for example `python mpdctrl.py` for `mpdctrl`).
 
 ```sh
-cd ~/MPDRussoundPi/mpdrussoundpi/russound
 . ~/russound-venv/bin/activate
-python mpdctrl.py --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --start ~/.config/mpdrussoundpi/config.json
-python mpdctrl.py --check-route ~/.config/mpdrussoundpi/config.json
+mpdctrl --stop --output stereo_centerlfe ~/.config/mpdrussoundpi/config.json
+mpdctrl --pause --output stereo_front ~/.config/mpdrussoundpi/config.json
+mpdctrl --start ~/.config/mpdrussoundpi/config.json
+mpdctrl --check-route ~/.config/mpdrussoundpi/config.json
 ```
 
 `--start` without `--output` starts every output that has a station.
@@ -198,7 +201,7 @@ required.
 loginctl show-user "$USER" -p Linger
 systemctl --user status mpd_playback_supervisor.service
 journalctl --user -u mpd_playback_supervisor.service -n 60 --no-pager
-python mpdsupervisor.py --once ~/.config/mpdrussoundpi/config.json
+mpd-supervisor --once ~/.config/mpdrussoundpi/config.json
 ```
 
 `--once` is useful while the supervisor is stopped; concurrent mutations use
@@ -212,8 +215,8 @@ MPD instances first during an approved maintenance window; otherwise they will
 keep trying to restore outputs whose virtual sinks you are removing:
 
 ```sh
-python mpdsetup.py --stop ~/.config/mpdrussoundpi/config.json
-python audiosetup.py --cleanup --audio-processor pipewire
+mpd-setup --stop ~/.config/mpdrussoundpi/config.json
+audio-setup --cleanup --audio-processor pipewire
 ```
 
 The MPD stop command selects exact output IDs from the supplied config and
@@ -246,8 +249,8 @@ service and retry its restart before reinstalling or resuming playback.
 Reinstall using the operational configuration, then restart MPD/supervision:
 
 ```sh
-python audiosetup.py --install --audio-processor pipewire ~/.config/mpdrussoundpi/config.json
-python mpdsetup.py --start ~/.config/mpdrussoundpi/config.json
+audio-setup --install --audio-processor pipewire ~/.config/mpdrussoundpi/config.json
+mpd-setup --start ~/.config/mpdrussoundpi/config.json
 ```
 
 ## Audio graph and hardware notes

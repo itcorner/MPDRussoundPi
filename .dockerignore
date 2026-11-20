@@ -7,17 +7,11 @@
 
 ansible/
 docs/
-# Only the shared modules the web image copies. Re-including a directory
-# (e.g. !mpdrussoundpi/russound/) would bring back everything below it.
+# Only the shared package the web image copies. Re-including a directory
+# brings back everything below it, so list exactly what the image needs.
 mpdrussoundpi/**
 !mpdrussoundpi/__init__.py
-!mpdrussoundpi/russound/__init__.py
-!mpdrussoundpi/russound/lib/__init__.py
-!mpdrussoundpi/russound/lib/sourceurl.py
-!mpdrussoundpi/russound/lib/publicnetwork.py
-!mpdrussoundpi/russound/lib/tunein.py
-!mpdrussoundpi/russound/lib/servicecredentials.py
-!mpdrussoundpi/russound/lib/runtimelogging.py
+!mpdrussoundpi/common/
 tests/
 tool/
 

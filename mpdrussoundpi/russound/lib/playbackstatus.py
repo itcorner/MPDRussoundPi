@@ -16,7 +16,7 @@ from .mpdbackend import BackendError, JSONValue, MPDBackend, MPDConnection, Outp
 from .streamgain import read_sink_gain
 from .streamroute import inspect_route
 from .stations import Station
-from .sourceurl import source_display
+from mpdrussoundpi.common.sourceurl import source_display
 
 
 class ReadValue(Protocol):

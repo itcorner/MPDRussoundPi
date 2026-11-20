@@ -39,6 +39,18 @@ jobs:
         env:
           REGISTRY_TEST_URL: http://127.0.0.1:5000
         run: node --test tests/*.js
+      # Mirrors Pi candidate staging: editable install, every console command
+      # starts, and the checkout stays clean for the staging verification.
+      - name: Check the installable package and its console commands
+        run: |
+          commands=$(python -c 'import tomllib; print(" ".join(tomllib.load(open("pyproject.toml", "rb"))["project"]["scripts"]))')
+          python -m venv "$RUNNER_TEMP/package"
+          "$RUNNER_TEMP/package/bin/python" -m pip install -e ".[web,agent,audio]"
+          cd "$RUNNER_TEMP"
+          for command in $commands; do
+            "$RUNNER_TEMP/package/bin/$command" --help > /dev/null
+          done
+          test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all)"
 
   container:
     name: Container (${{ matrix.arch }})

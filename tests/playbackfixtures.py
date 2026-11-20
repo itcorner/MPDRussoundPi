@@ -1,7 +1,10 @@
 """Small, deterministic admin configuration for playback tests."""
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
+import sys
+from unittest.mock import patch
 
 
 def configuration():
@@ -20,3 +23,18 @@ def configuration():
             {"key": "tunein:s8007", "name": "TuneIn Radio", "type": "tunein", "station_id": "s8007"},
         ],
     }
+
+
+@contextmanager
+def installed_commands(directory, *names):
+    """Pretend the package's console commands live next to the interpreter.
+
+    Generated units resolve commands in ``Path(sys.executable).parent``; this
+    creates that ``bin`` directory with the given command files.
+    """
+    bin_dir = Path(directory) / "venv" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (bin_dir / name).write_text("#!/bin/sh\n")
+    with patch.object(sys, "executable", str(bin_dir / "python")):
+        yield bin_dir

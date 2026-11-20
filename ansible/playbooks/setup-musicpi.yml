@@ -100,10 +100,22 @@
       when: mpd_russoundpi_mode == 'stage'
       tags: stage
 
-    - name: Install only bounded audio dependencies in the candidate environment
+    # Editable: the venv runs the code of this candidate's own immutable checkout.
+    - name: Install the candidate package with only its bounded audio dependencies
       ansible.builtin.pip:
-        requirements: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source/mpdrussoundpi/russound/requirements-audio.txt"
+        name: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source[audio]"
+        editable: true
         virtualenv: "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv"
+      when: mpd_russoundpi_mode == 'stage'
+      tags: stage
+
+    - name: Verify the candidate's audio commands start
+      ansible.builtin.command:
+        argv: ["{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/venv/bin/{{ item }}", --help]
+      environment:
+        PYTHONDONTWRITEBYTECODE: "1"
+      loop: [mpd-setup, audio-setup, mpd-supervisor, audio-ready]
+      changed_when: false
       when: mpd_russoundpi_mode == 'stage'
       tags: stage
 
@@ -144,11 +156,9 @@
           - -c
           - >-
             import pathlib,sys;
-            sys.path.insert(0,sys.argv[1]);
-            from lib.outputconfig import parse_configuration;
-            config=parse_configuration(pathlib.Path(sys.argv[2]).read_bytes());
+            from mpdrussoundpi.russound.lib.outputconfig import parse_configuration;
+            config=parse_configuration(pathlib.Path(sys.argv[1]).read_bytes());
             print(len(config.outputs))
-          - "{{ mpd_russoundpi_candidate_root }}/{{ mpd_russoundpi_revision }}/source/mpdrussoundpi/russound"
           - "{{ mpd_russoundpi_config }}"
       register: mpd_audio_candidate_config
       changed_when: false
@@ -243,15 +253,6 @@
           ansible.builtin.command:
             argv: [/usr/bin/python3, -m, venv, "{{ venv_dir }}"]
             creates: "{{ venv_dir }}/bin/python"
-        - name: Copy bounded playback dependencies into the isolated environment
-          ansible.builtin.copy:
-            src: "{{ playbook_dir }}/../../mpdrussoundpi/russound/requirements-audio.txt"
-            dest: "{{ venv_dir }}/requirements-audio.txt"
-            mode: "0600"
-        - name: Install playback dependencies without upgrading satisfied packages
-          ansible.builtin.pip:
-            requirements: "{{ venv_dir }}/requirements-audio.txt"
-            virtualenv: "{{ venv_dir }}"
       tags:
         - init
         - new
@@ -266,6 +267,16 @@
         - mpd_russoundpi_mode == 'activate'
         - mpd_russoundpi_update_repo | bool
       tags:
+        - new
+
+    - name: Install the checkout package with its bounded audio dependencies
+      ansible.builtin.pip:
+        name: "{{ mpd_russoundpi_dest }}[audio]"
+        editable: true
+        virtualenv: "{{ venv_dir }}"
+      when: mpd_russoundpi_mode == 'activate'
+      tags:
+        - init
         - new
 
     - name: Run MPD setup scripts
@@ -345,19 +356,19 @@
 
         - name: Stop configured MPD services when staging without playback
           ansible.builtin.command:
-            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --stop, "{{ mpd_russoundpi_config }}"]
+            argv: ["{{ venv_dir }}/bin/mpd-setup", --stop, "{{ mpd_russoundpi_config }}"]
           when: not (mpd_russoundpi_start_playback | bool)
 
         - name: Setup audio system
           ansible.builtin.command:
-            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/audiosetup.py", --install, --audio-processor, pipewire, "{{ mpd_russoundpi_config }}"]
+            argv: ["{{ venv_dir }}/bin/audio-setup", --install, --audio-processor, pipewire, "{{ mpd_russoundpi_config }}"]
         - name: Setup MPD services
           ansible.builtin.command:
-            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --install, "{{ mpd_russoundpi_config }}"]
+            argv: ["{{ venv_dir }}/bin/mpd-setup", --install, "{{ mpd_russoundpi_config }}"]
 
         - name: Initialize missing runtime state from optional station and gain defaults
           ansible.builtin.command:
-            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsupervisor.py", --initialize, "{{ mpd_russoundpi_config }}"]
+            argv: ["{{ venv_dir }}/bin/mpd-supervisor", --initialize, "{{ mpd_russoundpi_config }}"]
 
         - name: Set MPD meta service activation according to deployment mode
           ansible.builtin.systemd_service:
@@ -369,12 +380,12 @@
 
         - name: Restart configured MPD instances
           ansible.builtin.command:
-            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsetup.py", --restart, "{{ mpd_russoundpi_config }}"]
+            argv: ["{{ venv_dir }}/bin/mpd-setup", --restart, "{{ mpd_russoundpi_config }}"]
           when: mpd_russoundpi_start_playback | bool
 
         - name: Verify restored playback, routes and gains before enabling supervision
           ansible.builtin.command:
-            argv: ["{{ venv_dir }}/bin/python3", "{{ mpd_russoundpi_scripts }}/mpdsupervisor.py", --once, "{{ mpd_russoundpi_config }}"]
+            argv: ["{{ venv_dir }}/bin/mpd-supervisor", --once, "{{ mpd_russoundpi_config }}"]
           register: playback_verification
           retries: 3
           delay: 5

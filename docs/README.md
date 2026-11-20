@@ -59,7 +59,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
-| [Package layout and single module names](./plans/general_open_package-layout.md) | Open; Phase 1 (one module name) implemented, not yet deployed; Phase 2 (installable package) needs a reviewed Pi rollout |
+| [Package layout and single module names](./plans/general_open_package-layout.md) | Open; Phases 1–2 (one module name, installable package) implemented, not yet deployed; Phase 3 removes the transition bootstrap after the rollout |
 | [Guided first-time setup](./plans/general_open_guided-first-time-setup.md) | Open; config revision checks, load states, durable writes and the config/state store implemented; next: rest of the I0 inventory, preview and the config/state transaction before the wizard UI |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |

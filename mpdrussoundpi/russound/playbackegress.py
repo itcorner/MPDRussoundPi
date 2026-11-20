@@ -15,7 +15,7 @@ if not __package__:
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
-from mpdrussoundpi.russound.lib.publicnetwork import blocked_networks
+from mpdrussoundpi.common.publicnetwork import blocked_networks
 
 
 SERVICE = "mpdrussoundpi-egress.service"

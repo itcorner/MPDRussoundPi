@@ -1,13 +1,16 @@
 """Guards the single-module-name layout (see the package layout plan in docs/plans/)."""
 
 import ast
+import importlib
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
+import unittest.mock
 
 import yaml
 
@@ -17,6 +20,8 @@ PACKAGE = ROOT / "mpdrussoundpi" / "russound"
 LIBRARY = PACKAGE / "lib"
 ENTRY_SCRIPTS = sorted(path.stem for path in PACKAGE.glob("*.py") if path.name != "__init__.py")
 LIBRARY_MODULES = sorted(path.stem for path in LIBRARY.glob("*.py") if path.name != "__init__.py")
+COMMON = ROOT / "mpdrussoundpi" / "common"
+COMMON_MODULES = sorted(path.stem for path in COMMON.glob("*.py") if path.name != "__init__.py")
 PYTHON_SOURCES = [
     path for directory in ("mpdrussoundpi", "web", "tool", "tests")
     for path in (ROOT / directory).rglob("*.py") if "__pycache__" not in path.parts
@@ -51,6 +56,7 @@ class ImportLayoutTests(unittest.TestCase):
 
     def test_every_module_imports_by_its_canonical_name_only(self):
         modules = [f"mpdrussoundpi.russound.lib.{name}" for name in LIBRARY_MODULES]
+        modules += [f"mpdrussoundpi.common.{name}" for name in COMMON_MODULES]
         modules += [f"mpdrussoundpi.russound.{name}" for name in ENTRY_SCRIPTS]
         code = f"""
 import importlib, sys, types
@@ -71,7 +77,7 @@ print(len({modules!r}))
         with tempfile.TemporaryDirectory() as directory:
             result = run_python(code, cwd=directory)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(int(result.stdout), len(LIBRARY_MODULES) + len(ENTRY_SCRIPTS))
+        self.assertEqual(int(result.stdout), len(LIBRARY_MODULES) + len(COMMON_MODULES) + len(ENTRY_SCRIPTS))
 
     def test_entry_script_runs_by_file_path_from_another_directory(self):
         # systemd starts the scripts as `python /path/to/script.py`.
@@ -84,13 +90,13 @@ print(len({modules!r}))
         playbook = yaml.safe_load((ROOT / "ansible/playbooks/deploy-playback-egress.yml").read_text())
         tasks = {task["name"]: task for task in playbook[0]["tasks"]}
         copy = tasks["Copy the root-owned filter and shared address policy"]
-        self.assertEqual(copy["ansible.builtin.copy"]["dest"],
-                         "{{ playback_egress_install }}/mpdrussoundpi/russound/{{ item }}")
+        self.assertEqual(copy["ansible.builtin.copy"]["src"], "{{ playback_egress_source }}/{{ item.src }}")
+        self.assertEqual(copy["ansible.builtin.copy"]["dest"], "{{ playback_egress_install }}/mpdrussoundpi/{{ item.dest }}")
         with tempfile.TemporaryDirectory() as install, tempfile.TemporaryDirectory() as elsewhere:
-            for item in copy["loop"]:
-                target = Path(install) / "mpdrussoundpi/russound" / item
+            for item in copy["loop"]:  # playback_egress_source is mpdrussoundpi/russound
+                target = Path(install) / "mpdrussoundpi" / item["dest"]
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(PACKAGE / item, target)
+                shutil.copyfile((PACKAGE / item["src"]).resolve(), target)
             script = Path(install) / "mpdrussoundpi/russound/playbackegress.py"
             result = run_python([str(script), "--help"], cwd=elsewhere, isolated=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -104,12 +110,57 @@ print(len({modules!r}))
         self.assertEqual(staged["dest"], "{{ playback_egress_preflight.path }}/mpdrussoundpi/russound/lib/")
         argv = tasks["Validate configured outputs and effective owned unit paths"]["ansible.builtin.command"]["argv"]
         self.assertEqual(argv[1:3], ["-m", "mpdrussoundpi.russound.lib.mpdownership"])
+        shared = tasks["Stage the shared modules the ownership validator imports"]["ansible.builtin.copy"]
+        self.assertEqual(shared["src"], "{{ playback_egress_source }}/../common/")
+        self.assertEqual(shared["dest"], "{{ playback_egress_preflight.path }}/mpdrussoundpi/common/")
         with tempfile.TemporaryDirectory() as preflight:
             shutil.copytree(LIBRARY, Path(preflight) / "mpdrussoundpi/russound/lib",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(COMMON, Path(preflight) / "mpdrussoundpi/common",
                             ignore=shutil.ignore_patterns("__pycache__"))
             result = run_python(["-m", argv[2], "--help"], cwd=preflight, isolated=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--config", result.stdout)
+
+
+    def test_web_imports_only_the_shared_common_package(self):
+        offenders = []
+        for path in (ROOT / "web").rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                names = ([node.module or ""] if isinstance(node, ast.ImportFrom) and node.level == 0
+                         else [alias.name for alias in node.names] if isinstance(node, ast.Import) else [])
+                offenders += [f"{path.relative_to(ROOT)}:{node.lineno} {name}" for name in names
+                              if name.startswith("mpdrussoundpi") and not name.startswith("mpdrussoundpi.common")]
+        self.assertEqual(offenders, [], "The web image ships only mpdrussoundpi.common")
+
+    def test_deployment_files_use_canonical_names_without_path_edits(self):
+        offenders = []
+        for path in [*(ROOT / "ansible").rglob("*.yml"), *(ROOT / "ansible").rglob("*.j2")]:
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if re.search(r"(from|import|-m,?)\s+lib\.|sys\.path\.insert", line):
+                    offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+        self.assertEqual(offenders, [])
+
+    def test_pyproject_matches_the_repository(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+        packages = set(project["tool"]["setuptools"]["packages"])
+        on_disk = {".".join(path.parent.relative_to(ROOT).parts)
+                   for top in ("web", "mpdrussoundpi") for path in (ROOT / top).rglob("__init__.py")
+                   if "__pycache__" not in path.parts}
+        self.assertEqual(packages, on_disk)
+        for package, patterns in project["tool"]["setuptools"]["package-data"].items():
+            for pattern in patterns:
+                self.assertTrue(list((ROOT / package.replace(".", "/")).glob(pattern)), f"{package}: {pattern}")
+        for extra, spec in project["tool"]["setuptools"]["dynamic"]["optional-dependencies"].items():
+            for name in spec["file"]:
+                self.assertTrue((ROOT / name).is_file(), f"{extra}: {name}")
+        for command, target in project["project"]["scripts"].items():
+            module, function = target.split(":")
+            with self.subTest(command=command):
+                with unittest.mock.patch.dict(sys.modules, {"mpd": unittest.mock.MagicMock()}):
+                    self.assertTrue(callable(getattr(importlib.import_module(module), function)))
+        generated = {"mpd-supervisor", "audio-ready", "playback-audit"}
+        self.assertLessEqual(generated, set(project["project"]["scripts"]), "Commands used by generated units")
 
 
 if __name__ == "__main__":

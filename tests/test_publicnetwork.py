@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.request import ProxyHandler, Request
 
-from mpdrussoundpi.russound.lib import publicnetwork as network
+from mpdrussoundpi.common import publicnetwork as network
 
 
 MODULE = network.__name__

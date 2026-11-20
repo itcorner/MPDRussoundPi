@@ -1,0 +1,38 @@
+# Installable layout for the Pi services (docs/plans/*_package-layout.md).
+# Deployments are pinned by git revision, so the version is not maintained.
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpdrussoundpi"
+version = "0"
+description = "Russound multi-room control with per-output MPD playback"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dynamic = ["optional-dependencies"]
+
+[project.scripts]
+russound-web = "web.russound_server:main"
+playback-agent = "mpdrussoundpi.russound.playbackagent:main"
+mpd-supervisor = "mpdrussoundpi.russound.mpdsupervisor:main"
+mpd-setup = "mpdrussoundpi.russound.mpdsetup:main"
+audio-setup = "mpdrussoundpi.russound.audiosetup:main"
+audio-ready = "mpdrussoundpi.russound.audioready:main"
+playback-egress = "mpdrussoundpi.russound.playbackegress:main"
+mpdctrl = "mpdrussoundpi.russound.mpdctrl:main"
+playback-audit = "mpdrussoundpi.russound.playbackaudit:main"
+stream-levels = "mpdrussoundpi.russound.streamlevels:main"
+
+[tool.setuptools]
+packages = ["web", "mpdrussoundpi", "mpdrussoundpi.common", "mpdrussoundpi.russound", "mpdrussoundpi.russound.lib"]
+
+[tool.setuptools.package-data]
+web = ["static/*"]
+"mpdrussoundpi.russound" = ["config.json", "policy/*.lua", "requirements-*.txt"]
+
+# The requirements files stay the single source of the dependency lists.
+[tool.setuptools.dynamic.optional-dependencies]
+web = { file = ["web/requirements.txt"] }
+agent = { file = ["mpdrussoundpi/russound/requirements-agent.txt"] }
+audio = { file = ["mpdrussoundpi/russound/requirements-audio.txt"] }

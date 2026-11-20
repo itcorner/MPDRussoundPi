@@ -11,9 +11,10 @@ COPY web/requirements.txt /app/web/requirements.txt
 RUN pip install --no-cache-dir -r /app/web/requirements.txt
 
 COPY web/ /app/web/
+# The web application imports only the shared mpdrussoundpi.common package
+# (enforced by tests/test_import_layout.py).
 COPY mpdrussoundpi/__init__.py /app/mpdrussoundpi/
-COPY mpdrussoundpi/russound/__init__.py /app/mpdrussoundpi/russound/
-COPY mpdrussoundpi/russound/lib/__init__.py mpdrussoundpi/russound/lib/sourceurl.py mpdrussoundpi/russound/lib/publicnetwork.py mpdrussoundpi/russound/lib/tunein.py mpdrussoundpi/russound/lib/servicecredentials.py mpdrussoundpi/russound/lib/runtimelogging.py /app/mpdrussoundpi/russound/lib/
+COPY mpdrussoundpi/common/ /app/mpdrussoundpi/common/
 
 # /config and /data are mount points; both must stay writable for atomic JSON writes.
 RUN useradd --system --uid 10001 russound \
