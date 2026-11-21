@@ -140,6 +140,27 @@ Manual-operation and TuneIn settings apply only when activation is implemented.
 The installed agent and TLS proxy remain separate services; do not use proxy
 activation as evidence that a staged agent candidate is active.
 
+### Host information (optional)
+
+An agent from this revision serves `GET /v1/host` and advertises `host_info`
+(see the [read contract](./mpd-playback-read-api.md#host-information)); the
+Status page then shows a Host card for the audio Pi: network connection and
+addresses, Wi-Fi signal, CPU, memory, temperature, power and throttling, disk
+and clock. Two steps enable it on an existing installation, in this order:
+
+1. Run the proxy play again (section 4) so the Caddy allowlist includes
+   `/v1/host`; until then the web reports the host as unavailable and
+   playback is unaffected.
+2. Restart the agent from a candidate that contains the route, and the web
+   application from an image that contains the Status card. Order between these
+   two does not matter: the web shows "not supported" for an agent without the
+   capability.
+
+`--disable-host-info` on the agent turns it off. The collector reads `/proc`
+and `/sys` and runs `ip`, `nmcli` (current Wi-Fi link only, never a scan),
+`vcgencmd` and `timedatectl` when present, as the agent's service user; none of
+them needs extra privileges on the reference Pi.
+
 ## 4. Activate the TLS proxy
 
 Choose a DNS name or IPv4 address reachable from the web host and a source CIDR

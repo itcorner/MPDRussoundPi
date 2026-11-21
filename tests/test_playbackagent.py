@@ -626,5 +626,72 @@ class PlaybackFavoritesAgentTests(unittest.TestCase):
         self.assertEqual(self.get("/v1/outputs/output_0").json["output"]["gain"]["configured_db"], -12)
 
 
+class FakeHost:
+    """Stands in for the host collector; serving a request must never collect."""
+
+    def __init__(self):
+        self.document = {key: value for key, value in json.loads(
+            (Path(__file__).parent / "fixtures/host-info-v1.json").read_text())["agent_response"].items()
+            if key not in ("api_version", "agent_id", "epoch")}
+        self.refresh = Mock()
+        self.refresh_due = Mock()
+
+    def snapshot(self):
+        return self.document
+
+
+class PlaybackAgentHostRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = Mock()
+        self.observer = agent.AgentObserver("unused.json", backend=self.backend)
+        self.addCleanup(self.observer.close)
+        self.host = FakeHost()
+        self.auth = {"Authorization": "Bearer " + TOKEN}
+        self.client = agent.create_app(self.observer, "musicpi", TOKEN, None, self.host).test_client()
+
+    def test_capability_is_advertised_only_with_a_collector(self):
+        with_host = self.client.get("/v1/capabilities", headers=self.auth).json
+        self.assertEqual(with_host["read_features"][-1], "host_info")
+        without = agent.create_app(self.observer, "musicpi", TOKEN).test_client()
+        self.assertNotIn("host_info", without.get("/v1/capabilities", headers=self.auth).json["read_features"])
+
+    def test_host_route_requires_authentication_like_every_route(self):
+        for headers in ({}, {"Authorization": "Bearer wrong"}):
+            response = self.client.get("/v1/host", headers=headers)
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+        self.host.refresh.assert_not_called()
+
+    def test_host_route_returns_identity_and_cached_sections_without_collecting(self):
+        response = self.client.get("/v1/host", headers=self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        health = self.client.get("/v1/health", headers=self.auth).json
+        body = response.json
+        self.assertEqual((body["api_version"], body["agent_id"], body["epoch"]), (1, "musicpi", health["epoch"]))
+        self.assertEqual({key: value for key, value in body.items() if key not in ("api_version", "agent_id", "epoch")},
+                         self.host.document)
+        self.host.refresh.assert_not_called()
+        self.host.refresh_due.assert_not_called()
+
+    def test_host_route_is_read_only_and_takes_no_parameters(self):
+        self.assertEqual(self.client.get("/v1/host?refresh=1", headers=self.auth).status_code, 400)
+        self.assertEqual(self.client.post("/v1/host", headers=self.auth, json={}).status_code, 405)
+        self.assertEqual(self.client.get("/v1/host/extra", headers=self.auth).status_code, 404)
+
+    def test_host_route_does_not_exist_without_a_collector(self):
+        client = agent.create_app(self.observer, "musicpi", TOKEN).test_client()
+        self.assertEqual(client.get("/v1/host", headers=self.auth).status_code, 404)
+
+    def test_command_line_can_disable_host_information(self):
+        with tempfile.TemporaryDirectory() as directory:
+            token = Path(directory) / "token"
+            token.write_text(TOKEN)
+            result = subprocess.run([
+                sys.executable, "-m", "mpdrussoundpi.russound.playbackagent", "--help",
+            ], capture_output=True, text=True, timeout=20, cwd=SCRIPTS.parents[1])
+        self.assertIn("--disable-host-info", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ from uuid import uuid4
 from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+from .hostinfo import HostCollector
 from .mpdbackend import BackendError, MPDBackend
 from .playbackstatus import OutputObservation, PlaybackCollector
 from .playbackoperations import ACTIONS, FAVORITE_ACTIONS, OperationError, OperationManager
@@ -182,6 +183,7 @@ class AgentObserver:
 def create_app(
     observer: AgentObserver, agent_id: str, token: str,
     operations: OperationManager | None = None,
+    host: HostCollector | None = None,
 ) -> Flask:
     if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", agent_id) is None:
         raise ValueError("Invalid agent identity")
@@ -254,6 +256,7 @@ def create_app(
     def capabilities() -> Response:
         response: dict[str, object] = dict(identity, read_features=[
             "inventory", "playback", "now_playing", "audio_diagnostics",
+            *(["host_info"] if host is not None else []),
         ], write_operations=[
             action for action in ACTIONS
             if operations is not None
@@ -266,6 +269,12 @@ def create_app(
             response["operation_retention_seconds"] = 86400
             response["gain_limits"] = {"slider_min_db": -60, "max_db": 0, "step_db": 0.1}
         return jsonify(response)
+
+    if host is not None:
+        @app.get("/v1/host", provide_automatic_options=False)
+        def host_information() -> Response:
+            # Cached facts only; reads never run a probe.
+            return jsonify(**identity, **host.snapshot())
 
     def inventory(output_id: str | None = None) -> Response | tuple[Response, int]:
         if output_id is not None and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", output_id) is None:

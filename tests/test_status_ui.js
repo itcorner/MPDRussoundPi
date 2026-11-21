@@ -23,6 +23,15 @@ class FakeElement {
     this.parent = null;
     this.scrollWidth = 0;
     this.clientWidth = 0;
+    this.listeners = {};
+  }
+
+  addEventListener(type, handler) {
+    (this.listeners[type] ||= []).push(handler);
+  }
+
+  fire(type) {
+    for (const handler of this.listeners[type] || []) handler();
   }
 
   set innerHTML(_value) {
@@ -163,4 +172,120 @@ test("truncated payloads keep the expand toggle", () => {
   assert.equal(toggle.tagName, "BUTTON");
   assert.equal(toggle.getAttribute("data-payload-toggle"), "");
   assert.equal(toggle.getAttribute("aria-expanded"), "false");
+});
+
+
+// ---------------------------------------------------------------- Host card
+
+const reference = {
+  agent_id: "musicpi", status: "ok", error: null, stale: false, last_success_at: "2026-11-21T10:00:00Z",
+  host: {
+    sections: {
+      cpu: { status: "ok", age_ms: 2000, stale: false, error: null, value: {} },
+      memory: { status: "ok", age_ms: 7400, stale: false, error: null, value: {} },
+      power: { status: "unsupported", age_ms: null, stale: true, error: null, value: null },
+    },
+    assessment: {},
+    view: {
+      overall: "warning",
+      summary: ["Wi-Fi weak (-76 dBm)", "CPU 33 %", "Memory 51 % used", "44 °C"],
+      rows: [
+        { label: "Memory", value: "452 MiB used of 906 MiB", level: "ok" },
+        { label: "Wi-Fi link", value: "-76 dBm (weak), 270 Mbit/s, 5 GHz", level: "warning" },
+        { label: "Addresses", value: "192.168.1.105/24", level: "" },
+      ],
+    },
+  },
+};
+
+function renderHostPayload(hosts, existing) {
+  const elements = existing || {
+    hostList: new FakeElement("div"), hostEmpty: new FakeElement("p"), hostCount: new FakeElement("span"),
+    clientCount: new FakeElement("span"), clientsList: new FakeElement("div"), clientsEmpty: new FakeElement("p"),
+    eventsEmpty: new FakeElement("p"), eventsTableBody: new FakeElement("tbody"),
+  };
+  const context = existing ? existing.context : {
+    ...elements,
+    expandedPayloadRows: new Set(),
+    document: { createElement: (tagName) => new FakeElement(tagName) },
+  };
+  if (!existing) {
+    vm.createContext(context);
+    vm.runInContext(rendering, context);
+    elements.context = context;
+  }
+  context.renderHosts({ hosts });
+  return elements;
+}
+
+test("host card shows the level in words, the summary and collapsed details", () => {
+  const { hostList, hostCount, hostEmpty } = renderHostPayload([reference]);
+  assert.equal(hostCount.textContent, "1");
+  assert.equal(hostEmpty.hidden, true);
+  const card = hostList.children[0];
+  const pill = card.find((node) => node.className.includes("host-level"));
+  assert.equal(pill.textContent, "Warning");
+  assert.match(pill.className, /host-level-warning/);
+  assert.equal(card.find((node) => node.className.includes("host-summary")).textContent,
+    "Wi-Fi weak (-76 dBm) · CPU 33 % · Memory 51 % used · 44 °C");
+  assert.match(card.allText(), /Updated now\./, "under four seconds reads as now, like the playback page");
+  const older = JSON.parse(JSON.stringify(reference));
+  older.host.sections.cpu.age_ms = 7400;
+  assert.match(renderHostPayload([older]).hostList.allText(), /Updated 7 s ago\./);
+  const details = card.find((node) => node.tagName === "DETAILS");
+  assert.equal(details.open, false);
+  const rows = details.find((node) => node.tagName === "DL").children.map((node) => node.textContent);
+  assert.deepEqual(rows.slice(0, 4), ["Memory", "452 MiB used of 906 MiB", "Wi-Fi link", "-76 dBm (weak), 270 Mbit/s, 5 GHz (Warning)"]);
+  assert.equal(rows.at(-1), "192.168.1.105/24");
+});
+
+test("expanded details stay open across refreshes", () => {
+  const first = renderHostPayload([reference]);
+  const details = first.hostList.children[0].find((node) => node.tagName === "DETAILS");
+  details.open = true;
+  details.fire("toggle");
+  renderHostPayload([reference], first);
+  assert.equal(first.hostList.children[0].find((node) => node.tagName === "DETAILS").open, true);
+  const reopened = first.hostList.children[0].find((node) => node.tagName === "DETAILS");
+  reopened.open = false;
+  reopened.fire("toggle");
+  renderHostPayload([reference], first);
+  assert.equal(first.hostList.children[0].find((node) => node.tagName === "DETAILS").open, false);
+});
+
+test("unsupported, pending, unavailable and stale hosts explain themselves", () => {
+  const cases = [
+    [{ agent_id: "a", status: "unsupported", host: null, error: null, stale: false }, /does not report host information/],
+    [{ agent_id: "a", status: "pending", host: null, error: null, stale: false }, /Waiting for the first host report/],
+    [{ agent_id: "a", status: "unavailable", host: null, error: { code: "agent_timeout", message: "Playback agent timed out." }, stale: false },
+      /unavailable: Playback agent timed out\./],
+    [{ ...reference, stale: true }, /Data is old \(last update 2 s ago\)/],
+  ];
+  for (const [host, expected] of cases) {
+    const { hostList } = renderHostPayload([host]);
+    const card = hostList.children[0];
+    assert.match(card.allText(), expected);
+    if (!host.host) {
+      assert.equal(card.find((node) => node.className.includes("host-level")).textContent, "Unknown");
+      assert.equal(card.find((node) => node.tagName === "DETAILS"), null);
+    }
+  }
+});
+
+test("host text is only ever assigned as text, even for hostile labels", () => {
+  const hostile = JSON.parse(JSON.stringify(reference));
+  const markup = '<img src=x onerror="alert(1)">';
+  hostile.agent_id = markup;
+  hostile.host.view.summary = [markup];
+  hostile.host.view.rows = [{ label: markup, value: markup, level: "problem" }];
+  const { hostList } = renderHostPayload([hostile]);
+  assert.equal(hostList.find((node) => node.tagName === "IMG"), null);
+  assert.match(hostList.allText(), /<img src=x onerror="alert\(1\)"> \(Problem\)/);
+});
+
+test("no configured agent shows the empty message", () => {
+  const { hostEmpty, hostCount, hostList } = renderHostPayload([]);
+  assert.equal(hostEmpty.hidden, false);
+  assert.equal(hostCount.textContent, "0");
+  assert.equal(hostList.children.length, 0);
 });

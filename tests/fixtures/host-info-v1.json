@@ -1,0 +1,92 @@
+{
+  "agent_response": {
+    "api_version": 1,
+    "agent_id": "musicpi",
+    "epoch": "3108146afc394bafa142cc98f7e5d2a6",
+    "snapshot_at": "2026-11-21T10:00:05Z",
+    "system": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:00Z", "observed_at": "2026-11-21T10:00:00Z",
+      "age_ms": 5000, "stale": false, "error": null, "last_known": null,
+      "value": {
+        "model": "Raspberry Pi 4 Model B Rev 1.5", "os": "Debian GNU/Linux 13 (trixie)",
+        "kernel": "6.18.29+rpt-rpi-v8", "uptime_seconds": 437704, "cores": 4
+      }
+    },
+    "cpu": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:03Z", "observed_at": "2026-11-21T10:00:03Z",
+      "age_ms": 2000, "stale": false, "error": null, "last_known": null,
+      "value": {"cores": 4, "load": [1.31, 1.03, 0.96], "busy_percent": 33.4, "frequency_mhz": 1800}
+    },
+    "memory": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:03Z", "observed_at": "2026-11-21T10:00:03Z",
+      "age_ms": 2000, "stale": false, "error": null, "last_known": null,
+      "value": {
+        "total_bytes": 949702656, "available_bytes": 463306752,
+        "swap_total_bytes": 948957184, "swap_used_bytes": 258654208
+      }
+    },
+    "temperature": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:03Z", "observed_at": "2026-11-21T10:00:03Z",
+      "age_ms": 2000, "stale": false, "error": null, "last_known": null,
+      "value": {"celsius": 44.3}
+    },
+    "power": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:00Z", "observed_at": "2026-11-21T10:00:00Z",
+      "age_ms": 5000, "stale": false, "error": null, "last_known": null,
+      "value": {
+        "raw": "0x0",
+        "now": {"under_voltage": false, "frequency_capped": false, "throttled": false, "soft_temperature_limit": false},
+        "since_boot": {"under_voltage": false, "frequency_capped": false, "throttled": false, "soft_temperature_limit": false}
+      }
+    },
+    "disk": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:00Z", "observed_at": "2026-11-21T10:00:00Z",
+      "age_ms": 5000, "stale": false, "error": null, "last_known": null,
+      "value": {"total_bytes": 62239682560, "free_bytes": 40565358592}
+    },
+    "network": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:00Z", "observed_at": "2026-11-21T10:00:00Z",
+      "age_ms": 5000, "stale": false, "error": null, "last_known": null,
+      "value": {
+        "state": "connected", "interface_type": "wifi",
+        "addresses": [{"family": 4, "address": "192.168.1.105", "prefix": 24}],
+        "wifi": {"signal_dbm": -76, "link_rate_mbps": 270.0, "band": "5 GHz"}
+      }
+    },
+    "clock": {
+      "status": "ok", "attempted_at": "2026-11-21T10:00:00Z", "observed_at": "2026-11-21T10:00:00Z",
+      "age_ms": 5000, "stale": false, "error": null, "last_known": null,
+      "value": {"synchronized": true}
+    }
+  },
+  "forbidden_text": [
+    "88:a2:9e:a7:8d:2e", "heimnetz", "b78f85f7-9a0b-449e-93b3-73b8db16f929", "4f2c9a1e5d3b4a6f8c7e0d1b2a3c4d5e",
+    "musicpi-secret-host", "\"192.168.1.1\"", "10000000abcdef"
+  ],
+  "sources": {
+    "/proc/loadavg": "1.31 1.03 0.96 3/464 1272097\n",
+    "/proc/uptime": "437704.80 1480203.11\n",
+    "/proc/stat": "cpu  1000 0 500 8000 100 0 50 0 0 0\ncpu0 250 0 125 2000 25 0 12 0 0 0\n",
+    "/proc/stat_next": "cpu  1400 0 700 8500 120 0 60 0 0 0\ncpu0 350 0 175 2125 30 0 15 0 0 0\n",
+    "/proc/meminfo": "MemTotal:         927444 kB\nMemFree:          100000 kB\nMemAvailable:     452448 kB\nBuffers:           10000 kB\nSwapTotal:        926716 kB\nSwapFree:         674124 kB\n",
+    "/proc/cpuinfo": "processor\t: 0\nprocessor\t: 1\nprocessor\t: 2\nprocessor\t: 3\nSerial\t\t: 10000000abcdef\n",
+    "/proc/device-tree/model": "Raspberry Pi 4 Model B Rev 1.5\u0000",
+    "/etc/os-release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\n",
+    "/proc/sys/kernel/osrelease": "6.18.29+rpt-rpi-v8\n",
+    "/sys/class/thermal/thermal_zone0/temp": "44303\n",
+    "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq": "1800000\n",
+    "/proc/net/route": "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nwlan0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\nwlan0\t0001A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\t0\t0\t0\n",
+    "/proc/net/wireless": "Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n wlan0: 0000   34.  -76.  -256        0      0      0   1754      0        0\n",
+    "/sys/class/net/wlan0/operstate": "up\n",
+    "/sys/class/net/wlan0/address": "88:a2:9e:a7:8d:2e\n",
+    "/etc/machine-id": "4f2c9a1e5d3b4a6f8c7e0d1b2a3c4d5e\n",
+    "/etc/hostname": "musicpi-secret-host\n",
+    "/proc/sys/kernel/random/boot_id": "b78f85f7-9a0b-449e-93b3-73b8db16f929\n"
+  },
+  "commands": {
+    "vcgencmd get_throttled": "throttled=0x0\n",
+    "timedatectl show -p NTPSynchronized --value": "yes\n",
+    "ip -j addr show dev wlan0": "[{\"ifindex\":3,\"ifname\":\"wlan0\",\"address\":\"88:a2:9e:a7:8d:2e\",\"addr_info\":[{\"family\":\"inet\",\"local\":\"192.168.1.105\",\"prefixlen\":24,\"scope\":\"global\",\"dynamic\":true},{\"family\":\"inet6\",\"local\":\"fe80::1234:5678:9abc:def0\",\"prefixlen\":64,\"scope\":\"link\"}]}]",
+    "nmcli -t -f IN-USE,FREQ,RATE device wifi list ifname wlan0 --rescan no": ":2437 MHz:130 Mbit/s\n*:5200 MHz:270 Mbit/s\n"
+  }
+}

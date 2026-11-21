@@ -59,7 +59,7 @@ configuration maps that input to its playback output.
 |---|---|---|---|
 | Web application | `russound-web` container, or the `russound-web.service` systemd unit | [web/](../../web/) | HTTP UI and API, live events, Russound control, playback gateway |
 | Serial gateway | `russound-ser2net` container or host ser2net | [mpdrussoundpi/ser2net/](../../mpdrussoundpi/ser2net/), [Dockerfile.ser2net](../../Dockerfile.ser2net) | Exposes the RS-232 adapter as TCP port 6666 |
-| Playback agent | `playback-agent.service` behind `playback-agent-proxy.service` (Caddy) | [playbackagent.py](../../mpdrussoundpi/russound/playbackagent.py), `lib/playback*.py` | Versioned read and operations API for the local MPD outputs |
+| Playback agent | `playback-agent.service` behind `playback-agent-proxy.service` (Caddy) | [playbackagent.py](../../mpdrussoundpi/russound/playbackagent.py), `lib/playback*.py` | Versioned read and operations API for the local MPD outputs, plus read-only host facts (`GET /v1/host`: network and Wi-Fi, CPU, memory, temperature, power, disk, clock) collected by a background thread |
 | Playback supervisor | `mpd_playback_supervisor.service` (systemd user unit) | [mpdsupervisor.py](../../mpdrussoundpi/russound/mpdsupervisor.py), [lib/playbackwatchdog.py](../../mpdrussoundpi/russound/lib/playbackwatchdog.py) | Starts each `mpd_<output>.service`, restores the saved playback intention and restarts instances the stall watchdog finds hung or frozen |
 | Audio and MPD setup | One-shot scripts run by Ansible | [audiosetup.py](../../mpdrussoundpi/russound/audiosetup.py), [mpdsetup.py](../../mpdrussoundpi/russound/mpdsetup.py) | Create PipeWire sinks per USB device and one MPD instance per output |
 | Egress enforcement | `playback-egress.service` | [playbackegress.py](../../mpdrussoundpi/russound/playbackegress.py), [publicnetwork.py](../../mpdrussoundpi/common/publicnetwork.py) | MPD-only packet filter that allows public stream destinations only |
@@ -106,7 +106,7 @@ flowchart TB
 | [config_types.py](../../web/config_types.py) | Typed configuration, validation and environment overrides (backend endpoint, poll interval, audit log). |
 | [russound_backend.py](../../web/russound_backend.py) | Translates zone operations into connector calls and reads complete zone state, including the extended sound parameters. |
 | [russound_connector.py](../../web/russound_connector.py) | RNET protocol: frame encoding and checksums, the TCP or serial transport, request/response matching, and a listener thread that decodes unsolicited keypad frames. Optional protocol audit log. |
-| [playback_status.py](../../web/playback_status.py) | One client per configured agent: polls `/v1/health`, `/v1/capabilities`, `/v1/outputs` and `/v1/favorites` every 2 s, caches the snapshot and proxies operations and TuneIn search. |
+| [playback_status.py](../../web/playback_status.py) | One client per configured agent: polls `/v1/health`, `/v1/capabilities`, `/v1/outputs` and `/v1/favorites` every 2 s, caches the snapshot and proxies operations and TuneIn search. When the agent advertises `host_info` it also fetches `/v1/host` about every 10 s into a separate cache that never changes the playback revision or its events. |
 | [input_playback.py](../../web/input_playback.py) | Resolves Russound input names from the station currently selected on the linked playback output. |
 
 The frontend is plain JavaScript without a build step. Each page loads its

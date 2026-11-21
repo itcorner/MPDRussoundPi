@@ -55,7 +55,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [MPD web integration](./plans/general_done_mpd-web-integration.md) | Manual integration complete with accepted limitations; holds the [deployment acceptance](./plans/general_done_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Hardware-driven playback automation](./plans/general_new_hardware-playback-automation.md) | Lower priority; former S10 and automation-specific acceptance, not implemented |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
-| [Deployment and runtime configuration overview](./plans/general_new_deployment-status-overview.md) | Planned, not started; includes host information (network, Wi-Fi, CPU, memory, temperature); scope and disclosure decisions needed |
+| [Deployment and runtime configuration overview](./plans/general_new_deployment-status-overview.md) | In progress; host information first slice implemented (network, Wi-Fi, CPU, memory, temperature, power, disk, clock), not yet deployed; topology overview and its disclosure decisions still open |
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |

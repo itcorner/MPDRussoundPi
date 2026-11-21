@@ -394,6 +394,10 @@ class RussoundHTTPServer:
         def api_status_history():
             return jsonify(self.build_history_status_payload())
 
+        @app.get("/api/status/host")
+        def api_status_host():
+            return jsonify(self.build_host_status_payload())
+
         @app.get("/api/events")
         def api_events():
             return self._serve_events()
@@ -1254,6 +1258,14 @@ class RussoundHTTPServer:
                     "streams": stream_count,
                 }
         return {"connected_clients": list(sessions.values())}
+
+    def build_host_status_payload(self) -> dict[str, Any]:
+        """Validated host facts per configured playback agent; cached, never probing the network."""
+        return {
+            "api_version": 1,
+            "configured": bool(self._playback_clients),
+            "hosts": [client.host_snapshot() for client in self._playback_clients],
+        }
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:

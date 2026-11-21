@@ -110,8 +110,9 @@ are a different domain, not defined by this read contract.
 | `GET /v1/capabilities` | Capabilities object |
 | `GET /v1/outputs` | Inventory envelope |
 | `GET /v1/outputs/{output_id}` | Same envelope metadata with `output` instead of `outputs` |
+| `GET /v1/host` | Host information, only when `host_info` is advertised (see [Host information](#host-information)) |
 
-All four routes require configured service authentication. Under selected D06,
+All routes require configured service authentication. Under selected D06,
 TLS terminates at Caddy on the Pi and forwards to the loopback-only agent; the
 Docker client trusts the self-signed certificate using `tls_ca_file` with
 hostname validation enabled. Proxy and credential provisioning remain part of
@@ -134,7 +135,9 @@ claim audio readiness. Configuration health is reported by inventory errors.
 `api_version`, `agent_id`, `epoch`, `read_features`, `write_operations`.
 
 Initial `read_features` lists `inventory`, `playback`, `now_playing`,
-`audio_diagnostics`; `write_operations` is `[]`. Metadata capability does not
+`audio_diagnostics`, plus `host_info` when the agent serves `GET /v1/host`
+(an additive capability: clients that do not know it ignore it, and a client
+must not call the route unless it is advertised); `write_operations` is `[]`. Metadata capability does not
 mean every station supplies tags. Optional diagnostics that are unsupported
 are omitted from the feature list and have explicit `unsupported` probe status.
 Do not advertise writes before their handlers, authentication and semantics
@@ -168,6 +171,38 @@ after valid inventory establishes the ID is absent.
 Desired control state is published separately under `control` when writes are
 enabled (see the [operations API](./mpd-playback-operations-api.md)). A station label is not
 now-playing metadata.
+
+### Host information
+
+`GET /v1/host` returns `api_version`, `agent_id`, `epoch`, `snapshot_at` and one
+**probe object** (below) per section: `system`, `cpu`, `memory`, `temperature`,
+`power`, `disk`, `network`, `clock`. Values are read by a background collector
+every few seconds (CPU, memory, temperature, system 5 to 10 s; network 10 s;
+disk, power and clock 30 s); the route returns the cache and never starts a
+probe. `unsupported` means the host has no such source (no `vcgencmd`, thermal
+zone, NetworkManager or Wi-Fi), which is not an error. `last_known` is always
+null. Failed probes use `error.code` `probe_failed` with a fixed message.
+
+| Section | `value` fields |
+| --- | --- |
+| `system` | `model`, `os`, `kernel` (printable ASCII, at most 64 characters, or null), `uptime_seconds`, `cores` |
+| `cpu` | `cores`, `load` (1, 5, 15 minutes), `busy_percent` (null until two samples exist), `frequency_mhz` |
+| `memory` | `total_bytes`, `available_bytes`, `swap_total_bytes`, `swap_used_bytes` |
+| `temperature` | `celsius` |
+| `power` | `raw` (hexadecimal `get_throttled` value), `now` and `since_boot`, each with `under_voltage`, `frequency_capped`, `throttled`, `soft_temperature_limit` |
+| `disk` | `total_bytes`, `free_bytes` of the root file system |
+| `network` | `state` (`connected`, `disconnected`, `no_uplink`), `interface_type` (`wifi`, `ethernet`, `other`, null), `addresses` (global IPv4/IPv6 of the uplink interface as `{family, address, prefix}`, or null when unavailable), `wifi` (`signal_dbm`, `link_rate_mbps`, `band`; null unless Wi-Fi) |
+| `clock` | `synchronized` |
+
+**Never reported:** MAC addresses, serial number, machine id, boot id, host
+name, the Wi-Fi network name, its channel, the gateway and DNS servers, secrets
+and file paths. The collector never requests the network name, never triggers a
+Wi-Fi scan (`nmcli ... --rescan no`), runs only fixed commands without a shell
+and never takes the playback mutation lock. `--disable-host-info` turns the
+route and capability off. The proxy must allow `GET`/`HEAD /v1/host`; a proxy
+from before this route returns 403 or 404 for it, which the web reports as
+`unavailable`. Fixture and schema:
+[host-info-v1.json](../../tests/fixtures/host-info-v1.json).
 
 ### Probe object (playback and each audio subprobe)
 
