@@ -1001,6 +1001,19 @@ acceptance choices and required controller backup space. Type the exact
 SSH transaction; the target does not accept a disconnected digest as a reusable
 authorization token.
 
+**Updating from registry images.** Before an update the operator exports the
+currently running images for rollback and validates the archive. Registry
+images are multi-platform indexes: besides the image for the target platform,
+the index lists manifests for platforms that were never pulled and BuildKit
+attestations. The validator accepts those (absent content of other platforms,
+and attestations that are bound to an image of the same index and, when
+present, carry a matching subject), while the selected platform's image must
+still be present and match the recorded config and layers. Older tooling rejected
+such archives with "Archive descriptor selects a different image config", which
+made the first update after a registry deployment fail after the writers were
+stopped but before any backup; `resume-original` restores the running
+services in that case.
+
 On an ordinary rerun, omit both image-source options. The target reuses its
 committed pin and verifies the unchanged runtime without stop/start, image
 transfer, backup or recreation. Different candidates require **`--update`** plus
