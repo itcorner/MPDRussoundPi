@@ -189,10 +189,15 @@ const reference = {
     view: {
       overall: "warning",
       summary: ["Wi-Fi weak (-76 dBm)", "CPU 33 %", "Memory 51 % used", "44 °C"],
-      rows: [
-        { label: "Memory", value: "452 MiB used of 906 MiB", level: "ok" },
-        { label: "Wi-Fi link", value: "-76 dBm (weak), 270 Mbit/s, 5 GHz", level: "warning" },
-        { label: "Addresses", value: "192.168.1.105/24", level: "" },
+      rows: [],
+      groups: [
+        { id: "network", title: "Network", level: "warning", summary: "Wi-Fi weak (-76 dBm)", rows: [
+          { label: "Wi-Fi link", value: "-76 dBm (weak), 270 Mbit/s, 5 GHz", level: "warning" },
+          { label: "Addresses", value: "192.168.1.105/24", level: "" },
+        ] },
+        { id: "processor", title: "Processor and memory", level: "ok", summary: "CPU 33 % · Memory 51 % used", rows: [
+          { label: "Memory", value: "452 MiB used of 906 MiB", level: "ok" },
+        ] },
       ],
     },
   },
@@ -234,9 +239,12 @@ test("host card shows the level in words, the summary and collapsed details", ()
   assert.match(renderHostPayload([older]).hostList.allText(), /Updated 7 s ago\./);
   const details = card.find((node) => node.tagName === "DETAILS");
   assert.equal(details.open, false);
-  const rows = details.find((node) => node.tagName === "DL").children.map((node) => node.textContent);
-  assert.deepEqual(rows.slice(0, 4), ["Memory", "452 MiB used of 906 MiB", "Wi-Fi link", "-76 dBm (weak), 270 Mbit/s, 5 GHz (Warning)"]);
-  assert.equal(rows.at(-1), "192.168.1.105/24");
+  const text = details.allText();
+  assert.match(text, /Network/);
+  assert.match(text, /Processor and memory/);
+  assert.match(text, /Wi-Fi link -76 dBm \(weak\), 270 Mbit\/s, 5 GHz \(Warning\)/);
+  assert.match(text, /192\.168\.1\.105\/24/);
+  assert.match(text, /Memory 452 MiB used of 906 MiB/);
 });
 
 test("expanded details stay open across refreshes", () => {
@@ -277,7 +285,7 @@ test("host text is only ever assigned as text, even for hostile labels", () => {
   const markup = '<img src=x onerror="alert(1)">';
   hostile.agent_id = markup;
   hostile.host.view.summary = [markup];
-  hostile.host.view.rows = [{ label: markup, value: markup, level: "problem" }];
+  hostile.host.view.groups = [{ id: "g", title: markup, level: "ok", summary: markup, rows: [{ label: markup, value: markup, level: "problem" }] }];
   const { hostList } = renderHostPayload([hostile]);
   assert.equal(hostList.find((node) => node.tagName === "IMG"), null);
   assert.match(hostList.allText(), /<img src=x onerror="alert\(1\)"> \(Problem\)/);
