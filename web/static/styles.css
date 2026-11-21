@@ -1269,8 +1269,8 @@ h1 {
 .admin-form input {
   flex: 1 1 14rem;
   min-width: 0;
-  min-height: 44px;
-  padding: 0.55rem 0.75rem;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
   border: 1px solid rgba(91, 185, 255, 0.35);
   border-radius: 8px;
   color: var(--text);
@@ -1280,6 +1280,43 @@ h1 {
 .admin-form-row .status-meta,
 .admin-message {
   margin-top: 0;
+}
+
+.admin-form label {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* Small actions inside status sections, sized like the status pills. */
+.compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0.3rem 0.95rem;
+  border: 1px solid rgba(91, 185, 255, 0.4);
+  border-radius: 999px;
+  background: rgba(91, 185, 255, 0.12);
+  color: var(--text);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+
+.compact-button:hover:not(:disabled),
+.compact-button:focus-visible {
+  background: rgba(91, 185, 255, 0.24);
+  border-color: rgba(91, 185, 255, 0.7);
+}
+
+.compact-button-primary {
+  background: var(--accent-strong);
+  border-color: transparent;
+}
+
+.compact-button-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  filter: brightness(1.1);
 }
 
 .overview-subtitle {

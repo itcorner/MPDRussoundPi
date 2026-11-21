@@ -415,7 +415,7 @@ test("an empty overview shows the placeholder and an unknown level", () => {
 
 function renderAdminState(session) {
   const elements = {
-    adminState: new FakeElement("span"), adminLoginForm: new FakeElement("form"), adminPassword: new FakeElement("input"),
+    adminPanel: new FakeElement("details"), adminState: new FakeElement("span"), adminLoginForm: new FakeElement("form"), adminPassword: new FakeElement("input"),
     adminSession: new FakeElement("div"), adminSessionText: new FakeElement("span"), adminLogout: new FakeElement("button"),
     adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"),
   };
@@ -425,6 +425,20 @@ function renderAdminState(session) {
   context.renderAdmin(session);
   return { ...elements, context };
 }
+
+test("administrator panel opens only when a login is possible and keeps the user's choice", () => {
+  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  assert.equal(view.adminPanel.open, true, "set up but not logged in: open");
+  view.adminPanel.open = false;  // the user closes it
+  view.context.renderAdmin({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  assert.equal(view.adminPanel.open, false, "a refresh with the same state keeps the user's choice");
+  view.context.renderAdmin({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+  assert.equal(view.adminPanel.open, false, "logged in: collapsed");
+  view.context.renderAdmin({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  assert.equal(view.adminPanel.open, true, "after logout or expiry it opens again");
+  assert.equal(renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 }).adminPanel.open, false,
+    "not set up: collapsed");
+});
 
 test("administrator panel shows setup, login, locked and logged-in states in words", () => {
   const setup = renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 });
