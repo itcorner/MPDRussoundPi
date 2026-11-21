@@ -174,6 +174,33 @@ def image_identity(value: Any, reference: str, platform: str, revision: str) -> 
         raise BuildError("Built image ID, platform or source labels do not match")
 
 
+def index_child_role(child: dict[str, Any], siblings: set[str], platform: str) -> str:
+    """Role of one descriptor inside an archived image index.
+
+    ``required`` children are the selected image and must be present and match
+    the recorded config. Registry images also list manifests for platforms that
+    were never pulled and BuildKit attestations bound to one of those images;
+    these may be absent, but nothing else is allowed to be.
+    """
+    annotations = child.get("annotations", {})
+    described = child.get("platform")
+    if not is_mapping(annotations):
+        raise BuildError("Archive child descriptor annotations are invalid")
+    if annotations.get("vnd.docker.reference.type") == "attestation-manifest":
+        bound = annotations.get("vnd.docker.reference.digest")
+        if (not is_mapping(described) or described.get("os") != "unknown" or described.get("architecture") != "unknown"
+                or not isinstance(bound, str) or bound not in siblings or bound == child["digest"]):
+            raise BuildError("Archive index has an attestation that is not bound to an image in the same index")
+        return "attestation"
+    if is_mapping(described):
+        system, architecture = described.get("os"), described.get("architecture")
+        if not isinstance(system, str) or not isinstance(architecture, str) or "unknown" in (system, architecture):
+            raise BuildError("Archive index has a child without a usable platform")
+        if f"{system}/{architecture}" != "/".join(platform.split("/")[:2]):
+            return "other-platform"
+    return "required"
+
+
 def archive_identity(stream: BinaryIO, image: dict[str, Any], platform: str, revision: str | None) -> str:
     """Inspect, never extract, the Docker save envelope and its config."""
     stream.seek(0)
@@ -248,10 +275,30 @@ def archive_identity(stream: BinaryIO, image: dict[str, Any], platform: str, rev
                 if "manifests" in descriptor:
                     if not is_list(descriptor["manifests"]) or not descriptor["manifests"]:
                         raise BuildError("Archive image index is empty or invalid")
+                    siblings: set[str] = set()
                     for child in descriptor["manifests"]:
-                        if not is_mapping(child) or not isinstance(child.get("digest"), str):
+                        if (not is_mapping(child) or not isinstance(child.get("digest"), str)
+                                or not DIGEST.fullmatch(child["digest"])):
                             raise BuildError("Archive child image descriptor is invalid")
-                        pending.append(child["digest"])
+                        siblings.add(child["digest"])
+                    for child in descriptor["manifests"]:
+                        role = index_child_role(child, siblings, platform)
+                        if role == "required":
+                            pending.append(child["digest"])
+                            continue
+                        # Content of other platforms or attestations may be absent (never pulled); if it is
+                        # present it must be what its descriptor says and, for an attestation, belong to its image.
+                        name = "blobs/sha256/" + child["digest"].split(":")[1]
+                        if name not in members:
+                            continue
+                        raw_child, parsed = metadata(name)
+                        if "sha256:" + hashlib.sha256(raw_child).hexdigest() != child["digest"] or not is_mapping(parsed):
+                            raise BuildError("Archive image descriptor digest mismatch")
+                        if role == "attestation":
+                            subject = parsed.get("subject")
+                            if (not is_mapping(subject)
+                                    or subject.get("digest") != child["annotations"]["vnd.docker.reference.digest"]):
+                                raise BuildError("Archive attestation does not belong to its indexed image")
                 else:
                     child = descriptor.get("config")
                     if not is_mapping(child) or not isinstance(child.get("digest"), str):
