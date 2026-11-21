@@ -1,8 +1,11 @@
 # Coordinated USB audio recovery fix
 
-Status: investigation and implementation design prepared, 2026-10-16.
-No corrective configuration, code deployment, package change or audio-service
-restart has been applied. Controlled reconnect cycles are paused.
+Status: **done** (2026-10-16): the coordinated recovery fix was deployed in an
+approved maintenance window, passed the physical reconnect cycles and completed its
+observation period (see [Approved maintenance deployment](#approved-maintenance-deployment-2026-10-16)
+and [Observation period completed](#observation-period-completed-2026-10-16)).
+The sections up to the deployment gate are the dated investigation and design
+record written before that window.
 
 Naming note: this is a dated record. Stream names (Radio 88.6, FM4 Radio,
 OE3 Radio) and observer IDs (`front`, `centerlfe`, `rear`) are as they were at

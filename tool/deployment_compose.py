@@ -31,7 +31,7 @@ from tool.deployment_state import StateStore, candidate, identity, operation_id
 
 
 # The one layout addition an update may make: the read-only directory that holds the
-# updater service's Unix socket (see docs/plans/general_new_user-triggered-image-updates.md).
+# updater service's Unix socket (see docs/plans/general_open_user-triggered-image-updates.md).
 # It lives outside the data root, so file backups never meet the socket.
 UPDATER_SOCKET_DIR = "/var/lib/mpdrussoundpi-updater/socket"
 UPDATER_SOCKET_TARGET = "/run/mpdrussoundpi-updater"

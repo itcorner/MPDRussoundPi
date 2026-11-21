@@ -1,6 +1,6 @@
-# Idea: deployment and runtime configuration overview
+# Deployment and runtime configuration overview
 
-Status: **new, in progress** (2026-11-21): the host section is implemented,
+Status: **open** (2026-11-21): the host section is implemented,
 deployed and accepted on the reference Pi; the component and audio sections
 (second slice) are implemented, deployed and accepted (see
 [Implementation progress](#implementation-progress)); topology, the web host's
@@ -344,5 +344,5 @@ Related ideas and plans: [network relocation](./general_idea_network-relocation.
 (needs address, DNS and clock facts from the same collectors),
 [Wi-Fi bootstrap](./general_idea_wifi-bootstrap.md),
 [agent containerization](./mpd_new_agent-containerization.md)
-and [user-triggered image updates](./general_new_user-triggered-image-updates.md).
+and [user-triggered image updates](./general_open_user-triggered-image-updates.md).
 This overview is read-only and does not authorize or implement updates.

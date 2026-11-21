@@ -1227,7 +1227,7 @@ compatibility impacts are handled during implementation as they arise.
 | D3 | Image identity and updates | **Agreed:** resolve Hub development images on first deployment, record exact digests and reuse the pins on ordinary redeployments; updates are explicit. Matching verified source revision and target platform suffice for dev pairing; a durable CI pair record is not required. Never fall back across channels. Stable still requires an approved release. **Remaining:** define resolution mechanics and stable selection once releases exist. |
 | D4 | Runtime precedence and invalid inputs | **Agreed:** explicit CLI > environment > saved configuration > built-in default where those sources exist; blank optional values are unset, blank required values and other invalid configuration fail explicitly. Preflight incompatible inputs before service changes, preserve existing data and require reviewed correction instead of silently rewriting it. Render an actual empty agent list as unset in both plays. **Remaining:** document Ansible and Compose separately, field-specific types and necessary exceptions. |
 | D5 | Logging contract | **Agreed:** development DEBUG; production warnings/errors plus essential health and security events; protocol audit off unless explicitly enabled. Web file rotation is 10 MiB plus five backups, audit 5 MiB plus three. Configure Docker `max-size: 10m` and `max-file: 3` per container; native logs use the host journal without changing global retention. During an approved migration, inform the operator and disable previously configured audit after backup; later opt-ins survive ordinary reruns. **Remaining:** define other component destinations and test redaction. |
-| D6 | Migration and rollback | **Agreed:** a failed migration stops and reports changes; the operator decides whether to restore, rather than automatic rollback. Require a verified private backup with an off-Pi copy before Pi cutover. Encryption is not required for now; retain backups until explicitly removed. Verify compatibility before restoration. Pi cutover requires separate approval. **Remaining:** define backup verification, data-schema rules and runbook; coordinate cross-version rehearsal with [image updates](./general_new_user-triggered-image-updates.md). |
+| D6 | Migration and rollback | **Agreed:** a failed migration stops and reports changes; the operator decides whether to restore, rather than automatic rollback. Require a verified private backup with an off-Pi copy before Pi cutover. Encryption is not required for now; retain backups until explicitly removed. Verify compatibility before restoration. Pi cutover requires separate approval. **Remaining:** define backup verification, data-schema rules and runbook; coordinate cross-version rehearsal with [image updates](./general_open_user-triggered-image-updates.md). |
 | D7 | Python dependencies | **Agreed:** use separate component dependencies and bounded version ranges, not fully resolved locks. Do not unconditionally upgrade packages on ordinary reruns. Prepare a separate isolated audio environment and retain the working one until a verified, separately approved switch. **Remaining:** define and test supported ranges, platform coverage and security-update procedure; fresh installations can resolve different versions over time. |
 | D8 | Deployment record | **Agreed:** use a private versioned target-side record under `/var/lib/mpdrussoundpi/deployments/<deployment-id>/`; record committed and pending selections, block normal reruns after interruption or unreadable state and require explicit recovery. No secrets belong in the record. **Revised by operator 2026-11-13:** replace the previously agreed long-held OS lock with a persistent host-wide reservation and operator-led recovery. The design is not implemented or validated. |
 | D9 | Agent updates and credentials | **Agreed:** stage agent changes separately; do not modify active agent files or credentials until explicit activation. **Revised by operator 2026-11-13:** cross-host agent/web credential rotation is deferred from this rework; do not claim the host-local reservation coordinates hosts. The current agent play does not provide staged activation or safe rotation. |
@@ -2095,7 +2095,7 @@ policy before offering installation. Report unavailable registry data,
 ambiguous or incomplete pairs and unknown prior identity explicitly; do not
 infer "up to date" from an error. Checks do not pull, deploy or change the
 committed pin. Share the record and check results with
-[user-triggered updates](./general_new_user-triggered-image-updates.md) and
+[user-triggered updates](./general_open_user-triggered-image-updates.md) and
 [update status](./general_open_update-status-and-restarts.md), rather than
 independently deriving deployment history. Production stable `latest`
 selection remains blocked until approved stable releases are published.
@@ -2329,7 +2329,7 @@ variables and CLI invocations before changing behavior. Expose provenance to
 the configuration and deployment-status ideas without leaking secrets.
 Decide the target policy first, then share one effective-value/source contract
 with [inline overrides](./web_done_effective-config-overrides.md) and the
-[deployment overview](./general_new_deployment-status-overview.md); do not
+[deployment overview](./general_open_deployment-status-overview.md); do not
 let those interfaces independently define precedence.
 
 ## Ansible and deployment design
@@ -4015,7 +4015,7 @@ S5 gates and final legacy retirement are not marked complete by this trial.
   MPD/audio readiness, preservation of state and a deliberate rollback.
   Report absent hardware or unavailable stable images as unverified, not passed.
 
-Related: [deployment status](./general_new_deployment-status-overview.md),
+Related: [deployment status](./general_open_deployment-status-overview.md),
 [update status and restarts](./general_open_update-status-and-restarts.md),
 [image release pipeline](./general_open_cicd-docker-release.md), and
 [agent containerization](./mpd_new_agent-containerization.md).

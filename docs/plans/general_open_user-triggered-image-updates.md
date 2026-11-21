@@ -1,11 +1,11 @@
 # User-triggered Docker image updates
 
-Status: **new, in progress** (2026-11-21). Decisions 1 to 7 were taken on
-2026-11-21 (see [Decisions](#decisions-2026-11-21)); stage 1 (administrator
-login) is implemented and not yet deployed. Recorded as an idea on 2026-10-31. The unmerged preparation of
-2026-11-16 (branch `feature/deployment-update-status-planning`) was reviewed and
-its consistent parts are included here (see
-[Earlier preparation](#earlier-preparation-2026-11-16)).
+Status: **open** (2026-11-21). Decisions 1 to 7 were taken on 2026-11-21 (see
+[Decisions](#decisions-2026-11-21)). Stages 1 to 4 are implemented and rolled out
+on the reference Pi (administrator login, updater service, page flow, rollout);
+stage 5, the acceptance on the Pi, is in progress. Recorded as an idea on
+2026-10-31. The unmerged preparation of 2026-11-16 was reviewed and its consistent
+parts are included here (see [Earlier preparation](#earlier-preparation-2026-11-16)).
 
 ## Goal
 

@@ -1015,7 +1015,7 @@ stopped but before any backup; `resume-original` restores the running
 services in that case.
 
 **Updater socket mount (the one accepted layout addition).** For web-triggered
-updates (see the [plan](../plans/general_new_user-triggered-image-updates.md)),
+updates (see the [plan](../plans/general_open_user-triggered-image-updates.md)),
 an update may add exactly one mount to the web service of a recorded deployment:
 
 ```json

@@ -502,7 +502,7 @@ Available only on single-host Docker installations with the updater service (its
 socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
 `RUSSOUND_UPDATER_SOCKET` overrides the path); elsewhere the status reports
 `configured: false` and actions answer `503`. See the
-[plan](../docs/plans/general_new_user-triggered-image-updates.md).
+[plan](../docs/plans/general_open_user-triggered-image-updates.md).
 
 - `GET /api/status/update-operation` (public): `configured`, `phase`
   (`idle`, `resolving`, `awaiting_approval`, `running`, `succeeded`,

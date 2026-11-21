@@ -779,7 +779,7 @@ not silently approved.
 Implementation was gated on a six-hour Pi observation that began
 2026-11-14 01:29:07 CET. The original run completed with four failures. Resolution and the
 short diagnostic/repeat endurance gates are tracked separately in the
-[audio diagnostic freshness incident plan](./general_open_audio-diagnostic-freshness.md).
+[audio diagnostic freshness incident plan](./general_done_audio-diagnostic-freshness.md).
 Its corrected-runtime six-hour acceptance passed on 2026-11-14 at 15:19:18 CET
 (350 samples, zero failures, 21,602.064 seconds; verified at approximately
 17:54 CET). The observation prerequisite is satisfied; remaining contract and
@@ -887,7 +887,7 @@ Related: [safe configuration changes](./web_open_safe-configuration-changes.md),
 [effective overrides](./web_done_effective-config-overrides.md),
 [guided diagnostics](./general_idea_guided-diagnostics.md),
 [deployment simplification](./general_done_simplify-deployment-configuration.md),
-[deployment status](./general_new_deployment-status-overview.md),
+[deployment status](./general_open_deployment-status-overview.md),
 [Wi-Fi bootstrap](./general_idea_wifi-bootstrap.md) (a Pi without a network
 cannot show this wizard) and
 [network relocation](./general_idea_network-relocation.md) (the access boundary

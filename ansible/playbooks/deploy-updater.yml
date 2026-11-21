@@ -1,6 +1,6 @@
 ---
 # Installs the updater service for web-triggered Docker image updates
-# (docs/plans/general_new_user-triggered-image-updates.md). Single-host Docker
+# (docs/plans/general_open_user-triggered-image-updates.md). Single-host Docker
 # installations only. It installs files and the systemd unit; it never deploys,
 # stops or restarts the application containers. The web container gets access
 # only after the socket mount is added through a reviewed operator update.
