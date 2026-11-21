@@ -1,8 +1,11 @@
 # User-triggered Docker image updates
 
-Status: **new, planned** (2026-11-21). Decisions 1 to 4 were taken on
+Status: **new, planned** (2026-11-21). Decisions 1 to 7 were taken on
 2026-11-21 (see [Decisions](#decisions-2026-11-21)); implementation has not
-started. Recorded as an idea on 2026-10-31.
+started. Recorded as an idea on 2026-10-31. The unmerged preparation of
+2026-11-16 (branch `feature/deployment-update-status-planning`) was reviewed and
+its consistent parts are included here (see
+[Earlier preparation](#earlier-preparation-2026-11-16)).
 
 ## Goal
 
@@ -43,6 +46,18 @@ reviewed operator).
    failed update stops and reports. The page then offers **Restore previous
    version**, which runs the existing recovery with the on-Pi backup after its
    own confirmation. This matches the operator, which has no automatic rollback.
+5. **Password, not a PIN.** The 2026-11-16 preparation chose a shared 4-digit
+   PIN; this is superseded by a passphrase, because a leaked hash of a PIN can be
+   guessed offline. One shared administrator: audit records name the session and
+   action, not a person, and the session model leaves room for named accounts.
+6. **Login over HTTP for now; whole-UI HTTPS later.** The 2026-11-16 preparation
+   required HTTPS for the whole UI before any login. It is deferred: the first
+   release runs the login on the existing LAN-only HTTP UI and documents that the
+   password and session cookie can be read by anyone on that network. Whole-UI
+   HTTPS (own certificate or a generated local CA, HTTP redirect-only) stays a
+   planned stage; the cookie gets `Secure` as soon as HTTPS exists.
+7. **"Check now" stays public.** The read-only update check (once per minute,
+   public tags only) does not need a login; only installing does.
 
 ## Design
 
@@ -113,13 +128,56 @@ endpoint on the Docker bridge with a token from the existing secrets mount,
 avoids the layout change but needs a network filter and is weaker. Decide this
 in stage 2.
 
+### Sessions, reviews and operations (from the 2026-11-16 preparation)
+
+- **Credential handling:** memory-hard password hash with reviewed parameters in
+  the secrets mount; set, rotate and reset only by a local command over SSH or
+  console, never over HTTP; no default. Resetting revokes every session and
+  clears the lockout.
+- **Lockout:** after five failed attempts in total (across clients and workers),
+  refuse further attempts for 15 minutes; failures during the lock extend it; a
+  success clears the counter. The state survives restarts and handles clock
+  rollback conservatively. Plus per-client throttling and generic error messages.
+  A lockout is a possible denial of service; recovery is the local reset.
+- **Sessions:** opaque random IDs stored hashed on the server, cookies
+  `HttpOnly`, `SameSite=Strict` (and `Secure` once HTTPS exists), 15 minutes idle
+  and 8 hours absolute, rotated on login, revoked on logout and reset. Disruptive
+  actions (update, restore) require entering the password again within the last
+  5 minutes. No password, cookie or CSRF token in logs, events, SSE or URLs.
+- **CSRF:** a synchronizer token plus the existing same-origin check and JSON
+  content type on every privileged request; missing browser headers never count
+  as authorization. Endpoints `GET /api/admin/session`, `POST /api/admin/login`,
+  `POST /api/admin/logout`, `POST /api/admin/reauthenticate` (all `no-store`).
+- **Reviews:** bind actor, target, candidate digests, impact, configuration
+  generation and preconditions; expire after 2 minutes; revalidated under the
+  host reservation right before dispatch. A changed scope needs a new review.
+  Submission carries the review digest, the explicit confirmation and an
+  idempotency key (same key and payload returns the same operation, same key
+  with another payload conflicts). Errors: 401/403 unauthenticated or not
+  allowed, 409 expired review or busy host, 429 limits, 503 updater unavailable;
+  `202` only after the updater has persisted the operation.
+- **Operation states:** `accepted`, `running`, `verifying`, then `succeeded`,
+  `failed` or `outcome_unknown`. The actor, review digest and pre-action
+  identities are written to disk before dispatch, and the dispatch boundary is
+  recorded before the tooling runs. Ambiguous dispatch is never retried
+  automatically. A changed container, a returning host or a healthy page alone is
+  not proof of success.
+- **One maintenance gate per host:** the updater and the SSH operator share the
+  deployment tooling's reservation, taken atomically inside the transaction; a
+  check-then-act against `deployment_state status` would race a deployment.
+- **The updater as the host broker:** build it as the narrow host-side broker
+  that the [update status plan](./general_open_update-status-and-restarts.md)
+  needs later for restarts and reboots: fixed operations only, configured
+  targets, no addresses, unit names, paths or commands from requests, durable
+  operation records owned outside the web process.
+
 ## Stages
 
-- [ ] **1. Administrator authentication** in the web application: password hash
-  in the secrets mount (with a tool to set it), login and logout, session and CSRF
-  handling, rate limit, audit log, a small login dialog on the Status page. No
-  privileged action exists yet; tests cover wrong passwords, expired sessions,
-  CSRF and replay.
+- [ ] **1. Administrator authentication** in the web application, as described
+  above: password hash in the secrets mount and a local command to set or reset
+  it, login, logout and reauthentication, sessions, CSRF tokens, lockout, audit
+  log, a small login dialog on the Status page, and the documented HTTP risk. No
+  privileged action exists yet.
 - [ ] **2. Updater service:** systemd unit and Ansible play, socket and request
   protocol, local channel to the reviewed tooling, approval bridge with timeout,
   durable operation record, busy handling against the SSH operator, socket mount
@@ -131,6 +189,9 @@ in stage 2.
   result, and "Restore previous version" after a failed update.
 - [ ] **4. Rollout** through the reviewed SSH operator (layout change for the
   socket mount, updater installation, administrator password).
+- [ ] **Later: whole-UI HTTPS** (decision 6): own certificate or a generated
+  local CA with manual trust import and optional fingerprint check, HTTP
+  redirect-only, trusted-proxy boundary; separate from the playback-agent TLS.
 - [ ] **5. Acceptance on the Pi:** a successful update between two development
   images; a deliberately failing candidate and restore; an interrupted update
   (power or service stop) and its documented recovery; concurrent requests; wrong
@@ -141,6 +202,35 @@ rehearsed same-version config/state restoration, but did not test a cross-versio
 or old-schema downgrade. Restore after a failed update brings back the old images
 **with their own backed-up data**; include a cross-version restore rehearsal and do
 not assume an earlier version can read newer persisted state.
+
+### Test catalogue (from the 2026-11-16 preparation)
+
+- **Authentication:** anonymous, expired and revoked sessions; forged proxy
+  headers; missing or wrong CSRF token or origin; replayed or expired reviews;
+  the global five-attempt lockout across workers, restarts and clock rollback;
+  local reset; reauthentication; no credential in any log or event.
+- **Updater:** process death before and after durable acceptance, around the
+  dispatch boundary and during the tooling run; no duplicate apply; explicit
+  `outcome_unknown` with the reservation kept on uncertainty.
+- **Races:** interleaved web updates, SSH operator deployments and recoveries;
+  at most one disruptive owner per host.
+- **Recovery:** accepted but not executed, failed checks after apply, and restore
+  with the on-Pi backup including a cross-version data case.
+
+## Earlier preparation (2026-11-16)
+
+The branch `feature/deployment-update-status-planning` prepared the overview,
+update status and installation plans in more breadth (native releases and host
+packages as separate update adapters, restarts and reboots, a general overview
+contract). Its session, review, operation, broker and test material is adopted
+above. Deliberate deviations: a password instead of the PIN (decision 5), HTTPS
+deferred after the first login release (decision 6), the on-Pi backup instead of
+an independently verified off-host backup for web-triggered updates (decision 3),
+and a public "Check now" (decision 7). Its overview contract is superseded by the
+implemented `GET /api/status/overview`, and its digest-based update comparison by
+the published-tag comparison of the update check. Native application releases and
+host packages remain separate future adapters, as that preparation proposed;
+neither is part of this plan.
 
 ## Related
 
