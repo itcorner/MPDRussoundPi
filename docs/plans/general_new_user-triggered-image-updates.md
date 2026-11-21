@@ -50,6 +50,9 @@ reviewed operator).
    PIN; this is superseded by a passphrase, because a leaked hash of a PIN can be
    guessed offline. One shared administrator: audit records name the session and
    action, not a person, and the session model leaves room for named accounts.
+   *Amended 2026-11-21:* shorter secrets down to 4 characters (a 4-digit PIN) are
+   allowed as an explicit local opt-in (`--allow-short`) with a warning; 12
+   characters stay the default.
 6. **Login over HTTP for now; whole-UI HTTPS later.** The 2026-11-16 preparation
    required HTTPS for the whole UI before any login. It is deferred: the first
    release runs the login on the existing LAN-only HTTP UI and documents that the
