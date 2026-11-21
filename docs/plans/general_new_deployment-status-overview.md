@@ -1,8 +1,9 @@
 # Idea: deployment and runtime configuration overview
 
 Status: **new, in progress** (2026-11-21): the first slice of the host section
-is implemented (see [Implementation progress](#implementation-progress)); the rest
-of the overview is not started. Proposed as an idea on
+is implemented, deployed and accepted on the reference Pi (see
+[Implementation progress](#implementation-progress)); the rest of the overview is
+not started. Proposed as an idea on
 2026-11-12. On 2026-11-21 a **host information** section was added to the scope
 (see [Host information](#host-information)). Decisions 6 to 9 were taken on
 2026-11-21 (below); decisions 1 to 5 still gate the rest of the overview.
@@ -258,6 +259,19 @@ should reuse these facts instead of adding independent probes.
 |---|---|---|
 | 2026-11-21 | First slice of host information: `mpdrussoundpi/russound/lib/hostinfo.py` (background collector, probe objects, parsers) and `GET /v1/host` with the `host_info` capability and `--disable-host-info`; proxy allowlist entry in the Caddyfile template; `web/host_status.py` (allowlist validation, assessment, display rows); a separate slow poll in the web client; `GET /api/status/host`; the Host card on the Status page with details that stay open across refreshes; read contract, web API and deployment docs. | Not deployed. Needs the proxy play, an agent candidate and a web image, in the order described in the [deployment guide](../documentation/playback-agent-deployment.md#host-information-optional). |
 
+| 2026-11-21 | **Deployed and accepted on the reference Pi** at `d41264e`: proxy play (the Caddyfile diff was the single added `/v1/host` path), agent candidate, then the web through the reviewed `deploy --update`. | Acceptance: the live `/api/status/host` card was compared with independent observations on the Pi taken at the same moment. Load 1.71/1.56/1.29 vs 1.73/1.57/1.30; Wi-Fi -76 dBm, 270 Mbit/s, 5 GHz identical; address, uptime, clock sync, throttling flags and disk agree (disk to the rounding of `df`); temperature 44.3 vs 44 °C; memory and swap within a few MiB, the difference being the card's snapshot age (up to 5 s). Playback unchanged before and after (three outputs playing, routes ok). The served page contains the Host panel and no `innerHTML`. |
+
+**Rollout incident (2026-11-21).** The first web update stopped the web and ser2net
+containers and then failed **before taking a backup**: the operator's validation of
+the old-image archive rejected registry multi-platform images ("Archive descriptor
+selects a different image config"), because their index lists a BuildKit attestation
+per platform and manifests for platforms that were never pulled. No apply had been
+attempted, so `resume-original` restored the original runtime without touching data;
+the services were down for a few minutes. The validator now accepts that layout
+(PR #66, see the [deployment guide](../documentation/container-deployment.md)); the
+operator tooling on the Pi was upgraded through the reviewed play, the export was
+replayed read-only for both images, and the retry completed with every required check.
+
 Not part of the first slice: the web host's own facts, merging cards of the same
 host by boot id, widening the disclosure, and everything in the topology and
 component overview.
@@ -275,9 +289,9 @@ component overview.
   agents show "not supported". (Merging by boot id and the web host's own card
   are deferred, see above.) Implemented 2026-11-21; target acceptance on the Pi
   is still open.
-- [ ] Host information, target acceptance: deploy the proxy, agent and web as
-  described in the deployment guide and compare the card with independent
-  observations on the Pi.
+- [x] Host information, target acceptance: deployed the proxy, agent and web as
+  described in the deployment guide and compared the card with independent
+  observations on the Pi (2026-11-21, see the progress table).
 - [ ] Implement bounded collectors/aggregation and deployment metadata
   provisioning for approved layouts; update the deployment and API guides.
 - [ ] Add the responsive Status overview, preserving existing sections and
