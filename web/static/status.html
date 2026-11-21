@@ -37,35 +37,39 @@
           </div>
         </details>
 
-        <article class="panel status-panel">
-          <div class="status-panel-header">
+        <details id="clientsPanel" class="panel status-panel collapsible-panel" open>
+          <summary class="collapsible-summary">
             <h2 class="section-title">Connected clients</h2>
             <span id="clientCount" class="status-count">0</span>
+          </summary>
+          <div class="collapsible-body">
+            <div id="clientsEmpty" class="empty-copy" hidden>No active clients.</div>
+            <div id="clientsList" class="status-list"></div>
           </div>
-          <div id="clientsEmpty" class="empty-copy" hidden>No active clients.</div>
-          <div id="clientsList" class="status-list"></div>
-        </article>
+        </details>
 
-        <article class="panel status-panel">
-          <div class="status-panel-header">
+        <details id="eventsPanel" class="panel status-panel collapsible-panel" open>
+          <summary class="collapsible-summary">
             <h2 class="section-title">Recent frontend events</h2>
             <span class="status-count">Last 50</span>
+          </summary>
+          <div class="collapsible-body">
+            <div id="eventsEmpty" class="empty-copy" hidden>No events recorded yet.</div>
+            <div class="status-table-wrap">
+              <table class="status-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>IP</th>
+                    <th>Action</th>
+                    <th>Payload</th>
+                  </tr>
+                </thead>
+                <tbody id="eventsTableBody"></tbody>
+              </table>
+            </div>
           </div>
-          <div id="eventsEmpty" class="empty-copy" hidden>No events recorded yet.</div>
-          <div class="status-table-wrap">
-            <table class="status-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>IP</th>
-                  <th>Action</th>
-                  <th>Payload</th>
-                </tr>
-              </thead>
-              <tbody id="eventsTableBody"></tbody>
-            </table>
-          </div>
-        </article>
+        </details>
       </section>
 
       <details class="panel status-panel collapsible-panel license-panel">

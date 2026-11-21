@@ -85,7 +85,7 @@ class FakeElement {
   }
 }
 
-function render(clients, events) {
+function render(clients, events, options = {}) {
   const elements = {
     clientCount: new FakeElement("span"),
     clientsList: new FakeElement("div"),
@@ -96,7 +96,13 @@ function render(clients, events) {
   const context = {
     ...elements,
     expandedPayloadRows: new Set(),
-    document: { createElement: (tagName) => new FakeElement(tagName) },
+    document: {
+      createElement: (tagName) => {
+        const element = new FakeElement(tagName);
+        if (tagName === "code") element.clientWidth = options.laidOut === false ? 0 : 200;
+        return element;
+      },
+    },
   };
   vm.createContext(context);
   vm.runInContext(rendering, context);
@@ -143,6 +149,12 @@ test("status page renders event path, IP and payload as text", () => {
   assert.equal(eventsTableBody.find((node) => node.tagName === "IMG"), null);
 });
 
+test("a collapsed panel has no layout, so payloads keep their toggle instead of becoming static", () => {
+  const { eventsTableBody } = render([], [{ timestamp: "2026-11-20T10:00:00+00:00", ip: "192.0.2.4", path: "/api/x", payload: { a: 1 } }],
+    { laidOut: false });
+  assert.equal(eventsTableBody.children[0].children[3].children[0].tagName, "BUTTON");
+});
+
 test("truncated payloads keep the expand toggle", () => {
   const elements = {
     clientCount: new FakeElement("span"),
@@ -157,7 +169,7 @@ test("truncated payloads keep the expand toggle", () => {
     document: {
       createElement: (tagName) => {
         const element = new FakeElement(tagName);
-        if (tagName === "code") element.scrollWidth = 500;
+        if (tagName === "code") { element.scrollWidth = 500; element.clientWidth = 200; }
         return element;
       },
     },

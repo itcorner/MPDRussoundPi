@@ -124,7 +124,8 @@ function renderStatus(payload, historyPayload) {
 
     // Always test truncation in collapsed mode so expanded rows are not misclassified.
     payloadToggle.setAttribute("aria-expanded", "false");
-    const isTruncated = payloadPreview.scrollWidth > payloadPreview.clientWidth;
+    // A collapsed panel has no layout (width 0): keep the toggle rather than judging from nothing.
+    const isTruncated = !(payloadPreview.clientWidth > 0) || payloadPreview.scrollWidth > payloadPreview.clientWidth;
     payloadToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     if (isTruncated) {
       payloadToggle.setAttribute("data-payload-toggle", "");
