@@ -19,6 +19,7 @@ const adminSessionText = document.getElementById("adminSessionText");
 const adminLogout = document.getElementById("adminLogout");
 const adminSetup = document.getElementById("adminSetup");
 const adminMessage = document.getElementById("adminMessage");
+const adminUpdate = document.getElementById("adminUpdate");
 
 let eventSource = null;
 let eventSourceRetryTimer = null;
@@ -313,6 +314,9 @@ function renderAdmin(session) {
     adminSessionText.textContent = `Logged in. The session ends after ${minutesText(session.idle_expires_in_seconds)} without activity`
       + ` and at the latest in ${minutesText(session.expires_in_seconds)}.`;
   }
+  if (!authenticated) {
+    adminUpdate.hidden = true;
+  }
   if (configured && !authenticated && session.locked_for_seconds > 0) {
     showAdminMessage(`Too many failed attempts. Login is locked for about ${minutesText(session.locked_for_seconds)}.`);
   }
@@ -364,6 +368,7 @@ async function submitAdminLogin(event) {
     const { response, payload } = await adminRequest("/api/admin/login", { password });
     if (response.ok) {
       renderAdmin(payload);
+      fetchAdminUpdate();
     } else {
       showAdminFailure(payload.error && payload.error.message ? payload.error.message : "Login failed.");
     }
@@ -381,6 +386,210 @@ async function submitAdminLogout() {
   }
   showAdminMessage("");
   fetchAdminSession();
+}
+
+// Installing updates (administrator only). The updater on the Pi runs the
+// reviewed deployment; this page starts a review, shows it, sends the typed
+// confirmation and follows the progress, also across the web restart it causes.
+const updatePhaseText = {
+  idle: "No update has been started from this page yet.",
+  resolving: "Looking up the newest image on Docker Hub…",
+  approved: "Confirmed. Starting…",
+  running: "Updating. The page loses its connection for a few minutes and reconnects by itself.",
+  succeeded: "The update finished.",
+  up_to_date: "The newest image is already installed.",
+  cancelled: "The update was not started.",
+  failed: "The update failed after the services were stopped.",
+  failed_before_interruption: "The update stopped before anything was interrupted.",
+  outcome_unknown: "The outcome is unknown. Check the deployment on the Pi before trying again.",
+  restoring: "Restoring the previous version. The page reconnects by itself.",
+  restored: "The previous version was restored.",
+};
+let adminUpdateState = null;
+let adminUpdateReconnecting = false;
+let adminUpdateTimer = null;
+let pendingReauthAction = null;
+
+function shortRevision(revision) {
+  return typeof revision === "string" && revision.length >= 7 ? revision.slice(0, 7) : "unknown";
+}
+
+function updateButton(label, handler, { primary = false, disabled = false } = {}) {
+  const button = textElement("button", primary ? "compact-button compact-button-primary" : "compact-button", label);
+  button.type = "button";
+  button.disabled = disabled;
+  button.addEventListener("click", handler);
+  return button;
+}
+
+function renderReview(review) {
+  const box = document.createElement("div");
+  box.className = "admin-review";
+  const isRestore = review.action === "restore";
+  box.appendChild(textElement("strong", "", isRestore ? "Review: restore the previous version"
+    : `Review: update to dev-${shortRevision(review.revision)}`));
+  const rows = [
+    ["Interruption", review.interruption || ""],
+    ["Backup", review.backup || ""],
+  ];
+  if (review.layout_change) {
+    rows.push(["Layout change", review.layout_change]);
+  }
+  for (const [name, reference] of Object.entries(review.images || {})) {
+    rows.push([`Image (${name})`, reference || ""]);
+  }
+  rows.push(["Confirm within", `${review.expires_in_seconds} s`]);
+  const list = document.createElement("dl");
+  list.className = "host-rows";
+  for (const [label, value] of rows) {
+    list.append(textElement("dt", "", label), textElement("dd", "", value));
+  }
+  box.appendChild(list);
+  const word = isRestore ? "restore" : "update";
+  const row = document.createElement("div");
+  row.className = "admin-form-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.autocomplete = "off";
+  input.className = "admin-confirm-input";
+  input.setAttribute("aria-label", `Type ${word} to confirm`);
+  input.placeholder = `Type "${word}" to confirm`;
+  const confirm = updateButton(isRestore ? "Confirm restore" : "Confirm update",
+    () => runUpdateAction("approve", { operation: review.operation, digest: review.digest }), { primary: true, disabled: true });
+  input.addEventListener("input", () => {
+    confirm.disabled = input.value.trim().toLowerCase() !== word;
+  });
+  row.append(input, confirm, updateButton("Cancel", () => runUpdateAction("cancel", { operation: review.operation })));
+  box.appendChild(row);
+  return box;
+}
+
+function renderAdminUpdate(status) {
+  adminUpdateState = status;
+  adminUpdate.replaceChildren();
+  adminUpdate.appendChild(textElement("h3", "overview-subtitle", "Install updates"));
+  if (!status || status.configured === false) {
+    adminUpdate.appendChild(textElement("p", "status-meta",
+      "Installing updates from this page is not set up on this installation. It needs the updater service "
+      + "and works only when the containers run on one Pi."));
+    return;
+  }
+  if (adminUpdateReconnecting) {
+    adminUpdate.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
+    return;
+  }
+  const phase = status.phase;
+  if (phase === "awaiting_approval" || phase === "restore_awaiting_approval") {
+    if (status.review) {
+      adminUpdate.appendChild(renderReview(status.review));
+    }
+    return;
+  }
+  const lines = [updatePhaseText[phase] || "Unknown state."];
+  if (status.installed_revision) {
+    lines.push(`Installed: dev-${shortRevision(status.installed_revision)}.`);
+  }
+  if (status.error && !["cancelled", "up_to_date"].includes(phase)) {
+    lines.push(status.error);
+  }
+  adminUpdate.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown"
+    ? "admin-message" : "status-meta", lines.join(" ")));
+  const row = document.createElement("div");
+  row.className = "admin-form-row";
+  if (status.restore_available) {
+    row.appendChild(updateButton("Restore previous version",
+      () => runUpdateAction("restore", { operation: status.operation }), { primary: true }));
+  }
+  if (!status.busy && phase !== "outcome_unknown") {
+    row.appendChild(updateButton("Review an update", () => runUpdateAction("review", {})));
+  }
+  if (row.children.length) {
+    adminUpdate.appendChild(row);
+  }
+}
+
+function scheduleAdminUpdate(delayMs) {
+  if (adminUpdateTimer !== null) {
+    window.clearTimeout(adminUpdateTimer);
+  }
+  adminUpdateTimer = window.setTimeout(() => {
+    adminUpdateTimer = null;
+    fetchAdminUpdate();
+  }, delayMs);
+}
+
+async function fetchAdminUpdate() {
+  if (!adminCsrfToken) {
+    adminUpdate.hidden = true;
+    return;
+  }
+  adminUpdate.hidden = false;
+  const wasBusy = Boolean(adminUpdateState && adminUpdateState.busy);
+  try {
+    const response = await apiFetch("/api/admin/update");
+    const body = await response.json();
+    adminUpdateReconnecting = false;
+    renderAdminUpdate(response.ok || body.configured === false ? body : { configured: true, phase: "idle", error: body.error && body.error.message });
+    if (body.busy) {
+      scheduleAdminUpdate(2000);
+    }
+  } catch {
+    // During an update the web restarts: keep waiting instead of showing an error.
+    adminUpdateReconnecting = wasBusy || adminUpdateReconnecting;
+    renderAdminUpdate(adminUpdateState);
+    if (adminUpdateReconnecting) {
+      scheduleAdminUpdate(3000);
+    }
+  }
+}
+
+async function runUpdateAction(action, body) {
+  showAdminMessage("");
+  try {
+    const { response, payload } = await adminRequest(`/api/admin/update/${action}`, body);
+    if (response.status === 403 && payload.error && payload.error.code === "reauthenticate") {
+      pendingReauthAction = [action, body];
+      showReauthPrompt();
+      return;
+    }
+    if (!response.ok) {
+      showAdminMessage(payload.error && payload.error.message ? payload.error.message : "The request failed.");
+    }
+  } catch {
+    showAdminMessage("The server could not be reached.");
+  }
+  fetchAdminUpdate();
+}
+
+function showReauthPrompt() {
+  adminUpdate.replaceChildren();
+  adminUpdate.appendChild(textElement("h3", "overview-subtitle", "Install updates"));
+  adminUpdate.appendChild(textElement("p", "status-meta", "Enter the administrator password again to continue."));
+  const form = document.createElement("form");
+  form.className = "admin-form-row";
+  const input = document.createElement("input");
+  input.type = "password";
+  input.autocomplete = "current-password";
+  input.className = "admin-confirm-input";
+  input.setAttribute("aria-label", "Administrator password");
+  form.append(input, textElement("button", "compact-button compact-button-primary", "Continue"));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const password = input.value;
+    input.value = "";
+    const { response, payload } = await adminRequest("/api/admin/reauthenticate", { password });
+    if (!response.ok) {
+      showAdminMessage(payload.error && payload.error.message ? payload.error.message : "Login failed.");
+      return;
+    }
+    const retry = pendingReauthAction;
+    pendingReauthAction = null;
+    if (retry) {
+      runUpdateAction(retry[0], retry[1]);
+    }
+  });
+  adminUpdate.appendChild(form);
+  input.focus();
 }
 
 // The only action the overview offers: ask the server to check for updates now.
@@ -551,6 +760,9 @@ function startStatusPolling() {
       fetchHost();
       fetchOverview();
       fetchAdminSession();
+      if (adminUpdateTimer === null && !pendingReauthAction) {
+        fetchAdminUpdate();
+      }
     }, statusPollIntervalMs);
   }
 }
