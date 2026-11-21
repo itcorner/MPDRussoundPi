@@ -65,7 +65,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Moving the installation to another network](./plans/general_idea_network-relocation.md) | Idea; inventory of address, DNS, certificate and subnet dependencies and what breaks per scenario |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |
-| [User-triggered Docker image updates](./plans/general_new_user-triggered-image-updates.md) | New, planned: admin password, Pi updater service, on-Pi backup, one-click restore (decided 2026-11-21) |
+| [User-triggered Docker image updates](./plans/general_new_user-triggered-image-updates.md) | In progress: admin login done; updater service next; single-Pi Docker installations only |
 | [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
 | [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |

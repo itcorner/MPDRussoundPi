@@ -1014,6 +1014,23 @@ made the first update after a registry deployment fail after the writers were
 stopped but before any backup; `resume-original` restores the running
 services in that case.
 
+**Updater socket mount (the one accepted layout addition).** For web-triggered
+updates (see the [plan](../plans/general_new_user-triggered-image-updates.md)),
+an update may add exactly one mount to the web service of a recorded deployment:
+
+```json
+{"type": "bind", "source": "/var/lib/mpdrussoundpi-updater/socket",
+ "target": "/run/mpdrussoundpi-updater", "read_only": true,
+ "bind": {"create_host_path": false}}
+```
+
+Add it to the protected Compose input on the target and run an ordinary
+`--update`; the review then shows `layout_change`. The directory must already
+exist (the updater installation creates it) and lies outside the data root, so
+backups never meet the socket. Any other layout difference, including removing
+this mount, is still refused, and recovery restores the previous layout.
+Web-triggered updates currently support only single-host Docker installations.
+
 On an ordinary rerun, omit both image-source options. The target reuses its
 committed pin and verifies the unchanged runtime without stop/start, image
 transfer, backup or recreation. Different candidates require **`--update`** plus

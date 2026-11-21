@@ -30,6 +30,36 @@ from tool.deployment_runner import DevelopmentRun, RunHooks
 from tool.deployment_state import StateStore, candidate, identity, operation_id
 
 
+# The one layout addition an update may make: the read-only directory that holds the
+# updater service's Unix socket (see docs/plans/general_new_user-triggered-image-updates.md).
+# It lives outside the data root, so file backups never meet the socket.
+UPDATER_SOCKET_DIR = "/var/lib/mpdrussoundpi-updater/socket"
+UPDATER_SOCKET_TARGET = "/run/mpdrussoundpi-updater"
+UPDATER_LAYOUT_CHANGE = "adds the read-only updater socket mount to the web service"
+
+
+def is_updater_mount(mount: Any) -> bool:
+    return (is_mapping(mount) and mount.get("type") == "bind" and mount.get("source") == UPDATER_SOCKET_DIR
+            and mount.get("target") == UPDATER_SOCKET_TARGET and mount.get("read_only") is True
+            and set(mount) <= {"type", "source", "target", "read_only", "bind"}
+            and mount.get("bind", {}).get("create_host_path", False) is False)
+
+
+def updater_mount_added(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any] | None:
+    """The added mount when ``current`` differs from ``previous`` only by the updater mount on the web service."""
+    try:
+        before = previous["services"]["russound-web"].get("volumes", [])
+        after = current["services"]["russound-web"].get("volumes", [])
+    except (KeyError, TypeError, AttributeError):
+        return None
+    added = [mount for mount in after if mount not in before]
+    if len(added) != 1 or not is_updater_mount(added[0]) or [m for m in after if m != added[0]] != before:
+        return None
+    trial = copy.deepcopy(previous)
+    trial["services"]["russound-web"]["volumes"] = after
+    return added[0] if trial == current else None
+
+
 class ComposeError(ValueError):
     """Target validation or service work failed; retain state and private evidence."""
 
@@ -119,6 +149,8 @@ class ComposeDeployment:
             if selection["kind"] != LOCAL_CANDIDATE:
                 raise ComposeError("Dummy requires a pinned local web/dummy image bundle")
         self.committed = self.store.status()["deployments"].get(spec["deployment"], {}).get("committed")
+        self.layout_change: str | None = None
+        self.running_config: dict[str, Any] | None = None
         if restoring_native:
             state = self.store.status()
             pending = state["deployments"].get(spec["deployment"], {}).get("pending")
@@ -139,7 +171,14 @@ class ComposeDeployment:
                     service.pop("image", None)
                 return result
             if without_images(previous) != without_images(self.config):
-                raise ComposeError("Recorded layout changed; settings/mount/network migration needs separate review")
+                added = updater_mount_added(without_images(previous), without_images(self.config))
+                if added is None:
+                    raise ComposeError("Recorded layout changed; settings/mount/network migration needs separate review")
+                # The only accepted change: the recorded layout plus the updater socket mount.
+                self.running_config = previous
+                previous = copy.deepcopy(previous)
+                previous["services"]["russound-web"].setdefault("volumes", []).append(added)
+                self.layout_change = UPDATER_LAYOUT_CHANGE
             self.config = previous
         self.validate_config()
         self.baseline: list[dict[str, Any]] | None = None
@@ -147,6 +186,9 @@ class ComposeDeployment:
         self.asset = storage["assets"] / self.operation
         self.asset.mkdir(mode=0o700)
         private_write(self.asset / "compose.json", self.config)
+        if self.running_config is not None:
+            # Running containers still carry the recorded layout until apply.
+            private_write(self.asset / "running.json", self.running_config)
         private_write(self.asset / "spec.json", self.spec)
         self.generated_play = self.asset / "apply.yml"
         self.inventory = self.asset / "inventory.yml"
@@ -219,6 +261,8 @@ class ComposeDeployment:
                 raise ComposeError("Automated dummy must be headless without serial device permissions")
             mounts_value: list[dict[str, Any]] = service.get("volumes", [])
             for mount in mounts_value:
+                if name == "russound-web" and is_updater_mount(mount):
+                    continue
                 if (mount.get("type") != "bind" or not Path(mount.get("source", "")).is_absolute()
                         or not overlap(Path(mount["source"]), Path(spec["data_dir"]))
                         or mount.get("bind", {}).get("create_host_path", False)):
@@ -253,7 +297,7 @@ class ComposeDeployment:
             return
         web = config["services"]["russound-web"]
         expected = {"/config": "config", "/data": "data", "/logs": "logs", "/run/secrets": "secrets"}
-        mounts = {mount["target"]: mount for mount in web.get("volumes", [])}
+        mounts = {mount["target"]: mount for mount in web.get("volumes", []) if not is_updater_mount(mount)}
         if set(mounts) != set(expected) or any(
                 Path(mounts[target]["source"]) != Path(spec["data_dir"]) / child
                 or bool(mounts[target].get("read_only")) != (child == "secrets")
@@ -310,6 +354,10 @@ class ComposeDeployment:
         self.engine_id = info["ID"]
         check_data(spec)
         web = self.config["services"].get("russound-web", {})
+        if any(is_updater_mount(mount) for mount in web.get("volumes", [])):
+            socket_dir = Path(UPDATER_SOCKET_DIR)
+            if socket_dir.is_symlink() or not socket_dir.is_dir():
+                raise ComposeError("Updater socket directory is missing; install the updater service first")
         validate_runtime_files(spec, web.get("environment", {}))
         if spec["gateway"] != "standalone":
             safe_path(Path(spec["data_dir"]) / "config/russound_config.json")
@@ -338,7 +386,8 @@ class ComposeDeployment:
                 raise ComposeError("Project contains unexpected, duplicated or missing services")
             # Compare actual Compose generation hashes before adopting/rerunning.
             hashes = {}
-            for line in self.command(self.compose() + ["config", "--hash", "*"]).decode().splitlines():
+            running = self.asset / "running.json" if self.running_config is not None else None
+            for line in self.command(self.compose(running) + ["config", "--hash", "*"]).decode().splitlines():
                 name, checksum = line.split()
                 hashes[name] = checksum
             for item in own:
@@ -386,7 +435,8 @@ class ComposeDeployment:
                 "offhost_free_bytes_required": self.backup_estimate,
                 "backend": {key: self.config["services"].get("russound-web", {}).get("environment", {}).get(key)
                             for key in ("RUSSOUND_BACKEND_HOST", "RUSSOUND_BACKEND_PORT")},
-                "native_services": "untouched", "existing_data_and_secrets": "preserved"}
+                "native_services": "untouched", "existing_data_and_secrets": "preserved",
+                **({"layout_change": self.layout_change} if self.layout_change else {})}
 
     def stop(self, *, recovery_operation: str | None = None) -> None:
         recovery_operation = self.operation if recovery_operation is None else recovery_operation
