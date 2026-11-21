@@ -168,7 +168,13 @@ operator.
 - [ ] **2. Updater service:** systemd unit and Ansible play, socket and request
   protocol, local channel to the reviewed tooling, approval bridge with timeout,
   durable operation record, busy handling against the SSH operator. The
-  operator's narrow exception for the socket mount is implemented (2026-11-21). Tests with the existing fixtures for
+  operator's narrow exception for the socket mount is implemented (2026-11-21).
+  *Implemented 2026-11-21, not yet deployed:* `tool/deployment_updater.py`
+  (socket server, review/approve/cancel/restore, approval bridge with a
+  two-minute window, durable record, restart handling) and
+  `ansible/playbooks/deploy-updater.yml`. The web endpoints and page flow are
+  stage 3. Only the development channel exists, because the tooling resolves
+  only `dev` images. Tests with the existing fixtures for
   success, failed checks, timeouts and interruption.
 - [ ] **3. Status page flow:** "Update to …" for administrators in the Software
   updates section, review dialog (target revision and tags, both images, expected

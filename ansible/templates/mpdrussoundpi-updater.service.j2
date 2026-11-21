@@ -1,0 +1,23 @@
+[Unit]
+Description=MPDRussoundPi updater: web-triggered Docker image updates through the reviewed tooling
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mpdrussoundpi-deploy
+ExecStart=/opt/mpdrussoundpi-deploy/.venv/bin/python -m tool.deployment_updater serve
+Restart=on-failure
+RestartSec=5
+# Stopping the service ends a pending review; an approved operation keeps its
+# durable record and is reported as outcome unknown after a restart.
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
