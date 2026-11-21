@@ -91,6 +91,8 @@ function render(clients, events, options = {}) {
     clientsList: new FakeElement("div"),
     clientsEmpty: new FakeElement("p"),
     eventsEmpty: new FakeElement("p"),
+    eventsCount: new FakeElement("span"),
+    eventsTableWrap: new FakeElement("div"),
     eventsTableBody: new FakeElement("tbody"),
   };
   const context = {
@@ -149,6 +151,18 @@ test("status page renders event path, IP and payload as text", () => {
   assert.equal(eventsTableBody.find((node) => node.tagName === "IMG"), null);
 });
 
+test("the events count is the number shown and the empty table is hidden", () => {
+  const empty = render([], []);
+  assert.equal(empty.eventsCount.textContent, "0");
+  assert.equal(empty.eventsTableWrap.hidden, true);
+  assert.equal(empty.eventsEmpty.hidden, false);
+  const events = [1, 2, 3].map((n) => ({ timestamp: "2026-11-20T10:00:00+00:00", ip: "192.0.2.4", path: `/api/${n}`, payload: {} }));
+  const filled = render([], events);
+  assert.equal(filled.eventsCount.textContent, "3");
+  assert.equal(filled.eventsTableWrap.hidden, false);
+  assert.equal(filled.eventsEmpty.hidden, true);
+});
+
 test("a collapsed panel has no layout, so payloads keep their toggle instead of becoming static", () => {
   const { eventsTableBody } = render([], [{ timestamp: "2026-11-20T10:00:00+00:00", ip: "192.0.2.4", path: "/api/x", payload: { a: 1 } }],
     { laidOut: false });
@@ -161,6 +175,8 @@ test("truncated payloads keep the expand toggle", () => {
     clientsList: new FakeElement("div"),
     clientsEmpty: new FakeElement("p"),
     eventsEmpty: new FakeElement("p"),
+    eventsCount: new FakeElement("span"),
+    eventsTableWrap: new FakeElement("div"),
     eventsTableBody: new FakeElement("tbody"),
   };
   const context = {

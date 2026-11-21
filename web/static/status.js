@@ -2,6 +2,8 @@ const clientCount = document.getElementById("clientCount");
 const clientsList = document.getElementById("clientsList");
 const clientsEmpty = document.getElementById("clientsEmpty");
 const eventsEmpty = document.getElementById("eventsEmpty");
+const eventsCount = document.getElementById("eventsCount");
+const eventsTableWrap = document.getElementById("eventsTableWrap");
 const eventsTableBody = document.getElementById("eventsTableBody");
 const hostList = document.getElementById("hostList");
 const overviewList = document.getElementById("overviewList");
@@ -88,6 +90,8 @@ function renderStatus(payload, historyPayload) {
   }
 
   eventsEmpty.hidden = events.length !== 0;
+  eventsTableWrap.hidden = events.length === 0;
+  eventsCount.textContent = String(events.length);
   eventsTableBody.replaceChildren();
   const visibleKeys = new Set();
   for (const event of events) {
