@@ -142,6 +142,20 @@ class CommandTests(Fixture):
         self.assertEqual(target.stat().st_mode & 0o777, 0o400)
         self.assertTrue(verify_password(PASSWORD, target.read_text()))
 
+    def test_a_pin_needs_the_explicit_opt_in_and_warns(self):
+        target = self.root / "pin.scrypt"
+        with patch("getpass.getpass", side_effect=["4711", "4711"]), self.assertRaises(SystemExit):
+            admin_auth.main(["set", "--file", str(target)])
+        self.assertFalse(target.exists())
+        warning = io.StringIO()
+        with patch("getpass.getpass", side_effect=["4711", "4711"]), patch.object(admin_auth, "SCRYPT_N", 2 ** 14), \
+                patch("sys.stderr", warning):
+            self.assertEqual(admin_auth.main(["set", "--allow-short", "--file", str(target)]), 0)
+        self.assertTrue(verify_password("4711", target.read_text()))
+        self.assertIn("Warning", warning.getvalue())
+        with patch("getpass.getpass", side_effect=["471", "471"]), self.assertRaises(SystemExit):
+            admin_auth.main(["hash", "--allow-short"])
+
     def test_short_or_mismatching_passwords_change_nothing(self):
         target = self.root / "none.scrypt"
         for answers in (["short", "short"], [PASSWORD, PASSWORD + "!"]):
