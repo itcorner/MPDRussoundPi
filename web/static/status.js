@@ -323,6 +323,12 @@ function showAdminMessage(text) {
   adminMessage.hidden = !text;
 }
 
+function showAdminFailure(text) {
+  showAdminMessage(text);
+  // Back to the field, so the next attempt can be typed right away.
+  adminPassword.focus();
+}
+
 async function fetchAdminSession() {
   try {
     const response = await apiFetch("/api/admin/session");
@@ -359,10 +365,10 @@ async function submitAdminLogin(event) {
     if (response.ok) {
       renderAdmin(payload);
     } else {
-      showAdminMessage(payload.error && payload.error.message ? payload.error.message : "Login failed.");
+      showAdminFailure(payload.error && payload.error.message ? payload.error.message : "Login failed.");
     }
   } catch {
-    showAdminMessage("The server could not be reached.");
+    showAdminFailure("The server could not be reached.");
   }
   fetchAdminSession();
 }

@@ -33,11 +33,12 @@
           <div class="collapsible-body">
             <p id="adminIntro" class="empty-copy">Needed only for privileged actions such as installing updates. Rooms, playback and status work without it.</p>
             <form id="adminLoginForm" class="admin-form" hidden>
-              <label for="adminPassword">Administrator password</label>
+              <label for="adminPassword">Password:</label>
               <div class="admin-form-row">
                 <input id="adminPassword" type="password" autocomplete="current-password" maxlength="256" required />
                 <button class="compact-button compact-button-primary" type="submit">Log in</button>
               </div>
+              <p id="adminMessage" class="admin-message" role="alert" hidden></p>
               <p class="status-meta">This page uses plain HTTP: on this network the password can be observed. Use it only on a network you trust.</p>
             </form>
             <div id="adminSession" class="admin-form-row" hidden>
@@ -45,7 +46,6 @@
               <button id="adminLogout" class="compact-button" type="button">Log out</button>
             </div>
             <p id="adminSetup" class="status-meta" hidden>Administrator login is not set up on this installation. Set a password locally on the host with <code>python -m web.admin_auth set --file &lt;secrets directory&gt;/russound-admin.scrypt</code>.</p>
-            <p id="adminMessage" class="status-meta admin-message" role="status" hidden></p>
           </div>
         </details>
 

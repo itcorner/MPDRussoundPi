@@ -1252,10 +1252,39 @@ h1 {
   margin-top: 0;
 }
 
+/* "Password:", the field and the button share one line when it is wide enough;
+   otherwise the field and button wrap together onto the next line. */
 .admin-form {
-  display: grid;
-  gap: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
   margin-top: 0.6rem;
+}
+
+.admin-form label {
+  flex: 0 0 auto;
+}
+
+.admin-form .admin-form-row {
+  flex: 1 1 20rem;
+  flex-wrap: nowrap;
+  margin-top: 0;
+}
+
+.admin-form > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.admin-message {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(241, 92, 123, 0.55);
+  border-left: 4px solid var(--danger);
+  border-radius: 10px;
+  background: rgba(241, 92, 123, 0.14);
+  color: #ffd6de;
+  font-weight: 600;
 }
 
 .admin-form-row {
@@ -1277,8 +1306,7 @@ h1 {
   background: rgba(7, 19, 31, 0.65);
 }
 
-.admin-form-row .status-meta,
-.admin-message {
+.admin-form-row .status-meta {
   margin-top: 0;
 }
 

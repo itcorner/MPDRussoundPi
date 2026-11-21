@@ -419,6 +419,7 @@ function renderAdminState(session) {
     adminSession: new FakeElement("div"), adminSessionText: new FakeElement("span"), adminLogout: new FakeElement("button"),
     adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"),
   };
+  elements.adminPassword.focus = () => { elements.adminPassword.focused = true; };
   const context = { ...elements, document: { createElement: (tagName) => new FakeElement(tagName) } };
   vm.createContext(context);
   vm.runInContext(rendering, context);
@@ -438,6 +439,16 @@ test("administrator panel opens only when a login is possible and keeps the user
   assert.equal(view.adminPanel.open, true, "after logout or expiry it opens again");
   assert.equal(renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 }).adminPanel.open, false,
     "not set up: collapsed");
+});
+
+test("a failed login shows the message and returns to the password field", () => {
+  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  view.context.showAdminFailure("Login failed.");
+  assert.equal(view.adminMessage.hidden, false);
+  assert.equal(view.adminMessage.textContent, "Login failed.");
+  assert.equal(view.adminPassword.focused, true);
+  view.context.showAdminMessage("");
+  assert.equal(view.adminMessage.hidden, true);
 });
 
 test("administrator panel shows setup, login, locked and logged-in states in words", () => {
