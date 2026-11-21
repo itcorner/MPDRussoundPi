@@ -887,7 +887,7 @@ Related: [safe configuration changes](./web_open_safe-configuration-changes.md),
 [effective overrides](./web_done_effective-config-overrides.md),
 [guided diagnostics](./general_idea_guided-diagnostics.md),
 [deployment simplification](./general_done_simplify-deployment-configuration.md),
-[deployment status](./general_idea_deployment-status-overview.md),
+[deployment status](./general_new_deployment-status-overview.md),
 [Wi-Fi bootstrap](./general_idea_wifi-bootstrap.md) (a Pi without a network
 cannot show this wizard) and
 [network relocation](./general_idea_network-relocation.md) (the access boundary

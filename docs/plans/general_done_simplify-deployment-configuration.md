@@ -2329,7 +2329,7 @@ variables and CLI invocations before changing behavior. Expose provenance to
 the configuration and deployment-status ideas without leaking secrets.
 Decide the target policy first, then share one effective-value/source contract
 with [inline overrides](./web_done_effective-config-overrides.md) and the
-[deployment overview](./general_idea_deployment-status-overview.md); do not
+[deployment overview](./general_new_deployment-status-overview.md); do not
 let those interfaces independently define precedence.
 
 ## Ansible and deployment design
@@ -4015,7 +4015,7 @@ S5 gates and final legacy retirement are not marked complete by this trial.
   MPD/audio readiness, preservation of state and a deliberate rollback.
   Report absent hardware or unavailable stable images as unverified, not passed.
 
-Related: [deployment status](./general_idea_deployment-status-overview.md),
+Related: [deployment status](./general_new_deployment-status-overview.md),
 [update status and restarts](./general_idea_update-status-and-restarts.md),
 [image release pipeline](./general_open_cicd-docker-release.md), and
 [agent containerization](./mpd_new_agent-containerization.md).
