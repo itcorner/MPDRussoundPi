@@ -367,6 +367,7 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_ALLOWED_HOSTS` | Comma-separated `Host` names/IPs accepted (blocks DNS rebinding); empty accepts any | empty |
 | `RUSSOUND_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to send API writes, e.g. `https://music.example` | empty |
 | `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |
+| `RUSSOUND_ADMIN_PASSWORD_FILE` | Administrator password hash file (see [Administrator login](#administrator-login)); missing means no administrator login | `/run/secrets/russound-admin.scrypt` |
 | `RUSSOUND_UPDATE_CHECK` | `off` stops the read-only check for a newer published web image on Docker Hub (Status page, every 6 h); local builds are never checked | `on` |
 
 Core server settings also have command-line flags (`--host`, `--port`,
@@ -410,10 +411,36 @@ Neither establishes fresh-machine provisioning or arbitrary version migration.
 
 ## Deployment Notes
 
-- There is no user authentication: anyone who can reach the web port can control the system. State-changing API requests are protected against cross-site request forgery (same-origin check via `Origin`/`Sec-Fetch-Site`, JSON-only bodies), see `web/API.md`.
+- Rooms, playback and configuration have no user authentication: anyone who can reach the web port can control them. Privileged actions (installing updates, later restarts) need the administrator password, see [Administrator login](#administrator-login). Until the UI runs over HTTPS, that password and the session cookie travel in plain text on the local network. State-changing API requests are protected against cross-site request forgery (same-origin check via `Origin`/`Sec-Fetch-Site`, JSON-only bodies), see `web/API.md`.
 - Set `RUSSOUND_ALLOWED_HOSTS` to the host names/IPs you use to reach the UI to block DNS-rebinding attacks.
 - For non-local deployments, place the service behind a TLS-terminating reverse proxy and set `RUSSOUND_TRUSTED_PROXY_COUNT`.
 - Restrict network access to trusted clients.
+
+## Administrator login
+
+Privileged actions need one shared administrator password. Only its scrypt hash
+is stored, in a file in the secrets directory (`RUSSOUND_ADMIN_PASSWORD_FILE`,
+default `/run/secrets/russound-admin.scrypt` inside the container). Without that
+file the login is reported as "not set up" and no privileged action is possible.
+Set or reset the password locally on the host, never over the web; a new file
+revokes every administrator session and clears the login lockout:
+
+```sh
+# Native or on a host with this checkout: write the file directly
+python -m web.admin_auth set --file /path/to/secrets/russound-admin.scrypt --uid 10001 --gid 10001
+
+# Docker: print a hash inside the running web container, then write it on the host
+docker exec -it <web container> python -m web.admin_auth hash
+echo 'scrypt$...' | sudo tee /path/to/data/secrets/russound-admin.scrypt >/dev/null
+sudo chown <service uid>:<service gid> /path/to/data/secrets/russound-admin.scrypt
+sudo chmod 0400 /path/to/data/secrets/russound-admin.scrypt
+```
+
+The password needs at least 12 characters. Five failed attempts in total lock the
+login for 15 minutes (attempts during the lock extend it); the reset above is the
+recovery. Sessions end after 15 minutes without activity and after 8 hours at the
+latest. Logins, failures and logouts are recorded in `admin-audit.log` next to
+`RUSSOUND_LOG_FILE` and in the web log, never with the password.
 
 ## AI-Assisted Development Disclosure
 

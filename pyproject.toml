@@ -14,6 +14,7 @@ dynamic = ["optional-dependencies"]
 
 [project.scripts]
 russound-web = "web.russound_server:main"
+russound-admin-password = "web.admin_auth:main"
 playback-agent = "mpdrussoundpi.russound.playbackagent:main"
 mpd-supervisor = "mpdrussoundpi.russound.mpdsupervisor:main"
 mpd-setup = "mpdrussoundpi.russound.mpdsetup:main"

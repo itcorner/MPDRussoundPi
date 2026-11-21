@@ -1,8 +1,8 @@
 # User-triggered Docker image updates
 
-Status: **new, planned** (2026-11-21). Decisions 1 to 7 were taken on
-2026-11-21 (see [Decisions](#decisions-2026-11-21)); implementation has not
-started. Recorded as an idea on 2026-10-31. The unmerged preparation of
+Status: **new, in progress** (2026-11-21). Decisions 1 to 7 were taken on
+2026-11-21 (see [Decisions](#decisions-2026-11-21)); stage 1 (administrator
+login) is implemented and not yet deployed. Recorded as an idea on 2026-10-31. The unmerged preparation of
 2026-11-16 (branch `feature/deployment-update-status-planning`) was reviewed and
 its consistent parts are included here (see
 [Earlier preparation](#earlier-preparation-2026-11-16)).
@@ -173,8 +173,9 @@ in stage 2.
 
 ## Stages
 
-- [ ] **1. Administrator authentication** in the web application, as described
-  above: password hash in the secrets mount and a local command to set or reset
+- [x] **1. Administrator authentication** (implemented 2026-11-21, not yet
+  deployed: `web/admin_auth.py`, `/api/admin/*`, the Administrator panel on the
+  Status page, `python -m web.admin_auth set|hash`), as described above: password hash in the secrets mount and a local command to set or reset
   it, login, logout and reauthentication, sessions, CSRF tokens, lockout, audit
   log, a small login dialog on the Status page, and the documented HTTP risk. No
   privileged action exists yet.

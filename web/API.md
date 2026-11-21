@@ -41,6 +41,7 @@ Exceptions:
 - `GET /api/status` returns connected-client and event-history data, not the main controller view payload
 - `GET /api/status/host` returns validated host facts of each configured playback agent's host (see below)
 - `GET /api/status/overview` returns the component and audio sections of the Status page (see below)
+- `GET /api/admin/session`, `POST /api/admin/login`, `POST /api/admin/logout`, `POST /api/admin/reauthenticate` handle the administrator session (see below)
 - `GET /api/status/updates` returns the cached web image update check; `POST /api/status/updates/check` asks for a check now (see below)
 - `GET /api/playback`, `/api/playback/health`, and
   `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
@@ -469,6 +470,30 @@ the gateway or the network, and the response is `no-store`.
 - **Never present:** the serial number or bus path of a sound card, device
   paths, MPD ports, Wi-Fi details, MAC addresses and secrets. The sound card is
   identified by profile and USB vendor:product only.
+
+### Administrator session
+
+Privileged actions need the administrator session described in the
+[README](../README.md#administrator-login). All four routes answer `no-store`,
+never record frontend events and never log the password.
+
+- `GET /api/admin/session`: `configured`, `authenticated`, `locked_for_seconds`;
+  when logged in also `csrf_token`, `idle_expires_in_seconds`,
+  `expires_in_seconds` and `recently_authenticated`.
+- `POST /api/admin/login` with `{"password": "..."}`: `200` with the session
+  description and the cookie `russound_admin` (`HttpOnly`, `SameSite=Strict`,
+  `Path=/api/`, `Secure` over HTTPS); `401` "Login failed." for any wrong input;
+  `429` with `Retry-After` when locked (five failures in total, 15 minutes) or
+  throttled (ten attempts per minute from one client); `503` when not set up.
+- `POST /api/admin/logout` and `POST /api/admin/reauthenticate` (`{"password"}`)
+  need the session cookie **and** the `X-CSRF-Token` header with the session's
+  token. Reauthentication refreshes the "recently authenticated" window (5
+  minutes) that disruptive actions require.
+
+Privileged routes answer `401` without a session, `403` with code `csrf` without
+a valid token and `403` with code `reauthenticate` when the password must be
+entered again. The same-origin guard and JSON body rules apply as for every
+other write.
 
 ### GET /api/status/updates and POST /api/status/updates/check
 
