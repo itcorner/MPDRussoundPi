@@ -256,9 +256,6 @@ function overviewCard(section) {
   if (section.note) {
     item.appendChild(textElement("div", "status-meta", section.note));
   }
-  if (section.action && section.action.id === "check-updates") {
-    item.appendChild(updateCheckControl(section.action));
-  }
   const groups = section.groups || [];
   if (section.rows.length || groups.length) {
     const details = overviewDetails(section.id, "Details");
@@ -302,9 +299,17 @@ function renderAdmin(session) {
   // Open the panel when a login is possible but not done; collapse it once logged
   // in or when nothing can be done here. Only on a change of state, so a panel the
   // user opened or closed stays that way across refreshes.
+  // On page load: open when a login is possible but not done. Later, logging in
+  // keeps the panel open; logging out or an expired session opens it again.
   const shownState = !configured ? "setup" : authenticated ? "in" : "out";
   if (shownState !== adminShownState) {
-    adminPanel.open = shownState === "out";
+    if (adminShownState === null) {
+      adminPanel.open = shownState === "out";
+    } else if (shownState === "out") {
+      adminPanel.open = true;
+    } else if (shownState === "setup") {
+      adminPanel.open = false;
+    }
     adminShownState = shownState;
   }
   adminSetup.hidden = configured;
@@ -313,9 +318,6 @@ function renderAdmin(session) {
   if (authenticated) {
     adminSessionText.textContent = `Logged in. The session ends after ${minutesText(session.idle_expires_in_seconds)} without activity`
       + ` and at the latest in ${minutesText(session.expires_in_seconds)}.`;
-  }
-  if (!authenticated) {
-    adminUpdate.hidden = true;
   }
   if (configured && !authenticated && session.locked_for_seconds > 0) {
     showAdminMessage(`Too many failed attempts. Login is locked for about ${minutesText(session.locked_for_seconds)}.`);
@@ -388,30 +390,58 @@ async function submitAdminLogout() {
   fetchAdminSession();
 }
 
-// Installing updates (administrator only). The updater on the Pi runs the
-// reviewed deployment; this page starts a review, shows it, sends the typed
-// confirmation and follows the progress, also across the web restart it causes.
+// Software updates in the Administrator panel. Everyone sees what is installed,
+// what is newest and can ask for a check; a logged-in administrator can install
+// the available update. The review card is built once per review, so a refresh
+// never clears what is being typed into its confirmation field.
+const updateStateText = {
+  up_to_date: "Up to date",
+  update_available: "Update available",
+  pending: "Not checked yet",
+  checking: "Checking…",
+  check_failed: "Check failed",
+  unsupported: "Not checked",
+  disabled: "Turned off",
+};
 const updatePhaseText = {
-  idle: "No update has been started from this page yet.",
-  resolving: "Looking up the newest image on Docker Hub…",
+  resolving: "Preparing the update…",
   approved: "Confirmed. Starting…",
   running: "Updating. The page loses its connection for a few minutes and reconnects by itself.",
-  succeeded: "The update finished.",
+  succeeded: "The last update finished.",
   up_to_date: "The newest image is already installed.",
-  cancelled: "The update was not started.",
-  failed: "The update failed after the services were stopped.",
-  failed_before_interruption: "The update stopped before anything was interrupted.",
-  outcome_unknown: "The outcome is unknown. Check the deployment on the Pi before trying again.",
+  cancelled: "The last update was not started.",
+  failed: "The last update failed after the services were stopped.",
+  failed_before_interruption: "The last update stopped before anything was interrupted.",
+  outcome_unknown: "The outcome of the last update is unknown. Check the deployment on the Pi before trying again.",
   restoring: "Restoring the previous version. The page reconnects by itself.",
   restored: "The previous version was restored.",
 };
+let latestUpdates = null;
 let adminUpdateState = null;
 let adminUpdateReconnecting = false;
 let adminUpdateTimer = null;
 let pendingReauthAction = null;
+let renderedReviewKey = null;
+let updateCheckInFlight = false;
+
+function shortVersion(version) {
+  if (typeof version !== "string") {
+    return "unknown";
+  }
+  return version.startsWith("dev-") ? version.slice(0, 11) : version;
+}
 
 function shortRevision(revision) {
   return typeof revision === "string" && revision.length >= 7 ? revision.slice(0, 7) : "unknown";
+}
+
+function ageText(iso) {
+  const moment = Date.parse(iso || "");
+  if (!Number.isFinite(moment)) {
+    return null;
+  }
+  const seconds = Math.max(0, Math.round((Date.now() - moment) / 1000));
+  return seconds < 60 ? "just now" : seconds < 7200 ? `${Math.round(seconds / 60)} min ago` : `${Math.round(seconds / 3600)} h ago`;
 }
 
 function updateButton(label, handler, { primary = false, disabled = false } = {}) {
@@ -422,28 +452,85 @@ function updateButton(label, handler, { primary = false, disabled = false } = {}
   return button;
 }
 
+function updateAvailableVersion() {
+  const result = latestUpdates && latestUpdates.result;
+  return latestUpdates && latestUpdates.state === "update_available" && result && result.available
+    ? result.available : null;
+}
+
+function renderUpdateInfo(box) {
+  box.replaceChildren();
+  const updates = latestUpdates;
+  if (!updates) {
+    box.appendChild(textElement("p", "status-meta", "Loading…"));
+    return;
+  }
+  const rows = [];
+  if (updates.installed) {
+    rows.push(["Installed", shortVersion(updates.installed.version)]);
+  }
+  const result = updates.result || null;
+  const available = result && result.available ? result.available : null;
+  if (available) {
+    const published = ageText(available.published_at);
+    rows.push(["Newest published", shortVersion(available.version) + (published ? ` (published ${published})` : "")]);
+  }
+  const state = updateStateText[updates.state] || "Unknown";
+  rows.push(["Status", state + (updates.stale ? " (last known result)" : "")]);
+  if (updates.check_failed && updates.error) {
+    rows.push(["Last check", updates.error]);
+  } else if (updates.checked_at) {
+    rows.push(["Last check", ageText(updates.checked_at) || "unknown"]);
+  }
+  if (updates.reason) {
+    rows.push(["Note", updates.reason]);
+  }
+  const list = document.createElement("dl");
+  list.className = "host-rows";
+  for (const [label, value] of rows) {
+    list.append(textElement("dt", "", label), textElement("dd", "", value));
+  }
+  box.appendChild(list);
+  if (updates.state !== "unsupported" && updates.state !== "disabled") {
+    const manual = updates.manual_check || {};
+    const row = document.createElement("div");
+    row.className = "admin-form-row";
+    row.appendChild(updateButton("Check now", requestUpdateCheck, { disabled: !manual.available || updateCheckInFlight }));
+    if (available && updates.state === "update_available" && typeof available.link === "string"
+        && available.link.startsWith("https://hub.docker.com/r/")) {
+      const link = textElement("a", "status-meta", "Docker Hub");
+      link.setAttribute("href", available.link);
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+      row.appendChild(link);
+    }
+    if (!manual.available && manual.retry_after_seconds > 0) {
+      row.appendChild(textElement("span", "status-meta", `Check again in ${manual.retry_after_seconds} s`));
+    }
+    box.appendChild(row);
+  }
+}
+
 function renderReview(review) {
   const box = document.createElement("div");
   box.className = "admin-review";
   const isRestore = review.action === "restore";
   box.appendChild(textElement("strong", "", isRestore ? "Review: restore the previous version"
     : `Review: update to dev-${shortRevision(review.revision)}`));
-  const rows = [
-    ["Interruption", review.interruption || ""],
-    ["Backup", review.backup || ""],
-  ];
+  const rows = [["Interruption", review.interruption || ""], ["Backup", review.backup || ""]];
   if (review.layout_change) {
     rows.push(["Layout change", review.layout_change]);
   }
   for (const [name, reference] of Object.entries(review.images || {})) {
     rows.push([`Image (${name})`, reference || ""]);
   }
-  rows.push(["Confirm within", `${review.expires_in_seconds} s`]);
   const list = document.createElement("dl");
   list.className = "host-rows";
   for (const [label, value] of rows) {
     list.append(textElement("dt", "", label), textElement("dd", "", value));
   }
+  const countdown = textElement("dd", "review-countdown", `${review.expires_in_seconds} s`);
+  list.append(textElement("dt", "", "Confirm within"), countdown);
   box.appendChild(list);
   const word = isRestore ? "restore" : "update";
   const row = document.createElement("div");
@@ -461,51 +548,79 @@ function renderReview(review) {
   });
   row.append(input, confirm, updateButton("Cancel", () => runUpdateAction("cancel", { operation: review.operation })));
   box.appendChild(row);
+  box.countdown = countdown;
   return box;
 }
 
-function renderAdminUpdate(status) {
-  adminUpdateState = status;
-  adminUpdate.replaceChildren();
-  adminUpdate.appendChild(textElement("h3", "overview-subtitle", "Install updates"));
-  if (!status || status.configured === false) {
-    adminUpdate.appendChild(textElement("p", "status-meta",
-      "Installing updates from this page is not set up on this installation. It needs the updater service "
-      + "and works only when the containers run on one Pi."));
+function renderInstall(box) {
+  const status = adminUpdateState;
+  const review = status && status.review;
+  const awaiting = status && (status.phase === "awaiting_approval" || status.phase === "restore_awaiting_approval");
+  if (awaiting && review && adminCsrfToken) {
+    const key = `${review.operation}/${review.digest}`;
+    if (key === renderedReviewKey && box.reviewCard) {
+      // Same review: only the countdown changes, the typed confirmation stays.
+      box.reviewCard.countdown.textContent = `${review.expires_in_seconds} s`;
+      return;
+    }
+    renderedReviewKey = key;
+    box.reviewCard = renderReview(review);
+    box.replaceChildren(box.reviewCard);
     return;
   }
+  renderedReviewKey = null;
+  box.reviewCard = null;
+  box.replaceChildren();
   if (adminUpdateReconnecting) {
-    adminUpdate.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
+    box.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
     return;
   }
-  const phase = status.phase;
-  if (phase === "awaiting_approval" || phase === "restore_awaiting_approval") {
-    if (status.review) {
-      adminUpdate.appendChild(renderReview(status.review));
+  const available = updateAvailableVersion();
+  if (!status || status.configured === false) {
+    if (available && adminCsrfToken) {
+      box.appendChild(textElement("p", "status-meta", "Installing updates from this page is not set up here. It needs "
+        + "the updater service and works only when the containers run on one Pi."));
     }
     return;
   }
-  const lines = [updatePhaseText[phase] || "Unknown state."];
-  if (status.installed_revision) {
-    lines.push(`Installed: dev-${shortRevision(status.installed_revision)}.`);
+  const phase = status.phase;
+  if (phase && phase !== "idle" && updatePhaseText[phase]) {
+    const lines = [updatePhaseText[phase]];
+    if (status.error && !["cancelled", "up_to_date"].includes(phase)) {
+      lines.push(status.error);
+    }
+    box.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown" ? "admin-message" : "status-meta",
+      lines.join(" ")));
   }
-  if (status.error && !["cancelled", "up_to_date"].includes(phase)) {
-    lines.push(status.error);
-  }
-  adminUpdate.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown"
-    ? "admin-message" : "status-meta", lines.join(" ")));
   const row = document.createElement("div");
   row.className = "admin-form-row";
-  if (status.restore_available) {
+  if (adminCsrfToken && status.restore_available) {
     row.appendChild(updateButton("Restore previous version",
       () => runUpdateAction("restore", { operation: status.operation }), { primary: true }));
   }
-  if (!status.busy && phase !== "outcome_unknown") {
-    row.appendChild(updateButton("Review an update", () => runUpdateAction("review", {})));
+  if (available && !status.busy && phase !== "outcome_unknown") {
+    if (adminCsrfToken) {
+      row.appendChild(updateButton(`Update to ${shortVersion(available.version)}`,
+        () => runUpdateAction("review", {}), { primary: true }));
+    } else {
+      box.appendChild(textElement("p", "status-meta", "Log in as administrator to install it."));
+    }
   }
   if (row.children.length) {
-    adminUpdate.appendChild(row);
+    box.appendChild(row);
   }
+}
+
+function renderSoftwareUpdates() {
+  if (!adminUpdate.infoBox) {
+    adminUpdate.replaceChildren();
+    adminUpdate.appendChild(textElement("h3", "overview-subtitle", "Software updates"));
+    adminUpdate.infoBox = document.createElement("div");
+    adminUpdate.installBox = document.createElement("div");
+    adminUpdate.append(adminUpdate.infoBox, adminUpdate.installBox);
+  }
+  renderUpdateInfo(adminUpdate.infoBox);
+  renderInstall(adminUpdate.installBox);
 }
 
 function scheduleAdminUpdate(delayMs) {
@@ -519,27 +634,46 @@ function scheduleAdminUpdate(delayMs) {
 }
 
 async function fetchAdminUpdate() {
-  if (!adminCsrfToken) {
-    adminUpdate.hidden = true;
-    return;
-  }
-  adminUpdate.hidden = false;
   const wasBusy = Boolean(adminUpdateState && adminUpdateState.busy);
   try {
-    const response = await apiFetch("/api/admin/update");
+    const checked = await apiFetch("/api/status/updates");
+    if (checked.ok) {
+      latestUpdates = await checked.json();
+    }
+    const response = await apiFetch(adminCsrfToken ? "/api/admin/update" : "/api/status/update-operation");
     const body = await response.json();
     adminUpdateReconnecting = false;
-    renderAdminUpdate(response.ok || body.configured === false ? body : { configured: true, phase: "idle", error: body.error && body.error.message });
-    if (body.busy) {
+    adminUpdateState = response.ok || body.configured === false ? body : { configured: true, phase: "idle" };
+    renderSoftwareUpdates();
+    if (adminUpdateState.busy) {
       scheduleAdminUpdate(2000);
     }
   } catch {
     // During an update the web restarts: keep waiting instead of showing an error.
     adminUpdateReconnecting = wasBusy || adminUpdateReconnecting;
-    renderAdminUpdate(adminUpdateState);
+    renderSoftwareUpdates();
     if (adminUpdateReconnecting) {
       scheduleAdminUpdate(3000);
     }
+  }
+}
+
+async function requestUpdateCheck() {
+  if (updateCheckInFlight) {
+    return;
+  }
+  updateCheckInFlight = true;
+  try {
+    await apiFetch("/api/status/updates/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch {
+    // The block shows the result or the failure on the next refresh.
+  } finally {
+    updateCheckInFlight = false;
+    fetchAdminUpdate();
   }
 }
 
@@ -562,9 +696,11 @@ async function runUpdateAction(action, body) {
 }
 
 function showReauthPrompt() {
-  adminUpdate.replaceChildren();
-  adminUpdate.appendChild(textElement("h3", "overview-subtitle", "Install updates"));
-  adminUpdate.appendChild(textElement("p", "status-meta", "Enter the administrator password again to continue."));
+  renderedReviewKey = null;
+  const box = adminUpdate.installBox || adminUpdate;
+  box.reviewCard = null;
+  box.replaceChildren();
+  box.appendChild(textElement("p", "status-meta", "Enter the administrator password again to continue."));
   const form = document.createElement("form");
   form.className = "admin-form-row";
   const input = document.createElement("input");
@@ -588,45 +724,8 @@ function showReauthPrompt() {
       runUpdateAction(retry[0], retry[1]);
     }
   });
-  adminUpdate.appendChild(form);
+  box.appendChild(form);
   input.focus();
-}
-
-// The only action the overview offers: ask the server to check for updates now.
-// The server coalesces and rate-limits requests; nothing is installed.
-let updateCheckInFlight = false;
-
-function updateCheckControl(action) {
-  const row = document.createElement("div");
-  row.className = "overview-action";
-  const button = textElement("button", "compact-button", action.label);
-  button.type = "button";
-  button.disabled = !action.available || updateCheckInFlight;
-  button.addEventListener("click", () => requestUpdateCheck());
-  row.appendChild(button);
-  if (action.note) {
-    row.appendChild(textElement("span", "status-meta", action.note));
-  }
-  return row;
-}
-
-async function requestUpdateCheck() {
-  if (updateCheckInFlight) {
-    return;
-  }
-  updateCheckInFlight = true;
-  try {
-    await apiFetch("/api/status/updates/check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-  } catch {
-    // The overview shows the result or the failure on the next refresh.
-  } finally {
-    updateCheckInFlight = false;
-    fetchOverview();
-  }
 }
 
 function renderOverview(payload) {
@@ -778,6 +877,7 @@ fetchStatus();
 fetchHost();
 fetchOverview();
 fetchAdminSession();
+fetchAdminUpdate();
 adminLoginForm.addEventListener("submit", submitAdminLogin);
 adminLogout.addEventListener("click", submitAdminLogout);
 startStatusSync();

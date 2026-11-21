@@ -1472,7 +1472,6 @@ class RussoundHTTPServer:
                 kind=backend_status_kind(payload.get("backend_status")), observed_age=observed_age),
         ]
         updates = self._updates.snapshot()
-        sections.append(status_overview.updates_section(updates, moment))
         if not self._playback_clients:
             sections.append(status_overview.missing_agent_section())
         for client in self._playback_clients:

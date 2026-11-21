@@ -1233,7 +1233,19 @@ h1 {
 }
 
 .collapsible-summary .update-pill {
+  min-width: 1.9rem;
+  padding: 0.2rem 0.45rem;
   background: rgba(91, 185, 255, 0.16);
+  font-weight: 700;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .collapsible-summary .update-pill:not([hidden]) + .status-pill {

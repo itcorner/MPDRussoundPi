@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import unittest
 from unittest.mock import patch
 
 from mpdrussoundpi.common import imageregistry
-from web import status_overview, update_status
+from web import update_status
 from web.update_status import UpdateChecker
 from web.russound_server import RussoundHTTPServer
 
@@ -136,37 +135,6 @@ class RegistryResourceTests(unittest.TestCase):
             self.assertIsNone(imageregistry.MANIFEST_RESOURCE.fullmatch(resource), resource)
 
 
-class SectionTests(unittest.TestCase):
-    now = datetime(2027, 1, 16, 9, 0, tzinfo=timezone.utc)
-
-    def snapshot(self, state, **extra):
-        base = {"state": state, "reason": None, "installed": {"image": "itcornernet/mpdrussoundpi-web", "version": "dev-" + OURS},
-                "channel": "dev", "result": None, "checked_at": "2027-01-16T08:59:00Z", "check_failed": False, "error": None,
-                "stale": False, "next_check_at": "2027-01-16T14:59:00Z", "manual_check": {"available": True, "retry_after_seconds": 0}}
-        base.update(extra)
-        return base
-
-    def test_available_update_is_shown_with_a_link_and_does_not_raise_the_level(self):
-        result = {"state": "update_available", "available": {"version": "dev-" + THEIRS, "revision": "bbbbbbb",
-                  "published_at": "2027-01-16T08:00:00Z", "link": "https://hub.docker.com/r/x/mpdrussoundpi-web/tags?name=dev"}}
-        section = status_overview.updates_section(self.snapshot("update_available", result=result), self.now)
-        self.assertEqual(section["level"], "ok")
-        self.assertTrue(section["summary"].startswith("Update available: dev-bbbbbbb"))
-        self.assertTrue(any(row.get("link") for row in section["rows"]))
-        self.assertEqual(section["action"]["id"], "check-updates")
-        up = status_overview.updates_section(self.snapshot("up_to_date", result={**result, "state": "up_to_date"}), self.now)
-        self.assertFalse(any(row.get("link") for row in up["rows"]))
-        self.assertEqual(up["summary"], "Up to date")
-
-    def test_failed_and_unsupported_states(self):
-        failed = status_overview.updates_section(self.snapshot("check_failed", check_failed=True, error="Docker Hub could not be reached."), self.now)
-        self.assertEqual(failed["level"], "unknown")
-        self.assertIn("could not be reached", json.dumps(failed))
-        unsupported = status_overview.updates_section({"state": "unsupported", "reason": "This is a local build."}, self.now)
-        self.assertNotIn("action", unsupported)
-        self.assertIn("local build", json.dumps(unsupported))
-
-
 class EndpointTests(unittest.TestCase):
     def server(self, answer):
         patcher = patch.object(update_status, "platform_config", side_effect=lambda *args: answer)
@@ -181,7 +149,8 @@ class EndpointTests(unittest.TestCase):
         server, checker = self.server(published("dev-" + THEIRS, THEIRS))
         client = server.app.test_client()
         body = client.get("/api/status/overview").json
-        self.assertIn("updates", [section["id"] for section in body["sections"]])
+        self.assertNotIn("updates", [section["id"] for section in body["sections"]],
+                         "update details live in the Administrator panel; the overview keeps only the flag")
         self.assertFalse(body["update_available"])
         checker.check_once()
         body = client.get("/api/status/overview").json

@@ -17,8 +17,9 @@ the channel tag (`dev` for development images, `latest` for releases) about ever
 6 hours and on request (coalesced, at most once per 60 s), caches the result in
 memory and never pulls, installs or restarts anything. A failed lookup keeps the
 last result, marked stale, and is never reported as up to date.
-`RUSSOUND_UPDATE_CHECK=off` turns it off. The Status page shows the result as the
-"Software updates" section (built by `status_overview.updates_section`).
+`RUSSOUND_UPDATE_CHECK=off` turns it off. The Status page shows the result in the
+"Software updates" block of the Administrator panel (rendered by `status.js` from
+`GET /api/status/updates`) and as an arrow icon in the System overview header.
 
 ## Requirements
 

@@ -172,7 +172,7 @@ class EndpointTests(unittest.TestCase):
             body = server.app.test_client().get("/api/status/overview").json
             self.assertEqual(body["api_version"], 1)
             ids = [section["id"] for section in body["sections"]]
-            self.assertEqual(ids, ["web", "gateway", "updates", "agent"])
+            self.assertEqual(ids, ["web", "gateway", "agent"])
         finally:
             server.server_close()
 
@@ -188,7 +188,7 @@ class EndpointTests(unittest.TestCase):
             try:
                 with patch.object(client, "_get_json", side_effect=AssertionError("no probing")):
                     body = server.app.test_client().get("/api/status/overview").json
-                self.assertEqual([s["id"] for s in body["sections"]], ["web", "gateway", "updates", "agent:musicpi", "audio:musicpi"])
+                self.assertEqual([s["id"] for s in body["sections"]], ["web", "gateway", "agent:musicpi", "audio:musicpi"])
                 self.assertEqual(body["overall"], "warning", "the weak Wi-Fi of the host card must reach the overall level")
                 text = json.dumps(body)
                 for forbidden in AUDIO["forbidden_text"]:
