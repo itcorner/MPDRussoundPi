@@ -8,6 +8,7 @@ import math
 import re
 import ssl
 import threading
+import time
 from typing import Any, Callable, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -15,10 +16,15 @@ from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_ope
 
 from mpdrussoundpi.common.tunein import TuneInCatalog
 from web.config_types import env_str
+from web.host_status import snapshot_view, validate_host_response
 from mpdrussoundpi.common.servicecredentials import read_service_token
 
 POLL_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 2.0
+# Host facts change slowly and have their own state, so they are fetched less often and
+# never touch the playback revision or its change events.
+HOST_POLL_INTERVAL_SECONDS = 10.0
+HOST_STALE_AFTER_SECONDS = HOST_POLL_INTERVAL_SECONDS * 3
 AGENT_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 WRITE_ACTIONS = {"play", "pause", "stop", "set_gain", "set_tunein_station", "select_favorite"}
 FAVORITE_ACTIONS = {"add_favorite", "remove_favorite", "move_favorite"}
@@ -189,6 +195,12 @@ class PlaybackStatusClient:
         }
         self._revision = 0
         self._write_operations: list[str] = []
+        self._host: dict[str, Any] | None = None
+        self._host_status = "pending"
+        self._host_error: dict[str, str] | None = None
+        self._host_received: float | None = None
+        self._host_last_success_at: str | None = None
+        self._host_due = 0.0
 
     @property
     def agent_id(self) -> str:
@@ -211,6 +223,52 @@ class PlaybackStatusClient:
                 }],
             }
 
+    def host_snapshot(self) -> dict[str, Any]:
+        """Validated host facts of this agent's host, never blocking on the network."""
+        with self._lock:
+            host, received = self._host, self._host_received
+            result: dict[str, Any] = {
+                "agent_id": self._config.agent_id, "status": self._host_status, "error": self._host_error,
+                "last_success_at": self._host_last_success_at, "stale": False, "host": None,
+            }
+        if host is not None and received is not None:
+            elapsed = time.monotonic() - received
+            result["stale"] = elapsed > HOST_STALE_AFTER_SECONDS
+            # Effective age: what the agent reported plus the time since this web process received it.
+            sections = {
+                name: dict(probe, age_ms=None if probe["age_ms"] is None else probe["age_ms"] + int(elapsed * 1000))
+                for name, probe in host["sections"].items()
+            }
+            result["host"] = dict(host, sections=sections)
+        return result
+
+    def _set_host(self, status: str, error: str | None = None, host: dict[str, Any] | None = None) -> None:
+        with self._lock:
+            self._host_status = status
+            self._host = host
+            self._host_error = None if error is None else {"code": error, "message": _error_message(error)}
+            if host is not None:
+                self._host_received = time.monotonic()
+                self._host_last_success_at = _timestamp()
+            elif status != "ok":
+                self._host_received = None
+
+    def _poll_host(self, supported: bool) -> None:
+        if not supported:
+            self._set_host("unsupported")
+            return
+        if time.monotonic() < self._host_due:
+            return
+        self._host_due = time.monotonic() + HOST_POLL_INTERVAL_SECONDS
+        try:
+            response = self._get_json("/v1/host")
+            _validate_identity(response, self._config.agent_id)
+            self._set_host("ok", host=snapshot_view(validate_host_response(response)))
+        except (HTTPError, URLError, TimeoutError, OSError, HTTPException, ValueError) as exc:
+            if isinstance(exc, HTTPError):
+                exc.close()
+            self._set_host("unavailable", _error_code(exc))
+
     def poll_once(self) -> bool:
         if self._stop.is_set():
             return False
@@ -227,6 +285,8 @@ class PlaybackStatusClient:
             capabilities = self._get_json("/v1/capabilities")
             _validate_identity(capabilities, self._config.agent_id)
             writes = _write_capabilities(capabilities.get("write_operations"))
+            features = capabilities.get("read_features")
+            host_supported = isinstance(features, list) and "host_info" in cast(list[Any], features)
             if self._stop.is_set():
                 return False
             inventory = self._get_json("/v1/outputs")
@@ -245,6 +305,8 @@ class PlaybackStatusClient:
             snapshot["favorites"] = self._favorites() if "select_favorite" in writes else None
         except (HTTPError, URLError, TimeoutError, OSError, HTTPException, ValueError) as exc:
             code = _error_code(exc)
+            self._set_host("unavailable", code)
+            self._host_due = 0.0
             with self._lock:
                 changed = self._status != "unavailable" or self._error is None or self._error["code"] != code
                 self._status = "unavailable"
@@ -270,6 +332,7 @@ class PlaybackStatusClient:
             self._last_success_at = _timestamp()
             if changed:
                 self._revision += 1
+        self._poll_host(host_supported)
         return True
 
     def start(self) -> None:

@@ -6,6 +6,7 @@ from types import FrameType
 
 from waitress.server import create_server
 
+from mpdrussoundpi.russound.lib.hostinfo import HostCollector
 from mpdrussoundpi.russound.lib.playbackagent import AgentObserver, create_app
 from mpdrussoundpi.russound.lib.mpdbackend import MPDBackend
 from mpdrussoundpi.russound.lib.playbackoperations import OperationManager
@@ -22,6 +23,8 @@ def main() -> None:
     parser.add_argument("--disable-tunein-selection", action="store_true",
                         help="Disable station selection from the TuneIn catalog (enabled with manual operations)")
     parser.add_argument("--enable-tunein-selection", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--disable-host-info", action="store_true",
+                        help="Do not collect or serve host facts (GET /v1/host and the host_info capability)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--allow-remote", action="store_true",
@@ -47,8 +50,9 @@ def main() -> None:
         backend, args.operations_db, tunein_selection_enabled=not args.disable_tunein_selection,
     ) if backend is not None else None
     observer = AgentObserver(args.json, backend=backend, controls_enabled=operations is not None)
+    host = HostCollector() if not args.disable_host_info else None
     try:
-        app = create_app(observer, args.agent_id, token, operations)
+        app = create_app(observer, args.agent_id, token, operations, host)
     except (OSError, ValueError):
         if operations is not None:
             operations.close()
@@ -65,6 +69,8 @@ def main() -> None:
     previous = signal.signal(signal.SIGTERM, terminate)
     try:
         observer.start()
+        if host is not None:
+            host.start()
         if operations is not None:
             operations.start()
         server.run()
@@ -75,6 +81,8 @@ def main() -> None:
         server.task_dispatcher.shutdown()
         if operations is not None:
             operations.close()
+        if host is not None:
+            host.close()
         observer.close()
         signal.signal(signal.SIGTERM, previous)
 

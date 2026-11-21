@@ -156,6 +156,7 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         self.assertIn("reverse_proxy 127.0.0.1:8081", caddyfile)
         self.assertIn("/v1/outputs/*", caddyfile)
         self.assertIn("/v1/favorites", caddyfile)
+        self.assertIn("/v1/host", caddyfile)
         self.assertIn("respond 403", caddyfile)
         self.assertNotIn("--allow-remote", caddyfile)
         named_services = [
@@ -219,6 +220,11 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         readonly = caddy.render(**variables)
         self.assertIn("method GET HEAD", readonly)
         self.assertNotIn("method POST", readonly)
+        # Host facts are read-only: the route sits in the GET/HEAD matcher, never with the write routes.
+        read_matcher = readonly[readonly.index("@read_api"):readonly.index("handle @read_api")]
+        self.assertIn("/v1/host", read_matcher)
+        self.assertNotIn("/v1/host", caddy.render(**variables, playback_proxy_enable_operations=True)
+                         .split("@write_api")[1])
         self.assertNotIn("/v1/favorites/operations", readonly)
         enabled = caddy.render(**variables, playback_proxy_enable_operations=True)
         self.assertIn("/v1/outputs/*/operations", enabled)

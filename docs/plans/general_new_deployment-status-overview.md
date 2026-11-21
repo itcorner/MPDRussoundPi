@@ -1,9 +1,11 @@
 # Idea: deployment and runtime configuration overview
 
-Status: **new, planned; not started** (2026-11-21). Proposed as an idea on
+Status: **new, in progress** (2026-11-21): the first slice of the host section
+is implemented (see [Implementation progress](#implementation-progress)); the rest
+of the overview is not started. Proposed as an idea on
 2026-11-12. On 2026-11-21 a **host information** section was added to the scope
-(see [Host information](#host-information)); the decisions listed below are
-still open and gate implementation.
+(see [Host information](#host-information)). Decisions 6 to 9 were taken on
+2026-11-21 (below); decisions 1 to 5 still gate the rest of the overview.
 
 ## Goal
 
@@ -231,20 +233,34 @@ should reuse these facts instead of adding independent probes.
    minimum useful display when the agent does not support new metadata?
 5. What refresh rate, retention and stale thresholds are appropriate? Should
    the overview be automatic, manually refreshed, or a combination?
-6. **Host information, disclosure:** may every user of the unauthenticated page
-   see class B fields (IP addresses, gateway, DNS, Wi-Fi network name, channel,
-   host name), or only class A? Class C is never shown.
-7. **Host information, scope of the first release:** only the audio host
-   (through a new agent route and a proxy change), or also the web host? Is
-   the host section shipped before the full topology overview, as a first
-   slice?
-8. **Thresholds and labels** for Wi-Fi, memory and temperature (the proposal in
-   the Presentation section above), and whether to show raw values only,
-   labels only or both.
-9. **Agent contract change:** approve an additive `host_info` capability and
-   `GET /v1/host` route, with the matching proxy allowlist entry and a rollout
-   order (new web tolerates old agents; the agent and proxy change is deployed
-   through the reviewed process).
+6. **Host information, disclosure.** *Decided 2026-11-21:* class A plus the IP
+   addresses of the uplink interface. The Wi-Fi network name, channel, gateway,
+   DNS servers and host name are not shown (the collector never reads the
+   network name or channel). Class C is never shown. The address fields can be
+   widened later by an explicit decision, because a wider contract is additive.
+7. **Host information, scope of the first release.** *Decided 2026-11-21:* the
+   audio host first, through a new agent route and a proxy change, as a first
+   slice before the full topology overview. The web host's own facts and the
+   boot-id host merge follow later.
+8. **Thresholds and labels.** *Adopted as proposed (2026-11-21):* Wi-Fi good from
+   -60 dBm, fair to -70, weak below; memory low below 10 % available;
+   temperature high from 70 °C, critical from 80 °C; power flags as described.
+   Both labels and raw values are shown. They are constants at the top of
+   `web/host_status.py` and can be tuned from experience.
+9. **Agent contract change.** *Approved 2026-11-21:* additive `host_info`
+   capability and `GET /v1/host` route with the matching proxy allowlist entry.
+   New web tolerates old agents (shows "not supported"); the agent and proxy
+   change is deployed through the reviewed process.
+
+## Implementation progress
+
+| Date | Change | Notes |
+|---|---|---|
+| 2026-11-21 | First slice of host information: `mpdrussoundpi/russound/lib/hostinfo.py` (background collector, probe objects, parsers) and `GET /v1/host` with the `host_info` capability and `--disable-host-info`; proxy allowlist entry in the Caddyfile template; `web/host_status.py` (allowlist validation, assessment, display rows); a separate slow poll in the web client; `GET /api/status/host`; the Host card on the Status page with details that stay open across refreshes; read contract, web API and deployment docs. | Not deployed. Needs the proxy play, an agent candidate and a web image, in the order described in the [deployment guide](../documentation/playback-agent-deployment.md#host-information-optional). |
+
+Not part of the first slice: the web host's own facts, merging cards of the same
+host by boot id, widening the disclosure, and everything in the topology and
+component overview.
 
 ## Proposed implementation stages
 
@@ -252,11 +268,16 @@ should reuse these facts instead of adding independent probes.
   field inventory with owner, source, provenance, redaction and freshness.
 - [ ] Define and test additive contracts and mixed-version behavior across the
   agent, proxy and web, including disabled, partial and offline configurations.
-- [ ] Host information, first slice: parsers with fixture-based tests for
+- [x] Host information, first slice: parsers with fixture-based tests for
   `/proc`, NetworkManager and `vcgencmd` output; a bounded collector in the
   agent and the additive `host_info` capability and route; the proxy
-  allowlist entry; web aggregation with host merging by boot id; the Host card
-  on the Status page. Old agents show "not supported".
+  allowlist entry; web aggregation; the Host card on the Status page. Old
+  agents show "not supported". (Merging by boot id and the web host's own card
+  are deferred, see above.) Implemented 2026-11-21; target acceptance on the Pi
+  is still open.
+- [ ] Host information, target acceptance: deploy the proxy, agent and web as
+  described in the deployment guide and compare the card with independent
+  observations on the Pi.
 - [ ] Implement bounded collectors/aggregation and deployment metadata
   provisioning for approved layouts; update the deployment and API guides.
 - [ ] Add the responsive Status overview, preserving existing sections and

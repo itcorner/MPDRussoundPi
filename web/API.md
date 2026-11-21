@@ -39,6 +39,7 @@ Exceptions:
 
 - `GET /api/events` returns an event stream, not JSON
 - `GET /api/status` returns connected-client and event-history data, not the main controller view payload
+- `GET /api/status/host` returns validated host facts of each configured playback agent's host (see below)
 - `GET /api/playback`, `/api/playback/health`, and
   `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
   status payloads, independently of the Russound view payload
@@ -435,6 +436,65 @@ Response shape:
   ]
 }
 ```
+
+### GET /api/status/host
+
+Returns operational facts about the host each configured playback agent runs
+on: network connection and addresses, Wi-Fi signal, CPU, memory, temperature,
+power/throttling, disk and clock. The data is read from the agent's
+`GET /v1/host` (see the [read contract](../docs/documentation/mpd-playback-read-api.md#host-information)),
+cached by the web application and refreshed about every 10 seconds; a request
+never probes the agent or the host.
+
+- Response type: JSON. Not pushed over SSE (it changes constantly); the Status
+  page polls it.
+- Every section is rebuilt from an allowlist with strict types and bounds, so
+  only the documented fields can appear. **Never present:** MAC addresses,
+  serial number, machine id, boot id, host name, Wi-Fi network name, channel,
+  gateway and DNS servers. Addresses are those of the uplink interface
+  (global IPv4 and IPv6 only).
+- An agent that does not advertise the `host_info` capability is reported as
+  `unsupported`; an unreachable agent or host route as `unavailable`. Neither
+  affects the playback endpoints.
+
+```json
+{
+  "api_version": 1,
+  "configured": true,
+  "hosts": [{
+    "agent_id": "musicpi",
+    "status": "ok",
+    "error": null,
+    "last_success_at": "2026-11-21T10:00:05Z",
+    "stale": false,
+    "host": {
+      "sections": {"network": {"status": "ok", "age_ms": 5000, "stale": false, "error": null,
+        "value": {"state": "connected", "interface_type": "wifi",
+                  "addresses": [{"family": 4, "address": "192.168.1.105", "prefix": 24}],
+                  "wifi": {"signal_dbm": -76, "link_rate_mbps": 270.0, "band": "5 GHz"}}}},
+      "assessment": {"wifi": {"level": "warning", "label": "weak"}},
+      "view": {"overall": "warning",
+               "summary": ["Wi-Fi weak (-76 dBm)", "CPU 33 %", "Memory 51 % used", "44 °C"],
+               "rows": [{"label": "Addresses", "value": "192.168.1.105/24", "level": ""}]}
+    }
+  }]
+}
+```
+
+- `status`: `ok`, `pending`, `unsupported` or `unavailable`; `host` is `null`
+  unless `ok`. `stale` is true when the web application has not received a
+  report for about 30 seconds. Section `age_ms` includes the time since receipt.
+- `sections` holds `system`, `cpu`, `memory`, `temperature`, `power`, `disk`,
+  `network` and `clock`, each a probe (`status` `ok`, `error`, `pending` or
+  `unsupported`, `age_ms`, `stale`, `error`, `value`). One invalid or failing
+  section does not affect the others.
+- `assessment` gives `{level, label}` (`ok`, `warning`, `problem`, `unknown`) for
+  `network`, `wifi`, `memory`, `temperature`, `power` and `clock`. Thresholds:
+  Wi-Fi good from -60 dBm, fair to -70, weak below; memory low below 10 %
+  available; temperature high from 70 °C and critical from 80 °C; any active
+  power or throttling flag is a problem, one that occurred since boot a warning.
+- `view` is ready for display: `overall`, a one-line `summary` and detail
+  `rows`, all plain text.
 
 `connected_clients` reflects active SSE connections, grouped per browser session (`streams` is the number of open streams, e.g. tabs). `recent_events` is an in-memory rolling history capped at 50 entries.
 When available, each connected client includes its cookie-based `session_id` value.

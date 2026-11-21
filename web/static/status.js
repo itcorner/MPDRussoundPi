@@ -3,6 +3,9 @@ const clientsList = document.getElementById("clientsList");
 const clientsEmpty = document.getElementById("clientsEmpty");
 const eventsEmpty = document.getElementById("eventsEmpty");
 const eventsTableBody = document.getElementById("eventsTableBody");
+const hostList = document.getElementById("hostList");
+const hostEmpty = document.getElementById("hostEmpty");
+const hostCount = document.getElementById("hostCount");
 
 let eventSource = null;
 let eventSourceRetryTimer = null;
@@ -11,6 +14,7 @@ const eventSourceRetryDelayMs = 30000;
 const statusPollIntervalMs = 5000;
 let statusFetchInFlight = false;
 let statusFetchQueued = false;
+let hostFetchInFlight = false;
 const expandedPayloadRows = new Set();
 
 function formatTimestampLines(rawTimestamp) {
@@ -135,6 +139,81 @@ function renderStatus(payload, historyPayload) {
   }
 }
 
+// Host facts: every string below comes from validated server fields and is
+// assigned as text only. The server decides labels and builds the detail rows.
+const openHostDetails = new Set();
+const hostLevelText = { ok: "OK", warning: "Warning", problem: "Problem", unknown: "Unknown" };
+
+function hostFreshness(host) {
+  if (host.status === "unsupported") {
+    return "This agent does not report host information yet. Update the agent and the playback proxy to enable it.";
+  }
+  if (host.status === "pending") {
+    return "Waiting for the first host report.";
+  }
+  if (host.status !== "ok" || !host.host) {
+    return `Host information unavailable${host.error && host.error.message ? `: ${host.error.message}` : "."}`;
+  }
+  const ages = Object.values(host.host.sections)
+    .filter((section) => section.status === "ok" && Number.isFinite(section.age_ms))
+    .map((section) => section.age_ms);
+  const seconds = ages.length ? Math.round(Math.min(...ages) / 1000) : null;
+  if (host.stale) {
+    return seconds === null ? "Data is old." : `Data is old (last update ${seconds} s ago).`;
+  }
+  return seconds === null ? "Updated." : seconds < 4 ? "Updated now." : `Updated ${seconds} s ago.`;
+}
+
+function renderHosts(payload) {
+  const hosts = payload.hosts || [];
+  hostCount.textContent = String(hosts.length);
+  hostEmpty.hidden = hosts.length !== 0;
+  hostList.replaceChildren();
+  for (const host of hosts) {
+    const item = document.createElement("article");
+    item.className = "status-list-item host-card";
+    const view = host.host ? host.host.view : null;
+    const level = view ? view.overall : "unknown";
+    const header = document.createElement("div");
+    header.className = "status-item-row";
+    header.append(
+      textElement("strong", "", `Audio host (${host.agent_id})`),
+      textElement("span", `status-pill host-level host-level-${hostLevelText[level] ? level : "unknown"}`,
+        hostLevelText[level] || "Unknown"),
+    );
+    item.appendChild(header);
+    if (view && view.summary.length) {
+      item.appendChild(textElement("div", "status-meta host-summary", view.summary.join(" · ")));
+    }
+    item.appendChild(textElement("div", "status-meta", hostFreshness(host)));
+    if (view && view.rows.length) {
+      const details = document.createElement("details");
+      details.className = "host-details";
+      details.open = openHostDetails.has(host.agent_id);
+      details.addEventListener("toggle", () => {
+        if (details.open) {
+          openHostDetails.add(host.agent_id);
+        } else {
+          openHostDetails.delete(host.agent_id);
+        }
+      });
+      details.appendChild(textElement("summary", "", "Details"));
+      const list = document.createElement("dl");
+      list.className = "host-rows";
+      for (const row of view.rows) {
+        const flagged = hostLevelText[row.level] && row.level !== "ok";
+        list.append(
+          textElement("dt", "", row.label),
+          textElement("dd", flagged ? `host-row-${row.level}` : "", flagged ? `${row.value} (${hostLevelText[row.level]})` : row.value),
+        );
+      }
+      details.appendChild(list);
+      item.appendChild(details);
+    }
+    hostList.appendChild(item);
+  }
+}
+
 eventsTableBody.addEventListener("click", (event) => {
   const toggle = event.target.closest("[data-payload-toggle]");
   if (!toggle) {
@@ -181,6 +260,23 @@ async function fetchStatus() {
   }
 }
 
+async function fetchHost() {
+  if (hostFetchInFlight) {
+    return;
+  }
+  hostFetchInFlight = true;
+  try {
+    const response = await apiFetch("/api/status/host");
+    if (response.ok) {
+      renderHosts(await response.json());
+    }
+  } catch {
+    // The next poll retries; the previous card stays until then.
+  } finally {
+    hostFetchInFlight = false;
+  }
+}
+
 function startStatusSync() {
   if (!window.EventSource || eventSource || document.hidden) {
     return;
@@ -214,7 +310,10 @@ function stopStatusSync() {
 
 function startStatusPolling() {
   if (statusPollTimer === null && !document.hidden) {
-    statusPollTimer = window.setInterval(fetchStatus, statusPollIntervalMs);
+    statusPollTimer = window.setInterval(() => {
+      fetchStatus();
+      fetchHost();
+    }, statusPollIntervalMs);
   }
 }
 
@@ -226,6 +325,7 @@ function stopStatusPolling() {
 }
 
 fetchStatus();
+fetchHost();
 startStatusSync();
 startStatusPolling();
 
@@ -236,6 +336,7 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   fetchStatus();
+  fetchHost();
   startStatusSync();
   startStatusPolling();
 });
