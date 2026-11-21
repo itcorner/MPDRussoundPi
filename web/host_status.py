@@ -280,8 +280,11 @@ def view(sections: dict[str, Any], assessment: dict[str, dict[str, str]]) -> dic
     summary: list[str] = []
     rows: list[dict[str, str]] = []
 
-    def row(label: str, text: str, level: str = "") -> None:
+    topics: dict[str, str] = {}
+
+    def row(label: str, text: str, level: str = "", topic: str = "system") -> None:
         rows.append({"label": label, "value": text, "level": level})
+        topics[label] = topic
 
     network, cpu, memory = _value(sections, "network"), _value(sections, "cpu"), _value(sections, "memory")
     temperature, power = _value(sections, "temperature"), _value(sections, "power")
@@ -306,39 +309,56 @@ def view(sections: dict[str, Any], assessment: dict[str, dict[str, str]]) -> dic
                 row(label, system[key])
         row("Uptime", _duration(system["uptime_seconds"]))
     if cpu:
-        row("CPU load (1, 5, 15 min)", " / ".join(f"{item:.2f}" for item in cpu["load"]) + (f" on {cpu['cores']} cores" if cpu["cores"] else ""))
+        row("CPU load (1, 5, 15 min)", " / ".join(f"{item:.2f}" for item in cpu["load"]) + (f" on {cpu['cores']} cores" if cpu["cores"] else ""), topic="processor")
         if cpu["frequency_mhz"]:
-            row("CPU frequency", f"{cpu['frequency_mhz']} MHz")
+            row("CPU frequency", f"{cpu['frequency_mhz']} MHz", topic="processor")
     if memory:
         row("Memory", f"{_size(memory['total_bytes'] - memory['available_bytes'])} used of {_size(memory['total_bytes'])}",
-            assessment["memory"]["level"])
+            assessment["memory"]["level"], "processor")
         if memory["swap_total_bytes"]:
-            row("Swap", f"{_size(memory['swap_used_bytes'])} used of {_size(memory['swap_total_bytes'])}")
+            row("Swap", f"{_size(memory['swap_used_bytes'])} used of {_size(memory['swap_total_bytes'])}", topic="processor")
     if temperature:
-        row("Temperature", f"{temperature['celsius']:.1f} °C", assessment["temperature"]["level"])
+        row("Temperature", f"{temperature['celsius']:.1f} °C", assessment["temperature"]["level"], "power")
     if power:
         flags = [name.replace("_", " ") for name in THROTTLE_FLAGS if power["now"][name]]
         past = [name.replace("_", " ") for name in THROTTLE_FLAGS if power["since_boot"][name] and not power["now"][name]]
         row("Power and throttling", "; ".join(
             ([f"now: {', '.join(flags)}"] if flags else []) + ([f"since boot: {', '.join(past)}"] if past else [])) or "no issues",
-            assessment["power"]["level"])
+            assessment["power"]["level"], "power")
     if disk:
         row("Disk", f"{_size(disk['free_bytes'])} free of {_size(disk['total_bytes'])}")
     if network:
         kind = {"wifi": "Wi-Fi", "ethernet": "Ethernet", "other": "Other", None: "none"}[network["interface_type"]]
-        row("Network", f"{kind}, {assessment['network']['label']}", assessment["network"]["level"])
+        row("Network", f"{kind}, {assessment['network']['label']}", assessment["network"]["level"], "network")
         if network["addresses"] is None:
-            row("Addresses", "unavailable")
+            row("Addresses", "unavailable", topic="network")
         elif network["addresses"]:
-            row("Addresses", ", ".join(f"{item['address']}/{item['prefix']}" for item in network["addresses"]))
+            row("Addresses", ", ".join(f"{item['address']}/{item['prefix']}" for item in network["addresses"]), topic="network")
         if wifi:
             parts = ([f"{wifi['signal_dbm']} dBm ({assessment['wifi']['label']})"] if wifi["signal_dbm"] is not None else []) + (
                 [f"{wifi['link_rate_mbps']:g} Mbit/s"] if wifi["link_rate_mbps"] is not None else []) + (
                 [wifi["band"]] if wifi["band"] else [])
-            row("Wi-Fi link", ", ".join(parts) or "unavailable", assessment.get("wifi", {}).get("level", ""))
+            row("Wi-Fi link", ", ".join(parts) or "unavailable", assessment.get("wifi", {}).get("level", ""), "network")
     if clock:
         row("Clock", assessment["clock"]["label"], assessment["clock"]["level"])
-    return {"overall": overall(assessment), "summary": summary, "rows": rows}
+    groups = []
+    for key, title in (("network", "Network"), ("processor", "Processor and memory"), ("power", "Power and temperature"), ("system", "System")):
+        members = [item for item in rows if topics[item["label"]] == key]
+        if not members:
+            continue
+        levels = [item["level"] for item in members if item["level"] in ("ok", "warning", "problem")]
+        level = max(levels, key=("ok", "warning", "problem").index) if levels else "unknown"
+        by_label = {item["label"]: item["value"] for item in members}
+        brief = {
+            "network": [by_label.get("Network"), summary[0] if summary and summary[0].startswith("Wi-Fi") else None],
+            "processor": [next((part for part in summary if part.startswith("CPU")), None),
+                          next((part for part in summary if part.startswith("Memory")), None)],
+            "power": [by_label.get("Temperature"), by_label.get("Power and throttling")],
+            "system": [by_label.get("Uptime"), by_label.get("Clock"), by_label.get("Disk")],
+        }[key]
+        groups.append({"id": key, "title": title, "level": level,
+                       "summary": " · ".join(part for part in brief if part) or members[0]["value"], "rows": members})
+    return {"overall": overall(assessment), "summary": summary, "rows": rows, "groups": groups}
 
 
 def snapshot_view(sections: dict[str, Any]) -> dict[str, Any]:

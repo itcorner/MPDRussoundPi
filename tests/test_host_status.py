@@ -161,6 +161,16 @@ class ViewTests(unittest.TestCase):
         for forbidden in FIXTURES["forbidden_text"]:
             self.assertNotIn(forbidden, text)
 
+    def test_rows_are_also_grouped_by_topic(self):
+        view = host_status.snapshot_view(host_status.validate_host_response(response()))["view"]
+        groups = {group["id"]: group for group in view["groups"]}
+        self.assertEqual(list(groups), ["network", "processor", "power", "system"])
+        self.assertEqual(groups["network"]["level"], "warning")
+        self.assertEqual({row["label"] for group in view["groups"] for row in group["rows"]},
+                         {row["label"] for row in view["rows"]}, "every row belongs to exactly one group")
+        self.assertEqual(sum(len(group["rows"]) for group in view["groups"]), len(view["rows"]))
+        self.assertEqual(groups["processor"]["summary"], "CPU 33 % · Memory 51 % used")
+
     def test_degraded_hosts_still_render(self):
         document = response()
         document["power"] = {"status": "unsupported", "age_ms": None, "stale": True, "error": None, "value": None}

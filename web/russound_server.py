@@ -1290,7 +1290,8 @@ class RussoundHTTPServer:
             status_overview.web_section(
                 uptime_seconds=int(time.monotonic() - self._started_monotonic),
                 runtime="container" if Path("/.dockerenv").exists() else "native",
-                revision=os.environ.get("RUSSOUND_BUILD_REVISION"), clients=clients),
+                revision=os.environ.get("RUSSOUND_BUILD_REVISION"), clients=clients,
+                build_time=os.environ.get("RUSSOUND_BUILD_TIME"), build_source=os.environ.get("RUSSOUND_BUILD_SOURCE")),
             status_overview.gateway_section(
                 config=config,
                 effective_backend=backend_endpoint_metadata(coerce_russound_config(config)) if config else {},
@@ -1303,7 +1304,12 @@ class RussoundHTTPServer:
             extra = client.overview_snapshot()
             sections.append(status_overview.agent_section(agent, extra, moment))
             sections.append(status_overview.audio_section(agent, extra["audio"]))
-        return {**status_overview.compose(sections), "generated_at": moment.isoformat(timespec="seconds")}
+        host_levels = [
+            view["overall"] for view in (
+                (item.get("host") or {}).get("view") for item in (client.host_snapshot() for client in self._playback_clients))
+            if isinstance(view, dict) and isinstance(view.get("overall"), str)
+        ]
+        return {**status_overview.compose(sections, host_levels), "generated_at": moment.isoformat(timespec="seconds")}
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:

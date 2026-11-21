@@ -393,6 +393,7 @@ def build(source: Path, revision: str, parent: Path, gateway: str, platform: str
             source_context(source, revision, context_root)
             if clean_source(source, revision) != tree:
                 raise BuildError("Source changed during snapshot creation")
+            built_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             for name in components(gateway):
                 tag = f"mpdrussoundpi-local/{name}:{operation}"
                 command(docker + ["buildx", "build", "--builder", context_name,
@@ -401,6 +402,7 @@ def build(source: Path, revision: str, parent: Path, gateway: str, platform: str
                          "--label", "org.opencontainers.image.revision=" + revision,
                          "--label", "org.opencontainers.image.source=" + SOURCE,
                          "--build-arg", "BUILD_REVISION=" + revision,
+                         "--build-arg", "BUILD_TIME=" + built_at, "--build-arg", "BUILD_SOURCE=local",
                          "--tag", tag, "-f", DOCKERFILES[name], "."],
                         cwd=context_root / "context", log=log, timeout=1800)
                 inspected = json.loads(command(docker + ["image", "inspect", tag]))[0]
