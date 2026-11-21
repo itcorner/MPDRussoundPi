@@ -325,8 +325,10 @@ def audio_section(agent: dict[str, Any], audio: dict[str, Any]) -> dict[str, Any
     return _section(f"audio:{identifier}", title, level, summary, rows, groups)
 
 
-def compose(sections: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"api_version": 1, "overall": _worst([section["level"] for section in sections]), "sections": sections}
+def compose(sections: list[dict[str, Any]], extra_levels: list[str] | None = None) -> dict[str, Any]:
+    """``extra_levels`` are levels of cards shown in the same panel (the host cards) that are not sections."""
+    levels = [section["level"] for section in sections] + list(extra_levels or [])
+    return {"api_version": 1, "overall": _worst(levels), "sections": sections}
 
 
 def now() -> datetime:

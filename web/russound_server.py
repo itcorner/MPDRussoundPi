@@ -1303,7 +1303,12 @@ class RussoundHTTPServer:
             extra = client.overview_snapshot()
             sections.append(status_overview.agent_section(agent, extra, moment))
             sections.append(status_overview.audio_section(agent, extra["audio"]))
-        return {**status_overview.compose(sections), "generated_at": moment.isoformat(timespec="seconds")}
+        host_levels = [
+            view["overall"] for view in (
+                (item.get("host") or {}).get("view") for item in (client.host_snapshot() for client in self._playback_clients))
+            if isinstance(view, dict) and isinstance(view.get("overall"), str)
+        ]
+        return {**status_overview.compose(sections, host_levels), "generated_at": moment.isoformat(timespec="seconds")}
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:
