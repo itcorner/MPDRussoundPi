@@ -13,6 +13,7 @@ import secrets
 import shutil
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -55,6 +56,7 @@ class RussoundController:
         self.config_path = _resolve_config_path(config_path)
         self.state_path = _resolve_state_path(state_path)
         self._backend_health: dict[str, Any] | None = None
+        self._backend_health_at: float | None = None
         self._shared_backend: RussoundBackend | None = None
 
     # The stores own the files; assigning a different path starts a new store.
@@ -108,6 +110,7 @@ class RussoundController:
         """Use the server-owned backend for all controller hardware operations."""
         self._shared_backend = backend
         self._backend_health = None
+        self._backend_health_at = None
 
     def load_config(self) -> dict[str, Any] | None:
         """A private copy of the valid configuration, or None (see ``config_message``)."""
@@ -498,6 +501,7 @@ class RussoundController:
     def _record_backend_health(self, reachable: bool, answered: bool, polled_zone_count: int) -> None:
         """Derive hardware health from the zone reads that just ran."""
         self._backend_health = self._backend_health_for_poll(reachable, answered, polled_zone_count)
+        self._backend_health_at = time.time()
 
     @staticmethod
     def _backend_health_for_poll(reachable: bool, answered: bool, polled_zone_count: int) -> dict[str, Any]:
@@ -512,6 +516,11 @@ class RussoundController:
     def set_backend_health_snapshot(self, health: dict[str, Any]) -> None:
         """Publish the health result from a current backend poll."""
         self._backend_health = dict(health)
+        self._backend_health_at = time.time()
+
+    def backend_health_observed_at(self) -> float | None:
+        """Wall-clock time of the last backend poll result, or None before the first one."""
+        return self._backend_health_at
 
     def backend_health_snapshot(self) -> dict[str, Any] | None:
         """Health recorded by the last backend refresh, or None when nothing has been polled yet."""
@@ -801,6 +810,19 @@ def _check_api_backend_fields(backend: dict[str, Any], saved_backend: dict[str, 
 
 
 _NO_CONFIG_PATH = FileSnapshot("missing", None, None, None, None, 0)
+
+
+def backend_status_kind(status: object) -> str:
+    """Classify a ``backend_status`` payload: ``responding``, ``silent``, ``unreachable`` or ``unknown``."""
+    if not isinstance(status, dict):
+        return "unknown"
+    fields = cast(dict[str, Any], status)
+    if fields.get("connected") is True:
+        return "responding"
+    message = fields.get("message")
+    if message == _BACKEND_SILENT_MESSAGE:
+        return "silent"
+    return "unreachable" if message == _BACKEND_UNAVAILABLE_MESSAGE else "unknown"
 
 
 def _resolve_config_path(path: str | Path | None) -> Path | None:

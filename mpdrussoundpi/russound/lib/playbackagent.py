@@ -11,6 +11,7 @@ from uuid import uuid4
 from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+from .audioinfo import describe_audio
 from .hostinfo import HostCollector
 from .mpdbackend import BackendError, MPDBackend
 from .playbackstatus import OutputObservation, PlaybackCollector
@@ -59,10 +60,16 @@ class AgentObserver:
         self._controls: tuple[tuple[str, str, str, bool], ...] = ()
         self._favorites: tuple[Station, ...] | None = None
         self._control_revision: str | None = None
+        self._audio_info: tuple[str, dict[str, object]] | None = None
 
     def snapshot(self) -> CachedInventory:
         with self._lock:
             return self._cache
+
+    def audio_info(self) -> tuple[str, dict[str, object]] | None:
+        """The allowlisted audio hardware description of the current configuration revision."""
+        with self._lock:
+            return self._audio_info
 
     def _publish(
         self, outputs: tuple[OutputObservation, ...] | None,
@@ -99,7 +106,18 @@ class AgentObserver:
             try:
                 if self.backend is None:
                     self.backend = MPDBackend(self.config_path)
-                _, streams, revision = self.backend.configuration_snapshot()
+                configuration, streams, revision = self.backend.configuration_snapshot()
+                config_revision = revision
+                with self._lock:
+                    current = self._audio_info
+                if current is None or current[0] != config_revision:
+                    # A description problem must never disturb the playback inventory path.
+                    try:
+                        description: dict[str, object] | None = describe_audio(configuration)
+                    except (AttributeError, KeyError, TypeError, ValueError):
+                        description = None
+                    with self._lock:
+                        self._audio_info = None if description is None else (config_revision, description)
                 self._favorites, _, self._control_revision = self.backend.favorites()
                 if self.controls_enabled:
                     revision, self._controls = self.backend.operation_inventory()
@@ -110,6 +128,8 @@ class AgentObserver:
                     self._collector.apply_state(streams)
             except (BackendError, OSError, ValueError):
                 self._favorites = self._control_revision = None
+                with self._lock:
+                    self._audio_info = None
                 self._publish(None, error_code="configuration_invalid")
                 old, self._collector = self._collector, None
                 if old is not None:
@@ -184,6 +204,7 @@ def create_app(
     observer: AgentObserver, agent_id: str, token: str,
     operations: OperationManager | None = None,
     host: HostCollector | None = None,
+    audio: bool = False,
 ) -> Flask:
     if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", agent_id) is None:
         raise ValueError("Invalid agent identity")
@@ -257,6 +278,7 @@ def create_app(
         response: dict[str, object] = dict(identity, read_features=[
             "inventory", "playback", "now_playing", "audio_diagnostics",
             *(["host_info"] if host is not None else []),
+            *(["audio_info"] if audio else []),
         ], write_operations=[
             action for action in ACTIONS
             if operations is not None
@@ -275,6 +297,15 @@ def create_app(
         def host_information() -> Response:
             # Cached facts only; reads never run a probe.
             return jsonify(**identity, **host.snapshot())
+
+    if audio:
+        @app.get("/v1/audio", provide_automatic_options=False)
+        def audio_information() -> Response | tuple[Response, int]:
+            cached = observer.audio_info()
+            if cached is None:
+                return error("snapshot_unavailable", 503)
+            revision, description = cached
+            return jsonify(**identity, config_revision=revision, **description)
 
     def inventory(output_id: str | None = None) -> Response | tuple[Response, int]:
         if output_id is not None and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", output_id) is None:

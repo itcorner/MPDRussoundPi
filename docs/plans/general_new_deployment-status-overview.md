@@ -1,9 +1,10 @@
 # Idea: deployment and runtime configuration overview
 
-Status: **new, in progress** (2026-11-21): the first slice of the host section
-is implemented, deployed and accepted on the reference Pi (see
-[Implementation progress](#implementation-progress)); the rest of the overview is
-not started. Proposed as an idea on
+Status: **new, in progress** (2026-11-21): the host section is implemented,
+deployed and accepted on the reference Pi; the component and audio sections
+(second slice) are implemented and await deployment (see
+[Implementation progress](#implementation-progress)); topology, the web host's
+own facts and deployment metadata are not started. Proposed as an idea on
 2026-11-12. On 2026-11-21 a **host information** section was added to the scope
 (see [Host information](#host-information)). Decisions 6 to 9 were taken on
 2026-11-21 (below); decisions 1 to 5 still gate the rest of the overview.
@@ -272,6 +273,8 @@ the services were down for a few minutes. The validator now accepts that layout
 operator tooling on the Pi was upgraded through the reviewed play, the export was
 replayed read-only for both images, and the retry completed with every required check.
 
+| 2026-11-21 | **Second slice, component and audio overview** (not yet deployed): `GET /api/status/overview` with web, gateway, agent and audio sections; additive agent route `GET /v1/audio` and `audio_info` capability (model-level hardware only) with the proxy allowlist entry; the web image carries its git revision (`BUILD_REVISION` build argument, set by CI and by the operator's local build); certificate expiry from a verified handshake; the "System overview" panel. | Decisions of this round: audio hardware included now; model-level hardware details (card profile, sink names, channel mapping, USB vendor:product; serials, bus paths and MAC addresses stay hidden); the revision is baked into the image and displayed as "reported by the build". Rollout: proxy play, agent candidate, web update. |
+
 Not part of the first slice: the web host's own facts, merging cards of the same
 host by boot id, widening the disclosure, and everything in the topology and
 component overview.
@@ -292,6 +295,9 @@ component overview.
 - [x] Host information, target acceptance: deployed the proxy, agent and web as
   described in the deployment guide and compared the card with independent
   observations on the Pi (2026-11-21, see the progress table).
+- [x] Component and audio overview (second slice): web, gateway, agent and
+  audio sections, `GET /v1/audio`, build revision in the image, certificate
+  expiry. Implemented 2026-11-21; target acceptance is open.
 - [ ] Implement bounded collectors/aggregation and deployment metadata
   provisioning for approved layouts; update the deployment and API guides.
 - [ ] Add the responsive Status overview, preserving existing sections and

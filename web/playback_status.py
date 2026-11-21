@@ -6,6 +6,7 @@ import ipaddress
 import json
 import math
 import re
+import socket
 import ssl
 import threading
 import time
@@ -16,6 +17,7 @@ from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_ope
 
 from mpdrussoundpi.common.tunein import TuneInCatalog
 from web.config_types import env_str
+from web.audio_status import Invalid as AudioInvalid, validate_audio_response
 from web.host_status import snapshot_view, validate_host_response
 from mpdrussoundpi.common.servicecredentials import read_service_token
 
@@ -25,6 +27,12 @@ REQUEST_TIMEOUT_SECONDS = 2.0
 # never touch the playback revision or its change events.
 HOST_POLL_INTERVAL_SECONDS = 10.0
 HOST_STALE_AFTER_SECONDS = HOST_POLL_INTERVAL_SECONDS * 3
+# The audio hardware description only changes with the configuration, so it is refetched
+# when the configuration revision changes and otherwise rarely. The proxy certificate is
+# observed with one verified TLS handshake per hour.
+AUDIO_POLL_INTERVAL_SECONDS = 60.0
+CERTIFICATE_POLL_INTERVAL_SECONDS = 3600.0
+KNOWN_READ_FEATURES = frozenset({"inventory", "playback", "now_playing", "audio_diagnostics", "host_info", "audio_info"})
 AGENT_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 WRITE_ACTIONS = {"play", "pause", "stop", "set_gain", "set_tunein_station", "select_favorite"}
 FAVORITE_ACTIONS = {"add_favorite", "remove_favorite", "move_favorite"}
@@ -201,6 +209,14 @@ class PlaybackStatusClient:
         self._host_received: float | None = None
         self._host_last_success_at: str | None = None
         self._host_due = 0.0
+        self._read_features: list[str] = []
+        self._audio: dict[str, Any] | None = None
+        self._audio_status = "pending"
+        self._audio_error: dict[str, str] | None = None
+        self._audio_due = 0.0
+        self._certificate_expires: float | None = None
+        self._certificate_status = "pending"
+        self._certificate_due = 0.0
 
     @property
     def agent_id(self) -> str:
@@ -253,6 +269,71 @@ class PlaybackStatusClient:
             elif status != "ok":
                 self._host_received = None
 
+    def overview_snapshot(self) -> dict[str, Any]:
+        """Agent facts for the Status overview: advertised features, audio hardware, certificate expiry."""
+        with self._lock:
+            audio, status, error = self._audio, self._audio_status, self._audio_error
+            features = list(self._read_features)
+            expires, certificate_status = self._certificate_expires, self._certificate_status
+        days_left = None if expires is None else int((expires - time.time()) // 86400)
+        return {
+            "agent_id": self._config.agent_id,
+            "read_features": features,
+            "audio": {"status": status, "error": error, "data": audio},
+            "certificate": {
+                "status": certificate_status,
+                "expires_at": None if expires is None else datetime.fromtimestamp(expires, timezone.utc)
+                .isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "days_left": days_left,
+            },
+        }
+
+    def _set_audio(self, status: str, error: str | None = None, audio: dict[str, Any] | None = None) -> None:
+        with self._lock:
+            self._audio_status = status
+            self._audio = audio
+            self._audio_error = None if error is None else {"code": error, "message": _error_message(error)}
+
+    def _poll_audio(self, supported: bool, config_revision: object) -> None:
+        if not supported:
+            self._set_audio("unsupported")
+            return
+        with self._lock:
+            current = self._audio
+        revision_changed = current is None or current["config_revision"] != config_revision
+        if not revision_changed and time.monotonic() < self._audio_due:
+            return
+        self._audio_due = time.monotonic() + AUDIO_POLL_INTERVAL_SECONDS
+        try:
+            response = self._get_json("/v1/audio")
+            _validate_identity(response, self._config.agent_id)
+            self._set_audio("ok", audio=validate_audio_response(response))
+        except AudioInvalid:
+            self._set_audio("unavailable", "invalid_agent_response")
+        except (HTTPError, URLError, TimeoutError, OSError, HTTPException, ValueError) as exc:
+            if isinstance(exc, HTTPError):
+                exc.close()
+            self._set_audio("unavailable", _error_code(exc))
+
+    def _poll_certificate(self) -> None:
+        if time.monotonic() < self._certificate_due:
+            return
+        self._certificate_due = time.monotonic() + CERTIFICATE_POLL_INTERVAL_SECONDS
+        parts = urlsplit(self._config.base_url)
+        if parts.scheme != "https" or not parts.hostname:
+            with self._lock:
+                self._certificate_status, self._certificate_expires = "not_applicable", None
+            return
+        try:
+            certificate = _peer_certificate(parts.hostname, parts.port or 443, self._ssl_context, REQUEST_TIMEOUT_SECONDS)
+            expires = float(ssl.cert_time_to_seconds(str(certificate["notAfter"])))
+        except (OSError, ssl.SSLError, KeyError, ValueError, TypeError):
+            with self._lock:
+                self._certificate_status, self._certificate_expires = "unavailable", None
+            return
+        with self._lock:
+            self._certificate_status, self._certificate_expires = "ok", expires
+
     def _poll_host(self, supported: bool) -> None:
         if not supported:
             self._set_host("unsupported")
@@ -285,8 +366,13 @@ class PlaybackStatusClient:
             capabilities = self._get_json("/v1/capabilities")
             _validate_identity(capabilities, self._config.agent_id)
             writes = _write_capabilities(capabilities.get("write_operations"))
-            features = capabilities.get("read_features")
-            host_supported = isinstance(features, list) and "host_info" in cast(list[Any], features)
+            raw_features = capabilities.get("read_features")
+            features = sorted(
+                item for item in cast(list[Any], raw_features if isinstance(raw_features, list) else [])
+                if isinstance(item, str) and item in KNOWN_READ_FEATURES
+            )
+            host_supported = "host_info" in features
+            audio_supported = "audio_info" in features
             if self._stop.is_set():
                 return False
             inventory = self._get_json("/v1/outputs")
@@ -305,6 +391,8 @@ class PlaybackStatusClient:
             snapshot["favorites"] = self._favorites() if "select_favorite" in writes else None
         except (HTTPError, URLError, TimeoutError, OSError, HTTPException, ValueError) as exc:
             code = _error_code(exc)
+            self._set_audio("unavailable", code)
+            self._audio_due = 0.0
             self._set_host("unavailable", code)
             self._host_due = 0.0
             with self._lock:
@@ -327,12 +415,15 @@ class PlaybackStatusClient:
             )
             self._status = "ok"
             self._error = None
+            self._read_features = features
             self._snapshot = snapshot
             self._write_operations = list(writes)
             self._last_success_at = _timestamp()
             if changed:
                 self._revision += 1
         self._poll_host(host_supported)
+        self._poll_audio(audio_supported, snapshot.get("config_revision"))
+        self._poll_certificate()
         return True
 
     def start(self) -> None:
@@ -568,6 +659,13 @@ def _validate_output(output: Any) -> None:
                 source = cast(dict[str, Any], probe).get("current_source")
                 if source is not None and not isinstance(source, str):
                     raise ValueError("invalid_agent_response")
+
+
+def _peer_certificate(host: str, port: int, context: ssl.SSLContext, timeout: float) -> dict[str, Any]:
+    """The verified peer certificate of the agent's TLS endpoint (only its validity dates are used)."""
+    with socket.create_connection((host, port), timeout=timeout) as raw:
+        with context.wrap_socket(raw, server_hostname=host) as tls:
+            return cast(dict[str, Any], tls.getpeercert())
 
 
 def _error_code(exc: Exception) -> str:

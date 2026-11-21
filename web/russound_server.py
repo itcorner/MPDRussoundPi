@@ -30,6 +30,8 @@ from web.config_types import backend_endpoint_metadata, coerce_russound_config, 
 from web.russound_backend import RussoundBackend
 from web.russound_controller import ConfigConflictError, RussoundController
 from web.russound_state import RussoundState
+from web import status_overview
+from web.russound_controller import backend_status_kind
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
 from mpdrussoundpi.common.tunein import TuneInCatalog, TuneInError
@@ -189,6 +191,7 @@ class RussoundHTTPServer:
         self._event_history: deque[dict[str, Any]] = deque(maxlen=50)
         self._event_history_lock = threading.Lock()
         self.playback_revision = 0
+        self._started_monotonic = time.monotonic()
         playback_configs = PlaybackAgentConfig.from_environment() if playback_clients is None else None
         self._playback_clients = playback_clients or [
             PlaybackStatusClient(config, self.broadcast_playback_change)
@@ -397,6 +400,10 @@ class RussoundHTTPServer:
         @app.get("/api/status/host")
         def api_status_host():
             return jsonify(self.build_host_status_payload())
+
+        @app.get("/api/status/overview")
+        def api_status_overview():
+            return self._no_store(jsonify(self.build_overview_payload()))
 
         @app.get("/api/events")
         def api_events():
@@ -1266,6 +1273,37 @@ class RussoundHTTPServer:
             "configured": bool(self._playback_clients),
             "hosts": [client.host_snapshot() for client in self._playback_clients],
         }
+
+    def build_overview_payload(self) -> dict[str, Any]:
+        """Component and audio sections from cached data only; nothing here probes hosts or hardware."""
+        moment = status_overview.now()
+        payload = self._read_state_payload()
+        config = payload.get("config") if isinstance(payload.get("config"), dict) else None
+        observed = self.controller.backend_health_observed_at()
+        observed_age = None
+        if observed is not None:
+            seconds = max(0, int(time.time() - observed))
+            observed_age = "just now" if seconds < 4 else f"{seconds} s ago" if seconds < 120 else f"{seconds // 60} min ago"
+        with self._event_clients_lock:
+            clients = len({client["session_id"] or f"stream-{client['id']}" for client in self._event_clients.values()})
+        sections = [
+            status_overview.web_section(
+                uptime_seconds=int(time.monotonic() - self._started_monotonic),
+                runtime="container" if Path("/.dockerenv").exists() else "native",
+                revision=os.environ.get("RUSSOUND_BUILD_REVISION"), clients=clients),
+            status_overview.gateway_section(
+                config=config,
+                effective_backend=backend_endpoint_metadata(coerce_russound_config(config)) if config else {},
+                kind=backend_status_kind(payload.get("backend_status")), observed_age=observed_age),
+        ]
+        if not self._playback_clients:
+            sections.append(status_overview.missing_agent_section())
+        for client in self._playback_clients:
+            agent = client.snapshot()["agents"][0]
+            extra = client.overview_snapshot()
+            sections.append(status_overview.agent_section(agent, extra, moment))
+            sections.append(status_overview.audio_section(agent, extra["audio"]))
+        return {**status_overview.compose(sections), "generated_at": moment.isoformat(timespec="seconds")}
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:

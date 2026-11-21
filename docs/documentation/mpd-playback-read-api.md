@@ -111,6 +111,7 @@ are a different domain, not defined by this read contract.
 | `GET /v1/outputs` | Inventory envelope |
 | `GET /v1/outputs/{output_id}` | Same envelope metadata with `output` instead of `outputs` |
 | `GET /v1/host` | Host information, only when `host_info` is advertised (see [Host information](#host-information)) |
+| `GET /v1/audio` | Audio hardware description, only when `audio_info` is advertised (see [Audio hardware](#audio-hardware)) |
 
 All routes require configured service authentication. Under selected D06,
 TLS terminates at Caddy on the Pi and forwards to the loopback-only agent; the
@@ -135,8 +136,8 @@ claim audio readiness. Configuration health is reported by inventory errors.
 `api_version`, `agent_id`, `epoch`, `read_features`, `write_operations`.
 
 Initial `read_features` lists `inventory`, `playback`, `now_playing`,
-`audio_diagnostics`, plus `host_info` when the agent serves `GET /v1/host`
-(an additive capability: clients that do not know it ignore it, and a client
+`audio_diagnostics`, plus `host_info` when the agent serves `GET /v1/host` and `audio_info` when it
+serves `GET /v1/audio` (additive capabilities: clients that do not know it ignore it, and a client
 must not call the route unless it is advertised); `write_operations` is `[]`. Metadata capability does not
 mean every station supplies tags. Optional diagnostics that are unsupported
 are omitted from the feature list and have explicit `unsupported` probe status.
@@ -203,6 +204,25 @@ route and capability off. The proxy must allow `GET`/`HEAD /v1/host`; a proxy
 from before this route returns 403 or 404 for it, which the web reports as
 `unavailable`. Fixture and schema:
 [host-info-v1.json](../../tests/fixtures/host-info-v1.json).
+
+### Audio hardware
+
+`GET /v1/audio` returns `api_version`, `agent_id`, `epoch`, `config_revision`,
+`devices` and `outputs`. It is built from the validated admin configuration at
+the revision named by `config_revision`, with an allowlist, so it changes only
+when the configuration does.
+
+| Field | Content |
+| --- | --- |
+| `devices[]` | One per configured sound card: `profile` (card profile, printable ASCII, at most 64 characters, or null), `usb` (`vendor` and `product`, four lowercase hex digits each, or null: a model identifier shared by every unit of the model) and `sinks[]` |
+| `sinks[]` | `id`, `description`, `card_channels` and `output_channels` (channel names such as `FL`, `FR`, `FC`, `LFE`, or null when unusual), `remix` |
+| `outputs[]` | `id` and `sink`: which sink each output plays through |
+
+**Never reported:** the device `name` (it can embed the USB serial number and
+bus path), serial numbers, file paths, ports and anything else in the file.
+`--disable-audio-info` turns the route and capability off. The proxy must allow
+`GET`/`HEAD /v1/audio`; an older proxy returns 403 or 404, which the web reports
+as unavailable. Fixture: [audio-info-v1.json](../../tests/fixtures/audio-info-v1.json).
 
 ### Probe object (playback and each audio subprobe)
 

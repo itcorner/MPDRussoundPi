@@ -223,6 +223,8 @@ class PlaybackAgentDeploymentTests(unittest.TestCase):
         # Host facts are read-only: the route sits in the GET/HEAD matcher, never with the write routes.
         read_matcher = readonly[readonly.index("@read_api"):readonly.index("handle @read_api")]
         self.assertIn("/v1/host", read_matcher)
+        self.assertIn("/v1/audio", read_matcher)
+        self.assertNotIn("/v1/audio", caddy.render(**variables, playback_proxy_enable_operations=True).split("@write_api")[1])
         self.assertNotIn("/v1/host", caddy.render(**variables, playback_proxy_enable_operations=True)
                          .split("@write_api")[1])
         self.assertNotIn("/v1/favorites/operations", readonly)

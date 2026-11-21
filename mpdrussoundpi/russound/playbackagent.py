@@ -25,6 +25,8 @@ def main() -> None:
     parser.add_argument("--enable-tunein-selection", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--disable-host-info", action="store_true",
                         help="Do not collect or serve host facts (GET /v1/host and the host_info capability)")
+    parser.add_argument("--disable-audio-info", action="store_true",
+                        help="Do not serve the audio hardware description (GET /v1/audio and the audio_info capability)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--allow-remote", action="store_true",
@@ -52,7 +54,7 @@ def main() -> None:
     observer = AgentObserver(args.json, backend=backend, controls_enabled=operations is not None)
     host = HostCollector() if not args.disable_host_info else None
     try:
-        app = create_app(observer, args.agent_id, token, operations, host)
+        app = create_app(observer, args.agent_id, token, operations, host, not args.disable_audio_info)
     except (OSError, ValueError):
         if operations is not None:
             operations.close()

@@ -40,6 +40,7 @@ Exceptions:
 - `GET /api/events` returns an event stream, not JSON
 - `GET /api/status` returns connected-client and event-history data, not the main controller view payload
 - `GET /api/status/host` returns validated host facts of each configured playback agent's host (see below)
+- `GET /api/status/overview` returns the component and audio sections of the Status page (see below)
 - `GET /api/playback`, `/api/playback/health`, and
   `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
   status payloads, independently of the Russound view payload
@@ -436,6 +437,28 @@ Response shape:
   ]
 }
 ```
+
+### GET /api/status/overview
+
+Returns the sections shown in the Status page's "System overview":
+`web` (uptime, runtime, build revision, live clients), `gateway` (transport,
+endpoint with its source, last hardware poll, controllers and zone counts), and
+per playback agent `agent:{id}` (connection, features, controls, TLS certificate
+expiry) and `audio:{id}` (per output: playback, station, stream format, audio
+route, device readiness, gain, MPD; plus the sound card model and channel
+mapping). Everything comes from cached data; a request never probes an agent,
+the gateway or the network, and the response is `no-store`.
+
+- Every section is `{id, title, level, summary, rows, groups}` with `level` one
+  of `ok`, `warning`, `problem`, `unknown`; rows are `{label, value, level}` and
+  every value is plain text. `overall` is the worst level of all sections.
+- Provenance is part of the text: the revision reads "reported by the build" (the
+  image carries it as `RUSSOUND_BUILD_REVISION`; otherwise "not reported by this
+  build"), the runtime "detected", and anything not available is "not reported".
+- The TLS certificate warns below 30 days and is a problem once expired.
+- **Never present:** the serial number or bus path of a sound card, device
+  paths, MPD ports, Wi-Fi details, MAC addresses and secrets. The sound card is
+  identified by profile and USB vendor:product only.
 
 ### GET /api/status/host
 

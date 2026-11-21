@@ -693,5 +693,84 @@ class PlaybackAgentHostRouteTests(unittest.TestCase):
         self.assertIn("--disable-host-info", result.stdout)
 
 
+class PlaybackAgentAudioRouteTests(unittest.TestCase):
+    def setUp(self):
+        from mpdrussoundpi.russound.lib.outputconfig import parse_configuration
+        from playbackfixtures import configuration
+        self.parse = lambda config: parse_configuration(json.dumps(config).encode())
+        self.config = self.parse(configuration())
+        self.backend = Mock()
+        self.backend.configuration_snapshot.return_value = (self.config, (), "a" * 64)
+        self.backend.favorites.return_value = ((), "a" * 64, "b" * 64)
+        self.observer = agent.AgentObserver("unused.json", backend=self.backend)
+        self.addCleanup(self.observer.close)
+        patcher = patch.object(agent, "PlaybackCollector", return_value=FakeCollector())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.auth = {"Authorization": "Bearer " + TOKEN}
+        self.client = agent.create_app(self.observer, "musicpi", TOKEN, audio=True).test_client()
+
+    def test_capability_is_opt_in_for_the_factory_and_listed_last(self):
+        self.assertEqual(self.client.get("/v1/capabilities", headers=self.auth).json["read_features"][-1], "audio_info")
+        plain = agent.create_app(self.observer, "musicpi", TOKEN).test_client()
+        self.assertNotIn("audio_info", plain.get("/v1/capabilities", headers=self.auth).json["read_features"])
+        self.assertEqual(plain.get("/v1/audio", headers=self.auth).status_code, 404)
+
+    def test_route_serves_the_cached_description_with_identity_and_revision(self):
+        self.assertEqual(self.client.get("/v1/audio", headers=self.auth).status_code, 503, "nothing observed yet")
+        self.observer.tick()
+        response = self.client.get("/v1/audio", headers=self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        body = response.json
+        self.assertEqual((body["api_version"], body["agent_id"], body["config_revision"]), (1, "musicpi", "a" * 64))
+        self.assertEqual(set(body), {"api_version", "agent_id", "epoch", "config_revision", "devices", "outputs"})
+        self.assertEqual([item["id"] for item in body["outputs"]], ["front", "rear"])
+        self.backend.configuration_snapshot.assert_called_once()  # the request never read the configuration
+
+    def test_route_requires_authentication_and_is_read_only(self):
+        self.observer.tick()
+        for headers in ({}, {"Authorization": "Bearer wrong"}):
+            self.assertEqual(self.client.get("/v1/audio", headers=headers).status_code, 401)
+        self.assertEqual(self.client.get("/v1/audio?x=1", headers=self.auth).status_code, 400)
+        self.assertEqual(self.client.post("/v1/audio", headers=self.auth, json={}).status_code, 405)
+
+    def test_description_follows_the_configuration_revision_and_clears_when_invalid(self):
+        self.observer.tick()
+        first = self.observer.audio_info()
+        self.observer._config_due = 0
+        self.observer.tick()
+        self.assertIs(self.observer.audio_info(), first, "an unchanged revision keeps the cached description")
+        changed = copy_config_with_output_label(self.parse)
+        self.backend.configuration_snapshot.return_value = (changed, (), "c" * 64)
+        self.observer._config_due = 0
+        self.observer.tick()
+        self.assertEqual(self.observer.audio_info()[0], "c" * 64)
+        self.backend.configuration_snapshot.side_effect = agent.BackendError("invalid")
+        self.observer._config_due = 0
+        self.observer.tick()
+        self.assertIsNone(self.observer.audio_info())
+        self.assertEqual(self.client.get("/v1/audio", headers=self.auth).status_code, 503)
+
+    def test_a_description_problem_never_breaks_the_playback_inventory(self):
+        with patch.object(agent, "describe_audio", side_effect=TypeError("unexpected shape")):
+            self.observer.tick()
+        self.assertIsNone(self.observer.audio_info())
+        self.assertEqual(self.observer.snapshot().error_code, "ok")
+        self.assertIsNotNone(self.observer.snapshot().outputs)
+
+    def test_command_line_can_disable_audio_information(self):
+        result = subprocess.run([sys.executable, "-m", "mpdrussoundpi.russound.playbackagent", "--help"],
+                                capture_output=True, text=True, timeout=20, cwd=SCRIPTS.parents[1])
+        self.assertIn("--disable-audio-info", result.stdout)
+
+
+def copy_config_with_output_label(parse):
+    from playbackfixtures import configuration
+    config = configuration()
+    config["outputs"][0]["label"] = "Renamed"
+    return parse(config)
+
+
 if __name__ == "__main__":
     unittest.main()

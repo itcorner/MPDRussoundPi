@@ -25,6 +25,15 @@
       </section>
 
       <section class="status-grid">
+        <article class="panel status-panel status-panel-wide" id="overviewPanel">
+          <div class="status-panel-header">
+            <h2 class="section-title">System overview</h2>
+            <span id="overviewLevel" class="status-pill host-level host-level-unknown">Unknown</span>
+          </div>
+          <div id="overviewEmpty" class="empty-copy">Loading overview…</div>
+          <div id="overviewList" class="status-list"></div>
+        </article>
+
         <article class="panel status-panel" id="hostPanel">
           <div class="status-panel-header">
             <h2 class="section-title">Host</h2>

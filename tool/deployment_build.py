@@ -400,6 +400,7 @@ def build(source: Path, revision: str, parent: Path, gateway: str, platform: str
                          "--platform", platform, "--network", "default" if allow_build_network else "none",
                          "--label", "org.opencontainers.image.revision=" + revision,
                          "--label", "org.opencontainers.image.source=" + SOURCE,
+                         "--build-arg", "BUILD_REVISION=" + revision,
                          "--tag", tag, "-f", DOCKERFILES[name], "."],
                         cwd=context_root / "context", log=log, timeout=1800)
                 inspected = json.loads(command(docker + ["image", "inspect", tag]))[0]
