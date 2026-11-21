@@ -10,6 +10,7 @@ const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
 const overviewUpdate = document.getElementById("overviewUpdate");
+const adminPanel = document.getElementById("adminPanel");
 const adminState = document.getElementById("adminState");
 const adminLoginForm = document.getElementById("adminLoginForm");
 const adminPassword = document.getElementById("adminPassword");
@@ -281,6 +282,7 @@ function overviewCard(section) {
 // Administrator session. The CSRF token stays in memory and is sent with every
 // privileged request; the password field is cleared after each attempt.
 let adminCsrfToken = null;
+let adminShownState = null;
 
 function minutesText(seconds) {
   const minutes = Math.max(1, Math.round(seconds / 60));
@@ -296,6 +298,14 @@ function renderAdmin(session) {
       : session.locked_for_seconds > 0 ? ["Locked", "warning"] : ["Not logged in", "unknown"];
   adminState.textContent = text;
   adminState.className = `status-pill host-level host-level-${level}`;
+  // Open the panel when a login is possible but not done; collapse it once logged
+  // in or when nothing can be done here. Only on a change of state, so a panel the
+  // user opened or closed stays that way across refreshes.
+  const shownState = !configured ? "setup" : authenticated ? "in" : "out";
+  if (shownState !== adminShownState) {
+    adminPanel.open = shownState === "out";
+    adminShownState = shownState;
+  }
   adminSetup.hidden = configured;
   adminLoginForm.hidden = !configured || authenticated;
   adminSession.hidden = !authenticated;
@@ -311,6 +321,12 @@ function renderAdmin(session) {
 function showAdminMessage(text) {
   adminMessage.textContent = text || "";
   adminMessage.hidden = !text;
+}
+
+function showAdminFailure(text) {
+  showAdminMessage(text);
+  // Back to the field, so the next attempt can be typed right away.
+  adminPassword.focus();
 }
 
 async function fetchAdminSession() {
@@ -349,10 +365,10 @@ async function submitAdminLogin(event) {
     if (response.ok) {
       renderAdmin(payload);
     } else {
-      showAdminMessage(payload.error && payload.error.message ? payload.error.message : "Login failed.");
+      showAdminFailure(payload.error && payload.error.message ? payload.error.message : "Login failed.");
     }
   } catch {
-    showAdminMessage("The server could not be reached.");
+    showAdminFailure("The server could not be reached.");
   }
   fetchAdminSession();
 }
@@ -374,7 +390,7 @@ let updateCheckInFlight = false;
 function updateCheckControl(action) {
   const row = document.createElement("div");
   row.className = "overview-action";
-  const button = textElement("button", "power-button", action.label);
+  const button = textElement("button", "compact-button", action.label);
   button.type = "button";
   button.disabled = !action.available || updateCheckInFlight;
   button.addEventListener("click", () => requestUpdateCheck());
