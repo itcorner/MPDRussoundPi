@@ -3,7 +3,7 @@
 ## Documentation
 
 Client for the updater service's Unix socket, stage 3 of the
-[web-triggered update plan](../../plans/general_new_user-triggered-image-updates.md).
+[web-triggered update plan](../../plans/general_open_user-triggered-image-updates.md).
 The socket is mounted read-only into the web container at
 `/run/mpdrussoundpi-updater/updater.sock` (`RUSSOUND_UPDATER_SOCKET` overrides
 it). When the socket is absent, installing updates from the page is reported as

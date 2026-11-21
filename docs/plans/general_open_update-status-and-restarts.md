@@ -8,14 +8,14 @@ still need the decisions below. Proposed as an idea on 2026-11-12.
 ## Goal
 
 Incorporate update information into the proposed
-[deployment status overview](./general_new_deployment-status-overview.md).
+[deployment status overview](./general_open_deployment-status-overview.md).
 Show whether the Pi base system or deployed Docker images have updates
 available, keep results in a backend-managed cache refreshed regularly, and
 provide a manual **Check for updates** button. Also offer explicitly authorized
 API actions to restart selected services or reboot the Raspberry Pi.
 
 This idea covers **checking**, not installing updates. The separate
-[user-triggered image updates idea](./general_new_user-triggered-image-updates.md)
+[user-triggered image updates idea](./general_open_user-triggered-image-updates.md)
 covers a possible future installation workflow; neither idea authorizes
 automatic upgrades, pulls, deployments or reboots.
 
@@ -136,7 +136,7 @@ implement; the decisions above stay open for everything else.
   restart/reboot actions are out of scope.
 - **Identity:** what the image was published as, baked in by CI
   (`RUSSOUND_BUILD_IMAGE`, `RUSSOUND_BUILD_VERSION`, see the
-  [overview plan](./general_new_deployment-status-overview.md)). Local builds and
+  [overview plan](./general_open_deployment-status-overview.md)). Local builds and
   builds without that identity are reported as not checked, never as up to date.
 - **Channels (decision 3):** a development image (`dev-<commit>`) is compared
   with the `dev` tag, which CI moves to every new `develop` build; a newer `dev`
@@ -164,7 +164,7 @@ implement; the decisions above stay open for everything else.
   keeps the level `ok`: it is information, not a fault. *Changed 2026-11-21:* the
   separate overview section was merged into that block, which also holds the
   administrator's "Update to …" button (see the
-  [installation plan](./general_new_user-triggered-image-updates.md)).
+  [installation plan](./general_open_user-triggered-image-updates.md)).
 
 ## Proposed stages and acceptance
 

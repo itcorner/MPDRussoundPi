@@ -1,6 +1,6 @@
 """Updater service on the Pi: web-triggered Docker image updates through the reviewed tooling.
 
-Stage 2 of docs/plans/general_new_user-triggered-image-updates.md. The service runs
+Stage 2 of docs/plans/general_open_user-triggered-image-updates.md. The service runs
 as root from the trusted tooling checkout (/opt/mpdrussoundpi-deploy). The web
 container reaches it only through a Unix socket in a directory mounted read-only
 into the container; the socket is group-restricted to the container's numeric

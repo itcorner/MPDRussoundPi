@@ -301,7 +301,7 @@ control-state replacement or production rollback was performed for S04.
 - Audio diagnostic refresh regressions verify a 20-second refresh interval
   against the unchanged 30-second stale threshold, delayed worker publication,
   genuine stale/error observations and blocked-job deduplication. See the
-  [diagnostic incident record](../plans/general_open_audio-diagnostic-freshness.md).
+  [diagnostic incident record](../plans/general_done_audio-diagnostic-freshness.md).
 - [Agent deployment tests](../../tests/test_playback_agent_deployment.py) perform
   static YAML/template validation only: loopback user unit, opt-in activation,
   isolated sources/venv, private credentials, no audio/MPD service operations

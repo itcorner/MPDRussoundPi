@@ -55,7 +55,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [MPD web integration](./plans/general_done_mpd-web-integration.md) | Manual integration complete with accepted limitations; holds the [deployment acceptance](./plans/general_done_mpd-web-integration.md#6-deployment-acceptance) record and Pi platform follow-ups |
 | [Hardware-driven playback automation](./plans/general_new_hardware-playback-automation.md) | Lower priority; former S10 and automation-specific acceptance, not implemented |
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
-| [Deployment and runtime configuration overview](./plans/general_new_deployment-status-overview.md) | In progress; host information first slice deployed and accepted on the Pi (network, Wi-Fi, CPU, memory, temperature, power, disk, clock); topology overview and its disclosure decisions still open |
+| [Deployment and runtime configuration overview](./plans/general_open_deployment-status-overview.md) | Open; host information first slice deployed and accepted on the Pi (network, Wi-Fi, CPU, memory, temperature, power, disk, clock); topology overview and its disclosure decisions still open |
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
 | [Update status and controlled restarts](./plans/general_open_update-status-and-restarts.md) | Open: read-only web image update check implemented; Pi packages and restarts still need authentication and privileged-action design |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
@@ -65,12 +65,13 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Moving the installation to another network](./plans/general_idea_network-relocation.md) | Idea; inventory of address, DNS, certificate and subnet dependencies and what breaks per scenario |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |
-| [User-triggered Docker image updates](./plans/general_new_user-triggered-image-updates.md) | In progress: admin login done; updater service next; single-Pi Docker installations only |
+| [User-triggered Docker image updates](./plans/general_open_user-triggered-image-updates.md) | Open: admin login, updater service and page flow rolled out; acceptance on the Pi in progress; single-Pi Docker installations only |
 | [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
 | [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |
 | [Playback egress hardening](./plans/mpd_done_playback-egress-hardening.md) | Deployed 2026-10-17 |
 | [USB audio recovery](./plans/usb_done_audio-recovery.md) | Deployed 2026-10-16 |
+| [Audio diagnostic freshness](./plans/general_done_audio-diagnostic-freshness.md) | Done 2026-11-14; fix deployed, diagnosis and six-hour acceptance passed |
 | [Web UI live-update rerender fix](./plans/web_done_live-update-rerender.md) | Implemented 2026-10-24 |
 | [API payload cleanup](./plans/web_done_api-payload-cleanup.md) | Implemented and deployed 2026-11-02; deprecated `/api/state` removed the same day |
 | [Long-uptime reliability backlog](./plans/web_done_reliability-backlog.md) | All 13 items done |

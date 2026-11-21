@@ -1,7 +1,7 @@
 # Audio diagnostic freshness: incident, correction and acceptance
 
-Status: **fix deployed; 15-minute diagnosis and repeat six-hour acceptance passed**
-(2026-11-14). This incident is separate from guided first-time setup.
+Status: **done** (2026-11-14): fix deployed; 15-minute diagnosis and repeat
+six-hour acceptance passed. This incident is separate from guided first-time setup.
 
 ## Finding and provenance
 

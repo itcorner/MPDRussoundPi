@@ -3,7 +3,7 @@
 ## Documentation
 
 Administrator login for privileged actions, stage 1 of the
-[web-triggered update plan](../../plans/general_new_user-triggered-image-updates.md).
+[web-triggered update plan](../../plans/general_open_user-triggered-image-updates.md).
 One shared password, stored only as an scrypt hash (memory-hard, per-hash salt)
 in a file in the secrets mount. The file is re-read when it changes, so a local
 reset with `python -m web.admin_auth set` (or `hash` piped into the secrets

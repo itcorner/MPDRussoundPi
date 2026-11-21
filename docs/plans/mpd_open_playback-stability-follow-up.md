@@ -68,7 +68,7 @@ the November 11 Wi-Fi event is not proof of cause.
 - [ ] Design optional, sanitized agent/web visibility for watchdog events and
   rate-limit/deferral status, compatible with the existing read API, caching,
   freshness, privacy and proxy contracts. Coordinate with
-  [deployment overview](./general_new_deployment-status-overview.md) and
+  [deployment overview](./general_open_deployment-status-overview.md) and
   [guided diagnostics](./general_idea_guided-diagnostics.md).
 - [ ] Test absent, stale, malformed and bounded event history; ensure reads do
   not cause recovery actions and never claim health merely from active units.
