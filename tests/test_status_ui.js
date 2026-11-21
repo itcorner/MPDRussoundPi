@@ -373,6 +373,20 @@ test("overview details keep their open state across refreshes", () => {
   assert.equal(card().find((node) => node.tagName === "DETAILS").open, true);
 });
 
+test("a Docker Hub link is rendered as a link, any other address stays text", () => {
+  const link = (url) => ({ overall: "ok", sections: [{ id: "web", title: "Web", level: "ok", summary: "", groups: [],
+    rows: [{ label: "Docker Hub", value: "Open this tag", level: "", link: url }] }] });
+  const good = renderOverviewPayload(link("https://hub.docker.com/r/ns/mpdrussoundpi-web/tags?name=1.0.0"));
+  const anchor = good.overviewList.find((node) => node.tagName === "A");
+  assert.equal(anchor.getAttribute("href"), "https://hub.docker.com/r/ns/mpdrussoundpi-web/tags?name=1.0.0");
+  assert.equal(anchor.getAttribute("rel"), "noopener noreferrer");
+  assert.equal(anchor.textContent, "Open this tag");
+  for (const bad of ["javascript:alert(1)", "https://evil.example/r/x", "http://hub.docker.com/r/x"]) {
+    const view = renderOverviewPayload(link(bad));
+    assert.equal(view.overviewList.find((node) => node.tagName === "A"), null, bad);
+  }
+});
+
 test("an empty overview shows the placeholder and an unknown level", () => {
   const view = renderOverviewPayload({ overall: "weird", sections: [] });
   assert.equal(view.overviewEmpty.hidden, false);

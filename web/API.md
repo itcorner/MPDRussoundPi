@@ -455,7 +455,15 @@ the gateway or the network, and the response is `no-store`.
 - Provenance is part of the text: the revision reads "reported by the build" (the
   image carries it as `RUSSOUND_BUILD_REVISION`, the build time and source
   (`ci` or `local`) as `RUSSOUND_BUILD_TIME` and `RUSSOUND_BUILD_SOURCE`;
-  anything missing or malformed reads "not reported by this build"), the runtime "detected", and anything not available is "not reported".
+  anything missing or malformed reads "not reported by this build"). CI images
+  also carry the registry image name and exact tag (`RUSSOUND_BUILD_IMAGE`,
+  `RUSSOUND_BUILD_VERSION`); a valid pair (`<namespace>/mpdrussoundpi-<name>` with
+  `dev-<commit>` or `X.Y.Z[-rc.N]`) is shown as "Development image", "Release
+  candidate" or "Release" with a row that links to that tag on Docker Hub (the
+  only kind of link the page renders). Local builds read "local build, not
+  published to a registry". The values are what the image was published as at
+  build time; the page cannot see which registry digest the container was started
+  from, the runtime "detected", and anything not available is "not reported".
 - The TLS certificate warns below 30 days and is a problem once expired.
 - **Never present:** the serial number or bus path of a sound card, device
   paths, MPD ports, Wi-Fi details, MAC addresses and secrets. The sound card is

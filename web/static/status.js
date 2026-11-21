@@ -196,10 +196,16 @@ function overviewRows(rows) {
   list.className = "host-rows";
   for (const row of rows) {
     const flagged = hostLevelText[row.level] && row.level !== "ok";
-    list.append(
-      textElement("dt", "", row.label),
-      textElement("dd", flagged ? `host-row-${row.level}` : "", flagged ? `${row.value} (${hostLevelText[row.level]})` : row.value),
-    );
+    const value = textElement("dd", flagged ? `host-row-${row.level}` : "", flagged ? `${row.value} (${hostLevelText[row.level]})` : row.value);
+    if (typeof row.link === "string" && row.link.startsWith("https://hub.docker.com/r/")) {
+      // Only a Docker Hub address from the server becomes a link; the text stays text.
+      const anchor = textElement("a", "", row.value);
+      anchor.setAttribute("href", row.link);
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener noreferrer");
+      value.replaceChildren(anchor);
+    }
+    list.append(textElement("dt", "", row.label), value);
   }
   return list;
 }
