@@ -48,6 +48,7 @@ CSRF_HEADER = "X-CSRF-Token"
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 15, 8, 1
 SCRYPT_MAXMEM = 64 * 1024 * 1024
 MIN_PASSWORD_LENGTH = 12
+MIN_SHORT_PASSWORD_LENGTH = 4  # e.g. a 4-digit PIN, only with --allow-short
 MAX_PASSWORD_LENGTH = 256
 MAX_FAILURES = 5
 LOCK_SECONDS = 15 * 60
@@ -326,12 +327,17 @@ def _short_key(session_id: str) -> str:
 
 # ------------------------------------------------------------- local command
 
-def _read_new_password() -> str:
+def _read_new_password(allow_short: bool = False) -> str:
     first = getpass.getpass("New administrator password: ")
-    if not MIN_PASSWORD_LENGTH <= len(first) <= MAX_PASSWORD_LENGTH:
-        raise SystemExit(f"Use between {MIN_PASSWORD_LENGTH} and {MAX_PASSWORD_LENGTH} characters.")
+    minimum = MIN_SHORT_PASSWORD_LENGTH if allow_short else MIN_PASSWORD_LENGTH
+    if not minimum <= len(first) <= MAX_PASSWORD_LENGTH:
+        hint = "" if allow_short else f" (--allow-short accepts {MIN_SHORT_PASSWORD_LENGTH} or more, e.g. a PIN)"
+        raise SystemExit(f"Use between {minimum} and {MAX_PASSWORD_LENGTH} characters{hint}.")
     if getpass.getpass("Repeat the password: ") != first:
         raise SystemExit("The passwords differ; nothing was changed.")
+    if len(first) < MIN_PASSWORD_LENGTH:
+        print(f"Warning: a password shorter than {MIN_PASSWORD_LENGTH} characters is protected online only by the "
+              "login lockout, and can be guessed offline quickly if the hash file is ever copied.", file=sys.stderr)
     return first
 
 
@@ -344,9 +350,13 @@ def main(argv: list[str] | None = None) -> int:
     write.add_argument("--file", required=True, help="hash file in the deployment's secrets directory")
     write.add_argument("--uid", type=int, help="numeric owner (the web service user, e.g. 10001)")
     write.add_argument("--gid", type=int, help="numeric group")
-    commands.add_parser("hash", help="print a hash line to standard output, e.g. to pipe into sudo tee")
+    show = commands.add_parser("hash", help="print a hash line to standard output, e.g. to pipe into sudo tee")
+    for command in (write, show):
+        command.add_argument("--allow-short", action="store_true",
+                             help=f"accept {MIN_SHORT_PASSWORD_LENGTH} to {MIN_PASSWORD_LENGTH - 1} characters, "
+                                  "e.g. a 4-digit PIN (weaker: see the warning)")
     args = parser.parse_args(argv)
-    encoded = hash_password(_read_new_password())
+    encoded = hash_password(_read_new_password(args.allow_short))
     if args.command == "hash":
         print(encoded)
         return 0

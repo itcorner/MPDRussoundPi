@@ -436,7 +436,11 @@ sudo chown <service uid>:<service gid> /path/to/data/secrets/russound-admin.scry
 sudo chmod 0400 /path/to/data/secrets/russound-admin.scrypt
 ```
 
-The password needs at least 12 characters. Five failed attempts in total lock the
+The password needs at least 12 characters. `--allow-short` accepts 4 or more
+(for example a 4-digit PIN): online guessing is still slowed by the lockout
+(5 tries per 15 minutes, so about 10 days on average for a 4-digit PIN), but a
+copied hash file reveals a PIN within minutes, and the lockout can be triggered
+deliberately to keep the login closed. Five failed attempts in total lock the
 login for 15 minutes (attempts during the lock extend it); the reset above is the
 recovery. Sessions end after 15 minutes without activity and after 8 hours at the
 latest. Logins, failures and logouts are recorded in `admin-audit.log` next to
