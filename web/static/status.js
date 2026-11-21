@@ -9,6 +9,7 @@ const hostList = document.getElementById("hostList");
 const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
+const overviewUpdate = document.getElementById("overviewUpdate");
 
 let eventSource = null;
 let eventSourceRetryTimer = null;
@@ -245,6 +246,9 @@ function overviewCard(section) {
   if (section.note) {
     item.appendChild(textElement("div", "status-meta", section.note));
   }
+  if (section.action && section.action.id === "check-updates") {
+    item.appendChild(updateCheckControl(section.action));
+  }
   const groups = section.groups || [];
   if (section.rows.length || groups.length) {
     const details = overviewDetails(section.id, "Details");
@@ -266,12 +270,50 @@ function overviewCard(section) {
   return item;
 }
 
+// The only action the overview offers: ask the server to check for updates now.
+// The server coalesces and rate-limits requests; nothing is installed.
+let updateCheckInFlight = false;
+
+function updateCheckControl(action) {
+  const row = document.createElement("div");
+  row.className = "overview-action";
+  const button = textElement("button", "power-button", action.label);
+  button.type = "button";
+  button.disabled = !action.available || updateCheckInFlight;
+  button.addEventListener("click", () => requestUpdateCheck());
+  row.appendChild(button);
+  if (action.note) {
+    row.appendChild(textElement("span", "status-meta", action.note));
+  }
+  return row;
+}
+
+async function requestUpdateCheck() {
+  if (updateCheckInFlight) {
+    return;
+  }
+  updateCheckInFlight = true;
+  try {
+    await apiFetch("/api/status/updates/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch {
+    // The overview shows the result or the failure on the next refresh.
+  } finally {
+    updateCheckInFlight = false;
+    fetchOverview();
+  }
+}
+
 function renderOverview(payload) {
   const sections = payload.sections || [];
   overviewEmpty.hidden = sections.length !== 0;
   const overall = hostLevelText[payload.overall] ? payload.overall : "unknown";
   overviewLevel.textContent = hostLevelText[overall];
   overviewLevel.className = `status-pill host-level host-level-${overall}`;
+  overviewUpdate.hidden = payload.update_available !== true;
   overviewList.replaceChildren();
   for (const section of sections) {
     overviewList.appendChild(overviewCard(section));

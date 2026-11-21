@@ -45,7 +45,7 @@ An unresponsive web process cannot render its own page; document an external
 fallback for that case rather than showing a misleading “web healthy” result.
 Protect operational details and redact secrets under the overview's disclosure
 policy. Actual recovery actions belong to the separately authorized
-[restart idea](./general_idea_update-status-and-restarts.md), not diagnostics.
+[restart idea](./general_open_update-status-and-restarts.md), not diagnostics.
 
 ## Decisions and acceptance
 

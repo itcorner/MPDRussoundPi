@@ -367,6 +367,7 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_ALLOWED_HOSTS` | Comma-separated `Host` names/IPs accepted (blocks DNS rebinding); empty accepts any | empty |
 | `RUSSOUND_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to send API writes, e.g. `https://music.example` | empty |
 | `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |
+| `RUSSOUND_UPDATE_CHECK` | `off` stops the read-only check for a newer published web image on Docker Hub (Status page, every 6 h); local builds are never checked | `on` |
 
 Core server settings also have command-line flags (`--host`, `--port`,
 `--config`, `--state`, `--debug`). Explicit host, port, config and state flags

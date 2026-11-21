@@ -35,7 +35,7 @@ rollback and data/schema recovery rehearsal when evaluating the update path;
 do not assume an earlier schema or binary can read newer persisted state.
 
 Share installed-image identity, release channels and cached availability with
-the [update status idea](./general_idea_update-status-and-restarts.md), rather
+the [update status idea](./general_open_update-status-and-restarts.md), rather
 than independently checking registries. A check, an install and a restart are
 separate actions; a check never installs. The
 [deployment simplification plan](./general_done_simplify-deployment-configuration.md)

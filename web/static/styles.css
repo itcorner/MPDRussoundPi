@@ -1227,6 +1227,26 @@ h1 {
   color: var(--muted);
 }
 
+.collapsible-summary .update-pill {
+  background: rgba(91, 185, 255, 0.16);
+}
+
+.collapsible-summary .update-pill:not([hidden]) + .status-pill {
+  margin-left: 0;
+}
+
+.overview-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.overview-action .status-meta {
+  margin-top: 0;
+}
+
 .overview-subtitle {
   margin: 0 0 0.6rem;
   font-size: 1rem;
@@ -1646,4 +1666,8 @@ input[type="range"] {
   .app-shell {
     padding: 0.9rem;
   }
+}
+.overview-action button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

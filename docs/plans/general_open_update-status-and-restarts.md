@@ -1,6 +1,9 @@
-# Idea: update status and controlled restarts
+# Update status and controlled restarts
 
-Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
+Status: **open** (2026-11-21). The first slice, a read-only update check for the
+web image, is implemented (see [First slice](#first-slice-web-image-update-check-2026-11-21)).
+Pi package updates and every restart or reboot action remain unimplemented and
+still need the decisions below. Proposed as an idea on 2026-11-12.
 
 ## Goal
 
@@ -123,14 +126,52 @@ always reachable; certificate verification must remain enabled.
    operation record kept, and how are self-restart, power loss and ambiguous
    outcomes recovered without duplicate execution?
 
+## First slice: web image update check (2026-11-21)
+
+Scope and decisions taken for this slice, as the defaults the user asked to
+implement; the decisions above stay open for everything else.
+
+- **Scope:** the running web image only. Pi packages (needs an agent route and an
+  apt index decision), the ser2net image (the web cannot see its identity) and all
+  restart/reboot actions are out of scope.
+- **Identity:** what the image was published as, baked in by CI
+  (`RUSSOUND_BUILD_IMAGE`, `RUSSOUND_BUILD_VERSION`, see the
+  [overview plan](./general_new_deployment-status-overview.md)). Local builds and
+  builds without that identity are reported as not checked, never as up to date.
+- **Channels (decision 3):** a development image (`dev-<commit>`) is compared
+  with the `dev` tag, which CI moves to every new `develop` build; a newer `dev`
+  image counts as an update only if it was published after this build. A release
+  or release candidate is compared with `latest` (newest stable release) by
+  version; a release is newer than its own candidates. A development image is
+  never offered a stable release and vice versa.
+- **Who sees and who triggers (decision 1):** the check is read-only, reveals only
+  public tag names, and installs nothing, so the Status page shows it without a
+  login. The manual **Check now** button uses the existing same-origin POST
+  guard and is coalesced and rate-limited (one check per 60 s).
+- **Frequency (decision 4):** first check 60 s after start, then every 6 hours;
+  results are stale after 24 hours or after a failed check, and are kept in memory
+  only (a restarted web process starts as "not checked yet").
+- **Executor (decision 5):** the web process, through the shared read-only
+  client `mpdrussoundpi.common.imageregistry` (also used by the deployment
+  tooling, so there is one registry checker). It contacts only Docker Hub's token
+  and registry endpoints for the project's repository; certificate verification
+  stays on. `RUSSOUND_UPDATE_CHECK=off` turns it off.
+- **Display:** a "Software updates" section in the System overview (installed
+  tag, compared channel, newest published tag with its age, status, last and next
+  check, a Docker Hub link to the newer tag) and an "Update available" badge in the
+  overview header. An available update keeps the level `ok`: it is information,
+  not a fault. Installation stays the reviewed deployment update.
+
 ## Proposed stages and acceptance
 
 - [ ] Agree on disclosure, authorization, targets, update policies and supported
   deployment layouts; model host/image identity and action prerequisites.
 - [ ] Define versioned, allowlisted APIs and cached result/operation state
   machines with mixed-version, offline and restart recovery behavior.
-- [ ] Implement bounded, read-only update checks and the overview UI; do not
-  introduce package or image installation.
+- [x] Implement bounded, read-only update checks and the overview UI for the
+  web image; no package or image installation (2026-11-21, first slice).
+- [ ] Read-only update checks for the Pi base system (and other images whose
+  identity can be established).
 - [ ] Design and implement separately gated, least-privilege restart/reboot
   operations only after administrator authentication and target safeguards
   exist; update deployment and operational documentation.

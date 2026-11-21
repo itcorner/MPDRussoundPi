@@ -359,6 +359,63 @@ def audio_section(agent: dict[str, Any], audio: dict[str, Any]) -> dict[str, Any
     return _section(f"audio:{identifier}", title, level, summary, rows, groups)
 
 
+# ---------------------------------------------------------------- software updates
+
+UPDATE_TEXT = {
+    "up_to_date": ("Up to date", "ok"),
+    "update_available": ("Update available", "ok"),
+    "pending": ("Not checked yet", "unknown"),
+    "checking": ("Checking…", "unknown"),
+    "check_failed": ("Check failed", "unknown"),
+    "unsupported": ("Not checked", "unknown"),
+    "disabled": ("Turned off", "unknown"),
+}
+CHANNEL_TEXT = {"dev": "Development images (the dev tag on Docker Hub)", "latest": "Stable releases (the latest tag on Docker Hub)"}
+
+
+def updates_section(updates: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """Software updates of the web image. An available update is information, not a fault: level stays ok."""
+    state = updates.get("state") if updates.get("state") in UPDATE_TEXT else "unsupported"
+    text, level = UPDATE_TEXT[state]
+    rows: list[dict[str, Any]] = []
+    installed = updates.get("installed") if isinstance(updates.get("installed"), dict) else None
+    result = updates.get("result") if isinstance(updates.get("result"), dict) else None
+    available = result.get("available") if result and isinstance(result.get("available"), dict) else None
+    if installed:
+        rows.append(_row("Installed", f"{installed['image']}:{installed['version']}"))
+    channel = CHANNEL_TEXT.get(str(updates.get("channel")))
+    if channel:
+        rows.append(_row("Compared with", channel))
+    if available and state in ("up_to_date", "update_available", "checking", "check_failed"):
+        published = _age(available.get("published_at"), now) if available.get("published_at") else None
+        value = str(available["version"]) + (f" (published {published})" if published else "")
+        rows.append(_row("Newest published", value))
+        if state == "update_available" or (result and result.get("state") == "update_available"):
+            rows.append({**_row("Docker Hub", "Open the newer tag on Docker Hub"), "link": str(available["link"])})
+    rows.append(_row("Status", text + (" (last known result, may be outdated)" if updates.get("stale") else ""),
+                     level if state != "check_failed" else "warning"))
+    if updates.get("check_failed"):
+        rows.append(_row("Last check", str(updates.get("error") or "Check failed."), "warning"))
+    elif updates.get("checked_at"):
+        rows.append(_row("Last check", _age(updates["checked_at"], now) or "unknown"))
+    if updates.get("reason"):
+        rows.append(_row("Note", str(updates["reason"])))
+    if updates.get("next_check_at") and state not in ("unsupported", "disabled"):
+        moment = str(updates["next_check_at"])
+        rows.append(_row("Next automatic check", moment[11:16] + " UTC" if len(moment) >= 16 else moment))
+    rows.append(_row("Installing updates", "Not from this page: use the reviewed deployment update."))
+    summary = text
+    if state == "update_available" and available:
+        summary = f"Update available: {available['version'][:11]}" + ("…" if len(str(available["version"])) > 11 else "")
+    section = _section("updates", "Software updates", level, summary, rows)
+    manual = updates.get("manual_check") if isinstance(updates.get("manual_check"), dict) else {}
+    if state not in ("unsupported", "disabled"):
+        wait = manual.get("retry_after_seconds") if isinstance(manual.get("retry_after_seconds"), int) else 0
+        section["action"] = {"id": "check-updates", "label": "Check now", "available": bool(manual.get("available")),
+                             "note": "" if manual.get("available") else ("Checking…" if state == "checking" else f"Available again in {wait} s")}
+    return section
+
+
 def compose(sections: list[dict[str, Any]], extra_levels: list[str] | None = None) -> dict[str, Any]:
     """``extra_levels`` are levels of cards shown in the same panel (the host cards) that are not sections."""
     levels = [section["level"] for section in sections] + list(extra_levels or [])

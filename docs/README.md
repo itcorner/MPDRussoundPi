@@ -57,7 +57,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Live stream level meter](./plans/general_idea_live-level-meter.md) | Idea, not scheduled |
 | [Deployment and runtime configuration overview](./plans/general_new_deployment-status-overview.md) | In progress; host information first slice deployed and accepted on the Pi (network, Wi-Fi, CPU, memory, temperature, power, disk, clock); topology overview and its disclosure decisions still open |
 | [Effective configuration and environment overrides](./plans/web_done_effective-config-overrides.md) | Implemented, test-deployed and phone-accepted; release and screen-reader checks follow |
-| [Update status and controlled restarts](./plans/general_idea_update-status-and-restarts.md) | Idea, not scheduled; authentication and privileged-action design required |
+| [Update status and controlled restarts](./plans/general_open_update-status-and-restarts.md) | Open: read-only web image update check implemented; Pi packages and restarts still need authentication and privileged-action design |
 | [Simplify deployment and configuration](./plans/general_done_simplify-deployment-configuration.md) | S0–S5 complete; Pi handover and rollback validated; six-hour observation passed |
 | [Package layout and single module names](./plans/general_done_package-layout.md) | Done 2026-11-20; one module name, installable package, deployed; transition bootstrap removed |
 | [Guided first-time setup](./plans/general_open_guided-first-time-setup.md) | Open; config revision checks, load states, durable writes and the config/state store implemented; next: rest of the I0 inventory, preview and the config/state transaction before the wizard UI |
