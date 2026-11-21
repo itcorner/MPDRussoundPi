@@ -162,10 +162,15 @@ server.serve_forever()
                     )
 
                     def wait_ready(container):
-                        deadline = time.monotonic() + 40
+                        deadline = time.monotonic() + 90
+                        result = None
                         while time.monotonic() < deadline:
-                            result = subprocess.run([DOCKER, "exec", container, "python", "-c", probe],
-                                                    env=environment, capture_output=True, text=True, timeout=15)
+                            try:
+                                result = subprocess.run([DOCKER, "exec", container, "python", "-c", probe],
+                                                        env=environment, capture_output=True, text=True, timeout=15)
+                            except subprocess.TimeoutExpired as timed_out:
+                                # Emulated arm64 starts Python slowly; a slow probe means "not ready yet".
+                                result = subprocess.CompletedProcess(timed_out.cmd, 1, "", "probe timed out")
                             if result.returncode == 0:
                                 return
                             state = json.loads(run([DOCKER, "inspect", container]))[0]["State"]
