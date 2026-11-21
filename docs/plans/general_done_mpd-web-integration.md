@@ -855,7 +855,7 @@ the [deployment guide](../documentation/playback-agent-deployment.md).
 - Public IPv6 testing is not required for this closure. IPv6 playback on an
   IPv6-capable network remains unverified.
 - Cross-version rollback is deferred to update-path evaluation and tracked in
-  the [image updates idea](./general_idea_user-triggered-image-updates.md).
+  the [image updates idea](./general_new_user-triggered-image-updates.md).
   The completed same-version restore does not validate downgrade compatibility.
 
 ### Acceptance limitations and handover

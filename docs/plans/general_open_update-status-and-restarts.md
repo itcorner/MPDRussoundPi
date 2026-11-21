@@ -15,7 +15,7 @@ provide a manual **Check for updates** button. Also offer explicitly authorized
 API actions to restart selected services or reboot the Raspberry Pi.
 
 This idea covers **checking**, not installing updates. The separate
-[user-triggered image updates idea](./general_idea_user-triggered-image-updates.md)
+[user-triggered image updates idea](./general_new_user-triggered-image-updates.md)
 covers a possible future installation workflow; neither idea authorizes
 automatic upgrades, pulls, deployments or reboots.
 
@@ -146,7 +146,8 @@ implement; the decisions above stay open for everything else.
   never offered a stable release and vice versa.
 - **Who sees and who triggers (decision 1):** the check is read-only, reveals only
   public tag names, and installs nothing, so the Status page shows it without a
-  login. The manual **Check now** button uses the existing same-origin POST
+  login. Confirmed 2026-11-21 against the unmerged 2026-11-16 preparation, which
+  had made manual checks administrator-only: "Check now" stays public. The manual **Check now** button uses the existing same-origin POST
   guard and is coalesced and rate-limited (one check per 60 s).
 - **Frequency (decision 4):** first check 60 s after start, then every 6 hours;
   results are stale after 24 hours or after a failed check, and are kept in memory
