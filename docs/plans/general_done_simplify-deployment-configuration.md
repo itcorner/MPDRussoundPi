@@ -2096,7 +2096,7 @@ ambiguous or incomplete pairs and unknown prior identity explicitly; do not
 infer "up to date" from an error. Checks do not pull, deploy or change the
 committed pin. Share the record and check results with
 [user-triggered updates](./general_idea_user-triggered-image-updates.md) and
-[update status](./general_idea_update-status-and-restarts.md), rather than
+[update status](./general_open_update-status-and-restarts.md), rather than
 independently deriving deployment history. Production stable `latest`
 selection remains blocked until approved stable releases are published.
 
@@ -4016,7 +4016,7 @@ S5 gates and final legacy retirement are not marked complete by this trial.
   Report absent hardware or unavailable stable images as unverified, not passed.
 
 Related: [deployment status](./general_new_deployment-status-overview.md),
-[update status and restarts](./general_idea_update-status-and-restarts.md),
+[update status and restarts](./general_open_update-status-and-restarts.md),
 [image release pipeline](./general_open_cicd-docker-release.md), and
 [agent containerization](./mpd_new_agent-containerization.md).
 

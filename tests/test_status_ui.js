@@ -325,6 +325,7 @@ test("no configured agent renders no host card", () => {
 function renderOverviewPayload(payload, existing) {
   const elements = existing || {
     overviewList: new FakeElement("div"), overviewEmpty: new FakeElement("p"), overviewLevel: new FakeElement("span"),
+    overviewUpdate: new FakeElement("span"),
   };
   const context = existing ? existing.context : {
     ...elements,
@@ -385,6 +386,24 @@ test("a Docker Hub link is rendered as a link, any other address stays text", ()
     const view = renderOverviewPayload(link(bad));
     assert.equal(view.overviewList.find((node) => node.tagName === "A"), null, bad);
   }
+});
+
+test("the update badge and the check button follow the server", () => {
+  const section = (action) => ({ id: "updates", title: "Software updates", level: "ok", summary: "Update available: dev-1234567",
+    rows: [], groups: [], action });
+  const view = renderOverviewPayload({ overall: "ok", update_available: true,
+    sections: [section({ id: "check-updates", label: "Check now", available: true, note: "" })] });
+  assert.equal(view.overviewUpdate.hidden, false);
+  const button = view.overviewList.find((node) => node.tagName === "BUTTON");
+  assert.equal(button.textContent, "Check now");
+  assert.equal(button.disabled, false);
+  const waiting = renderOverviewPayload({ overall: "ok", update_available: false,
+    sections: [section({ id: "check-updates", label: "Check now", available: false, note: "Available again in 40 s" })] });
+  assert.equal(waiting.overviewUpdate.hidden, true);
+  assert.equal(waiting.overviewList.find((node) => node.tagName === "BUTTON").disabled, true);
+  assert.match(waiting.overviewList.allText(), /Available again in 40 s/);
+  const unknown = renderOverviewPayload({ overall: "ok", sections: [section({ id: "reboot", label: "Reboot", available: true })] });
+  assert.equal(unknown.overviewList.find((node) => node.tagName === "BUTTON"), null, "only the known action renders");
 });
 
 test("an empty overview shows the placeholder and an unknown level", () => {

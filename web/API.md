@@ -41,6 +41,7 @@ Exceptions:
 - `GET /api/status` returns connected-client and event-history data, not the main controller view payload
 - `GET /api/status/host` returns validated host facts of each configured playback agent's host (see below)
 - `GET /api/status/overview` returns the component and audio sections of the Status page (see below)
+- `GET /api/status/updates` returns the cached web image update check; `POST /api/status/updates/check` asks for a check now (see below)
 - `GET /api/playback`, `/api/playback/health`, and
   `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
   status payloads, independently of the Russound view payload
@@ -468,6 +469,24 @@ the gateway or the network, and the response is `no-store`.
 - **Never present:** the serial number or bus path of a sound card, device
   paths, MPD ports, Wi-Fi details, MAC addresses and secrets. The sound card is
   identified by profile and USB vendor:product only.
+
+### GET /api/status/updates and POST /api/status/updates/check
+
+The cached result of the read-only web image update check (see the
+[plan](../docs/plans/general_open_update-status-and-restarts.md#first-slice-web-image-update-check-2026-11-21)).
+`state` is `pending`, `checking`, `up_to_date`, `update_available`,
+`check_failed`, `unsupported` (local build or no published identity, with a
+`reason`) or `disabled` (`RUSSOUND_UPDATE_CHECK=off`). `result.available` names the
+newest published tag of the compared channel (`dev` or `latest`), its revision,
+publication time and Docker Hub link. A failed check keeps the last result with
+`check_failed: true` and `stale: true`; the error text is fixed. Nothing is ever
+pulled or installed. The overview also carries this as the "Software updates"
+section and a top-level `update_available` flag.
+
+`POST /api/status/updates/check` (JSON body `{}`, same-origin) requests a check:
+`202` when accepted or already running (requests coalesce), `429` with
+`Retry-After` within 60 s of the previous check, `409` when the image cannot be
+checked. The response carries the current snapshot as `updates`.
 
 ### GET /api/status/host
 

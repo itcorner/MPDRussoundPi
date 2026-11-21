@@ -31,6 +31,7 @@ from web.russound_backend import RussoundBackend
 from web.russound_controller import ConfigConflictError, RussoundController
 from web.russound_state import RussoundState
 from web import status_overview
+from web.update_status import UpdateChecker
 from web.russound_controller import backend_status_kind
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
@@ -169,6 +170,7 @@ class RussoundHTTPServer:
         trusted_proxy_count: int = 0,
         max_event_streams: int | None = None,
         playback_clients: list[PlaybackStatusClient] | None = None,
+        update_checker: UpdateChecker | None = None,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
@@ -192,6 +194,7 @@ class RussoundHTTPServer:
         self._event_history_lock = threading.Lock()
         self.playback_revision = 0
         self._started_monotonic = time.monotonic()
+        self._updates = update_checker or UpdateChecker()
         playback_configs = PlaybackAgentConfig.from_environment() if playback_clients is None else None
         self._playback_clients = playback_clients or [
             PlaybackStatusClient(config, self.broadcast_playback_change)
@@ -404,6 +407,24 @@ class RussoundHTTPServer:
         @app.get("/api/status/overview")
         def api_status_overview():
             return self._no_store(jsonify(self.build_overview_payload()))
+
+        @app.get("/api/status/updates")
+        def api_status_updates():
+            return self._no_store(jsonify(self._updates.snapshot()))
+
+        @app.post("/api/status/updates/check")
+        def api_status_updates_check():
+            accepted, retry_after = self._updates.request_check()
+            body = {"accepted": accepted, "retry_after_seconds": retry_after, "updates": self._updates.snapshot()}
+            response = self._no_store(jsonify(body))
+            if accepted:
+                response.status_code = 202
+            elif retry_after:
+                response.status_code = 429
+                response.headers["Retry-After"] = str(retry_after)
+            else:
+                response.status_code = 409
+            return response
 
         @app.get("/api/events")
         def api_events():
@@ -627,6 +648,7 @@ class RussoundHTTPServer:
         watcher = self._backend_watcher_thread
         for playback_client in self._playback_clients:
             playback_client.request_stop()
+        self._updates.stop()
         with ExitStack() as cleanup:
             for playback_client in self._playback_clients:
                 cleanup.callback(playback_client.close)
@@ -650,6 +672,7 @@ class RussoundHTTPServer:
                 raise RuntimeError("Cannot start background workers during shutdown")
             for playback_client in self._playback_clients:
                 playback_client.start()
+            self._updates.start()
             self._start_unsolicited_update_listener()
             self._backend_watcher_thread = threading.Thread(
                 target=self._backend_change_watcher_loop, daemon=True, name="backend-change-watcher")
@@ -1298,6 +1321,8 @@ class RussoundHTTPServer:
                 effective_backend=backend_endpoint_metadata(coerce_russound_config(config)) if config else {},
                 kind=backend_status_kind(payload.get("backend_status")), observed_age=observed_age),
         ]
+        updates = self._updates.snapshot()
+        sections.append(status_overview.updates_section(updates, moment))
         if not self._playback_clients:
             sections.append(status_overview.missing_agent_section())
         for client in self._playback_clients:
@@ -1310,7 +1335,8 @@ class RussoundHTTPServer:
                 (item.get("host") or {}).get("view") for item in (client.host_snapshot() for client in self._playback_clients))
             if isinstance(view, dict) and isinstance(view.get("overall"), str)
         ]
-        return {**status_overview.compose(sections, host_levels), "generated_at": moment.isoformat(timespec="seconds")}
+        return {**status_overview.compose(sections, host_levels),
+                "update_available": updates.get("state") == "update_available", "generated_at": moment.isoformat(timespec="seconds")}
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:

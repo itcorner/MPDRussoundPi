@@ -215,7 +215,7 @@ them until an explicit, compatible disclosure and authorization decision is
 made. Share effective configuration metadata with
 [inline overrides](./web_done_effective-config-overrides.md), and share image
 identity and release-channel information with
-[update status](./general_idea_update-status-and-restarts.md).
+[update status](./general_open_update-status-and-restarts.md).
 The complementary [guided diagnostics](./general_idea_guided-diagnostics.md)
 should reuse these facts instead of adding independent probes.
 
