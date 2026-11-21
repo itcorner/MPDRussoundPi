@@ -4,8 +4,6 @@ const clientsEmpty = document.getElementById("clientsEmpty");
 const eventsEmpty = document.getElementById("eventsEmpty");
 const eventsTableBody = document.getElementById("eventsTableBody");
 const hostList = document.getElementById("hostList");
-const hostEmpty = document.getElementById("hostEmpty");
-const hostCount = document.getElementById("hostCount");
 const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
@@ -169,8 +167,6 @@ function hostFreshness(host) {
 
 function renderHosts(payload) {
   const hosts = payload.hosts || [];
-  hostCount.textContent = String(hosts.length);
-  hostEmpty.hidden = hosts.length !== 0;
   hostList.replaceChildren();
   for (const host of hosts) {
     const view = host.host ? host.host.view : null;

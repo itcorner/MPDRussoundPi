@@ -205,7 +205,7 @@ const reference = {
 
 function renderHostPayload(hosts, existing) {
   const elements = existing || {
-    hostList: new FakeElement("div"), hostEmpty: new FakeElement("p"), hostCount: new FakeElement("span"),
+    hostList: new FakeElement("div"),
     clientCount: new FakeElement("span"), clientsList: new FakeElement("div"), clientsEmpty: new FakeElement("p"),
     eventsEmpty: new FakeElement("p"), eventsTableBody: new FakeElement("tbody"),
   };
@@ -224,9 +224,8 @@ function renderHostPayload(hosts, existing) {
 }
 
 test("host card shows the level in words, the summary and collapsed details", () => {
-  const { hostList, hostCount, hostEmpty } = renderHostPayload([reference]);
-  assert.equal(hostCount.textContent, "1");
-  assert.equal(hostEmpty.hidden, true);
+  const { hostList } = renderHostPayload([reference]);
+  assert.equal(hostList.children.length, 1);
   const card = hostList.children[0];
   const pill = card.find((node) => node.className.includes("host-level"));
   assert.equal(pill.textContent, "Warning");
@@ -291,11 +290,8 @@ test("host text is only ever assigned as text, even for hostile labels", () => {
   assert.match(hostList.allText(), /<img src=x onerror="alert\(1\)"> \(Problem\)/);
 });
 
-test("no configured agent shows the empty message", () => {
-  const { hostEmpty, hostCount, hostList } = renderHostPayload([]);
-  assert.equal(hostEmpty.hidden, false);
-  assert.equal(hostCount.textContent, "0");
-  assert.equal(hostList.children.length, 0);
+test("no configured agent renders no host card", () => {
+  assert.equal(renderHostPayload([]).hostList.children.length, 0);
 });
 
 function renderOverviewPayload(payload, existing) {

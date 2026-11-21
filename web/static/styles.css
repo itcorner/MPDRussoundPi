@@ -887,7 +887,8 @@ h1 {
   padding-left: 1.25rem;
 }
 
-.collapsible-summary .status-count {
+.collapsible-summary .status-count,
+.collapsible-summary .status-pill {
   margin-left: auto;
 }
 
@@ -1233,6 +1234,14 @@ h1 {
 
 #overviewList {
   margin-top: 0.75rem;
+}
+
+#hostList:empty {
+  display: none;
+}
+
+#hostList:not(:empty) {
+  margin-bottom: 0.75rem;
 }
 
 .overview-group {
