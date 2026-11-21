@@ -1031,6 +1031,34 @@ backups never meet the socket. Any other layout difference, including removing
 this mount, is still refused, and recovery restores the previous layout.
 Web-triggered updates currently support only single-host Docker installations.
 
+**Updater service.** [`tool/deployment_updater.py`](../../tool/deployment_updater.py)
+runs as root from the trusted tooling and drives the same reviewed transaction
+locally: the operator's controller in the service and `deployment_operator serve`
+as a child process connected by pipes. The web container talks to it only
+through `updater.sock` in the mounted socket directory (group of the web service,
+mode `0660`; directory `0750`), with a fixed set of requests: `status`, `review`,
+`approve` (exact operation and digest within two minutes), `cancel` and
+`restore`. Backups and evidence stay in `/var/lib/mpdrussoundpi-updater/evidence`
+on the same host (not disaster recovery). The operation record in
+`/var/lib/mpdrussoundpi-updater/state.json` survives restarts: a pending review
+becomes `cancelled`, an approved operation `outcome_unknown`; nothing is
+retried. The operator lock makes an SSH operator run and an updater operation
+exclude each other. `python -m tool.deployment_updater status` (as root in the
+tooling directory) prints the current state.
+
+Rollout on an existing single-host installation, in this order:
+
+1. Upgrade the trusted tooling to a revision containing the updater
+   (`upgrade-deployment.yml`).
+2. Create a new protected Compose input on the target (root, `0600`) as a copy of
+   the current one plus the updater mount above, and point the controller's
+   private target specification (`compose`) at it.
+3. Install the service with that specification:
+   `ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-updater.yml --limit musicpi -e updater_target_spec=/absolute/private/target.json`.
+   The play installs files and the unit only; it never touches the containers.
+4. Run an ordinary operator `--update` with a new candidate; the review shows
+   `layout_change`. From then on the web container can reach the updater.
+
 On an ordinary rerun, omit both image-source options. The target reuses its
 committed pin and verifies the unchanged runtime without stop/start, image
 transfer, backup or recreation. Different candidates require **`--update`** plus

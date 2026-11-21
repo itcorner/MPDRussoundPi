@@ -1,0 +1,116 @@
+---
+# Installs the updater service for web-triggered Docker image updates
+# (docs/plans/general_new_user-triggered-image-updates.md). Single-host Docker
+# installations only. It installs files and the systemd unit; it never deploys,
+# stops or restarts the application containers. The web container gets access
+# only after the socket mount is added through a reviewed operator update.
+- name: Install the MPDRussoundPi updater service
+  hosts: all
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    updater_root: /var/lib/mpdrussoundpi-updater
+    updater_config_dir: /etc/mpdrussoundpi-updater
+    updater_start: true
+  pre_tasks:
+    - name: Require exactly one explicitly selected host
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+        fail_msg: "Select exactly one updater target using a dedicated inventory or --limit."
+      tags: always
+    - name: Require the controller's private target specification
+      ansible.builtin.assert:
+        that:
+          - updater_target_spec is defined
+          - updater_target_spec is match('^/')
+        fail_msg: "Pass -e updater_target_spec=/absolute/path/to/the/private/target.json (the operator --spec file)."
+    - name: Read the target specification on the controller
+      ansible.builtin.set_fact:
+        updater_spec: "{{ lookup('ansible.builtin.file', updater_target_spec) | from_json }}"
+      no_log: true
+    - name: Require a single-host Docker layout with the service's numeric group
+      ansible.builtin.assert:
+        that:
+          - updater_spec.gateway in ['managed', 'external']
+          - updater_spec.gid | int > 0
+        fail_msg: "Web-triggered updates support single-host Docker installations with the web service only."
+    - name: Require the trusted tooling with the updater
+      ansible.builtin.stat:
+        path: /opt/mpdrussoundpi-deploy/tool/deployment_updater.py
+      register: updater_tooling
+    - name: Stop when the installed tooling predates the updater
+      ansible.builtin.assert:
+        that:
+          - updater_tooling.stat.exists | default(false)
+          - updater_tooling.stat.pw_name | default('') == 'root'
+        fail_msg: "Upgrade the trusted tooling (upgrade-deployment.yml) to a revision that contains the updater first."
+  tasks:
+    - name: Create the private configuration directory
+      ansible.builtin.file:
+        path: "{{ updater_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+    - name: Install the target specification for the updater
+      ansible.builtin.copy:
+        content: "{{ updater_spec | to_nice_json }}\n"
+        dest: "{{ updater_config_dir }}/target.json"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart the updater
+    - name: Install the updater configuration
+      ansible.builtin.copy:
+        content: "{{ {'schema_version': 1, 'spec': updater_config_dir + '/target.json', 'client_gid': updater_spec.gid | int} | to_nice_json }}\n"
+        dest: "{{ updater_config_dir }}/updater.json"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Restart the updater
+    - name: Create the updater state directory
+      ansible.builtin.file:
+        path: "{{ updater_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+    - name: Create the private evidence directory (backups stay on this host)
+      ansible.builtin.file:
+        path: "{{ updater_root }}/evidence"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+    - name: Create the socket directory, reachable only by the web service's group
+      ansible.builtin.file:
+        path: "{{ updater_root }}/socket"
+        state: directory
+        owner: root
+        group: "{{ updater_spec.gid | int }}"
+        mode: "0750"
+    - name: Install the systemd unit
+      ansible.builtin.template:
+        src: ../templates/mpdrussoundpi-updater.service.j2
+        dest: /etc/systemd/system/mpdrussoundpi-updater.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart the updater
+    - name: Enable and start the updater
+      ansible.builtin.systemd:
+        name: mpdrussoundpi-updater.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: updater_start | bool
+  handlers:
+    - name: Restart the updater
+      ansible.builtin.systemd:
+        name: mpdrussoundpi-updater.service
+        state: restarted
+        daemon_reload: true
+      when: updater_start | bool
