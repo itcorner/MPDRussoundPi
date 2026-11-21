@@ -15,7 +15,7 @@ provide a manual **Check for updates** button. Also offer explicitly authorized
 API actions to restart selected services or reboot the Raspberry Pi.
 
 This idea covers **checking**, not installing updates. The separate
-[user-triggered image updates idea](./general_idea_user-triggered-image-updates.md)
+[user-triggered image updates idea](./general_new_user-triggered-image-updates.md)
 covers a possible future installation workflow; neither idea authorizes
 automatic upgrades, pulls, deployments or reboots.
 

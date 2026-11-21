@@ -344,5 +344,5 @@ Related ideas and plans: [network relocation](./general_idea_network-relocation.
 (needs address, DNS and clock facts from the same collectors),
 [Wi-Fi bootstrap](./general_idea_wifi-bootstrap.md),
 [agent containerization](./mpd_new_agent-containerization.md)
-and [user-triggered image updates](./general_idea_user-triggered-image-updates.md).
+and [user-triggered image updates](./general_new_user-triggered-image-updates.md).
 This overview is read-only and does not authorize or implement updates.
