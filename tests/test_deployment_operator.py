@@ -170,6 +170,96 @@ class OperatorContractTests(unittest.TestCase):
         self.assertFalse(any(self.storage["assets"].iterdir()))
         self.assertFalse((self.storage["state"] / "reservation").exists())
 
+    def committed_target(self, recorded, supplied):
+        """A target whose last committed layout is ``recorded`` and whose supplied input is ``supplied``."""
+        operation = str(uuid4())
+        runtime = self.storage["runtime"] / operation
+        runtime.mkdir(parents=True)
+        (runtime / "active.json").write_bytes(encoded(recorded))
+        (runtime / "active.json").chmod(0o600)
+        self.compose.write_bytes(encoded(supplied))
+        committed = {"selection": {"candidate": {"kind": "local-development-image-candidate"}, "operation": operation}}
+        status = {"deployments": {self.spec["deployment"]: {"committed": committed}}}
+        with patch("tool.deployment_compose.local_engine", return_value="default"), \
+                patch("tool.deployment_compose.StateStore.status", return_value=status):
+            return ComposeDeployment(self.spec, self.selection, self.storage)
+
+    def updater_mount(self, **changes):
+        from tool.deployment_compose import UPDATER_SOCKET_DIR, UPDATER_SOCKET_TARGET
+        mount = {"type": "bind", "source": UPDATER_SOCKET_DIR, "target": UPDATER_SOCKET_TARGET,
+                 "read_only": True, "bind": {"create_host_path": False}}
+        mount.update(changes)
+        return mount
+
+    def test_update_may_add_exactly_the_updater_socket_mount(self):
+        from tool.deployment_compose import UPDATER_LAYOUT_CHANGE
+        recorded = copy.deepcopy(self.config)
+        recorded["services"]["russound-web"]["image"] = "sha256:" + "b" * 64
+        supplied = copy.deepcopy(self.config)
+        supplied["services"]["russound-web"]["volumes"].append(self.updater_mount())
+        target = self.committed_target(recorded, supplied)
+        self.assertEqual(target.layout_change, UPDATER_LAYOUT_CHANGE)
+        applied = json.loads((target.asset / "compose.json").read_text())
+        self.assertIn(self.updater_mount(), applied["services"]["russound-web"]["volumes"])
+        self.assertEqual(applied["services"]["russound-web"]["image"], "sha256:" + "b" * 64,
+                         "the recorded layout is the base; images are replaced only at apply")
+        running = json.loads((target.asset / "running.json").read_text())
+        self.assertNotIn(self.updater_mount(), running["services"]["russound-web"]["volumes"])
+        target.baseline, target.backup_estimate = [], 0
+        self.assertEqual(target.scope()["layout_change"], UPDATER_LAYOUT_CHANGE)
+
+    def test_an_unchanged_layout_reports_no_layout_change(self):
+        target = self.committed_target(self.config, self.config)
+        self.assertIsNone(target.layout_change)
+        self.assertFalse((target.asset / "running.json").exists())
+        target.baseline, target.backup_estimate = [], 0
+        self.assertNotIn("layout_change", target.scope())
+
+    def test_any_other_layout_change_is_still_refused(self):
+        variants = {
+            "writable": self.updater_mount(read_only=False),
+            "other source": self.updater_mount(source="/var/lib/elsewhere"),
+            "other target": self.updater_mount(target="/run/elsewhere"),
+            "creates host path": self.updater_mount(bind={"create_host_path": True}),
+            "extra field": {**self.updater_mount(), "consistency": "cached"},
+        }
+        for name, mount in variants.items():
+            supplied = copy.deepcopy(self.config)
+            supplied["services"]["russound-web"]["volumes"].append(mount)
+            with self.subTest(name=name), self.assertRaisesRegex(ComposeError, "Recorded layout changed"):
+                self.committed_target(self.config, supplied)
+        both = copy.deepcopy(self.config)
+        both["services"]["russound-web"]["volumes"].append(self.updater_mount())
+        both["services"]["russound-web"]["environment"] = {"RUSSOUND_DEBUG": "true"}
+        with self.assertRaisesRegex(ComposeError, "Recorded layout changed"):
+            self.committed_target(self.config, both)
+        recorded = copy.deepcopy(self.config)
+        recorded["services"]["russound-web"]["volumes"].append(self.updater_mount())
+        with self.assertRaisesRegex(ComposeError, "Recorded layout changed"):
+            self.committed_target(recorded, self.config)  # removing it is not the accepted addition
+
+    def test_preflight_requires_the_installed_updater_socket_directory(self):
+        from tool.deployment_compose import UPDATER_SOCKET_DIR
+        if Path(UPDATER_SOCKET_DIR).exists():
+            self.skipTest("an updater is installed on this machine")
+        config = copy.deepcopy(self.config)
+        config["services"]["russound-web"]["volumes"].append(self.updater_mount())
+        self.compose.write_bytes(encoded(config))
+        target = self.target()
+        info = {"Architecture": "aarch64", "OSType": "linux", "SecurityOptions": [], "ID": "fixture"}
+        with patch("tool.deployment_compose.sys.platform", "linux"), \
+                patch("tool.deployment_compose.os.geteuid", return_value=0), \
+                patch("tool.deployment_compose.check_data"), \
+                patch.object(target, "command", return_value=encoded(info)):
+            with self.assertRaisesRegex(ComposeError, "install the updater service first"):
+                target.preflight()
+
+    def test_a_first_install_may_include_the_updater_mount(self):
+        config = copy.deepcopy(self.config)
+        config["services"]["russound-web"]["volumes"].append(self.updater_mount())
+        self.compose.write_bytes(encoded(config))
+        self.assertIsNone(self.target().layout_change)
+
     def test_explicit_adoption_acceptance_and_no_hidden_dummy_build(self):
         for key, value in (("adopt", "yes"), ("require_playback", None),
                            ("data_dir", "/"), ("compose", "../compose.json")):

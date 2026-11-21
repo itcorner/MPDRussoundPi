@@ -17,6 +17,14 @@ whether a newer image is published (see the
 this plan adds the **install** step: review, explicit confirmation, progress,
 result, and a restore path after a failed update.
 
+**Supported layout: a single Pi running the Docker containers.** Web-triggered
+updates currently work only when the web container (and, in the managed layout,
+the ser2net gateway container) run on one host together with the updater
+service. Split-host layouts (web and gateway on different machines), native web
+or gateway installations and the native playback agent are not supported; they
+keep using the reviewed SSH operator. See
+[Split-host layouts](#split-host-layouts-not-supported-yet).
+
 Out of scope: the native Pi playback agent and audio candidates (separate
 deployment model), Pi base-system packages, restarts and reboots (the update
 status plan), unattended or scheduled updates, downgrades from the page, and
@@ -121,58 +129,33 @@ manual recovery, never as success.
 
 ### Mount for the socket (prerequisite)
 
-The operator deliberately accepts only the web mounts config, data, logs and
-secrets, and does not let image updates change mounts. The socket needs one more
-reviewed web mount (for example `<data_dir>/updater` to `/run/mpdrussoundpi-updater`,
-socket mode `0660`, group of the container's numeric user). That is a layout
-change, so the operator's validation must learn this one mount and the first
-rollout goes through the reviewed SSH operator. The alternative, an HTTP
-endpoint on the Docker bridge with a token from the existing secrets mount,
-avoids the layout change but needs a network filter and is weaker. Decide this
-in stage 2.
+The socket lives in `/var/lib/mpdrussoundpi-updater/socket` on the host, mounted
+read-only into the web container at `/run/mpdrussoundpi-updater` (connecting to a
+socket works on a read-only mount). It is deliberately **outside** the data root:
+the operator backs up the whole data root and accepts only regular files and
+directories there, so a socket inside it would break every backup.
 
-### Sessions, reviews and operations (from the 2026-11-16 preparation)
+After the first deployment the operator pins the recorded Compose layout apart
+from images and refuses any other change ("Recorded layout changed"). Instead of a
+general layout-migration feature, the operator accepts **exactly one** addition
+during an update: this read-only mount on the web service (exact source, target,
+`read_only: true`, no host-path creation). The review shows it as
+`layout_change`, preflight requires the socket directory to exist, and every other
+layout difference, including removing the mount again, is still refused. Recovery
+restores the backed-up previous layout. A first install may include the mount
+directly. (Decided 2026-11-21 instead of a token-authenticated listener on the
+Docker bridge, which would not have helped split hosts either.)
 
-- **Credential handling:** memory-hard password hash with reviewed parameters in
-  the secrets mount; set, rotate and reset only by a local command over SSH or
-  console, never over HTTP; no default. Resetting revokes every session and
-  clears the lockout.
-- **Lockout:** after five failed attempts in total (across clients and workers),
-  refuse further attempts for 15 minutes; failures during the lock extend it; a
-  success clears the counter. The state survives restarts and handles clock
-  rollback conservatively. Plus per-client throttling and generic error messages.
-  A lockout is a possible denial of service; recovery is the local reset.
-- **Sessions:** opaque random IDs stored hashed on the server, cookies
-  `HttpOnly`, `SameSite=Strict` (and `Secure` once HTTPS exists), 15 minutes idle
-  and 8 hours absolute, rotated on login, revoked on logout and reset. Disruptive
-  actions (update, restore) require entering the password again within the last
-  5 minutes. No password, cookie or CSRF token in logs, events, SSE or URLs.
-- **CSRF:** a synchronizer token plus the existing same-origin check and JSON
-  content type on every privileged request; missing browser headers never count
-  as authorization. Endpoints `GET /api/admin/session`, `POST /api/admin/login`,
-  `POST /api/admin/logout`, `POST /api/admin/reauthenticate` (all `no-store`).
-- **Reviews:** bind actor, target, candidate digests, impact, configuration
-  generation and preconditions; expire after 2 minutes; revalidated under the
-  host reservation right before dispatch. A changed scope needs a new review.
-  Submission carries the review digest, the explicit confirmation and an
-  idempotency key (same key and payload returns the same operation, same key
-  with another payload conflicts). Errors: 401/403 unauthenticated or not
-  allowed, 409 expired review or busy host, 429 limits, 503 updater unavailable;
-  `202` only after the updater has persisted the operation.
-- **Operation states:** `accepted`, `running`, `verifying`, then `succeeded`,
-  `failed` or `outcome_unknown`. The actor, review digest and pre-action
-  identities are written to disk before dispatch, and the dispatch boundary is
-  recorded before the tooling runs. Ambiguous dispatch is never retried
-  automatically. A changed container, a returning host or a healthy page alone is
-  not proof of success.
-- **One maintenance gate per host:** the updater and the SSH operator share the
-  deployment tooling's reservation, taken atomically inside the transaction; a
-  check-then-act against `deployment_state status` would race a deployment.
-- **The updater as the host broker:** build it as the narrow host-side broker
-  that the [update status plan](./general_open_update-status-and-restarts.md)
-  needs later for restarts and reboots: fixed operations only, configured
-  targets, no addresses, unit names, paths or commands from requests, durable
-  operation records owned outside the web process.
+### Split-host layouts (not supported yet)
+
+A Unix socket, like any address on the Docker bridge, exists only on its own
+machine, and the updater must run where the containers it updates run. In a split
+layout (web on machine A, ser2net gateway on machine B) the web on A could update
+only its own container through A's updater; B's updater would need an
+authenticated network transport (for example mutual TLS, like the playback-agent
+proxy) and a rule that keeps web and gateway on matching versions. That is a
+possible later stage; until then split installations are updated with the SSH
+operator.
 
 ## Stages
 
@@ -184,8 +167,8 @@ in stage 2.
   privileged action exists yet.
 - [ ] **2. Updater service:** systemd unit and Ansible play, socket and request
   protocol, local channel to the reviewed tooling, approval bridge with timeout,
-  durable operation record, busy handling against the SSH operator, socket mount
-  support in the operator's validation. Tests with the existing fixtures for
+  durable operation record, busy handling against the SSH operator. The
+  operator's narrow exception for the socket mount is implemented (2026-11-21). Tests with the existing fixtures for
   success, failed checks, timeouts and interruption.
 - [ ] **3. Status page flow:** "Update to …" for administrators in the Software
   updates section, review dialog (target revision and tags, both images, expected
