@@ -53,7 +53,17 @@ class AudioValidationTests(unittest.TestCase):
 class SectionTests(unittest.TestCase):
     def test_web_revision_wording(self):
         shown = overview.web_section(uptime_seconds=90000, runtime="container", revision="a" * 40, clients=2)
-        self.assertIn("aaaaaaa (reported by the build)", [row["value"] for row in shown["rows"]])
+        self.assertIn("aaaaaaa (latest commit, reported by the build)", [row["value"] for row in shown["rows"]])
+        built = overview.web_section(uptime_seconds=5, runtime="container", revision="b" * 40, clients=0,
+                                     build_time="2026-11-21T08:25:07Z", build_source="local")
+        values = {row["label"]: row["value"] for row in built["rows"]}
+        self.assertEqual(values["Build"], "Local build (reported by the build)")
+        self.assertEqual(values["Built"], "2026-11-21 08:25 UTC (reported by the build)")
+        self.assertIn("local build · bbbbbbb", built["summary"])
+        bad = overview.web_section(uptime_seconds=5, runtime="native", revision=None, clients=0,
+                                   build_time="<b>soon</b>", build_source="<i>x</i>")
+        self.assertEqual({row["label"]: row["value"] for row in bad["rows"]}["Built"], "not reported by this build")
+        self.assertNotIn("<", json.dumps(bad))
         unknown = overview.web_section(uptime_seconds=5, runtime="native", revision="not-a-sha", clients=0)
         self.assertIn("not reported by this build", [row["value"] for row in unknown["rows"]])
 

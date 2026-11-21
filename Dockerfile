@@ -25,6 +25,10 @@ RUN useradd --system --uid 10001 russound \
 # build"). Late in the file so a new value only changes image metadata, never a layer.
 ARG BUILD_REVISION=""
 ENV RUSSOUND_BUILD_REVISION=${BUILD_REVISION}
+ARG BUILD_TIME=""
+ENV RUSSOUND_BUILD_TIME=${BUILD_TIME}
+ARG BUILD_SOURCE=""
+ENV RUSSOUND_BUILD_SOURCE=${BUILD_SOURCE}
 
 USER russound
 

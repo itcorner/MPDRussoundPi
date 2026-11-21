@@ -1290,7 +1290,8 @@ class RussoundHTTPServer:
             status_overview.web_section(
                 uptime_seconds=int(time.monotonic() - self._started_monotonic),
                 runtime="container" if Path("/.dockerenv").exists() else "native",
-                revision=os.environ.get("RUSSOUND_BUILD_REVISION"), clients=clients),
+                revision=os.environ.get("RUSSOUND_BUILD_REVISION"), clients=clients,
+                build_time=os.environ.get("RUSSOUND_BUILD_TIME"), build_source=os.environ.get("RUSSOUND_BUILD_SOURCE")),
             status_overview.gateway_section(
                 config=config,
                 effective_backend=backend_endpoint_metadata(coerce_russound_config(config)) if config else {},
