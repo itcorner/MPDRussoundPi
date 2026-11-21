@@ -531,8 +531,9 @@ The cached result of the read-only web image update check (see the
 newest published tag of the compared channel (`dev` or `latest`), its revision,
 publication time and Docker Hub link. A failed check keeps the last result with
 `check_failed: true` and `stale: true`; the error text is fixed. Nothing is ever
-pulled or installed. The overview also carries this as the "Software updates"
-section and a top-level `update_available` flag.
+pulled or installed. The overview carries only the top-level `update_available`
+flag (an arrow icon in the System overview header); the details are shown in the
+"Software updates" block of the Administrator panel.
 
 `POST /api/status/updates/check` (JSON body `{}`, same-origin) requests a check:
 `202` when accepted or already running (requests coalesce), `429` with

@@ -180,7 +180,13 @@ operator.
   `web/updater_client.py`, `/api/status/update-operation`, `/api/admin/update*`,
   the "Install updates" block in the Administrator panel with typed confirmation,
   reconnection and restore; reauthentication is asked inline when the password is
-  older than 5 minutes): "Update to …" for administrators in the Software
+  older than 5 minutes). *Revised after the first try on the Pi (2026-11-21):*
+  the review card is no longer rebuilt on refresh (typing the confirmation was
+  cleared every two seconds), the "Install updates" and overview "Software
+  updates" sections are one "Software updates" block whose install button names
+  the available version instead of a separate "Review an update", logging in
+  keeps the panel open, and the overview header shows an arrow icon instead of
+  the "Update available" pill so it stays on one line on phones: "Update to …" for administrators in the Software
   updates section, review dialog (target revision and tags, both images, expected
   interruption, backup custody note), typed confirmation, progress, reconnection,
   result, and "Restore previous version" after a failed update.

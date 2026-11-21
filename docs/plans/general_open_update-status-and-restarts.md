@@ -157,11 +157,14 @@ implement; the decisions above stay open for everything else.
   tooling, so there is one registry checker). It contacts only Docker Hub's token
   and registry endpoints for the project's repository; certificate verification
   stays on. `RUSSOUND_UPDATE_CHECK=off` turns it off.
-- **Display:** a "Software updates" section in the System overview (installed
-  tag, compared channel, newest published tag with its age, status, last and next
-  check, a Docker Hub link to the newer tag) and an "Update available" badge in the
-  overview header. An available update keeps the level `ok`: it is information,
-  not a fault. Installation stays the reviewed deployment update.
+- **Display:** a "Software updates" block in the Administrator panel, visible
+  without login (installed tag, newest published tag with its age, status, last
+  check, "Check now", a Docker Hub link to the newer tag), and a small arrow icon
+  in the System overview header when an update is available. An available update
+  keeps the level `ok`: it is information, not a fault. *Changed 2026-11-21:* the
+  separate overview section was merged into that block, which also holds the
+  administrator's "Update to …" button (see the
+  [installation plan](./general_new_user-triggered-image-updates.md)).
 
 ## Proposed stages and acceptance
 

@@ -388,22 +388,10 @@ test("a Docker Hub link is rendered as a link, any other address stays text", ()
   }
 });
 
-test("the update badge and the check button follow the server", () => {
-  const section = (action) => ({ id: "updates", title: "Software updates", level: "ok", summary: "Update available: dev-1234567",
-    rows: [], groups: [], action });
-  const view = renderOverviewPayload({ overall: "ok", update_available: true,
-    sections: [section({ id: "check-updates", label: "Check now", available: true, note: "" })] });
+test("the overview header shows only a small update icon", () => {
+  const view = renderOverviewPayload({ overall: "ok", update_available: true, sections: [] });
   assert.equal(view.overviewUpdate.hidden, false);
-  const button = view.overviewList.find((node) => node.tagName === "BUTTON");
-  assert.equal(button.textContent, "Check now");
-  assert.equal(button.disabled, false);
-  const waiting = renderOverviewPayload({ overall: "ok", update_available: false,
-    sections: [section({ id: "check-updates", label: "Check now", available: false, note: "Available again in 40 s" })] });
-  assert.equal(waiting.overviewUpdate.hidden, true);
-  assert.equal(waiting.overviewList.find((node) => node.tagName === "BUTTON").disabled, true);
-  assert.match(waiting.overviewList.allText(), /Available again in 40 s/);
-  const unknown = renderOverviewPayload({ overall: "ok", sections: [section({ id: "reboot", label: "Reboot", available: true })] });
-  assert.equal(unknown.overviewList.find((node) => node.tagName === "BUTTON"), null, "only the known action renders");
+  assert.equal(renderOverviewPayload({ overall: "ok", update_available: false, sections: [] }).overviewUpdate.hidden, true);
 });
 
 test("an empty overview shows the placeholder and an unknown level", () => {
@@ -433,12 +421,15 @@ test("administrator panel opens only when a login is possible and keeps the user
   view.adminPanel.open = false;  // the user closes it
   view.context.renderAdmin({ configured: true, authenticated: false, locked_for_seconds: 0 });
   assert.equal(view.adminPanel.open, false, "a refresh with the same state keeps the user's choice");
+  view.adminPanel.open = true;  // the user opens it again and logs in
   view.context.renderAdmin({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
-  assert.equal(view.adminPanel.open, false, "logged in: collapsed");
+  assert.equal(view.adminPanel.open, true, "logging in keeps the panel open");
   view.context.renderAdmin({ configured: true, authenticated: false, locked_for_seconds: 0 });
   assert.equal(view.adminPanel.open, true, "after logout or expiry it opens again");
   assert.equal(renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 }).adminPanel.open, false,
     "not set up: collapsed");
+  assert.equal(renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900,
+    expires_in_seconds: 28800 }).adminPanel.open, false, "already logged in when the page loads: collapsed");
 });
 
 test("a failed login shows the message and returns to the password field", () => {
@@ -473,34 +464,72 @@ test("administrator panel shows setup, login, locked and logged-in states in wor
 });
 
 
-test("update block: not set up, review with typed confirmation, failure with restore", () => {
-  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
-  const render = (status) => { view.context.renderAdminUpdate(status); return view.adminUpdate; };
-  assert.match(render({ configured: false, phase: "idle" }).allText(), /not set up on this installation/);
-  const idle = render({ configured: true, phase: "succeeded", installed_revision: "b".repeat(40), busy: false });
-  assert.match(idle.allText(), /The update finished\. Installed: dev-bbbbbbb\./);
-  assert.equal(idle.find((node) => node.tagName === "BUTTON").textContent, "Review an update");
-  const review = render({ configured: true, phase: "awaiting_approval", busy: true, review: {
-    operation: "op-1", digest: "sha256:abc", action: "update", revision: "c".repeat(40), expires_in_seconds: 95,
-    images: { web: "itcornernet/mpdrussoundpi-web@sha256:1" }, layout_change: "adds the read-only updater socket mount",
-    interruption: "The web application restarts.", backup: "The backup is kept on this Pi. It is not disaster recovery.",
-  } });
-  assert.match(review.allText(), /Review: update to dev-ccccccc/);
-  assert.match(review.allText(), /not disaster recovery/);
-  assert.match(review.allText(), /95 s/);
-  const confirm = review.find((node) => node.tagName === "BUTTON" && node.textContent === "Confirm update");
-  assert.equal(confirm.disabled, true, "disabled until the word is typed");
-  const input = review.find((node) => node.tagName === "INPUT");
-  input.value = "Update";
-  input.fire("input");
-  assert.equal(confirm.disabled, false);
-  const failed = render({ configured: true, phase: "failed", busy: false, restore_available: true, operation: "op-1",
-    error: "The update failed after the services were stopped." });
+const availableUpdates = {
+  state: "update_available", installed: { version: "dev-" + "a".repeat(40) }, stale: false, check_failed: false,
+  checked_at: new Date().toISOString(), manual_check: { available: true, retry_after_seconds: 0 },
+  result: { state: "update_available", available: { version: "dev-" + "c".repeat(40), published_at: new Date().toISOString(),
+    link: "https://hub.docker.com/r/itcornernet/mpdrussoundpi-web/tags?name=dev-c" } },
+};
+const pendingReview = { configured: true, phase: "awaiting_approval", busy: true, review: {
+  operation: "op-1", digest: "sha256:abc", action: "update", revision: "c".repeat(40), expires_in_seconds: 95,
+  images: { web: "itcornernet/mpdrussoundpi-web@sha256:1" }, layout_change: "adds the read-only updater socket mount",
+  interruption: "The web application restarts.", backup: "The backup is kept on this Pi. It is not disaster recovery.",
+} };
+
+function renderUpdates(view, updates, status, csrf = "t") {
+  vm.runInContext(`adminCsrfToken = ${JSON.stringify(csrf)};`, view.context);
+  view.context.latestUpdates = updates;
+  vm.runInContext(`latestUpdates = this.latestUpdates; adminUpdateState = this.adminUpdateState;`,
+    Object.assign(view.context, { adminUpdateState: status }));
+  view.context.renderSoftwareUpdates();
+  return view.adminUpdate;
+}
+
+function buttons(node) {
   const labels = [];
-  failed.find((node) => { if (node.tagName === "BUTTON") labels.push(node.textContent); return false; });
-  assert.deepEqual(labels, ["Restore previous version", "Review an update"]);
-  const unknown = render({ configured: true, phase: "outcome_unknown", busy: false, restore_available: false });
-  assert.equal(unknown.find((node) => node.tagName === "BUTTON"), null, "no new update while the outcome is unknown");
-  const hostile = render({ configured: true, phase: "failed", busy: false, error: "<img src=x onerror=1>" });
-  assert.equal(hostile.find((node) => node.tagName === "IMG"), null);
+  node.find((child) => { if (child.tagName === "BUTTON") labels.push(child.textContent); return false; });
+  return labels;
+}
+
+test("software updates: one block with check info for everyone and install for the administrator", () => {
+  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  const anonymous = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false }, null);
+  assert.match(anonymous.allText(), /Installed dev-aaaaaaa/);
+  assert.match(anonymous.allText(), /Newest published dev-ccccccc \(published just now\)/);
+  assert.match(anonymous.allText(), /Log in as administrator to install it\./);
+  assert.deepEqual(buttons(anonymous), ["Check now"]);
+  const admin = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });
+  assert.deepEqual(buttons(admin), ["Check now", "Update to dev-ccccccc"]);
+  const upToDate = renderUpdates(view, { ...availableUpdates, state: "up_to_date" }, { configured: true, phase: "idle", busy: false });
+  assert.deepEqual(buttons(upToDate), ["Check now"], "no install button without an available update");
+  const notSetUp = renderUpdates(view, availableUpdates, { configured: false, phase: "idle" });
+  assert.match(notSetUp.allText(), /not set up here/);
+});
+
+test("software updates: the review keeps typed text across refreshes and fails safely", () => {
+  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+  const block = renderUpdates(view, availableUpdates, pendingReview);
+  assert.match(block.allText(), /Review: update to dev-ccccccc/);
+  assert.match(block.allText(), /not disaster recovery/);
+  const input = block.find((node) => node.tagName === "INPUT");
+  const confirm = block.find((node) => node.tagName === "BUTTON" && node.textContent === "Confirm update");
+  input.value = "upd";
+  input.fire("input");
+  assert.equal(confirm.disabled, true);
+  const refreshed = JSON.parse(JSON.stringify(pendingReview));
+  refreshed.review.expires_in_seconds = 80;
+  renderUpdates(view, availableUpdates, refreshed);
+  const again = block.find((node) => node.tagName === "INPUT");
+  assert.equal(again, input, "the same field survives the refresh");
+  assert.equal(again.value, "upd");
+  assert.match(block.allText(), /80 s/);
+  again.value = "update";
+  again.fire("input");
+  assert.equal(confirm.disabled, false);
+  const failed = renderUpdates(view, availableUpdates, { configured: true, phase: "failed", busy: false, restore_available: true,
+    operation: "op-1", error: "<img src=x onerror=1>" });
+  assert.deepEqual(buttons(failed), ["Check now", "Restore previous version", "Update to dev-ccccccc"]);
+  assert.equal(failed.find((node) => node.tagName === "IMG"), null);
+  const unknown = renderUpdates(view, availableUpdates, { configured: true, phase: "outcome_unknown", busy: false });
+  assert.deepEqual(buttons(unknown), ["Check now"], "no new update while the outcome is unknown");
 });
