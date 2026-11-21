@@ -443,7 +443,7 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertNotIn(b"Zone sound controls", response.data)
             with client.get("/status") as response:
                 self.assertEqual(response.status_code, 200)
-                self.assertIn(b"7 components", response.data)
+                self.assertIn(b"13 components", response.data)
                 self.assertIn(b"python-mpd2", response.data)
                 self.assertIn(b"netcat-openbsd", response.data)
                 self.assertIn(b"GPL-2.0 with OpenSSL exception", response.data)

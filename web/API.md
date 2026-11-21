@@ -453,8 +453,9 @@ the gateway or the network, and the response is `no-store`.
   of `ok`, `warning`, `problem`, `unknown`; rows are `{label, value, level}` and
   every value is plain text. `overall` is the worst level of all sections.
 - Provenance is part of the text: the revision reads "reported by the build" (the
-  image carries it as `RUSSOUND_BUILD_REVISION`; otherwise "not reported by this
-  build"), the runtime "detected", and anything not available is "not reported".
+  image carries it as `RUSSOUND_BUILD_REVISION`, the build time and source
+  (`ci` or `local`) as `RUSSOUND_BUILD_TIME` and `RUSSOUND_BUILD_SOURCE`;
+  anything missing or malformed reads "not reported by this build"), the runtime "detected", and anything not available is "not reported".
 - The TLS certificate warns below 30 days and is a problem once expired.
 - **Never present:** the serial number or bus path of a sound card, device
   paths, MPD ports, Wi-Fi details, MAC addresses and secrets. The sound card is

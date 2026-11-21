@@ -85,18 +85,26 @@ class FakeElement {
   }
 }
 
-function render(clients, events) {
+function render(clients, events, options = {}) {
   const elements = {
     clientCount: new FakeElement("span"),
     clientsList: new FakeElement("div"),
     clientsEmpty: new FakeElement("p"),
     eventsEmpty: new FakeElement("p"),
+    eventsCount: new FakeElement("span"),
+    eventsTableWrap: new FakeElement("div"),
     eventsTableBody: new FakeElement("tbody"),
   };
   const context = {
     ...elements,
     expandedPayloadRows: new Set(),
-    document: { createElement: (tagName) => new FakeElement(tagName) },
+    document: {
+      createElement: (tagName) => {
+        const element = new FakeElement(tagName);
+        if (tagName === "code") element.clientWidth = options.laidOut === false ? 0 : 200;
+        return element;
+      },
+    },
   };
   vm.createContext(context);
   vm.runInContext(rendering, context);
@@ -143,12 +151,32 @@ test("status page renders event path, IP and payload as text", () => {
   assert.equal(eventsTableBody.find((node) => node.tagName === "IMG"), null);
 });
 
+test("the events count is the number shown and the empty table is hidden", () => {
+  const empty = render([], []);
+  assert.equal(empty.eventsCount.textContent, "0");
+  assert.equal(empty.eventsTableWrap.hidden, true);
+  assert.equal(empty.eventsEmpty.hidden, false);
+  const events = [1, 2, 3].map((n) => ({ timestamp: "2026-11-20T10:00:00+00:00", ip: "192.0.2.4", path: `/api/${n}`, payload: {} }));
+  const filled = render([], events);
+  assert.equal(filled.eventsCount.textContent, "3");
+  assert.equal(filled.eventsTableWrap.hidden, false);
+  assert.equal(filled.eventsEmpty.hidden, true);
+});
+
+test("a collapsed panel has no layout, so payloads keep their toggle instead of becoming static", () => {
+  const { eventsTableBody } = render([], [{ timestamp: "2026-11-20T10:00:00+00:00", ip: "192.0.2.4", path: "/api/x", payload: { a: 1 } }],
+    { laidOut: false });
+  assert.equal(eventsTableBody.children[0].children[3].children[0].tagName, "BUTTON");
+});
+
 test("truncated payloads keep the expand toggle", () => {
   const elements = {
     clientCount: new FakeElement("span"),
     clientsList: new FakeElement("div"),
     clientsEmpty: new FakeElement("p"),
     eventsEmpty: new FakeElement("p"),
+    eventsCount: new FakeElement("span"),
+    eventsTableWrap: new FakeElement("div"),
     eventsTableBody: new FakeElement("tbody"),
   };
   const context = {
@@ -157,7 +185,7 @@ test("truncated payloads keep the expand toggle", () => {
     document: {
       createElement: (tagName) => {
         const element = new FakeElement(tagName);
-        if (tagName === "code") element.scrollWidth = 500;
+        if (tagName === "code") { element.scrollWidth = 500; element.clientWidth = 200; }
         return element;
       },
     },
@@ -189,10 +217,15 @@ const reference = {
     view: {
       overall: "warning",
       summary: ["Wi-Fi weak (-76 dBm)", "CPU 33 %", "Memory 51 % used", "44 °C"],
-      rows: [
-        { label: "Memory", value: "452 MiB used of 906 MiB", level: "ok" },
-        { label: "Wi-Fi link", value: "-76 dBm (weak), 270 Mbit/s, 5 GHz", level: "warning" },
-        { label: "Addresses", value: "192.168.1.105/24", level: "" },
+      rows: [],
+      groups: [
+        { id: "network", title: "Network", level: "warning", summary: "Wi-Fi weak (-76 dBm)", rows: [
+          { label: "Wi-Fi link", value: "-76 dBm (weak), 270 Mbit/s, 5 GHz", level: "warning" },
+          { label: "Addresses", value: "192.168.1.105/24", level: "" },
+        ] },
+        { id: "processor", title: "Processor and memory", level: "ok", summary: "CPU 33 % · Memory 51 % used", rows: [
+          { label: "Memory", value: "452 MiB used of 906 MiB", level: "ok" },
+        ] },
       ],
     },
   },
@@ -200,7 +233,7 @@ const reference = {
 
 function renderHostPayload(hosts, existing) {
   const elements = existing || {
-    hostList: new FakeElement("div"), hostEmpty: new FakeElement("p"), hostCount: new FakeElement("span"),
+    hostList: new FakeElement("div"),
     clientCount: new FakeElement("span"), clientsList: new FakeElement("div"), clientsEmpty: new FakeElement("p"),
     eventsEmpty: new FakeElement("p"), eventsTableBody: new FakeElement("tbody"),
   };
@@ -219,9 +252,8 @@ function renderHostPayload(hosts, existing) {
 }
 
 test("host card shows the level in words, the summary and collapsed details", () => {
-  const { hostList, hostCount, hostEmpty } = renderHostPayload([reference]);
-  assert.equal(hostCount.textContent, "1");
-  assert.equal(hostEmpty.hidden, true);
+  const { hostList } = renderHostPayload([reference]);
+  assert.equal(hostList.children.length, 1);
   const card = hostList.children[0];
   const pill = card.find((node) => node.className.includes("host-level"));
   assert.equal(pill.textContent, "Warning");
@@ -234,9 +266,12 @@ test("host card shows the level in words, the summary and collapsed details", ()
   assert.match(renderHostPayload([older]).hostList.allText(), /Updated 7 s ago\./);
   const details = card.find((node) => node.tagName === "DETAILS");
   assert.equal(details.open, false);
-  const rows = details.find((node) => node.tagName === "DL").children.map((node) => node.textContent);
-  assert.deepEqual(rows.slice(0, 4), ["Memory", "452 MiB used of 906 MiB", "Wi-Fi link", "-76 dBm (weak), 270 Mbit/s, 5 GHz (Warning)"]);
-  assert.equal(rows.at(-1), "192.168.1.105/24");
+  const text = details.allText();
+  assert.match(text, /Network/);
+  assert.match(text, /Processor and memory/);
+  assert.match(text, /Wi-Fi link -76 dBm \(weak\), 270 Mbit\/s, 5 GHz \(Warning\)/);
+  assert.match(text, /192\.168\.1\.105\/24/);
+  assert.match(text, /Memory 452 MiB used of 906 MiB/);
 });
 
 test("expanded details stay open across refreshes", () => {
@@ -277,17 +312,14 @@ test("host text is only ever assigned as text, even for hostile labels", () => {
   const markup = '<img src=x onerror="alert(1)">';
   hostile.agent_id = markup;
   hostile.host.view.summary = [markup];
-  hostile.host.view.rows = [{ label: markup, value: markup, level: "problem" }];
+  hostile.host.view.groups = [{ id: "g", title: markup, level: "ok", summary: markup, rows: [{ label: markup, value: markup, level: "problem" }] }];
   const { hostList } = renderHostPayload([hostile]);
   assert.equal(hostList.find((node) => node.tagName === "IMG"), null);
   assert.match(hostList.allText(), /<img src=x onerror="alert\(1\)"> \(Problem\)/);
 });
 
-test("no configured agent shows the empty message", () => {
-  const { hostEmpty, hostCount, hostList } = renderHostPayload([]);
-  assert.equal(hostEmpty.hidden, false);
-  assert.equal(hostCount.textContent, "0");
-  assert.equal(hostList.children.length, 0);
+test("no configured agent renders no host card", () => {
+  assert.equal(renderHostPayload([]).hostList.children.length, 0);
 });
 
 function renderOverviewPayload(payload, existing) {

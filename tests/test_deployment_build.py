@@ -283,6 +283,9 @@ class LocalBuildTests(unittest.TestCase):
                 self.assertEqual(argv[argv.index("--network") + 1], "none")
                 # The page reports the running revision from the build, so every image gets the exact commit.
                 self.assertEqual(argv[argv.index("--build-arg") + 1], "BUILD_REVISION=" + self.revision)
+                arguments = [argv[position + 1] for position, item in enumerate(argv) if item == "--build-arg"]
+                self.assertIn("BUILD_SOURCE=local", arguments)
+                self.assertRegex(next(item for item in arguments if item.startswith("BUILD_TIME=")), r"BUILD_TIME=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertFalse(any(path.is_dir() for path in bundle.iterdir()))
         self.assertEqual(builds.clean_source(self.source, self.revision), value["tree"])
 

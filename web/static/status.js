@@ -2,10 +2,10 @@ const clientCount = document.getElementById("clientCount");
 const clientsList = document.getElementById("clientsList");
 const clientsEmpty = document.getElementById("clientsEmpty");
 const eventsEmpty = document.getElementById("eventsEmpty");
+const eventsCount = document.getElementById("eventsCount");
+const eventsTableWrap = document.getElementById("eventsTableWrap");
 const eventsTableBody = document.getElementById("eventsTableBody");
 const hostList = document.getElementById("hostList");
-const hostEmpty = document.getElementById("hostEmpty");
-const hostCount = document.getElementById("hostCount");
 const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
@@ -90,6 +90,8 @@ function renderStatus(payload, historyPayload) {
   }
 
   eventsEmpty.hidden = events.length !== 0;
+  eventsTableWrap.hidden = events.length === 0;
+  eventsCount.textContent = String(events.length);
   eventsTableBody.replaceChildren();
   const visibleKeys = new Set();
   for (const event of events) {
@@ -126,7 +128,8 @@ function renderStatus(payload, historyPayload) {
 
     // Always test truncation in collapsed mode so expanded rows are not misclassified.
     payloadToggle.setAttribute("aria-expanded", "false");
-    const isTruncated = payloadPreview.scrollWidth > payloadPreview.clientWidth;
+    // A collapsed panel has no layout (width 0): keep the toggle rather than judging from nothing.
+    const isTruncated = !(payloadPreview.clientWidth > 0) || payloadPreview.scrollWidth > payloadPreview.clientWidth;
     payloadToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     if (isTruncated) {
       payloadToggle.setAttribute("data-payload-toggle", "");
@@ -145,7 +148,6 @@ function renderStatus(payload, historyPayload) {
 
 // Host facts: every string below comes from validated server fields and is
 // assigned as text only. The server decides labels and builds the detail rows.
-const openHostDetails = new Set();
 const hostLevelText = { ok: "OK", warning: "Warning", problem: "Problem", unknown: "Unknown" };
 
 function hostFreshness(host) {
@@ -170,51 +172,18 @@ function hostFreshness(host) {
 
 function renderHosts(payload) {
   const hosts = payload.hosts || [];
-  hostCount.textContent = String(hosts.length);
-  hostEmpty.hidden = hosts.length !== 0;
   hostList.replaceChildren();
   for (const host of hosts) {
-    const item = document.createElement("article");
-    item.className = "status-list-item host-card";
     const view = host.host ? host.host.view : null;
-    const level = view ? view.overall : "unknown";
-    const header = document.createElement("div");
-    header.className = "status-item-row";
-    header.append(
-      textElement("strong", "", `Audio host (${host.agent_id})`),
-      textElement("span", `status-pill host-level host-level-${hostLevelText[level] ? level : "unknown"}`,
-        hostLevelText[level] || "Unknown"),
-    );
-    item.appendChild(header);
-    if (view && view.summary.length) {
-      item.appendChild(textElement("div", "status-meta host-summary", view.summary.join(" · ")));
-    }
-    item.appendChild(textElement("div", "status-meta", hostFreshness(host)));
-    if (view && view.rows.length) {
-      const details = document.createElement("details");
-      details.className = "host-details";
-      details.open = openHostDetails.has(host.agent_id);
-      details.addEventListener("toggle", () => {
-        if (details.open) {
-          openHostDetails.add(host.agent_id);
-        } else {
-          openHostDetails.delete(host.agent_id);
-        }
-      });
-      details.appendChild(textElement("summary", "", "Details"));
-      const list = document.createElement("dl");
-      list.className = "host-rows";
-      for (const row of view.rows) {
-        const flagged = hostLevelText[row.level] && row.level !== "ok";
-        list.append(
-          textElement("dt", "", row.label),
-          textElement("dd", flagged ? `host-row-${row.level}` : "", flagged ? `${row.value} (${hostLevelText[row.level]})` : row.value),
-        );
-      }
-      details.appendChild(list);
-      item.appendChild(details);
-    }
-    hostList.appendChild(item);
+    hostList.appendChild(overviewCard({
+      id: `host:${host.agent_id}`,
+      title: `Audio host (${host.agent_id})`,
+      level: view ? view.overall : "unknown",
+      summary: view && view.summary.length ? view.summary.join(" · ") : "",
+      note: hostFreshness(host),
+      rows: [],
+      groups: view ? (view.groups || []) : [],
+    }));
   }
 }
 
@@ -260,6 +229,37 @@ function overviewDetails(key, label) {
   return details;
 }
 
+function overviewCard(section) {
+  const item = document.createElement("article");
+  item.className = "status-list-item host-card";
+  item.appendChild(overviewHeader(section.title, section.level, true));
+  if (section.summary) {
+    item.appendChild(textElement("div", "status-meta host-summary", section.summary));
+  }
+  if (section.note) {
+    item.appendChild(textElement("div", "status-meta", section.note));
+  }
+  const groups = section.groups || [];
+  if (section.rows.length || groups.length) {
+    const details = overviewDetails(section.id, "Details");
+    if (section.rows.length) {
+      details.appendChild(overviewRows(section.rows));
+    }
+    for (const group of groups) {
+      const box = document.createElement("div");
+      box.className = "overview-group";
+      box.appendChild(overviewHeader(group.title, group.level, false));
+      box.appendChild(textElement("div", "status-meta", group.summary));
+      const inner = overviewDetails(`${section.id}/${group.id}`, "Show");
+      inner.appendChild(overviewRows(group.rows));
+      box.appendChild(inner);
+      details.appendChild(box);
+    }
+    item.appendChild(details);
+  }
+  return item;
+}
+
 function renderOverview(payload) {
   const sections = payload.sections || [];
   overviewEmpty.hidden = sections.length !== 0;
@@ -268,29 +268,7 @@ function renderOverview(payload) {
   overviewLevel.className = `status-pill host-level host-level-${overall}`;
   overviewList.replaceChildren();
   for (const section of sections) {
-    const item = document.createElement("article");
-    item.className = "status-list-item host-card";
-    item.appendChild(overviewHeader(section.title, section.level, true));
-    item.appendChild(textElement("div", "status-meta host-summary", section.summary));
-    const groups = section.groups || [];
-    if (section.rows.length || groups.length) {
-      const details = overviewDetails(section.id, "Details");
-      if (section.rows.length) {
-        details.appendChild(overviewRows(section.rows));
-      }
-      for (const group of groups) {
-        const box = document.createElement("div");
-        box.className = "overview-group";
-        box.appendChild(overviewHeader(group.title, group.level, false));
-        box.appendChild(textElement("div", "status-meta", group.summary));
-        const inner = overviewDetails(`${section.id}/${group.id}`, "Show");
-        inner.appendChild(overviewRows(group.rows));
-        box.appendChild(inner);
-        details.appendChild(box);
-      }
-      item.appendChild(details);
-    }
-    overviewList.appendChild(item);
+    overviewList.appendChild(overviewCard(section));
   }
 }
 

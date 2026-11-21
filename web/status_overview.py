@@ -16,6 +16,8 @@ from typing import Any, cast
 LEVEL_ORDER = {"unknown": 0, "ok": 1, "warning": 2, "problem": 3}
 CERTIFICATE_WARNING_DAYS = 30
 REVISION = re.compile(r"[a-f0-9]{40}\Z")
+BUILD_TIME = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):\d{2}Z\Z")
+BUILD_SOURCES = {"ci": "CI build (GitHub Actions)", "local": "Local build"}
 FORMAT = re.compile(r"[0-9a-z:]{1,32}\Z")
 SINK_NAME = re.compile(r"[\w.-]{1,96}\Z", re.ASCII)
 MAX_LABEL = 120
@@ -74,17 +76,25 @@ def _section(identifier: str, title: str, level: str, summary: str, rows: list[d
 
 # ------------------------------------------------------------ web application
 
-def web_section(*, uptime_seconds: int, runtime: str, revision: str | None, clients: int) -> dict[str, Any]:
+def web_section(*, uptime_seconds: int, runtime: str, revision: str | None, clients: int,
+                build_time: str | None = None, build_source: str | None = None) -> dict[str, Any]:
     reported = revision if isinstance(revision, str) and REVISION.fullmatch(revision) else None
+    moment = BUILD_TIME.fullmatch(build_time) if isinstance(build_time, str) else None
+    source = BUILD_SOURCES.get(build_source or "")
     runtime_text = {"container": "Container (detected)", "native": "Native process (detected)"}.get(runtime, "Unknown")
+    built = f"{moment.group(1)}-{moment.group(2)}-{moment.group(3)} {moment.group(4)}:{moment.group(5)} UTC" if moment else None
     rows = [
         _row("Status", "Running", "ok"),
         _row("Runtime", runtime_text),
-        _row("Revision", f"{reported[:7]} (reported by the build)" if reported else "not reported by this build"),
+        _row("Build", (source or "not reported by this build") + (" (reported by the build)" if source else "")),
+        _row("Revision", f"{reported[:7]} (latest commit, reported by the build)" if reported else "not reported by this build"),
+        _row("Built", f"{built} (reported by the build)" if built else "not reported by this build"),
         _row("Uptime", _duration(uptime_seconds)),
         _row("Live clients", str(clients)),
     ]
-    return _section("web", "Web application", "ok", f"Running · {_duration(uptime_seconds)}" + (f" · {reported[:7]}" if reported else ""), rows)
+    origin = {"CI build (GitHub Actions)": "CI build", "Local build": "local build"}.get(source or "")
+    tail = " · ".join(part for part in (origin, reported[:7] if reported else None) if part)
+    return _section("web", "Web application", "ok", f"Running · {_duration(uptime_seconds)}" + (f" · {tail}" if tail else ""), rows)
 
 
 # --------------------------------------------------------------- playback agent
@@ -325,8 +335,10 @@ def audio_section(agent: dict[str, Any], audio: dict[str, Any]) -> dict[str, Any
     return _section(f"audio:{identifier}", title, level, summary, rows, groups)
 
 
-def compose(sections: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"api_version": 1, "overall": _worst([section["level"] for section in sections]), "sections": sections}
+def compose(sections: list[dict[str, Any]], extra_levels: list[str] | None = None) -> dict[str, Any]:
+    """``extra_levels`` are levels of cards shown in the same panel (the host cards) that are not sections."""
+    levels = [section["level"] for section in sections] + list(extra_levels or [])
+    return {"api_version": 1, "overall": _worst(levels), "sections": sections}
 
 
 def now() -> datetime:

@@ -8,12 +8,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from web import audio_status, status_overview as overview
+from web import audio_status, host_status, status_overview as overview
 from web.playback_status import PlaybackAgentConfig, PlaybackStatusClient
 from web.russound_controller import backend_status_kind
 from web.russound_server import RussoundHTTPServer
 
 FIXTURES = Path(__file__).parent / "fixtures"
+HOST_RESPONSE = json.loads((FIXTURES / "host-info-v1.json").read_text())["agent_response"]
 AUDIO = json.loads((FIXTURES / "audio-info-v1.json").read_text())
 PLAYBACK = json.loads((FIXTURES / "playback-read-v1.json").read_text())
 NOW = datetime(2026, 10, 14, 18, 50, 5, tzinfo=timezone.utc)
@@ -52,7 +53,17 @@ class AudioValidationTests(unittest.TestCase):
 class SectionTests(unittest.TestCase):
     def test_web_revision_wording(self):
         shown = overview.web_section(uptime_seconds=90000, runtime="container", revision="a" * 40, clients=2)
-        self.assertIn("aaaaaaa (reported by the build)", [row["value"] for row in shown["rows"]])
+        self.assertIn("aaaaaaa (latest commit, reported by the build)", [row["value"] for row in shown["rows"]])
+        built = overview.web_section(uptime_seconds=5, runtime="container", revision="b" * 40, clients=0,
+                                     build_time="2026-11-21T08:25:07Z", build_source="local")
+        values = {row["label"]: row["value"] for row in built["rows"]}
+        self.assertEqual(values["Build"], "Local build (reported by the build)")
+        self.assertEqual(values["Built"], "2026-11-21 08:25 UTC (reported by the build)")
+        self.assertIn("local build · bbbbbbb", built["summary"])
+        bad = overview.web_section(uptime_seconds=5, runtime="native", revision=None, clients=0,
+                                   build_time="<b>soon</b>", build_source="<i>x</i>")
+        self.assertEqual({row["label"]: row["value"] for row in bad["rows"]}["Built"], "not reported by this build")
+        self.assertNotIn("<", json.dumps(bad))
         unknown = overview.web_section(uptime_seconds=5, runtime="native", revision="not-a-sha", clients=0)
         self.assertIn("not reported by this build", [row["value"] for row in unknown["rows"]])
 
@@ -117,6 +128,15 @@ class SectionTests(unittest.TestCase):
         self.assertNotIn("\\u001b", text)
 
 
+class OverallTests(unittest.TestCase):
+    def test_overall_includes_levels_of_the_host_cards(self):
+        sections = [{"level": "ok"}, {"level": "ok"}]
+        self.assertEqual(overview.compose(sections)["overall"], "ok")
+        self.assertEqual(overview.compose(sections, ["warning"])["overall"], "warning")
+        self.assertEqual(overview.compose(sections, ["unknown"])["overall"], "ok")
+        self.assertEqual(overview.compose([], ["warning"])["overall"], "warning")
+
+
 class BackendKindTests(unittest.TestCase):
     def test_kinds(self):
         self.assertEqual(backend_status_kind({"connected": True}), "responding")
@@ -141,11 +161,14 @@ class EndpointTests(unittest.TestCase):
             token.write_text("mock-value-" + "x" * 32 + "\n")
             client = PlaybackStatusClient(PlaybackAgentConfig("http://127.0.0.1:8081", "musicpi", str(token)))
             client._set_audio("ok", audio=audio_status.validate_audio_response(audio_response()))
+            client._status = "ok"
+            client._set_host("ok", host=host_status.snapshot_view(host_status.validate_host_response(HOST_RESPONSE)))
             server = RussoundHTTPServer(None, None, playback_clients=[client])
             try:
                 with patch.object(client, "_get_json", side_effect=AssertionError("no probing")):
                     body = server.app.test_client().get("/api/status/overview").json
                 self.assertEqual([s["id"] for s in body["sections"]], ["web", "gateway", "agent:musicpi", "audio:musicpi"])
+                self.assertEqual(body["overall"], "warning", "the weak Wi-Fi of the host card must reach the overall level")
                 text = json.dumps(body)
                 for forbidden in AUDIO["forbidden_text"]:
                     self.assertNotIn(forbidden, text)
