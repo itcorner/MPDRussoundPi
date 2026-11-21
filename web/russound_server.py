@@ -34,6 +34,7 @@ from web import status_overview
 from web.update_status import UpdateChecker
 from web import admin_auth
 from web.admin_auth import AdminAuth
+from web.updater_client import UpdaterClient, UpdaterRefused, UpdaterUnavailable
 from web.russound_controller import backend_status_kind
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
@@ -174,6 +175,7 @@ class RussoundHTTPServer:
         playback_clients: list[PlaybackStatusClient] | None = None,
         update_checker: UpdateChecker | None = None,
         admin: AdminAuth | None = None,
+        updater: UpdaterClient | None = None,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
@@ -199,6 +201,7 @@ class RussoundHTTPServer:
         self._started_monotonic = time.monotonic()
         self._updates = update_checker or UpdateChecker()
         log_file = env_str("RUSSOUND_LOG_FILE")
+        self.updater = updater or UpdaterClient()
         self.admin = admin or AdminAuth(
             env_str("RUSSOUND_ADMIN_PASSWORD_FILE") or admin_auth.DEFAULT_PASSWORD_FILE,
             Path(state_path).expanduser().resolve().parent / "admin-lockout.json" if state_path else None,
@@ -454,6 +457,35 @@ class RussoundHTTPServer:
             if result == "ok":
                 return self._no_store(jsonify(self.admin.describe(session_id)))
             return self._admin_failure(result, retry)
+
+        # Installing updates through the updater service (single-host Docker only).
+        @app.get("/api/status/update-operation")
+        def api_status_update_operation():
+            return self._updater_response(lambda: self.updater.status(include_review=False))
+
+        @app.get("/api/admin/update")
+        def api_admin_update():
+            if self.admin.session(request.cookies.get(admin_auth.COOKIE_NAME), touch=False) is None:
+                return self._admin_failure("unauthenticated", 0)
+            return self._updater_response(lambda: self.updater.status(include_review=True))
+
+        @app.post("/api/admin/update/review")
+        def api_admin_update_review():
+            return self._updater_action("review", recent=True)
+
+        @app.post("/api/admin/update/approve")
+        def api_admin_update_approve():
+            body = self._read_json_body()
+            return self._updater_action("approve", recent=True,
+                                        operation=body.get("operation"), digest=body.get("digest"))
+
+        @app.post("/api/admin/update/cancel")
+        def api_admin_update_cancel():
+            return self._updater_action("cancel", recent=False, operation=self._read_json_body().get("operation"))
+
+        @app.post("/api/admin/update/restore")
+        def api_admin_update_restore():
+            return self._updater_action("restore", recent=True, operation=self._read_json_body().get("operation"))
 
         @app.get("/api/status/updates")
         def api_status_updates():
@@ -989,6 +1021,44 @@ class RussoundHTTPServer:
         }[denied]
         response = self._no_store(jsonify({"api_version": 1, "error": {"code": denied, "message": message}}))
         response.status_code = status
+        return response
+
+    def _updater_response(self, produce: Any) -> Response:
+        try:
+            body = produce()
+        except UpdaterUnavailable as error:
+            response = self._no_store(jsonify({"api_version": 1, "configured": self.updater.configured(),
+                                                "error": {"code": "updater_unavailable", "message": str(error)}}))
+            response.status_code = 503
+            return response
+        return self._no_store(jsonify(body))
+
+    def _updater_action(self, action: str, *, recent: bool, **fields: Any) -> Response:
+        denied = self.admin_required(recent=recent)
+        if denied is not None:
+            return denied
+        session = self.admin.session(request.cookies.get(admin_auth.COOKIE_NAME), touch=False)
+        actor = {"session": session.reference if session else "-", "client": self._request_ip()[:64]}
+        payload = {"op": action, "actor": actor, **{key: value for key, value in fields.items()
+                                                        if isinstance(value, str) and len(value) <= 128}}
+        if action == "cancel":
+            payload.pop("actor")
+        try:
+            result = self.updater.request(payload)
+        except UpdaterRefused as error:
+            response = self._no_store(jsonify({"api_version": 1, "error": {"code": "refused", "message": str(error)}}))
+            response.status_code = 409
+            return response
+        except UpdaterUnavailable as error:
+            response = self._no_store(jsonify({"api_version": 1, "error": {"code": "updater_unavailable",
+                                                                         "message": str(error)}}))
+            response.status_code = 503
+            return response
+        logging.getLogger("russound.audit").warning(
+            "admin update_%s client=%s session=%s", action, actor["client"], actor["session"])
+        response = self._no_store(jsonify({"api_version": 1, "accepted": True,
+                                           "operation": result.get("operation")}))
+        response.status_code = 202
         return response
 
     def _admin_failure(self, result: str, retry: int) -> Response:

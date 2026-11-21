@@ -176,7 +176,11 @@ operator.
   stage 3. Only the development channel exists, because the tooling resolves
   only `dev` images. Tests with the existing fixtures for
   success, failed checks, timeouts and interruption.
-- [ ] **3. Status page flow:** "Update to …" for administrators in the Software
+- [x] **3. Status page flow** (implemented 2026-11-21, not yet deployed:
+  `web/updater_client.py`, `/api/status/update-operation`, `/api/admin/update*`,
+  the "Install updates" block in the Administrator panel with typed confirmation,
+  reconnection and restore; reauthentication is asked inline when the password is
+  older than 5 minutes): "Update to …" for administrators in the Software
   updates section, review dialog (target revision and tags, both images, expected
   interruption, backup custody note), typed confirmation, progress, reconnection,
   result, and "Restore previous version" after a failed update.

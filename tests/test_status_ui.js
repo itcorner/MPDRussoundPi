@@ -417,7 +417,7 @@ function renderAdminState(session) {
   const elements = {
     adminPanel: new FakeElement("details"), adminState: new FakeElement("span"), adminLoginForm: new FakeElement("form"), adminPassword: new FakeElement("input"),
     adminSession: new FakeElement("div"), adminSessionText: new FakeElement("span"), adminLogout: new FakeElement("button"),
-    adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"),
+    adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"), adminUpdate: new FakeElement("section"),
   };
   elements.adminPassword.focus = () => { elements.adminPassword.focused = true; };
   const context = { ...elements, document: { createElement: (tagName) => new FakeElement(tagName) } };
@@ -470,4 +470,37 @@ test("administrator panel shows setup, login, locked and logged-in states in wor
   assert.equal(inside.adminSession.hidden, false);
   assert.match(inside.adminSessionText.textContent, /15 minutes without activity and at the latest in 480 minutes/);
   assert.equal(vm.runInContext("adminCsrfToken", inside.context), "token-1");
+});
+
+
+test("update block: not set up, review with typed confirmation, failure with restore", () => {
+  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+  const render = (status) => { view.context.renderAdminUpdate(status); return view.adminUpdate; };
+  assert.match(render({ configured: false, phase: "idle" }).allText(), /not set up on this installation/);
+  const idle = render({ configured: true, phase: "succeeded", installed_revision: "b".repeat(40), busy: false });
+  assert.match(idle.allText(), /The update finished\. Installed: dev-bbbbbbb\./);
+  assert.equal(idle.find((node) => node.tagName === "BUTTON").textContent, "Review an update");
+  const review = render({ configured: true, phase: "awaiting_approval", busy: true, review: {
+    operation: "op-1", digest: "sha256:abc", action: "update", revision: "c".repeat(40), expires_in_seconds: 95,
+    images: { web: "itcornernet/mpdrussoundpi-web@sha256:1" }, layout_change: "adds the read-only updater socket mount",
+    interruption: "The web application restarts.", backup: "The backup is kept on this Pi. It is not disaster recovery.",
+  } });
+  assert.match(review.allText(), /Review: update to dev-ccccccc/);
+  assert.match(review.allText(), /not disaster recovery/);
+  assert.match(review.allText(), /95 s/);
+  const confirm = review.find((node) => node.tagName === "BUTTON" && node.textContent === "Confirm update");
+  assert.equal(confirm.disabled, true, "disabled until the word is typed");
+  const input = review.find((node) => node.tagName === "INPUT");
+  input.value = "Update";
+  input.fire("input");
+  assert.equal(confirm.disabled, false);
+  const failed = render({ configured: true, phase: "failed", busy: false, restore_available: true, operation: "op-1",
+    error: "The update failed after the services were stopped." });
+  const labels = [];
+  failed.find((node) => { if (node.tagName === "BUTTON") labels.push(node.textContent); return false; });
+  assert.deepEqual(labels, ["Restore previous version", "Review an update"]);
+  const unknown = render({ configured: true, phase: "outcome_unknown", busy: false, restore_available: false });
+  assert.equal(unknown.find((node) => node.tagName === "BUTTON"), null, "no new update while the outcome is unknown");
+  const hostile = render({ configured: true, phase: "failed", busy: false, error: "<img src=x onerror=1>" });
+  assert.equal(hostile.find((node) => node.tagName === "IMG"), null);
 });

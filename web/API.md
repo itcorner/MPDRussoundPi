@@ -42,6 +42,7 @@ Exceptions:
 - `GET /api/status/host` returns validated host facts of each configured playback agent's host (see below)
 - `GET /api/status/overview` returns the component and audio sections of the Status page (see below)
 - `GET /api/admin/session`, `POST /api/admin/login`, `POST /api/admin/logout`, `POST /api/admin/reauthenticate` handle the administrator session (see below)
+- `GET /api/status/update-operation` (public) and `GET /api/admin/update`, `POST /api/admin/update/review|approve|cancel|restore` (administrator) install updates through the updater service (see below)
 - `GET /api/status/updates` returns the cached web image update check; `POST /api/status/updates/check` asks for a check now (see below)
 - `GET /api/playback`, `/api/playback/health`, and
   `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
@@ -494,6 +495,31 @@ Privileged routes answer `401` without a session, `403` with code `csrf` without
 a valid token and `403` with code `reauthenticate` when the password must be
 entered again. The same-origin guard and JSON body rules apply as for every
 other write.
+
+### Installing updates
+
+Available only on single-host Docker installations with the updater service (its
+socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
+`RUSSOUND_UPDATER_SOCKET` overrides the path); elsewhere the status reports
+`configured: false` and actions answer `503`. See the
+[plan](../docs/plans/general_new_user-triggered-image-updates.md).
+
+- `GET /api/status/update-operation` (public): `configured`, `phase`
+  (`idle`, `resolving`, `awaiting_approval`, `running`, `succeeded`,
+  `up_to_date`, `cancelled`, `failed`, `failed_before_interruption`,
+  `outcome_unknown`, `restore_awaiting_approval`, `restoring`, `restored`),
+  `kind`, `operation`, `installed_revision`, `candidate_revision`, `error`,
+  `finished_at`, `restore_available`, `busy`, `updated_at`. Never the review.
+- `GET /api/admin/update` (administrator session): the same plus `review`
+  (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `images`,
+  `layout_change`, `interruption`, `backup`) while a confirmation is pending.
+- `POST /api/admin/update/review` (`{}`), `/approve`
+  (`{"operation", "digest"}`) and `/restore` (`{"operation"}`) need the session,
+  the `X-CSRF-Token` header and the password entered within the last 5 minutes;
+  `/cancel` (`{"operation"}`) needs session and token. `202` when the updater
+  accepted the request, `409` with its reason when it refused (busy, no pending
+  review, wrong or expired confirmation), `503` when it is not installed or does
+  not answer. Each action is written to the audit log.
 
 ### GET /api/status/updates and POST /api/status/updates/check
 

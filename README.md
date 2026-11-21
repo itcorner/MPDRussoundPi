@@ -436,6 +436,15 @@ sudo chown <service uid>:<service gid> /path/to/data/secrets/russound-admin.scry
 sudo chmod 0400 /path/to/data/secrets/russound-admin.scrypt
 ```
 
+After logging in, the Administrator panel can install the newest development
+image: it shows a review (version, images, interruption, where the backup is kept),
+asks you to type `update` to confirm, follows the progress across the restart of
+the web application and offers "Restore previous version" if the update fails.
+This works only on a single Pi running the Docker containers with the updater
+service installed (see the
+[container deployment guide](docs/documentation/container-deployment.md)); other
+installations keep using the reviewed SSH operator.
+
 The password needs at least 12 characters. `--allow-short` accepts 4 or more
 (for example a 4-digit PIN): online guessing is still slowed by the lockout
 (5 tries per 15 minutes, so about 10 days on average for a 4-digit PIN), but a
