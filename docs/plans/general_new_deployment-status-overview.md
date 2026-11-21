@@ -2,7 +2,7 @@
 
 Status: **new, in progress** (2026-11-21): the host section is implemented,
 deployed and accepted on the reference Pi; the component and audio sections
-(second slice) are implemented and await deployment (see
+(second slice) are implemented, deployed and accepted (see
 [Implementation progress](#implementation-progress)); topology, the web host's
 own facts and deployment metadata are not started. Proposed as an idea on
 2026-11-12. On 2026-11-21 a **host information** section was added to the scope
@@ -273,7 +273,7 @@ the services were down for a few minutes. The validator now accepts that layout
 operator tooling on the Pi was upgraded through the reviewed play, the export was
 replayed read-only for both images, and the retry completed with every required check.
 
-| 2026-11-21 | **Second slice, component and audio overview** (not yet deployed): `GET /api/status/overview` with web, gateway, agent and audio sections; additive agent route `GET /v1/audio` and `audio_info` capability (model-level hardware only) with the proxy allowlist entry; the web image carries its git revision (`BUILD_REVISION` build argument, set by CI and by the operator's local build); certificate expiry from a verified handshake; the "System overview" panel. | Decisions of this round: audio hardware included now; model-level hardware details (card profile, sink names, channel mapping, USB vendor:product; serials, bus paths and MAC addresses stay hidden); the revision is baked into the image and displayed as "reported by the build". Rollout: proxy play, agent candidate, web update. |
+| 2026-11-21 | **Second slice, component and audio overview** (deployed 2026-11-21 at `0ff3b02`): `GET /api/status/overview` with web, gateway, agent and audio sections; additive agent route `GET /v1/audio` and `audio_info` capability (model-level hardware only) with the proxy allowlist entry; the web image carries its git revision (`BUILD_REVISION` build argument, set by CI and by the operator's local build); certificate expiry from a verified handshake; the "System overview" panel. | Decisions of this round: audio hardware included now; model-level hardware details (card profile, sink names, channel mapping, USB vendor:product; serials, bus paths and MAC addresses stay hidden); the revision is baked into the image and displayed as "reported by the build". Rollout done in that order: the proxy diff was the single added `/v1/audio` path, then the agent candidate, then the web through the reviewed `deploy --update` (all required checks passed). Acceptance: the live overview shows revision `0ff3b02` "reported by the build", the gateway responding, certificate valid until 2027-10-16, three outputs playing with correct routes and the sound card as USB 0d8c:0102; the agent's `/v1/audio` contains no serial or bus path. |
 
 Not part of the first slice: the web host's own facts, merging cards of the same
 host by boot id, widening the disclosure, and everything in the topology and
@@ -297,7 +297,7 @@ component overview.
   observations on the Pi (2026-11-21, see the progress table).
 - [x] Component and audio overview (second slice): web, gateway, agent and
   audio sections, `GET /v1/audio`, build revision in the image, certificate
-  expiry. Implemented 2026-11-21; target acceptance is open.
+  expiry. Implemented, deployed and accepted on the Pi 2026-11-21.
 - [ ] Implement bounded collectors/aggregation and deployment metadata
   provisioning for approved layouts; update the deployment and API guides.
 - [ ] Add the responsive Status overview, preserving existing sections and
