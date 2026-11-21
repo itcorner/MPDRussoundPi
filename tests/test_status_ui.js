@@ -411,3 +411,38 @@ test("an empty overview shows the placeholder and an unknown level", () => {
   assert.equal(view.overviewEmpty.hidden, false);
   assert.equal(view.overviewLevel.textContent, "Unknown");
 });
+
+
+function renderAdminState(session) {
+  const elements = {
+    adminState: new FakeElement("span"), adminLoginForm: new FakeElement("form"), adminPassword: new FakeElement("input"),
+    adminSession: new FakeElement("div"), adminSessionText: new FakeElement("span"), adminLogout: new FakeElement("button"),
+    adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"),
+  };
+  const context = { ...elements, document: { createElement: (tagName) => new FakeElement(tagName) } };
+  vm.createContext(context);
+  vm.runInContext(rendering, context);
+  context.renderAdmin(session);
+  return { ...elements, context };
+}
+
+test("administrator panel shows setup, login, locked and logged-in states in words", () => {
+  const setup = renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 });
+  assert.equal(setup.adminState.textContent, "Not set up");
+  assert.equal(setup.adminSetup.hidden, false);
+  assert.equal(setup.adminLoginForm.hidden, true);
+  const out = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  assert.equal(out.adminState.textContent, "Not logged in");
+  assert.equal(out.adminLoginForm.hidden, false);
+  assert.equal(out.adminSession.hidden, true);
+  const locked = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 600 });
+  assert.equal(locked.adminState.textContent, "Locked");
+  assert.match(locked.adminMessage.textContent, /locked for about 10 minutes/);
+  const inside = renderAdminState({ configured: true, authenticated: true, csrf_token: "token-1",
+    idle_expires_in_seconds: 900, expires_in_seconds: 28800, recently_authenticated: true });
+  assert.equal(inside.adminState.textContent, "Logged in");
+  assert.equal(inside.adminLoginForm.hidden, true);
+  assert.equal(inside.adminSession.hidden, false);
+  assert.match(inside.adminSessionText.textContent, /15 minutes without activity and at the latest in 480 minutes/);
+  assert.equal(vm.runInContext("adminCsrfToken", inside.context), "token-1");
+});

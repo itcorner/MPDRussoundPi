@@ -10,6 +10,14 @@ const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
 const overviewUpdate = document.getElementById("overviewUpdate");
+const adminState = document.getElementById("adminState");
+const adminLoginForm = document.getElementById("adminLoginForm");
+const adminPassword = document.getElementById("adminPassword");
+const adminSession = document.getElementById("adminSession");
+const adminSessionText = document.getElementById("adminSessionText");
+const adminLogout = document.getElementById("adminLogout");
+const adminSetup = document.getElementById("adminSetup");
+const adminMessage = document.getElementById("adminMessage");
 
 let eventSource = null;
 let eventSourceRetryTimer = null;
@@ -270,6 +278,95 @@ function overviewCard(section) {
   return item;
 }
 
+// Administrator session. The CSRF token stays in memory and is sent with every
+// privileged request; the password field is cleared after each attempt.
+let adminCsrfToken = null;
+
+function minutesText(seconds) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+function renderAdmin(session) {
+  const configured = session.configured === true;
+  const authenticated = configured && session.authenticated === true;
+  adminCsrfToken = authenticated && typeof session.csrf_token === "string" ? session.csrf_token : null;
+  const [text, level] = !configured ? ["Not set up", "unknown"]
+    : authenticated ? ["Logged in", "ok"]
+      : session.locked_for_seconds > 0 ? ["Locked", "warning"] : ["Not logged in", "unknown"];
+  adminState.textContent = text;
+  adminState.className = `status-pill host-level host-level-${level}`;
+  adminSetup.hidden = configured;
+  adminLoginForm.hidden = !configured || authenticated;
+  adminSession.hidden = !authenticated;
+  if (authenticated) {
+    adminSessionText.textContent = `Logged in. The session ends after ${minutesText(session.idle_expires_in_seconds)} without activity`
+      + ` and at the latest in ${minutesText(session.expires_in_seconds)}.`;
+  }
+  if (configured && !authenticated && session.locked_for_seconds > 0) {
+    showAdminMessage(`Too many failed attempts. Login is locked for about ${minutesText(session.locked_for_seconds)}.`);
+  }
+}
+
+function showAdminMessage(text) {
+  adminMessage.textContent = text || "";
+  adminMessage.hidden = !text;
+}
+
+async function fetchAdminSession() {
+  try {
+    const response = await apiFetch("/api/admin/session");
+    if (response.ok) {
+      renderAdmin(await response.json());
+    }
+  } catch {
+    // The next poll retries.
+  }
+}
+
+async function adminRequest(path, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (adminCsrfToken) {
+    headers["X-CSRF-Token"] = adminCsrfToken;
+  }
+  const response = await apiFetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+  return { response, payload };
+}
+
+async function submitAdminLogin(event) {
+  event.preventDefault();
+  const password = adminPassword.value;
+  adminPassword.value = "";
+  showAdminMessage("");
+  try {
+    const { response, payload } = await adminRequest("/api/admin/login", { password });
+    if (response.ok) {
+      renderAdmin(payload);
+    } else {
+      showAdminMessage(payload.error && payload.error.message ? payload.error.message : "Login failed.");
+    }
+  } catch {
+    showAdminMessage("The server could not be reached.");
+  }
+  fetchAdminSession();
+}
+
+async function submitAdminLogout() {
+  try {
+    await adminRequest("/api/admin/logout");
+  } catch {
+    // The session state below shows the result.
+  }
+  showAdminMessage("");
+  fetchAdminSession();
+}
+
 // The only action the overview offers: ask the server to check for updates now.
 // The server coalesces and rate-limits requests; nothing is installed.
 let updateCheckInFlight = false;
@@ -437,6 +534,7 @@ function startStatusPolling() {
       fetchStatus();
       fetchHost();
       fetchOverview();
+      fetchAdminSession();
     }, statusPollIntervalMs);
   }
 }
@@ -451,6 +549,9 @@ function stopStatusPolling() {
 fetchStatus();
 fetchHost();
 fetchOverview();
+fetchAdminSession();
+adminLoginForm.addEventListener("submit", submitAdminLogin);
+adminLogout.addEventListener("click", submitAdminLogout);
 startStatusSync();
 startStatusPolling();
 
@@ -463,6 +564,7 @@ document.addEventListener("visibilitychange", () => {
   fetchStatus();
   fetchHost();
   fetchOverview();
+  fetchAdminSession();
   startStatusSync();
   startStatusPolling();
 });

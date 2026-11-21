@@ -32,6 +32,8 @@ from web.russound_controller import ConfigConflictError, RussoundController
 from web.russound_state import RussoundState
 from web import status_overview
 from web.update_status import UpdateChecker
+from web import admin_auth
+from web.admin_auth import AdminAuth
 from web.russound_controller import backend_status_kind
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
@@ -171,6 +173,7 @@ class RussoundHTTPServer:
         max_event_streams: int | None = None,
         playback_clients: list[PlaybackStatusClient] | None = None,
         update_checker: UpdateChecker | None = None,
+        admin: AdminAuth | None = None,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
@@ -195,6 +198,12 @@ class RussoundHTTPServer:
         self.playback_revision = 0
         self._started_monotonic = time.monotonic()
         self._updates = update_checker or UpdateChecker()
+        log_file = env_str("RUSSOUND_LOG_FILE")
+        self.admin = admin or AdminAuth(
+            env_str("RUSSOUND_ADMIN_PASSWORD_FILE") or admin_auth.DEFAULT_PASSWORD_FILE,
+            Path(state_path).expanduser().resolve().parent / "admin-lockout.json" if state_path else None,
+            audit_file=Path(log_file).parent / "admin-audit.log" if log_file else None,
+        )
         playback_configs = PlaybackAgentConfig.from_environment() if playback_clients is None else None
         self._playback_clients = playback_clients or [
             PlaybackStatusClient(config, self.broadcast_playback_change)
@@ -407,6 +416,44 @@ class RussoundHTTPServer:
         @app.get("/api/status/overview")
         def api_status_overview():
             return self._no_store(jsonify(self.build_overview_payload()))
+
+        # Administrator login. These routes never record frontend events, and the
+        # password is never logged; see web/admin_auth.py.
+        @app.get("/api/admin/session")
+        def api_admin_session():
+            return self._no_store(jsonify(self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME))))
+
+        @app.post("/api/admin/login")
+        def api_admin_login():
+            password = self._read_json_body().get("password")
+            result, session_id, retry = self.admin.login(password, self._request_ip())
+            if result == "ok" and session_id is not None:
+                response = self._no_store(jsonify(self.admin.describe(session_id)))
+                response.set_cookie(admin_auth.COOKIE_NAME, session_id, max_age=admin_auth.ABSOLUTE_SECONDS,
+                                    path="/api/", httponly=True, samesite="Strict", secure=request.is_secure)
+                return response
+            return self._admin_failure(result, retry)
+
+        @app.post("/api/admin/logout")
+        def api_admin_logout():
+            denied = self.admin_required()
+            if denied is not None:
+                return denied
+            self.admin.logout(request.cookies.get(admin_auth.COOKIE_NAME), self._request_ip())
+            response = self._no_store(jsonify({"api_version": 1, "authenticated": False}))
+            response.delete_cookie(admin_auth.COOKIE_NAME, path="/api/", samesite="Strict", secure=request.is_secure)
+            return response
+
+        @app.post("/api/admin/reauthenticate")
+        def api_admin_reauthenticate():
+            denied = self.admin_required()
+            if denied is not None:
+                return denied
+            session_id = request.cookies.get(admin_auth.COOKIE_NAME)
+            result, retry = self.admin.reauthenticate(session_id, self._read_json_body().get("password"), self._request_ip())
+            if result == "ok":
+                return self._no_store(jsonify(self.admin.describe(session_id)))
+            return self._admin_failure(result, retry)
 
         @app.get("/api/status/updates")
         def api_status_updates():
@@ -923,6 +970,39 @@ class RussoundHTTPServer:
     @staticmethod
     def _no_store(response: Response) -> Response:
         response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def admin_required(self, *, recent: bool = False) -> Response | None:
+        """None when the request carries a valid administrator session and CSRF token.
+
+        Privileged routes call this first; ``recent`` additionally requires the
+        password to have been entered within the last few minutes.
+        """
+        denied = self.admin.authorize(request.cookies.get(admin_auth.COOKIE_NAME),
+                                      request.headers.get(admin_auth.CSRF_HEADER), recent=recent)
+        if denied is None:
+            return None
+        status, message = {
+            "unauthenticated": (401, "Administrator login required."),
+            "csrf": (403, "The request is missing a valid security token; reload the page."),
+            "reauthenticate": (403, "Enter the administrator password again to confirm this action."),
+        }[denied]
+        response = self._no_store(jsonify({"api_version": 1, "error": {"code": denied, "message": message}}))
+        response.status_code = status
+        return response
+
+    def _admin_failure(self, result: str, retry: int) -> Response:
+        status, code, message = {
+            "invalid": (401, "invalid", "Login failed."),
+            "unauthenticated": (401, "unauthenticated", "Administrator login required."),
+            "locked": (429, "locked", "Too many failed attempts; administrator login is locked for a while."),
+            "throttled": (429, "throttled", "Too many attempts from this device; try again shortly."),
+            "not_configured": (503, "not_configured", "Administrator login is not set up on this installation."),
+        }[result]
+        response = self._no_store(jsonify({"api_version": 1, "error": {"code": code, "message": message}}))
+        response.status_code = status
+        if retry:
+            response.headers["Retry-After"] = str(retry)
         return response
 
     def _read_json_body(self) -> dict[str, Any]:

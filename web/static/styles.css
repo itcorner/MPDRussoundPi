@@ -28,6 +28,11 @@ input {
   font: inherit;
 }
 
+/* The hidden attribute always wins over component display rules. */
+[hidden] {
+  display: none !important;
+}
+
 a {
   color: inherit;
 }
@@ -1244,6 +1249,36 @@ h1 {
 }
 
 .overview-action .status-meta {
+  margin-top: 0;
+}
+
+.admin-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.admin-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.admin-form input {
+  flex: 1 1 14rem;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(91, 185, 255, 0.35);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(7, 19, 31, 0.65);
+}
+
+.admin-form-row .status-meta,
+.admin-message {
   margin-top: 0;
 }
 
