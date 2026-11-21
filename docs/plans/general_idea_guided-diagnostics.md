@@ -34,7 +34,7 @@ dashboard issue was fixed and rechecked; guided diagnostics can build on it
 with more specific, safe troubleshooting guidance.
 
 Reuse cached observations, effective configuration and shared component
-identity from [deployment status](./general_idea_deployment-status-overview.md)
+identity from [deployment status](./general_new_deployment-status-overview.md)
 and [inline overrides](./web_done_effective-config-overrides.md). Provide a
 bounded manual refresh only if its effects are clear, and avoid per-browser
 duplicated polling. Verify whether each existing check is passive or sends

@@ -5,7 +5,7 @@ Status: **idea, not scheduled or authorized for implementation** (2026-11-12).
 ## Goal
 
 Incorporate update information into the proposed
-[deployment status overview](./general_idea_deployment-status-overview.md).
+[deployment status overview](./general_new_deployment-status-overview.md).
 Show whether the Pi base system or deployed Docker images have updates
 available, keep results in a backend-managed cache refreshed regularly, and
 provide a manual **Check for updates** button. Also offer explicitly authorized
