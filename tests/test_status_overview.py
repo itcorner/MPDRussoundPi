@@ -60,6 +60,27 @@ class SectionTests(unittest.TestCase):
         self.assertEqual(values["Build"], "Local build (reported by the build)")
         self.assertEqual(values["Built"], "2026-11-21 08:25 UTC (reported by the build)")
         self.assertIn("local build · bbbbbbb", built["summary"])
+        sha = "c" * 40
+        dev = overview.web_section(uptime_seconds=5, runtime="container", revision=sha, clients=0, build_time="2026-11-21T09:18:00Z",
+                                   build_source="ci", image="itcornernet/mpdrussoundpi-web", version="dev-" + sha)
+        rows = {row["label"]: row for row in dev["rows"]}
+        self.assertEqual(rows["Image"]["value"], f"itcornernet/mpdrussoundpi-web:dev-{sha} (reported by the build)")
+        self.assertEqual(rows["Image kind"]["value"], "Development image (published by CI)")
+        self.assertEqual(rows["Docker Hub"]["link"], f"https://hub.docker.com/r/itcornernet/mpdrussoundpi-web/tags?name=dev-{sha}")
+        self.assertIn("Development image · ccccccc", dev["summary"])
+        release = overview.web_section(uptime_seconds=5, runtime="container", revision=sha, clients=0, build_source="ci",
+                                       image="itcornernet/mpdrussoundpi-web", version="1.2.0")
+        self.assertIn("Release 1.2.0 · ccccccc", release["summary"])
+        candidate = overview.web_section(uptime_seconds=5, runtime="container", revision=sha, clients=0, build_source="ci",
+                                         image="itcornernet/mpdrussoundpi-web", version="1.2.0-rc.1")
+        self.assertIn("Release candidate 1.2.0-rc.1", candidate["summary"])
+        self.assertEqual({row["label"]: row["value"] for row in built["rows"]}["Image"], "local build, not published to a registry")
+        for image, version in (("evil.example/x", "1.0.0"), ("itcornernet/mpdrussoundpi-web", "latest"),
+                               ("itcornernet/mpdrussoundpi-web", "<b>1</b>"), (None, None)):
+            odd = overview.web_section(uptime_seconds=5, runtime="container", revision=sha, clients=0, build_source="ci",
+                                       image=image, version=version)
+            self.assertEqual({row["label"]: row for row in odd["rows"]}["Image"]["value"], "not reported by this build")
+            self.assertFalse(any("link" in row for row in odd["rows"]))
         bad = overview.web_section(uptime_seconds=5, runtime="native", revision=None, clients=0,
                                    build_time="<b>soon</b>", build_source="<i>x</i>")
         self.assertEqual({row["label"]: row["value"] for row in bad["rows"]}["Built"], "not reported by this build")

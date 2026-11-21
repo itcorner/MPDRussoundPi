@@ -120,6 +120,8 @@ jobs:
             BUILD_REVISION=${{ github.sha }}
             BUILD_TIME=${{ steps.built.outputs.time }}
             BUILD_SOURCE=ci
+            BUILD_IMAGE=${{ vars.DOCKERHUB_NAMESPACE }}/mpdrussoundpi-${{ matrix.image }}
+            BUILD_VERSION=${{ needs.policy.outputs.version }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=prepared-${{ matrix.image }}-${{ matrix.arch }}

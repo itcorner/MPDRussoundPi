@@ -298,6 +298,12 @@ component overview.
 - [x] Component and audio overview (second slice): web, gateway, agent and
   audio sections, `GET /v1/audio`, build revision in the image, certificate
   expiry. Implemented, deployed and accepted on the Pi 2026-11-21.
+- [x] Web image identity (decision 3, first half): the image reports build
+  source, build time, registry image name and exact tag, shown as development
+  image, release candidate, release or local build with a Docker Hub link.
+  Implemented 2026-11-21 without operator changes, because CI knows the name and
+  tag at build time. The digest the container was actually started from still
+  needs deployment-time provisioning and stays open below.
 - [ ] Implement bounded collectors/aggregation and deployment metadata
   provisioning for approved layouts; update the deployment and API guides.
 - [ ] Add the responsive Status overview, preserving existing sections and

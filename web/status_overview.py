@@ -17,6 +17,8 @@ LEVEL_ORDER = {"unknown": 0, "ok": 1, "warning": 2, "problem": 3}
 CERTIFICATE_WARNING_DAYS = 30
 REVISION = re.compile(r"[a-f0-9]{40}\Z")
 BUILD_TIME = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):\d{2}Z\Z")
+IMAGE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{1,63}/mpdrussoundpi-[a-z0-9-]{1,32}\Z")
+IMAGE_TAG = re.compile(r"(dev-[a-f0-9]{40}|\d+\.\d+\.\d+(?:-rc\.\d+)?)\Z")
 BUILD_SOURCES = {"ci": "CI build (GitHub Actions)", "local": "Local build"}
 FORMAT = re.compile(r"[0-9a-z:]{1,32}\Z")
 SINK_NAME = re.compile(r"[\w.-]{1,96}\Z", re.ASCII)
@@ -76,23 +78,45 @@ def _section(identifier: str, title: str, level: str, summary: str, rows: list[d
 
 # ------------------------------------------------------------ web application
 
+def image_facts(image: str | None, version: str | None) -> tuple[str, str, str] | None:
+    """(reference, kind, Docker Hub link) of a published image, or None when it is not a valid one."""
+    if not (isinstance(image, str) and isinstance(version, str) and IMAGE_NAME.fullmatch(image) and IMAGE_TAG.fullmatch(version)):
+        return None
+    kind = ("Development image" if version.startswith("dev-") else
+            "Release candidate" if "-rc." in version else "Release")
+    return f"{image}:{version}", kind, f"https://hub.docker.com/r/{image}/tags?name={version}"
+
+
 def web_section(*, uptime_seconds: int, runtime: str, revision: str | None, clients: int,
-                build_time: str | None = None, build_source: str | None = None) -> dict[str, Any]:
+                build_time: str | None = None, build_source: str | None = None,
+                image: str | None = None, version: str | None = None) -> dict[str, Any]:
     reported = revision if isinstance(revision, str) and REVISION.fullmatch(revision) else None
     moment = BUILD_TIME.fullmatch(build_time) if isinstance(build_time, str) else None
     source = BUILD_SOURCES.get(build_source or "")
+    published = image_facts(image, version) if build_source == "ci" else None
     runtime_text = {"container": "Container (detected)", "native": "Native process (detected)"}.get(runtime, "Unknown")
     built = f"{moment.group(1)}-{moment.group(2)}-{moment.group(3)} {moment.group(4)}:{moment.group(5)} UTC" if moment else None
     rows = [
         _row("Status", "Running", "ok"),
         _row("Runtime", runtime_text),
+    ]
+    if published is not None:
+        rows.append(_row("Image", f"{published[0]} (reported by the build)"))
+        rows.append(_row("Image kind", published[1] + " (published by CI)"))
+        rows.append({**_row("Docker Hub", "Open this tag on Docker Hub"), "link": published[2]})
+    elif build_source == "local":
+        rows.append(_row("Image", "local build, not published to a registry"))
+    else:
+        rows.append(_row("Image", "not reported by this build"))
+    rows += [
         _row("Build", (source or "not reported by this build") + (" (reported by the build)" if source else "")),
         _row("Revision", f"{reported[:7]} (latest commit, reported by the build)" if reported else "not reported by this build"),
         _row("Built", f"{built} (reported by the build)" if built else "not reported by this build"),
         _row("Uptime", _duration(uptime_seconds)),
         _row("Live clients", str(clients)),
     ]
-    origin = {"CI build (GitHub Actions)": "CI build", "Local build": "local build"}.get(source or "")
+    origin = (published[1] + (f" {version}" if published[1] != "Development image" else "")) if published else (
+        "local build" if build_source == "local" else None)
     tail = " · ".join(part for part in (origin, reported[:7] if reported else None) if part)
     return _section("web", "Web application", "ok", f"Running · {_duration(uptime_seconds)}" + (f" · {tail}" if tail else ""), rows)
 
