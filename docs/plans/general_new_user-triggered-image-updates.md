@@ -184,8 +184,15 @@ operator.
   updates section, review dialog (target revision and tags, both images, expected
   interruption, backup custody note), typed confirmation, progress, reconnection,
   result, and "Restore previous version" after a failed update.
-- [ ] **4. Rollout** through the reviewed SSH operator (layout change for the
-  socket mount, updater installation, administrator password).
+- [x] **4. Rollout** (2026-11-21 on the reference Pi): tooling upgraded from
+  `d41264e` to `8d8079c`; new protected Compose input
+  `/etc/mpdrussoundpi-deploy/russound-dev-compose.json` (the previous input plus the
+  updater mount) and the controller's target spec pointed at it; updater installed
+  with `deploy-updater.yml` (socket `srw-rw---- root:musicpi` in a `0750`
+  directory, evidence `0700`); then the operator `--update` to `8d8079c`, whose
+  review showed `layout_change` and which passed every required check. The web
+  container sees the socket read-only and reports `configured: true`, phase
+  `idle`, installed `8d8079c`. Playback was unaffected.
 - [ ] **Later: whole-UI HTTPS** (decision 6): own certificate or a generated
   local CA with manual trust import and optional fingerprint check, HTTP
   redirect-only, trusted-proxy boundary; separate from the playback-agent TLS.
