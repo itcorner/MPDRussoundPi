@@ -6,6 +6,9 @@ const eventsTableBody = document.getElementById("eventsTableBody");
 const hostList = document.getElementById("hostList");
 const hostEmpty = document.getElementById("hostEmpty");
 const hostCount = document.getElementById("hostCount");
+const overviewList = document.getElementById("overviewList");
+const overviewEmpty = document.getElementById("overviewEmpty");
+const overviewLevel = document.getElementById("overviewLevel");
 
 let eventSource = null;
 let eventSourceRetryTimer = null;
@@ -15,6 +18,7 @@ const statusPollIntervalMs = 5000;
 let statusFetchInFlight = false;
 let statusFetchQueued = false;
 let hostFetchInFlight = false;
+let overviewFetchInFlight = false;
 const expandedPayloadRows = new Set();
 
 function formatTimestampLines(rawTimestamp) {
@@ -214,6 +218,82 @@ function renderHosts(payload) {
   }
 }
 
+// System overview: sections and groups come from the server as plain text with
+// the level spelled out; nothing here is ever treated as markup.
+const openOverviewDetails = new Set();
+
+function overviewRows(rows) {
+  const list = document.createElement("dl");
+  list.className = "host-rows";
+  for (const row of rows) {
+    const flagged = hostLevelText[row.level] && row.level !== "ok";
+    list.append(
+      textElement("dt", "", row.label),
+      textElement("dd", flagged ? `host-row-${row.level}` : "", flagged ? `${row.value} (${hostLevelText[row.level]})` : row.value),
+    );
+  }
+  return list;
+}
+
+function overviewHeader(title, level, strong) {
+  const header = document.createElement("div");
+  header.className = "status-item-row";
+  header.append(
+    textElement(strong ? "strong" : "span", strong ? "" : "overview-group-title", title),
+    textElement("span", `status-pill host-level host-level-${hostLevelText[level] ? level : "unknown"}`, hostLevelText[level] || "Unknown"),
+  );
+  return header;
+}
+
+function overviewDetails(key, label) {
+  const details = document.createElement("details");
+  details.className = "host-details";
+  details.open = openOverviewDetails.has(key);
+  details.addEventListener("toggle", () => {
+    if (details.open) {
+      openOverviewDetails.add(key);
+    } else {
+      openOverviewDetails.delete(key);
+    }
+  });
+  details.appendChild(textElement("summary", "", label));
+  return details;
+}
+
+function renderOverview(payload) {
+  const sections = payload.sections || [];
+  overviewEmpty.hidden = sections.length !== 0;
+  const overall = hostLevelText[payload.overall] ? payload.overall : "unknown";
+  overviewLevel.textContent = hostLevelText[overall];
+  overviewLevel.className = `status-pill host-level host-level-${overall}`;
+  overviewList.replaceChildren();
+  for (const section of sections) {
+    const item = document.createElement("article");
+    item.className = "status-list-item host-card";
+    item.appendChild(overviewHeader(section.title, section.level, true));
+    item.appendChild(textElement("div", "status-meta host-summary", section.summary));
+    const groups = section.groups || [];
+    if (section.rows.length || groups.length) {
+      const details = overviewDetails(section.id, "Details");
+      if (section.rows.length) {
+        details.appendChild(overviewRows(section.rows));
+      }
+      for (const group of groups) {
+        const box = document.createElement("div");
+        box.className = "overview-group";
+        box.appendChild(overviewHeader(group.title, group.level, false));
+        box.appendChild(textElement("div", "status-meta", group.summary));
+        const inner = overviewDetails(`${section.id}/${group.id}`, "Show");
+        inner.appendChild(overviewRows(group.rows));
+        box.appendChild(inner);
+        details.appendChild(box);
+      }
+      item.appendChild(details);
+    }
+    overviewList.appendChild(item);
+  }
+}
+
 eventsTableBody.addEventListener("click", (event) => {
   const toggle = event.target.closest("[data-payload-toggle]");
   if (!toggle) {
@@ -277,6 +357,23 @@ async function fetchHost() {
   }
 }
 
+async function fetchOverview() {
+  if (overviewFetchInFlight) {
+    return;
+  }
+  overviewFetchInFlight = true;
+  try {
+    const response = await apiFetch("/api/status/overview");
+    if (response.ok) {
+      renderOverview(await response.json());
+    }
+  } catch {
+    // The next poll retries; the previous overview stays until then.
+  } finally {
+    overviewFetchInFlight = false;
+  }
+}
+
 function startStatusSync() {
   if (!window.EventSource || eventSource || document.hidden) {
     return;
@@ -313,6 +410,7 @@ function startStatusPolling() {
     statusPollTimer = window.setInterval(() => {
       fetchStatus();
       fetchHost();
+      fetchOverview();
     }, statusPollIntervalMs);
   }
 }
@@ -326,6 +424,7 @@ function stopStatusPolling() {
 
 fetchStatus();
 fetchHost();
+fetchOverview();
 startStatusSync();
 startStatusPolling();
 
@@ -337,6 +436,7 @@ document.addEventListener("visibilitychange", () => {
   }
   fetchStatus();
   fetchHost();
+  fetchOverview();
   startStatusSync();
   startStatusPolling();
 });

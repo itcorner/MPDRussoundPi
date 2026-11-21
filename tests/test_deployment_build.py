@@ -281,6 +281,8 @@ class LocalBuildTests(unittest.TestCase):
             if "buildx" in argv:
                 self.assertEqual(argv[argv.index("--builder") + 1], "fixture")
                 self.assertEqual(argv[argv.index("--network") + 1], "none")
+                # The page reports the running revision from the build, so every image gets the exact commit.
+                self.assertEqual(argv[argv.index("--build-arg") + 1], "BUILD_REVISION=" + self.revision)
         self.assertFalse(any(path.is_dir() for path in bundle.iterdir()))
         self.assertEqual(builds.clean_source(self.source, self.revision), value["tree"])
 

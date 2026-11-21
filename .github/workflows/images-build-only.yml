@@ -113,6 +113,8 @@ jobs:
             org.opencontainers.image.source=https://github.com/itcorner/MPDRussoundPi
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.policy.outputs.version }}
+          build-args: |
+            BUILD_REVISION=${{ github.sha }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=prepared-${{ matrix.image }}-${{ matrix.arch }}

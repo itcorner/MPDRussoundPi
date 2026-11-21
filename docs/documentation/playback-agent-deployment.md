@@ -161,6 +161,18 @@ and `/sys` and runs `ip`, `nmcli` (current Wi-Fi link only, never a scan),
 `vcgencmd` and `timedatectl` when present, as the agent's service user; none of
 them needs extra privileges on the reference Pi.
 
+### Audio hardware (optional)
+
+An agent from this revision also serves `GET /v1/audio` and advertises
+`audio_info` (see the [read contract](./mpd-playback-read-api.md#audio-hardware));
+the Status page's audio section then names the sound card model, its channel
+mapping and the sink each output uses. Enable it in the same order as host
+information: run the proxy play again so the Caddy allowlist includes
+`/v1/audio`, then restart the agent from a candidate containing the route, and
+update the web application. Until the proxy allows it the web reports the audio
+hardware as unavailable; playback is unaffected. `--disable-audio-info` turns it
+off.
+
 ## 4. Activate the TLS proxy
 
 Choose a DNS name or IPv4 address reachable from the web host and a source CIDR

@@ -1,0 +1,25 @@
+{
+  "agent_response": {
+    "api_version": 1,
+    "agent_id": "musicpi",
+    "epoch": "3108146afc394bafa142cc98f7e5d2a6",
+    "config_revision": "353969e8447cadc744bbea5e449b6eede392406bb875fd0b1c34edd5633fb59b",
+    "devices": [
+      {
+        "profile": "analog-surround-51",
+        "usb": {"vendor": "0d8c", "product": "0102"},
+        "sinks": [
+          {"id": "stereo_front", "description": "Stereo Front", "card_channels": ["FL", "FR"], "output_channels": ["FL", "FR"], "remix": false},
+          {"id": "stereo_centerlfe", "description": "Stereo CenterLFE", "card_channels": ["FC", "LFE"], "output_channels": ["FL", "FR"], "remix": false},
+          {"id": "stereo_rear", "description": "Stereo Rear", "card_channels": ["RL", "RR"], "output_channels": ["FL", "FR"], "remix": false}
+        ]
+      }
+    ],
+    "outputs": [
+      {"id": "stereo_front", "sink": "stereo_front"},
+      {"id": "stereo_centerlfe", "sink": "stereo_centerlfe"},
+      {"id": "stereo_rear", "sink": "stereo_rear"}
+    ]
+  },
+  "forbidden_text": ["SERIAL0123456789", "usb-C-Media", "/dev/snd", "bus-path", "6601", "private-note"]
+}

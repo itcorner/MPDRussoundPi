@@ -1226,6 +1226,17 @@ h1 {
   color: var(--muted);
 }
 
+.overview-group {
+  margin-top: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.overview-group-title {
+  font-weight: 600;
+}
+
 .host-details {
   margin-top: 0.6rem;
 }

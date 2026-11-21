@@ -289,3 +289,60 @@ test("no configured agent shows the empty message", () => {
   assert.equal(hostCount.textContent, "0");
   assert.equal(hostList.children.length, 0);
 });
+
+function renderOverviewPayload(payload, existing) {
+  const elements = existing || {
+    overviewList: new FakeElement("div"), overviewEmpty: new FakeElement("p"), overviewLevel: new FakeElement("span"),
+  };
+  const context = existing ? existing.context : {
+    ...elements,
+    document: { createElement: (tagName) => new FakeElement(tagName) },
+  };
+  if (!existing) {
+    vm.createContext(context);
+    vm.runInContext(rendering, context);
+    elements.context = context;
+  }
+  context.renderOverview(payload);
+  return elements;
+}
+
+const overviewPayload = {
+  overall: "problem",
+  sections: [
+    { id: "web", title: "Web application", level: "ok", summary: "Running · 1 h", rows: [{ label: "Status", value: "Running", level: "ok" }], groups: [] },
+    {
+      id: "audio:musicpi", title: "Audio system (musicpi)", level: "problem", summary: "1 of 1 outputs playing", rows: [],
+      groups: [{ id: "front", title: "Front <b>stream</b>", level: "problem", summary: "Playing",
+        rows: [{ label: "Audio route", value: "Wrong: expected a, actual b", level: "problem" }] }],
+    },
+  ],
+};
+
+test("overview shows levels in words, nested groups and text-only values", () => {
+  const view = renderOverviewPayload(overviewPayload);
+  assert.equal(view.overviewLevel.textContent, "Problem");
+  assert.match(view.overviewLevel.className, /host-level-problem/);
+  assert.equal(view.overviewEmpty.hidden, true);
+  assert.equal(view.overviewList.children.length, 2);
+  const text = view.overviewList.allText();
+  assert.match(text, /Front <b>stream<\/b>/, "markup in labels stays text");
+  assert.match(text, /Wrong: expected a, actual b \(Problem\)/);
+  assert.equal(view.overviewList.find((node) => node.tagName === "B"), null);
+});
+
+test("overview details keep their open state across refreshes", () => {
+  const first = renderOverviewPayload(overviewPayload);
+  const card = () => first.overviewList.children[1];
+  const outer = card().find((node) => node.tagName === "DETAILS");
+  outer.open = true;
+  outer.fire("toggle");
+  renderOverviewPayload(overviewPayload, first);
+  assert.equal(card().find((node) => node.tagName === "DETAILS").open, true);
+});
+
+test("an empty overview shows the placeholder and an unknown level", () => {
+  const view = renderOverviewPayload({ overall: "weird", sections: [] });
+  assert.equal(view.overviewEmpty.hidden, false);
+  assert.equal(view.overviewLevel.textContent, "Unknown");
+});

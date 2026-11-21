@@ -21,6 +21,11 @@ RUN useradd --system --uid 10001 russound \
     && mkdir -p /config /data /logs \
     && chown -R russound:russound /app /config /data /logs
 
+# The git revision this image was built from, for the Status page ("reported by the
+# build"). Late in the file so a new value only changes image metadata, never a layer.
+ARG BUILD_REVISION=""
+ENV RUSSOUND_BUILD_REVISION=${BUILD_REVISION}
+
 USER russound
 
 ENV RUSSOUND_WEB_HOST=0.0.0.0 \
