@@ -262,6 +262,14 @@ trusted code from `main`, never code from the downloaded artifacts. Missing,
 expired or mismatching evidence fails; normal publication reruns do not silently
 recover an existing exact tag.
 
+The only exception is the runtime smoke tests. The images were built from the
+validated develop source commit, and `main` can lag behind that app version's
+API (a save without a config revision answers 428 on newer images, for example).
+Both the recovery and the verification-only workflow therefore take
+`tool/ci/smoke-web-image.sh` and `tool/ci/smoke-ser2net-image.sh` from that
+source SHA, which already passed CI in the original run, just before the
+verification step. That step and the verification have no Docker Hub secret.
+
 Publishing jobs preserve journals for 90 days even on failure. OCI archives are
 retained for seven days; download and preserve them promptly if recovery is
 needed. Abrupt runner termination can prevent evidence upload; absent evidence
