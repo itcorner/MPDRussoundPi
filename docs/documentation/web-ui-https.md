@@ -11,7 +11,10 @@ how to roll it back. Background and decisions:
   separate from the playback-agent proxy (port 8443) and from the package's
   `caddy.service`, which stays disabled.
 - Port **80** only redirects to `https://` and serves the trust page at
-  `/ca/`.
+  `/ca/`. Port 443 serves the trust page at `/ca/` too, because browsers such
+  as Chrome upgrade `http://` links to `https://` on their own. On a device
+  that does not trust the CA yet, that means one certificate warning before
+  the page.
 - The certificates come from a **local CA owned by this installation**. Its
   name constraints limit it to the private address ranges and the Pi's names
   (`musicpi.local`, `musicpi` by default). A device that trusts it trusts it
@@ -90,16 +93,17 @@ settings without the loopback listener:
 
 ## Trust the CA on a device
 
-Open `http://<pi>/ca/` on the device and follow the instructions for its
-platform. Before trusting, compare the fingerprint on the page with the one the
-play printed, or with:
+Open `http://<pi>/ca/` on the device (or `https://<pi>/ca/`, accepting the
+certificate warning once) and follow the instructions for its platform. Before
+trusting, compare the fingerprint on the page with the one the play printed, or
+with:
 
 ```sh
 sudo python3 /usr/local/lib/mpdrussoundpi/web_tls.py status
 ```
 
-The trust page arrives over plain HTTP, so only the comparison proves it is
-the right certificate.
+The trust page arrives over plain HTTP or an untrusted connection, so only the
+comparison proves it is the right certificate.
 
 - **iPhone, iPad:** install the profile, then turn on full trust under
   Settings → General → About → Certificate Trust Settings.

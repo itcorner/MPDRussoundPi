@@ -268,8 +268,9 @@ border-radius:4px}}h2{{font-size:1.05rem;margin-top:1.6rem}}.box{{background:#10
 <p>This installation uses its own certificate authority for HTTPS. Install it once on each device, then open
 <a href="{e(https_url)}">{e(https_url)}</a>. The authority is limited to this installation's names and private
 network addresses; it cannot vouch for any other website.</p>
-<div class="box"><p><strong>Compare before trusting.</strong> This page arrives over plain HTTP, so check that the
-SHA-256 fingerprint matches the one the installation printed (Ansible output, or
+<div class="box"><p><strong>Compare before trusting.</strong> On a device that does not trust the authority yet,
+this page arrives over plain HTTP or after a certificate warning, so anyone on the network could have replaced
+it. Check that the SHA-256 fingerprint matches the one the installation printed (Ansible output, or
 <code>sudo python3 /usr/local/lib/mpdrussoundpi/web_tls.py status</code> on the Pi):</p>
 <p><code>{e(print_fingerprint)}</code></p></div>
 <h2>iPhone and iPad</h2>
