@@ -71,7 +71,8 @@ class FakeDocker:
         if args[:2] == ["container", "inspect"]:
             return "\n".join(self.used) + "\n"
         if args[:2] == ["system", "df"]:
-            return json.dumps({"Type": "Images", "Size": f"{self.size / 1e9:.3f}GB"}) + "\n"
+            return json.dumps({"Type": "Images", "Size": f"{self.size / 1e9:.3f}GB",
+                               "Reclaimable": "724.3MB (48%)"}) + "\n"
         if args[:2] == ["image", "rm"]:
             if args[2] in self.fail:
                 raise CleanupError("conflict: unable to remove repository reference")
@@ -150,7 +151,11 @@ class CleanupTests(Fixture):
         report = cleanup(docker, status(), self.assets, apply=False)
         self.assertEqual(docker.removed(), [])
         self.assertEqual(len(report["remove"]), 4)
-        self.assertEqual(report["estimated_bytes"], 215_000_000 + 195_000_000 + 212_000_000)
+        self.assertEqual(report["docker_reclaimable_bytes"], 724_300_000)
+        self.assertNotIn("estimated_bytes", report, "no guessed number for shared layers")
+        text = cleanup_module.render(report)
+        self.assertIn("Would remove 4 image(s)", text)
+        self.assertIn("Docker reports 724 MB reclaimable in total", text)
 
     def test_apply_removes_tags_then_the_image_and_reports(self):
         docker = FakeDocker(fail={"mpdrussoundpi-local/web:75267e59-bedc-4193-bd2a-ba033717519a"})

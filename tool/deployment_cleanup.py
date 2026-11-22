@@ -144,24 +144,26 @@ def _used(run: Run) -> set[str]:
     return set(run(["container", "inspect", "--format", "{{.Image}}", *ids]).split()) if ids else set()
 
 
-def _images_size(run: Run) -> int:
+def _images_usage(run: Run) -> tuple[int, int]:
+    """Docker's total image size and its "reclaimable" part (every image no container uses)."""
     for line in run(["system", "df", "--format", "{{json .}}"]).splitlines():
         item = json.loads(line) if line.strip() else {}
         if item.get("Type") == "Images":
-            return parse_size(item.get("Size"))
-    return 0
+            return parse_size(item.get("Size")), parse_size(item.get("Reclaimable"))
+    return 0, 0
 
 
 def cleanup(run: Run, status: dict[str, Any], assets: Path, *, apply: bool) -> dict[str, Any]:
     """Decide and, with ``apply``, remove. Raises CleanupError before removing anything when unsafe."""
     keep = keep_set(status, assets)
     decided = plan(_images(run), _used(run), keep)
+    # No byte estimate for the removal itself: images share layers, and Docker does not
+    # say which layers only the removed images use. --apply measures what it frees.
+    before, reclaimable = _images_usage(run)
     report: dict[str, Any] = {**decided, "applied": apply, "removed": 0, "skipped": [],
-                              "estimated_bytes": sum(item["size"] for item in decided["remove"] if item["by_id"]),
-                              "freed_bytes": 0}
+                              "docker_reclaimable_bytes": reclaimable, "freed_bytes": 0}
     if not apply:
         return report
-    before = _images_size(run)
     for item in decided["remove"]:
         references = item["tags"] + ([item["image"]] if item["by_id"] else [])
         removed_any = False
@@ -174,7 +176,7 @@ def cleanup(run: Run, status: dict[str, Any], assets: Path, *, apply: bool) -> d
                     continue  # the last tag already removed the image
                 report["skipped"].append({"reference": reference, "error": str(error)[:200]})
         report["removed"] += removed_any
-    report["freed_bytes"] = max(0, before - _images_size(run))
+    report["freed_bytes"] = max(0, before - _images_usage(run)[0])
     return report
 
 
@@ -224,7 +226,9 @@ def render(report: dict[str, Any]) -> str:
     for item in report["skipped"]:
         lines.append(f"Skipped {item['reference']}: {item['error']}")
     lines.append(f"Freed {_megabytes(report['freed_bytes'])}." if report["applied"]
-                 else f"Up to {_megabytes(report['estimated_bytes'])} (shared layers make it less). Run with --apply to remove.")
+                 else f"Docker reports {_megabytes(report['docker_reclaimable_bytes'])} reclaimable in total; that also counts "
+                 "the kept previous version and the images outside the project, and the images share layers. "
+                 "--apply removes the listed images and reports the space actually freed.")
     return "\n".join(lines)
 
 
