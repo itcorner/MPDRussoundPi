@@ -366,7 +366,9 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_TCP_USER_TIMEOUT_SECONDS` | Drop client connections whose sent data stays unacknowledged this long (Linux only, `0` disables) | `30` |
 | `RUSSOUND_ALLOWED_HOSTS` | Comma-separated `Host` names/IPs accepted (blocks DNS rebinding); empty accepts any | empty |
 | `RUSSOUND_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to send API writes, e.g. `https://music.example` | empty |
-| `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted | `0` |
+| `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted. Set it only when the web port is reachable from the proxy alone (for example published on `127.0.0.1`); otherwise any client can claim HTTPS or another address | `0` |
+| `RUSSOUND_REQUIRE_HTTPS_LOGIN` | Refuse administrator login and reauthentication over plain HTTP (see [HTTPS for the web UI](docs/documentation/web-ui-https.md)); needs `RUSSOUND_TRUSTED_PROXY_COUNT` | `false` |
+| `RUSSOUND_WEB_TLS_STATUS_FILE` | Public facts of the HTTPS certificate written by `tool/web_tls.py`, shown on the Status page; missing means no HTTPS row | `/run/web-tls/status.json` |
 | `RUSSOUND_ADMIN_PASSWORD_FILE` | Administrator password hash file (see [Administrator login](#administrator-login)); missing means no administrator login | `/run/secrets/russound-admin.scrypt` |
 | `RUSSOUND_UPDATE_CHECK` | `off` stops the read-only check for a newer published web image on Docker Hub (Status page, every 6 h); local builds are never checked | `on` |
 

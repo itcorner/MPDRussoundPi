@@ -88,6 +88,28 @@ class SectionTests(unittest.TestCase):
         unknown = overview.web_section(uptime_seconds=5, runtime="native", revision="not-a-sha", clients=0)
         self.assertIn("not reported by this build", [row["value"] for row in unknown["rows"]])
 
+    def test_web_https_certificate_row_and_level(self):
+        plain = overview.web_section(uptime_seconds=5, runtime="container", revision=None, clients=0)
+        self.assertNotIn("HTTPS certificate", [row["label"] for row in plain["rows"]], "no row without HTTPS")
+        self.assertEqual(plain["level"], "ok")
+        fine = overview.web_section(uptime_seconds=5, runtime="container", revision=None, clients=0,
+                                    tls_certificate={"status": "ok", "days_left": 300,
+                                                     "expires_at": "2027-12-24T22:57:34Z"})
+        row = {row["label"]: row for row in fine["rows"]}["HTTPS certificate"]
+        self.assertEqual((row["value"], row["level"]), ("Valid until 2027-12-24 (300 days)", "ok"))
+        soon = overview.web_section(uptime_seconds=5, runtime="container", revision=None, clients=0,
+                                    tls_certificate={"status": "ok", "days_left": 12,
+                                                     "expires_at": "2026-12-05T00:00:00Z"})
+        self.assertEqual(soon["level"], "warning", "a failing renewal shows on the section")
+        expired = overview.web_section(uptime_seconds=5, runtime="container", revision=None, clients=0,
+                                       tls_certificate={"status": "ok", "days_left": -1,
+                                                        "expires_at": "2026-11-20T00:00:00Z"})
+        self.assertEqual(expired["level"], "problem")
+        unreadable = overview.web_section(uptime_seconds=5, runtime="container", revision=None, clients=0,
+                                          tls_certificate={"status": "unavailable"})
+        self.assertEqual({row["label"]: row["value"] for row in unreadable["rows"]}["HTTPS certificate"],
+                         "could not be checked")
+
     def test_certificate_levels(self):
         row = lambda days: overview.certificate_row({"status": "ok", "days_left": days, "expires_at": "2027-10-16T00:00:00Z"})
         self.assertEqual([row(400)["level"], row(10)["level"], row(-1)["level"]], ["ok", "warning", "problem"])

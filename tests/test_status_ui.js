@@ -406,6 +406,7 @@ function renderAdminState(session) {
     adminPanel: new FakeElement("details"), adminState: new FakeElement("span"), adminLoginForm: new FakeElement("form"), adminPassword: new FakeElement("input"),
     adminSession: new FakeElement("div"), adminSessionText: new FakeElement("span"), adminLogout: new FakeElement("button"),
     adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"), adminUpdate: new FakeElement("section"),
+    adminHttpWarning: new FakeElement("p"), adminHttps: new FakeElement("p"), adminHttpsLink: new FakeElement("a"),
   };
   elements.adminPassword.focus = () => { elements.adminPassword.focused = true; };
   const context = { ...elements, document: { createElement: (tagName) => new FakeElement(tagName) } };
@@ -461,6 +462,30 @@ test("administrator panel shows setup, login, locked and logged-in states in wor
   assert.equal(inside.adminSession.hidden, false);
   assert.match(inside.adminSessionText.textContent, /15 minutes without activity and at the latest in 480 minutes/);
   assert.equal(vm.runInContext("adminCsrfToken", inside.context), "token-1");
+});
+
+
+test("the plain-HTTP warning shows only on HTTP, and an HTTPS-only login offers the HTTPS address", () => {
+  const http = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: false,
+    https_required: false, https_url: null });
+  assert.equal(http.adminLoginForm.hidden, false);
+  assert.equal(http.adminHttpWarning.hidden, false);
+  assert.equal(http.adminHttps.hidden, true);
+  const https = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: true,
+    https_required: true, https_url: "https://musicpi.local/" });
+  assert.equal(https.adminLoginForm.hidden, false, "over HTTPS the form is offered");
+  assert.equal(https.adminHttpWarning.hidden, true, "no plain-HTTP warning over HTTPS");
+  assert.equal(https.adminHttps.hidden, true);
+  const refused = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: false,
+    https_required: true, https_url: "https://musicpi.local/" });
+  assert.equal(refused.adminLoginForm.hidden, true, "no password field where the server would refuse it");
+  assert.equal(refused.adminHttps.hidden, false);
+  assert.equal(refused.adminHttpsLink.href, "https://musicpi.local/status");
+  assert.equal(refused.adminHttpsLink.textContent, "https://musicpi.local/status");
+  const hostile = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: false,
+    https_required: true, https_url: "javascript:alert(1)" });
+  assert.equal(hostile.adminHttps.hidden, true, "only an https:// address becomes a link");
+  assert.equal(hostile.adminLoginForm.hidden, false);
 });
 
 

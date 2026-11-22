@@ -18,6 +18,9 @@ const adminSession = document.getElementById("adminSession");
 const adminSessionText = document.getElementById("adminSessionText");
 const adminLogout = document.getElementById("adminLogout");
 const adminSetup = document.getElementById("adminSetup");
+const adminHttpWarning = document.getElementById("adminHttpWarning");
+const adminHttps = document.getElementById("adminHttps");
+const adminHttpsLink = document.getElementById("adminHttpsLink");
 const adminMessage = document.getElementById("adminMessage");
 const adminUpdate = document.getElementById("adminUpdate");
 
@@ -312,8 +315,19 @@ function renderAdmin(session) {
     }
     adminShownState = shownState;
   }
+  // Behind the HTTPS proxy the server refuses logins over plain HTTP; offer the HTTPS address instead.
+  const secure = session.secure === true;
+  const httpsUrl = typeof session.https_url === "string" && session.https_url.startsWith("https://")
+    ? session.https_url : null;
+  const httpsOnly = session.https_required === true && !secure && httpsUrl !== null;
   adminSetup.hidden = configured;
-  adminLoginForm.hidden = !configured || authenticated;
+  adminLoginForm.hidden = !configured || authenticated || httpsOnly;
+  adminHttpWarning.hidden = secure;
+  adminHttps.hidden = !configured || authenticated || !httpsOnly;
+  if (httpsOnly) {
+    adminHttpsLink.href = `${httpsUrl}status`;
+    adminHttpsLink.textContent = `${httpsUrl}status`;
+  }
   adminSession.hidden = !authenticated;
   if (authenticated) {
     adminSessionText.textContent = `Logged in. The session ends after ${minutesText(session.idle_expires_in_seconds)} without activity`
