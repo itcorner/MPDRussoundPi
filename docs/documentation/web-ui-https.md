@@ -71,8 +71,10 @@ still reachable at `http://<pi>:8000` as well.
 
 ## Web application settings
 
-Stage 4 of the plan sets these in the managed deployment, together with the
-loopback publish address:
+The deployment's HTTPS layout sets these together with the loopback publish
+address ([container deployment](./container-deployment.md), "HTTPS layout").
+The reviewed tooling accepts all of them as one change and never the proxy
+settings without the loopback listener:
 
 - `RUSSOUND_TRUSTED_PROXY_COUNT=1`: trust Caddy's `X-Forwarded-*` headers, so
   the app sees HTTPS, sets `Secure` cookies and logs the client's address.

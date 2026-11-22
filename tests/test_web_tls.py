@@ -132,7 +132,8 @@ class WebTlsTests(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in public.iterdir()),
                          ["index.html", "mpdrussoundpi-ca.crt", "mpdrussoundpi-ca.mobileconfig", "status.json"])
         facts = json.loads((public / "status.json").read_text())
-        self.assertEqual(facts, {"schema_version": 1, "server_not_after": report["server"]["not_after"],
+        self.assertEqual(facts, {"schema_version": 1, "https_url": "https://musicpi.local/",
+                                 "server_not_after": report["server"]["not_after"],
                                  "server_dns": ["musicpi", "musicpi.local"], "server_ips": ["192.168.1.105"],
                                  "ca_sha256_fingerprint": report["ca"]["sha256_fingerprint"]})
 

@@ -1014,7 +1014,7 @@ made the first update after a registry deployment fail after the writers were
 stopped but before any backup; `resume-original` restores the running
 services in that case.
 
-**Updater socket mount (the one accepted layout addition).** For web-triggered
+**Updater socket mount (accepted layout addition 1 of 2).** For web-triggered
 updates (see the [plan](../plans/general_open_user-triggered-image-updates.md)),
 an update may add exactly one mount to the web service of a recorded deployment:
 
@@ -1030,6 +1030,51 @@ exist (the updater installation creates it) and lies outside the data root, so
 backups never meet the socket. Any other layout difference, including removing
 this mount, is still refused, and recovery restores the previous layout.
 Web-triggered updates currently support only single-host Docker installations.
+
+**HTTPS layout (accepted layout addition 2 of 2).** Once the host serves the
+UI over HTTPS ([guide](./web-ui-https.md)), an update may switch the web service
+to the HTTPS layout. It is one change with three parts, all required:
+
+- the listener moves to loopback: `"host_ip": "127.0.0.1"` (the private target
+  specification's `publish_host` becomes `127.0.0.1` too);
+- exactly these settings are added: `"RUSSOUND_TRUSTED_PROXY_COUNT": "1"` and
+  `"RUSSOUND_REQUIRE_HTTPS_LOGIN": "true"`;
+- exactly this mount is added:
+
+  ```json
+  {"type": "bind", "source": "/etc/mpdrussoundpi-web-tls/public",
+   "target": "/run/web-tls", "read_only": true,
+   "bind": {"create_host_path": false}}
+  ```
+
+The review shows it as `layout_change`. It can arrive in the same update as the
+updater mount. Any partial or altered form is refused, and so is removing it
+again. Independently of updates, a layout with the proxy settings or the
+certificate mount but without the loopback listener is always refused: trusting
+`X-Forwarded-*` on a port the network can reach would let any client claim
+HTTPS or another address. Preflight requires the certificate status file and a
+running `mpdrussoundpi-web-proxy.service`. The `http` runtime check then also
+requests `/api/rooms` through the proxy, verifying the certificate against the
+local CA for the published name. Recovery restores the backed-up layout and
+specification (the LAN listener). A later update with the HTTPS input applies
+the change again.
+
+Rollout on an installation that already has the updater:
+
+1. Upgrade the trusted tooling to a revision containing the HTTPS layout, then
+   restart the updater while it is idle.
+2. Run `deploy-web-tls.yml` with `web_tls_start=true` and trust the CA on the
+   devices ([guide](./web-ui-https.md)). The UI is then reachable over HTTPS
+   and, until the next step, still over `http://<pi>:8000`.
+3. Create a new protected Compose input on the target (root, `0600`) as a copy
+   of the current one with the three parts above. In the controller's private
+   target specification, set `publish_host` to `127.0.0.1` and point `compose`
+   at the new input.
+4. Reinstall the updater with that specification (`deploy-updater.yml`, as
+   below), so web-triggered updates use the same layout.
+5. Run an update with a new candidate, from the page or with the SSH operator.
+   The review shows the HTTPS `layout_change`. Afterwards port 8000 is closed
+   to the network and logins work only over HTTPS.
 
 **Updater service.** [`tool/deployment_updater.py`](../../tool/deployment_updater.py)
 runs as root from the trusted tooling and drives the same reviewed transaction

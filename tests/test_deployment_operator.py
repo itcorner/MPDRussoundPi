@@ -260,6 +260,124 @@ class OperatorContractTests(unittest.TestCase):
         self.compose.write_bytes(encoded(config))
         self.assertIsNone(self.target().layout_change)
 
+    # ---------------------------------------------------------------- HTTPS layout
+
+    def tls_mount(self, **changes):
+        from tool.deployment_compose import WEB_TLS_PUBLIC_DIR, WEB_TLS_TARGET
+        mount = {"type": "bind", "source": WEB_TLS_PUBLIC_DIR, "target": WEB_TLS_TARGET,
+                 "read_only": True, "bind": {"create_host_path": False}}
+        mount.update(changes)
+        return mount
+
+    def lan_layout(self):
+        """The recorded layout before HTTPS: the listener on all addresses."""
+        recorded = copy.deepcopy(self.config)
+        recorded["services"]["russound-web"]["ports"][0]["host_ip"] = "0.0.0.0"
+        return recorded
+
+    def https_layout(self, base=None, mount=None, environment=None, host="127.0.0.1"):
+        supplied = copy.deepcopy(base or self.config)
+        web = supplied["services"]["russound-web"]
+        web["volumes"].append(mount or self.tls_mount())
+        web["environment"] = {**web.get("environment", {}),
+                              **(environment if environment is not None else
+                                 {"RUSSOUND_TRUSTED_PROXY_COUNT": "1", "RUSSOUND_REQUIRE_HTTPS_LOGIN": "true"})}
+        web["ports"][0]["host_ip"] = host
+        return supplied
+
+    def test_update_may_switch_to_the_https_layout_as_one_reviewed_change(self):
+        from tool.deployment_compose import HTTPS_LAYOUT_CHANGE
+        recorded = self.lan_layout()
+        recorded["services"]["russound-web"]["image"] = "sha256:" + "b" * 64
+        target = self.committed_target(recorded, self.https_layout())
+        self.assertEqual(target.layout_change, HTTPS_LAYOUT_CHANGE)
+        web = json.loads((target.asset / "compose.json").read_text())["services"]["russound-web"]
+        self.assertIn(self.tls_mount(), web["volumes"])
+        self.assertEqual(web["ports"][0]["host_ip"], "127.0.0.1")
+        self.assertEqual((web["environment"]["RUSSOUND_TRUSTED_PROXY_COUNT"],
+                          web["environment"]["RUSSOUND_REQUIRE_HTTPS_LOGIN"]), ("1", "true"))
+        self.assertEqual(web["image"], "sha256:" + "b" * 64, "images are replaced only at apply")
+        running = json.loads((target.asset / "running.json").read_text())["services"]["russound-web"]
+        self.assertEqual(running["ports"][0]["host_ip"], "0.0.0.0", "running containers keep the recorded layout")
+        target.baseline, target.backup_estimate = [], 0
+        self.assertEqual(target.scope()["layout_change"], HTTPS_LAYOUT_CHANGE)
+
+    def test_the_updater_mount_and_the_https_layout_may_arrive_together(self):
+        from tool.deployment_compose import HTTPS_LAYOUT_CHANGE, UPDATER_LAYOUT_CHANGE
+        supplied = self.https_layout()
+        supplied["services"]["russound-web"]["volumes"].insert(0, self.updater_mount())
+        target = self.committed_target(self.lan_layout(), supplied)
+        self.assertEqual(target.layout_change, UPDATER_LAYOUT_CHANGE + "; " + HTTPS_LAYOUT_CHANGE)
+
+    def test_partial_or_altered_https_layouts_are_refused(self):
+        variants = {
+            "listener left on the LAN": self.https_layout(host="0.0.0.0"),
+            "no proxy settings": self.https_layout(environment={}),
+            "only one setting": self.https_layout(environment={"RUSSOUND_TRUSTED_PROXY_COUNT": "1"}),
+            "two proxies": self.https_layout(environment={"RUSSOUND_TRUSTED_PROXY_COUNT": "2",
+                                                          "RUSSOUND_REQUIRE_HTTPS_LOGIN": "true"}),
+            "extra setting": self.https_layout(environment={"RUSSOUND_TRUSTED_PROXY_COUNT": "1",
+                                                            "RUSSOUND_REQUIRE_HTTPS_LOGIN": "true",
+                                                            "RUSSOUND_DEBUG": "true"}),
+            "writable mount": self.https_layout(mount=self.tls_mount(read_only=False)),
+            "other source": self.https_layout(mount=self.tls_mount(source="/etc/mpdrussoundpi-web-tls")),
+            "creates host path": self.https_layout(mount=self.tls_mount(bind={"create_host_path": True})),
+        }
+        for name, supplied in variants.items():
+            with self.subTest(name=name), self.assertRaises(ComposeError):
+                self.committed_target(self.lan_layout(), supplied)
+        settings_only = copy.deepcopy(self.config)
+        settings_only["services"]["russound-web"]["environment"] = {
+            "RUSSOUND_TRUSTED_PROXY_COUNT": "1", "RUSSOUND_REQUIRE_HTTPS_LOGIN": "true"}
+        with self.assertRaisesRegex(ComposeError, "Recorded layout changed"):
+            self.committed_target(self.lan_layout(), settings_only)
+        with self.assertRaisesRegex(ComposeError, "Recorded layout changed"):
+            self.committed_target(self.https_layout(), self.config)  # removing it is not an accepted addition
+
+    def test_proxy_settings_never_appear_with_a_listener_the_network_can_reach(self):
+        lan_spec = {**self.spec, "publish_host": "0.0.0.0"}
+        config = self.https_layout(base=self.lan_layout(), host="0.0.0.0")
+        self.compose.write_bytes(encoded(config))
+        with patch("tool.deployment_compose.local_engine", return_value="default"), \
+                self.assertRaisesRegex(ComposeError, "HTTPS layout needs all of"):
+            ComposeDeployment(lan_spec, self.selection, self.storage)
+        settings_only = self.lan_layout()
+        settings_only["services"]["russound-web"]["environment"] = {"RUSSOUND_TRUSTED_PROXY_COUNT": "1"}
+        self.compose.write_bytes(encoded(settings_only))
+        with patch("tool.deployment_compose.local_engine", return_value="default"), \
+                self.assertRaisesRegex(ComposeError, "HTTPS layout needs all of"):
+            ComposeDeployment(lan_spec, self.selection, self.storage)
+
+    def test_a_first_install_may_include_the_https_layout(self):
+        self.compose.write_bytes(encoded(self.https_layout()))
+        self.assertIsNone(self.target().layout_change)
+
+    def test_preflight_requires_the_running_https_proxy(self):
+        import tool.deployment_compose as compose
+        self.compose.write_bytes(encoded(self.https_layout()))
+        target = self.target()
+        info = {"Architecture": "aarch64", "OSType": "linux", "SecurityOptions": [], "ID": "fixture"}
+        status = self.root / "web-tls" / "status.json"
+
+        def preflight():
+            with patch("tool.deployment_compose.sys.platform", "linux"), \
+                    patch("tool.deployment_compose.os.geteuid", return_value=0), \
+                    patch("tool.deployment_compose.check_data"), \
+                    patch.object(compose, "WEB_TLS_STATUS", str(status)), \
+                    patch.object(target, "command", return_value=encoded(info)):
+                target.preflight()
+
+        with self.assertRaisesRegex(ComposeError, "run deploy-web-tls.yml first"):
+            preflight()
+        status.parent.mkdir()
+        status.write_text("{}")
+        with patch("tool.deployment_compose.subprocess.run",
+                   return_value=subprocess.CompletedProcess([], 3)) as run, \
+                self.assertRaisesRegex(ComposeError, "HTTPS proxy is not running"):
+            preflight()
+        self.assertEqual(run.call_args.args[0],
+                         ["systemctl", "is-active", "--quiet", "mpdrussoundpi-web-proxy.service"])
+
     def test_explicit_adoption_acceptance_and_no_hidden_dummy_build(self):
         for key, value in (("adopt", "yes"), ("require_playback", None),
                            ("data_dir", "/"), ("compose", "../compose.json")):

@@ -303,7 +303,7 @@ def publish(directory: Path, label: str, identifier: str, https_url: str) -> Non
     if (directory / "server.crt").exists():
         dns, ips = san(directory / "server.crt")
         _write(public / "status.json", json.dumps({
-            "schema_version": 1, "server_not_after": not_after(directory / "server.crt"),
+            "schema_version": 1, "https_url": https_url, "server_not_after": not_after(directory / "server.crt"),
             "server_dns": sorted(dns), "server_ips": sorted(ips),
             "ca_sha256_fingerprint": sha256_fingerprint(directory / "ca" / "ca.crt")}, indent=2) + "\n", 0o644)
 
