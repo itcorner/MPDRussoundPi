@@ -1,6 +1,6 @@
 # Clean up old Docker images after a successful update
 
-**Status:** new. Planned on 2026-11-22, not implemented. Related to the
+**Status:** new. Planned on 2026-11-22, decisions confirmed the same day, not implemented. Related to the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (every web or SSH update adds images) and to
 [publishing only changed images](./general_open_publish-only-changed-images.md)
@@ -32,18 +32,20 @@ its assets). `load_recovery_images()` loads them back with `docker image load`,
 which recreates the recovery tag. Removing a tag therefore does not reduce
 what can be restored, as long as the backup itself is kept.
 
-## Decisions to confirm
+## Decisions (confirmed by the user on 2026-11-22)
 
-1. **Keep the current and the previous version as Docker images** (recommended)
-   and remove the rest. Keeping only the current version saves a little more.
-   Keeping the previous one makes a manual rollback quick without loading
-   archives.
-2. **Automatic after every verified-complete update** (web or SSH), plus a
-   manual command with a dry run for the existing backlog and for checks
-   (recommended). The alternative is manual only.
+1. **Keep the current and the previous version as Docker images** and remove the
+   rest. This keeps a manual rollback quick without loading archives, at the cost
+   of at most one extra image pair. The alternatives were only the current
+   version, or the current plus the last two.
+2. **Automatic after every verified-complete update** (web or SSH), **plus a manual
+   command** with a dry run for the existing backlog and for checks. The
+   alternatives were manual only, or automatic only.
 3. **Only this project's namespaces.** The six images outside them are never
    touched automatically. The dry run lists them for a manual decision. One of
    them is still used by the exited legacy container.
+4. **The page shows a short line** in the update result: "Removed N old images
+   (X MB)". It ships with the next web change.
 
 ## Design
 
@@ -87,12 +89,12 @@ Docker handles that. Build cache is out of scope (no builds run on the Pi).
   outside the current and previous version are removed after success. The
   result records `cleanup: {removed, skipped, freed_bytes}`. The updater passes
   it through, and the Status page can show "Removed N old images (X MB)" in the
-  update result. That page change is optional and lands with the web image.
+  update result (decision 4). That page change lands with the web image.
 
 **Not changed:** backups, assets, incoming bundles, restores and evidence (see
 [Later](#later-operation-file-retention)), the restore path, the preflight space
 check (`3 × size + incoming + 256 MB`), and the updater's protocol, apart from the
-optional result field.
+result field.
 
 ## Stages
 
@@ -125,7 +127,7 @@ optional result field.
     backup, so the removed recovery tags do not matter;
   - an SSH operator update cleans up the same way;
   - the manual dry run lists nothing removable right after an update.
-- [ ] **5. Optional page line:** "Removed N old images (X MB)" in the update
+- [ ] **5. Page line:** "Removed N old images (X MB)" in the update
   result (`sanitize_status` field and `status.js`), with the next web change.
 
 ## Later: operation file retention
