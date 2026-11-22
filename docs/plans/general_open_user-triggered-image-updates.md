@@ -206,6 +206,19 @@ operator.
   images; a deliberately failing candidate and restore; an interrupted update
   (power or service stop) and its documented recovery; concurrent requests; wrong
   password and CSRF rejection; and the cross-version data rehearsal below.
+  - [x] *Successful update* (2026-11-22): `e49ced5` → `f82d2ee` started from the
+    Status page by the administrator (operation `b25f90cd`). An earlier review on
+    2026-11-21 expired and was cancelled before any interruption, as designed.
+    Verified independently on the Pi: updater phase `succeeded`; required checks
+    apply, containers, http, backend and playback passed; the operator's committed
+    pin and both running containers at `f82d2ee` with no restarts; on-Pi backup
+    identity, review and result kept in the updater evidence; all three MPD
+    outputs kept playing. The update check then reported `up_to_date`.
+  - [ ] *Failing candidate and restore:* a required post-apply check is made to
+    fail by stopping `mpdrussoundpi-playback-agent-proxy.service` before
+    approval; the update must end as `failed` with the backup retained, and
+    "Restore previous version" must bring back the previous images after the
+    proxy is started again.
 
 The [MPD web integration acceptance](./general_done_mpd-web-integration.md#acceptance-limitations-and-handover)
 rehearsed same-version config/state restoration, but did not test a cross-version
