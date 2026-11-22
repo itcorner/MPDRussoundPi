@@ -47,3 +47,20 @@
     quiet: true
   when: deployment_component == 'egress'
   tags: always
+
+- name: Validate web TLS names, addresses and ports before changing the target
+  ansible.builtin.assert:
+    that:
+      - web_tls_dns_names is sequence and web_tls_dns_names is not string and web_tls_dns_names | length > 0
+      - web_tls_dns_names | map('deployment_hostname') | select('match', '^[0-9.]+$') | list | length == 0
+      - web_tls_permitted_dns is sequence and web_tls_permitted_dns is not string
+      - web_tls_permitted_dns | map('deployment_hostname') | select('match', '^[0-9.]+$') | list | length == 0
+      - web_tls_ip_addresses | deployment_addresses | length > 0
+      - web_tls_permitted_ips | deployment_addresses(network=true) | length > 0
+      - web_tls_https_port != web_tls_http_port
+      - web_tls_upstream_port not in [web_tls_https_port, web_tls_http_port, web_tls_admin_port]
+      - web_tls_server_days | int <= 825 and web_tls_renew_days | int < web_tls_server_days | int
+    fail_msg: "Web TLS needs DNS names (not IP literals), literal server addresses, CIDR constraints, distinct ports and 1-825 server days."
+    quiet: true
+  when: deployment_component == 'web_tls'
+  tags: always

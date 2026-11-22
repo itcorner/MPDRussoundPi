@@ -1,0 +1,29 @@
+# Managed by ansible/playbooks/deploy-web-tls.yml; see docs/plans/general_open_web-ui-https.md.
+{
+	admin 127.0.0.1:{{ web_tls_admin_port }}
+	auto_https off
+	# Clients that send no SNI (addressing the Pi by IP) still get the server certificate.
+	default_sni {{ web_tls_dns_names[0] }}
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://:{{ web_tls_https_port }} {
+	tls {{ web_tls_dir }}/server.crt {{ web_tls_dir }}/server.key
+	reverse_proxy 127.0.0.1:{{ web_tls_upstream_port }} {
+		# /api/events is a server-sent event stream: never buffer it.
+		flush_interval -1
+	}
+}
+
+http://:{{ web_tls_http_port }} {
+	redir /ca /ca/ 308
+	handle_path /ca/* {
+		root * {{ web_tls_dir }}/public
+		file_server
+	}
+	handle {
+		redir https://{host}{% if web_tls_https_port != 443 %}:{{ web_tls_https_port }}{% endif %}{uri} 308
+	}
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Renew the MPDRussoundPi web UI certificate when it is due
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ web_tls_tool }} {{ web_tls_ensure_args | join(' ') }} --reload-unit {{ web_tls_unit }}.service
+UMask=0077
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ web_tls_dir }}

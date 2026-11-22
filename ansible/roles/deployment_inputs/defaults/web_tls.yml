@@ -1,0 +1,26 @@
+---
+# HTTPS for the web UI: docs/plans/general_open_web-ui-https.md
+deployment_component: web_tls
+deployment_boolean_inputs: [web_tls_start, web_tls_disable_nginx_default]
+deployment_port_inputs: [web_tls_https_port, web_tls_http_port, web_tls_upstream_port, web_tls_admin_port]
+# Taking ports 80 and 443 and stopping nginx happens only with -e web_tls_start=true.
+web_tls_start: false
+web_tls_disable_nginx_default: true
+web_tls_https_port: 443
+web_tls_http_port: 80
+web_tls_upstream_port: 8000
+web_tls_admin_port: 2021
+# Server certificate names; the first DNS name is the address shown to users.
+web_tls_dns_names: "{{ [ansible_facts['hostname'] ~ '.local', ansible_facts['hostname']] }}"
+web_tls_ip_addresses: "{{ [ansible_host] }}"
+# CA name constraints, fixed when the CA is created (never changed afterwards).
+web_tls_permitted_dns: "{{ web_tls_dns_names }}"
+web_tls_permitted_ips: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+web_tls_server_days: 397
+web_tls_renew_days: 60
+web_tls_dir: /etc/mpdrussoundpi-web-tls
+web_tls_tool: /usr/local/lib/mpdrussoundpi/web_tls.py
+web_tls_caddy_binary: /usr/bin/caddy
+web_tls_caddyfile: /etc/caddy/mpdrussoundpi-web.Caddyfile
+web_tls_unit: mpdrussoundpi-web-proxy
+web_tls_renew_unit: mpdrussoundpi-web-tls-renew
