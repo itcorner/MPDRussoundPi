@@ -81,7 +81,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
             "action": "restore" if summary.get("action") == "restore" else "update",
             "revision": _revision(summary.get("revision")),
             "images": {str(name)[:16]: _text(reference, 160) for name, reference in list(images.items())[:4]},
-            "layout_change": _text(summary.get("layout_change")),
+            "layout_change": _text(summary.get("layout_change"), 400),  # up to two named changes
             "interruption": _text(summary.get("interruption"), 300),
             "backup": _text(summary.get("backup"), 300),
             "cleanup": _text(summary.get("cleanup"), 300),

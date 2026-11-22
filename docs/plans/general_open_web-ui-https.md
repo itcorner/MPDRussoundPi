@@ -1,6 +1,6 @@
 # HTTPS for the web UI
 
-**Status:** open. Planned and decided on 2026-11-22. Stages 2 (certificates and proxy) and 3 (web application) implemented on 2026-11-23, not rolled out yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
+**Status:** open. Planned and decided on 2026-11-22. Stages 2 to 4 (certificates and proxy, web application, deployment layout) implemented on 2026-11-23, not rolled out yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (decision 6) so that no interim login protection is needed. A prerequisite for
 [administrator mode and protected settings](./web_open_admin-mode-and-protected-settings.md),
@@ -127,9 +127,9 @@ anyway. HTTPS solves all of it.
     overwritten), the server certificate, the Caddy unit and Caddyfile, the
     renewal timer and the CA page, and disables the nginx default site;
   - the `publish_host` change goes through the reviewed deployment tooling
-    as a spec change. The `http` verification check keeps using
-    `127.0.0.1:8000`, and a new check also verifies `https://` through Caddy
-    with the CA pinned;
+    as a named layout addition (see stage 4). The `http` verification check
+    uses `127.0.0.1:8000` and also verifies `https://` through Caddy with the
+    CA pinned;
   - web-triggered updates keep working: the updater talks to Docker, not to
     the proxy, and Caddy keeps running while the container restarts (the
     page's reconnect and reload logic sees a short 502);
@@ -186,9 +186,30 @@ anyway. HTTPS solves all of it.
   - tests in `test_admin_auth.py`, `test_status_overview.py`,
     `test_status_ui.js` and `test_web_tls.py`; `web/API.md`, `README.md` and
     the guide updated.
-- [ ] **4. Deployment spec:** loopback `publish_host`, trusted proxy count,
-      the https verification check; tests; documentation in
-      `container-deployment.md`, `README.md` (Security) and `web/API.md`.
+- [x] **4. Deployment layout** (2026-11-23). The tooling accepts no spec or
+  layout changes apart from named additions, so the HTTPS switch became the
+  second named addition next to the updater socket mount
+  (`tool/deployment_compose.py`, `layout_changes`):
+  - one all-or-nothing change on the web service: listener on `127.0.0.1`,
+    exactly `RUSSOUND_TRUSTED_PROXY_COUNT=1` and
+    `RUSSOUND_REQUIRE_HTTPS_LOGIN=true`, and exactly the read-only bind of
+    `/etc/mpdrussoundpi-web-tls/public` to `/run/web-tls`. It is shown as
+    `layout_change`, may arrive with the updater mount, and partial,
+    altered or removing changes are refused;
+  - general rule: proxy settings or the certificate mount without a loopback
+    listener are refused for any layout;
+  - preflight requires the certificate status and a running
+    `mpdrussoundpi-web-proxy.service`;
+  - the `http` runtime check also requests `/api/rooms` through the proxy,
+    verifying the certificate against the local CA for the published name
+    (the name and port come from `status.json`, which now also contains
+    `https_url`). No new check name, because the required checks are part of
+    the recorded intent;
+  - recovery uses the backed-up layout and specification, so a restore goes
+    back to the LAN listener, and the next update applies the change again;
+  - tests in `test_deployment_operator.py` and `test_deployment_https.py` (a
+    real TLS server with a certificate from the tool); rollout steps in
+    `container-deployment.md`.
 - [ ] **5. Rollout on the Pi:** run the playbook, compare the fingerprint,
       trust the root on the user's devices, then switch `publish_host`.
 - [ ] **6. Acceptance:**

@@ -145,6 +145,9 @@ layout difference, including removing the mount again, is still refused. Recover
 restores the backed-up previous layout. A first install may include the mount
 directly. (Decided 2026-11-21 instead of a token-authenticated listener on the
 Docker bridge, which would not have helped split hosts either.)
+Since 2026-11-23 a second named addition exists, the HTTPS layout (loopback
+listener, proxy settings and certificate mount as one change); see
+[HTTPS for the web UI](./general_open_web-ui-https.md), stage 4.
 
 ### Split-host layouts (not supported yet)
 

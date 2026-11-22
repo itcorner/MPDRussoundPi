@@ -45,23 +45,94 @@ def is_updater_mount(mount: Any) -> bool:
             and mount.get("bind", {}).get("create_host_path", False) is False)
 
 
-def updater_mount_added(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any] | None:
-    """The added mount when ``current`` differs from ``previous`` only by the updater mount on the web service."""
+# HTTPS for the web UI (docs/plans/general_open_web-ui-https.md): the web listener moves to loopback
+# behind the host's Caddy proxy, the app trusts that one proxy and refuses plain-HTTP logins, and the
+# proxy certificate's public facts are mounted for the Status page. All three parts or none.
+WEB_TLS_PUBLIC_DIR = "/etc/mpdrussoundpi-web-tls/public"
+WEB_TLS_TARGET = "/run/web-tls"
+WEB_TLS_STATUS = WEB_TLS_PUBLIC_DIR + "/status.json"
+WEB_TLS_CA = "/etc/mpdrussoundpi-web-tls/ca/ca.crt"
+WEB_TLS_PROXY_UNIT = "mpdrussoundpi-web-proxy.service"
+HTTPS_ENVIRONMENT = {"RUSSOUND_TRUSTED_PROXY_COUNT": "1", "RUSSOUND_REQUIRE_HTTPS_LOGIN": "true"}
+LOOPBACK = "127.0.0.1"
+HTTPS_LAYOUT_CHANGE = ("moves the web listener to 127.0.0.1 behind the HTTPS proxy, trusts that proxy, refuses "
+                       "logins over plain HTTP and mounts the certificate status read-only")
+
+
+def is_web_tls_mount(mount: Any) -> bool:
+    return (is_mapping(mount) and mount.get("type") == "bind" and mount.get("source") == WEB_TLS_PUBLIC_DIR
+            and mount.get("target") == WEB_TLS_TARGET and mount.get("read_only") is True
+            and set(mount) <= {"type", "source", "target", "read_only", "bind"}
+            and mount.get("bind", {}).get("create_host_path", False) is False)
+
+
+def https_parts(service: dict[str, Any]) -> dict[str, bool]:
+    """Which parts of the HTTPS layout a web service carries."""
+    environment = service.get("environment") or {}
+    ports = service.get("ports") or []
+    return {
+        "mount": any(is_web_tls_mount(mount) for mount in service.get("volumes", [])),
+        "environment": any(key in environment for key in HTTPS_ENVIRONMENT),
+        "exact_environment": all(environment.get(key) == value for key, value in HTTPS_ENVIRONMENT.items()),
+        "loopback": len(ports) == 1 and is_mapping(ports[0]) and ports[0].get("host_ip") == LOOPBACK,
+    }
+
+
+def with_https_layout(config: dict[str, Any], mount: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(config)
+    web = result["services"]["russound-web"]
+    web.setdefault("volumes", []).append(mount)
+    web["environment"] = {**web.get("environment", {}), **HTTPS_ENVIRONMENT}
+    web["ports"][0]["host_ip"] = LOOPBACK
+    return result
+
+
+def _sorted_volumes(config: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(config)
+    for service in result.get("services", {}).values():
+        if isinstance(service, dict) and isinstance(service.get("volumes"), list):
+            service["volumes"] = sorted(service["volumes"], key=lambda mount: json.dumps(mount, sort_keys=True))
+    return result
+
+
+def layout_changes(previous: dict[str, Any], current: dict[str, Any]) -> tuple[dict[str, Any], list[str]] | None:
+    """The accepted layout additions from ``previous`` to ``current``: the new layout and the review texts.
+
+    Only two named, forward-only additions exist: the updater socket mount and the HTTPS layout.
+    None when anything else differs (including removing one of them again).
+    """
     try:
-        before = previous["services"]["russound-web"].get("volumes", [])
-        after = current["services"]["russound-web"].get("volumes", [])
+        web = current["services"]["russound-web"]
+        before = previous["services"]["russound-web"]
+        added = [mount for mount in web.get("volumes", []) if mount not in before.get("volumes", [])]
     except (KeyError, TypeError, AttributeError):
         return None
-    added = [mount for mount in after if mount not in before]
-    if len(added) != 1 or not is_updater_mount(added[0]) or [m for m in after if m != added[0]] != before:
+    updater = [mount for mount in added if is_updater_mount(mount)]
+    tls = [mount for mount in added if is_web_tls_mount(mount)]
+    trial, texts = copy.deepcopy(previous), []
+    if updater:
+        trial["services"]["russound-web"].setdefault("volumes", []).append(updater[0])
+        texts.append(UPDATER_LAYOUT_CHANGE)
+    if tls and not https_parts(before)["mount"]:
+        trial = with_https_layout(trial, tls[0])
+        texts.append(HTTPS_LAYOUT_CHANGE)
+    if not texts or len(updater) > 1 or len(tls) > 1:
         return None
-    trial = copy.deepcopy(previous)
-    trial["services"]["russound-web"]["volumes"] = after
-    return added[0] if trial == current else None
+    return (trial, texts) if _sorted_volumes(trial) == _sorted_volumes(current) else None
 
 
 class ComposeError(ValueError):
     """Target validation or service work failed; retain state and private evidence."""
+
+
+def web_tls_ready() -> None:
+    """The HTTPS proxy runs and has published its certificate status (deploy-web-tls.yml)."""
+    status = Path(WEB_TLS_STATUS)
+    if status.is_symlink() or not status.is_file() or status.parent.is_symlink():
+        raise ComposeError("HTTPS certificate status is missing; run deploy-web-tls.yml first")
+    active = subprocess.run(["systemctl", "is-active", "--quiet", WEB_TLS_PROXY_UNIT], check=False, timeout=30)
+    if active.returncode != 0:
+        raise ComposeError("The HTTPS proxy is not running; run deploy-web-tls.yml with web_tls_start=true first")
 
 
 def encoded(value: Any) -> bytes:
@@ -171,14 +242,17 @@ class ComposeDeployment:
                     service.pop("image", None)
                 return result
             if without_images(previous) != without_images(self.config):
-                added = updater_mount_added(without_images(previous), without_images(self.config))
-                if added is None:
+                changed = layout_changes(without_images(previous), without_images(self.config))
+                if changed is None:
                     raise ComposeError("Recorded layout changed; settings/mount/network migration needs separate review")
-                # The only accepted change: the recorded layout plus the updater socket mount.
+                # Only the named additions are accepted, applied to the recorded layout (images stay recorded).
                 self.running_config = previous
-                previous = copy.deepcopy(previous)
-                previous["services"]["russound-web"].setdefault("volumes", []).append(added)
-                self.layout_change = UPDATER_LAYOUT_CHANGE
+                images = {name: service.get("image") for name, service in previous["services"].items()}
+                previous = changed[0]
+                for name, image in images.items():
+                    if image is not None:
+                        previous["services"][name]["image"] = image
+                self.layout_change = "; ".join(changed[1])
             self.config = previous
         self.validate_config()
         self.baseline: list[dict[str, Any]] | None = None
@@ -261,7 +335,7 @@ class ComposeDeployment:
                 raise ComposeError("Automated dummy must be headless without serial device permissions")
             mounts_value: list[dict[str, Any]] = service.get("volumes", [])
             for mount in mounts_value:
-                if name == "russound-web" and is_updater_mount(mount):
+                if name == "russound-web" and (is_updater_mount(mount) or is_web_tls_mount(mount)):
                     continue
                 if (mount.get("type") != "bind" or not Path(mount.get("source", "")).is_absolute()
                         or not overlap(Path(mount["source"]), Path(spec["data_dir"]))
@@ -297,13 +371,20 @@ class ComposeDeployment:
             return
         web = config["services"]["russound-web"]
         expected = {"/config": "config", "/data": "data", "/logs": "logs", "/run/secrets": "secrets"}
-        mounts = {mount["target"]: mount for mount in web.get("volumes", []) if not is_updater_mount(mount)}
+        mounts = {mount["target"]: mount for mount in web.get("volumes", [])
+                  if not is_updater_mount(mount) and not is_web_tls_mount(mount)}
         if set(mounts) != set(expected) or any(
                 Path(mounts[target]["source"]) != Path(spec["data_dir"]) / child
                 or bool(mounts[target].get("read_only")) != (child == "secrets")
                 for target, child in expected.items()):
             raise ComposeError("Web mounts must preserve exactly config/data/logs/secrets")
         self.validate_listener(web, 8000)
+        parts = https_parts(web)
+        if (parts["mount"] or parts["environment"]) and not (
+                parts["mount"] and parts["exact_environment"] and parts["loopback"]):
+            # Trusting X-Forwarded-* on a port the network can reach lets any client claim HTTPS
+            # or another address, so the proxy settings exist only with a loopback listener.
+            raise ComposeError("The HTTPS layout needs all of: loopback listener, proxy settings and certificate mount")
         agents = web.get("environment", {}).get("RUSSOUND_PLAYBACK_AGENTS", "")
         if bool(agents) != spec["require_playback"]:
             raise ComposeError("Configured playback requires acceptance; disabled playback must have no agent input")
@@ -358,6 +439,8 @@ class ComposeDeployment:
             socket_dir = Path(UPDATER_SOCKET_DIR)
             if socket_dir.is_symlink() or not socket_dir.is_dir():
                 raise ComposeError("Updater socket directory is missing; install the updater service first")
+        if https_parts(web)["mount"]:
+            web_tls_ready()
         validate_runtime_files(spec, web.get("environment", {}))
         if spec["gateway"] != "standalone":
             safe_path(Path(spec["data_dir"]) / "config/russound_config.json")
@@ -664,6 +747,11 @@ def runtime_checks(target: RuntimeTarget, images: dict[str, str]) -> dict[str, s
                 with opener.open(f'http://{url_host}:{target.spec["publish_port"]}/api/rooms', timeout=5) as response:
                     if response.status != 200:
                         raise ComposeError("Published host HTTP route did not return 200")
+                config = getattr(target, "config", None)
+                services = config.get("services") if is_mapping(config) else None
+                web = services.get("russound-web") if is_mapping(services) else None
+                if is_mapping(web) and isinstance(web.get("volumes", []), list) and https_parts(web)["mount"]:
+                    https_route_check()
                 return dict.fromkeys(("containers", "http", "backend", "playback"), "passed")
         except NativeError:
             raise
@@ -673,6 +761,32 @@ def runtime_checks(target: RuntimeTarget, images: dict[str, str]) -> dict[str, s
         if time.monotonic() >= deadline:
             raise ComposeError("Runtime health/routing deadline exceeded; pending state is retained")
         time.sleep(1)
+
+
+def https_route_check() -> None:
+    """The HTTPS layout's route: through the host's proxy, certificate verified against the local CA."""
+    import http.client
+    import ssl
+    from urllib.parse import urlsplit
+
+    url = urlsplit(str(json.loads(Path(WEB_TLS_STATUS).read_text())["https_url"]))
+    if url.scheme != "https" or not url.hostname:
+        raise ComposeError("HTTPS certificate status names no HTTPS address")
+    context = ssl.create_default_context(cafile=WEB_TLS_CA)
+
+    class Connection(http.client.HTTPSConnection):
+        # Connect to this host's proxy but verify the certificate for the published name.
+        def connect(self) -> None:
+            raw = socket.create_connection((LOOPBACK, url.port or 443), timeout=5)
+            self.sock = context.wrap_socket(raw, server_hostname=url.hostname)
+
+    connection = Connection(url.hostname, url.port or 443, timeout=5, context=context)
+    try:
+        connection.request("GET", "/api/rooms", headers={"Host": url.netloc})
+        if connection.getresponse().status != 200:
+            raise ComposeError("HTTPS route through the proxy did not return 200")
+    finally:
+        connection.close()
 
 
 def apply(path: Path, images: dict[str, str]) -> None:
