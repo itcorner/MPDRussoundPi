@@ -34,6 +34,8 @@ STORAGE = Path("/var/lib/mpdrussoundpi-operations")
 DEPLOY_ACTIONS = ("deploy", "native-deploy", "handover-deploy")
 DEFAULT_CONTROLLER_TIMEOUT = 3600
 MAX_CONTROLLER_TIMEOUT = 5 * 3600
+CLEANUP_NOTE = ("After a verified-complete update, this project's Docker images that neither the new "
+                "nor the previous version uses are removed; backups keep their image archives.")
 
 
 @contextmanager
@@ -215,7 +217,10 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
 
     runner = target.runner(offhost, receive_images if selection["kind"] == LOCAL_CANDIDATE else None)
     result = runner.execute(lambda review: approve_remote(channel, review))
-    channel.send({"event": "complete", **result,
+    # Committed and verified: remove images no version needs (best effort, still under the lock).
+    from tool.deployment_cleanup import after_update
+    cleanup = after_update(target)
+    channel.send({"event": "complete", **result, "cleanup": cleanup,
                   "acceptance": {"controller": "reported-connected" if target.spec["require_controller"] else "not-requested",
                                  "playback": "reported-healthy" if target.spec["require_playback"] else "not-configured"}})
 
@@ -393,6 +398,8 @@ def controller(channel: Channel, request: dict[str, Any], evidence: Path,
 
 def interactive(review: dict[str, Any]) -> str | None:
     print(json.dumps(review["plan"], indent=2))
+    if "selection" in review["plan"] and review["plan"].get("action") != "verify-unchanged-pin":
+        print(CLEANUP_NOTE)
     print("Approve this exact scope, including interruption and recovery retention.")
     expected = "approve " + review["plan"]["operation"]
     with open("/dev/tty", "r", encoding="utf-8") as source, \

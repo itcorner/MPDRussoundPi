@@ -30,6 +30,7 @@ class FakeTransaction:
 
     def __init__(self, outcome="complete", backup=True):
         self.outcome, self.backup = outcome, backup
+        self.cleanup = None
         self.requests, self.approvals = [], []
         self.release = threading.Event()
 
@@ -52,7 +53,8 @@ class FakeTransaction:
         if self.outcome == "fail":
             raise ChannelError("Target operation failed")
         return {"event": "recovered" if request["action"] == "recover" else "complete",
-                "required": {"containers": "passed", "http": "passed"}}
+                "required": {"containers": "passed", "http": "passed"},
+                **({"cleanup": self.cleanup} if request["action"] == "deploy" and self.cleanup is not None else {})}
 
 
 class Fixture(unittest.TestCase):
@@ -107,6 +109,23 @@ class UpdateFlowTests(Fixture):
         self.assertEqual((request_sent["action"], request_sent["update"], request_sent["selection"]["revision"]),
                          ("deploy", True, NEWER))
 
+    def test_the_review_mentions_and_the_result_reports_the_image_cleanup(self):
+        transaction = FakeTransaction()
+        transaction.cleanup = {"removed": 4, "skipped": 1, "freed_bytes": 650_000_000, "error": None,
+                               "unexpected": "dropped"}
+        updater = self.make(transaction)
+        operation = updater.handle({"op": "review", "actor": ACTOR})["operation"]
+        review = self.wait_for(updater, "awaiting_approval")["review"]
+        self.assertIn("old images", review["summary"]["cleanup"])
+        updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
+        transaction.release.set()
+        result = self.wait_for(updater, "succeeded")["result"]
+        self.assertEqual(result["cleanup"], {"removed": 4, "skipped": 1, "freed_bytes": 650_000_000, "error": None})
+        transaction.cleanup = {"removed": -3, "freed_bytes": "lots", "error": 5}
+        self.assertEqual(updater_module._cleanup(transaction.cleanup),
+                         {"removed": 0, "skipped": 0, "freed_bytes": 0, "error": None})
+        self.assertIsNone(updater_module._cleanup(None))
+
     def test_nothing_to_do_when_the_newest_image_is_installed(self):
         updater = self.make(resolve=lambda gateway, platform: candidate(INSTALLED))
         updater.handle({"op": "review", "actor": ACTOR})
@@ -140,6 +159,7 @@ class UpdateFlowTests(Fixture):
         updater.handle({"op": "restore", "operation": operation, "actor": ACTOR})
         review = self.wait_for(updater, "restore_awaiting_approval")["review"]
         self.assertEqual(review["summary"]["action"], "restore")
+        self.assertIsNone(review["summary"]["cleanup"], "a restore never cleans up")
         updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
         self.assertEqual(self.wait_for(updater, "restored")["phase"], "restored")
         restore_request, recovery = self.transaction.requests[-1]

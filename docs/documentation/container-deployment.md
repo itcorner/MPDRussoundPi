@@ -1046,6 +1046,32 @@ retried. The operator lock makes an SSH operator run and an updater operation
 exclude each other. `python -m tool.deployment_updater status` (as root in the
 tooling directory) prints the current state.
 
+**Old image cleanup.** After a verified-complete update, from the page or the
+SSH operator, the target removes this project's Docker images that no version
+still needs ([`tool/deployment_cleanup.py`](../../tool/deployment_cleanup.py),
+[plan](../plans/general_open_docker-image-cleanup.md)). It keeps:
+
+- images used by any container, running or stopped;
+- every deployment's committed version;
+- the previous version: the images the committed operation backed up, from
+  its `images.json` in the assets.
+
+It removes nothing while the state is blocked, reserved or pending. It considers
+only `mpdrussoundpi-recovery/*`, `mpdrussoundpi-local/*` and the two published
+repositories. It removes one reference at a time, never with `--force` and never
+with a global prune. The cleanup is best effort and holds the operator lock: an
+error is reported in the result (`cleanup` with `removed`, `skipped`,
+`freed_bytes`, `error`) but never changes the update's outcome. It never runs
+after a failed update, a restore or an unknown outcome. A restore does not need
+the removed tags: it loads the old images from the archives in the backup.
+Backups, assets, bundles and evidence are not touched. For the backlog, or to
+check, run it by hand as root in the tooling directory:
+
+```sh
+sudo .venv/bin/python -m tool.deployment_cleanup images            # dry run: lists kept, removable and outside images
+sudo .venv/bin/python -m tool.deployment_cleanup images --apply
+```
+
 Rollout on an existing single-host installation, in this order:
 
 1. Upgrade the trusted tooling to a revision containing the updater

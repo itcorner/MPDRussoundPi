@@ -44,6 +44,16 @@ def _revision(value: object) -> str | None:
     return value if isinstance(value, str) and len(value) == 40 and all(c in "0123456789abcdef" for c in value) else None
 
 
+def _cleanup(value: object) -> dict[str, int] | None:
+    """How many old images the update removed and how much space it freed."""
+    if not isinstance(value, dict):
+        return None
+    counts = {key: value.get(key) for key in ("removed", "freed_bytes")}
+    if any(type(count) is not int or count < 0 for count in counts.values()):
+        return None
+    return counts
+
+
 def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str, Any]:
     """Only the documented fields; the review (with its confirmation digest) only for administrators."""
     phase = value.get("phase") if value.get("phase") in PHASES else "idle"
@@ -56,6 +66,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
         "candidate_revision": _revision(value.get("candidate_revision")),
         "error": _text(value.get("error")),
         "finished_at": _text(result.get("finished_at"), 32) if result else None,
+        "cleanup": _cleanup(result.get("cleanup")) if result else None,
         "restore_available": value.get("restore_available") is True,
         "busy": value.get("busy") is True,
         "updated_at": _text(value.get("updated_at"), 32),
@@ -73,6 +84,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
             "layout_change": _text(summary.get("layout_change")),
             "interruption": _text(summary.get("interruption"), 300),
             "backup": _text(summary.get("backup"), 300),
+            "cleanup": _text(summary.get("cleanup"), 300),
         }
     return status
 

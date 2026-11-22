@@ -118,6 +118,19 @@ class PageFlowTests(unittest.TestCase):
         self.assertNotIn("secret", status)
         self.assertNotIn("review", status)
 
+    def test_sanitize_passes_only_the_cleanup_counts(self):
+        def cleanup(value):
+            return sanitize_status({"phase": "succeeded", "result": {"cleanup": value}}, include_review=False)["cleanup"]
+        self.assertEqual(cleanup({"removed": 4, "freed_bytes": 650_000_000, "skipped": 1, "error": "x"}),
+                         {"removed": 4, "freed_bytes": 650_000_000})
+        for bad in (None, "4", {"removed": -1, "freed_bytes": 0}, {"removed": 1, "freed_bytes": "a lot"},
+                    {"removed": True, "freed_bytes": 0}):
+            with self.subTest(bad=bad):
+                self.assertIsNone(cleanup(bad))
+        review = sanitize_status({"phase": "awaiting_approval", "review": {"operation": "o", "digest": "d", "summary": {
+            "cleanup": "Old images are removed."}}}, include_review=True)["review"]
+        self.assertEqual(review["cleanup"], "Old images are removed.")
+
 
 if __name__ == "__main__":
     unittest.main()
