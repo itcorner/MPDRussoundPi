@@ -210,8 +210,28 @@ anyway. HTTPS solves all of it.
   - tests in `test_deployment_operator.py` and `test_deployment_https.py` (a
     real TLS server with a certificate from the tool); rollout steps in
     `container-deployment.md`.
-- [ ] **5. Rollout on the Pi:** run the playbook, compare the fingerprint,
-      trust the root on the user's devices, then switch `publish_host`.
+- [ ] **5. Rollout on the Pi** (started 2026-11-23):
+  - [x] trusted tooling upgraded from `bd36633` to `cdbc3c5`, updater restarted
+    while idle;
+  - [x] `deploy-web-tls.yml` run, first without and then with
+    `web_tls_start=true`. The CA was created (SHA-256
+    `9E:44:9C:3D:F1:B9:5D:BC:FE:3F:2B:DD:FF:8C:5C:D2:82:3A:81:8D:77:C5:62:1E:5B:10:08:68:29:BE:3D:01`),
+    the server certificate is valid until 2027-12-24, and nginx is stopped and
+    disabled (marker written). Checked from the controller: HTTPS by IP and by
+    `musicpi.local` with the CA pinned, the 308 redirect, `/ca/` on both
+    ports (added in PR #101 because Chrome upgrades `http://` links), the
+    unbuffered event stream, and the playback proxy on 8443 unaffected;
+  - [x] HTTPS compose input on the target
+    (`/etc/mpdrussoundpi-deploy/russound-dev-compose-https.json`, root
+    `0600`). The tooling's `layout_changes` on the Pi accepts it as exactly the
+    HTTPS layout;
+  - [x] the controller's private target specification (backup
+    `pi-target.json.before-https` next to it) has `publish_host` set to
+    `127.0.0.1` and `compose` pointing to the new input; the updater was
+    reinstalled with it (`deploy-updater.yml`);
+  - [ ] devices trust the CA;
+  - [ ] an update with a new candidate applies the HTTPS layout (this commit
+    forces new development images for it).
 - [ ] **6. Acceptance:**
   - desktop (macOS Safari and Chrome) and phone (iOS Safari, Android Chrome)
     without certificate warnings, by IP and by `musicpi.local`;
