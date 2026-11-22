@@ -20,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -40,6 +41,13 @@ jobs:
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: arm64
+      - name: Use the runtime smoke tests of the source commit
+        # The images were built from a develop commit; their smoke tests belong to
+        # that app version (main's copies can lag behind its API). Only these two
+        # scripts are taken from the validated source SHA, in a step without secrets.
+        env:
+          PUBLICATION_SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: git checkout "$PUBLICATION_SOURCE_SHA" -- tool/ci/smoke-web-image.sh tool/ci/smoke-ser2net-image.sh
       - name: Verify exact and dev tags, then smoke-test published digests without writes
         env:
           VERIFY_PUBLICATION_TAGS: "true"
