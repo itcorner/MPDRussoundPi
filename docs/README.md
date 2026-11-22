@@ -16,6 +16,7 @@ record deployment acceptance in the plan it belongs to.
 - [Container deployment and recovery](./documentation/container-deployment.md), including [separate web and prepared backend hosts](./documentation/container-deployment.md#split-host-deployment-on-prepared-hosts).
 - [Docker image preparation and release](./documentation/docker-image-release.md): build-only artifacts, image boundaries and publication prerequisites.
 - [Development and release workflow](./documentation/development-workflow.md): branch roles, feature PRs, release promotion and hotfix back-merges.
+- [HTTPS for the web UI](./documentation/web-ui-https.md): local CA, Caddy proxy on port 443, device trust, renewal and rollback.
 - [Playback deployment](./documentation/playback-agent-deployment.md): install or update the Pi playback stack and connect it to the web dashboard.
 - [Headless MPD deployment and recovery](./documentation/mpd-headless-deployment.md), including [audio graph and hardware notes](./documentation/mpd-headless-deployment.md#audio-graph-and-hardware-notes).
 - [Playback endurance and USB reconnect recorder](./documentation/mpd-playback-endurance-test.md)
@@ -69,7 +70,7 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |
 | [User-triggered Docker image updates](./plans/general_open_user-triggered-image-updates.md) | Open: admin login, updater service and page flow rolled out; acceptance on the Pi in progress; single-Pi Docker installations only |
 | [Administrator mode and protected settings](./plans/web_open_admin-mode-and-protected-settings.md) | Open: planned 2026-11-22; global sign-in in the header, amber admin mode (frame, strip, shield), settings editable only for the administrator, password asked again only for restore and password change |
-| [HTTPS for the web UI](./plans/general_open_web-ui-https.md) | Open: planned 2026-11-22; Caddy on the host terminates TLS on 443, web container on loopback, local CA with name constraints and automatic renewal, port 80 redirects and serves the CA; decided, implementation next |
+| [HTTPS for the web UI](./plans/general_open_web-ui-https.md) | Open: planned 2026-11-22; Caddy on the host terminates TLS on 443, web container on loopback, local CA with name constraints and automatic renewal, port 80 redirects and serves the CA; decided; stage 2 (certificate tool, Caddy proxy and renewal playbook) implemented, not rolled out |
 | [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
 | [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |
 | [Config split](./plans/mpd_done_config-split.md) | Rolled out 2026-10-17 |

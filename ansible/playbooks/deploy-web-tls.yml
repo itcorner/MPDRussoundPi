@@ -1,0 +1,262 @@
+---
+# HTTPS for the web UI: docs/plans/general_open_web-ui-https.md
+#
+# Install or refresh (no ports taken, nothing stopped):
+#   ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-web-tls.yml --limit musicpi
+# Take ports 80/443 (stops the unused nginx default site):
+#   ... -e web_tls_start=true
+# Roll back to plain HTTP (keeps the CA, so devices stay trusted):
+#   ... --tags rollback
+- name: Configure HTTPS for the web UI
+  hosts: musicpi
+  become: true
+  pre_tasks:
+    - name: Validate web TLS inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: web_tls
+      tags: always
+  tasks:
+    - name: Require the preinstalled Caddy binary
+      ansible.builtin.stat:
+        path: "{{ web_tls_caddy_binary }}"
+      register: web_tls_caddy
+
+    - name: Refuse to configure an absent Caddy installation
+      ansible.builtin.assert:
+        that:
+          - web_tls_caddy.stat.executable | default(false)
+        fail_msg: "Install and verify Caddy on the Pi before configuring HTTPS."
+
+    - name: Inspect the Caddy service account
+      ansible.builtin.getent:
+        database: passwd
+        key: caddy
+
+    - name: Inspect system services
+      ansible.builtin.service_facts:
+
+    - name: Refuse to compete with the package's own Caddy service for the ports
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['caddy.service'].state | default('inactive') != 'running'
+        fail_msg: "caddy.service (the package's default site) is running; stop and disable it first."
+
+    - name: Ensure the tool, certificate and proxy data directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ web_tls_tool | dirname }}", owner: root, group: root, mode: "0755"}
+        - {path: "{{ web_tls_dir }}", owner: root, group: caddy, mode: "0750"}
+        - {path: /var/lib/caddy/web-proxy, owner: caddy, group: caddy, mode: "0750"}
+
+    - name: Install the certificate tool
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../tool/web_tls.py"
+        dest: "{{ web_tls_tool }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Assemble the certificate tool arguments shared by this play and the renewal timer
+      ansible.builtin.set_fact:
+        web_tls_ensure_args: >-
+          {{
+            ['ensure', '--dir', web_tls_dir, '--key-group', 'caddy',
+             '--days', web_tls_server_days | string, '--renew-days', web_tls_renew_days | string,
+             '--https-url', 'https://' ~ web_tls_dns_names[0]
+               ~ ('' if web_tls_https_port == 443 else ':' ~ web_tls_https_port) ~ '/']
+            + (web_tls_dns_names | map('regex_replace', '^', '--dns=') | list)
+            + (web_tls_ip_addresses | map('regex_replace', '^', '--ip=') | list)
+            + (web_tls_permitted_dns | map('regex_replace', '^', '--permit-dns=') | list)
+            + (web_tls_permitted_ips | map('regex_replace', '^', '--permit-ip=') | list)
+          }}
+
+    - name: Create the CA once and issue or renew the server certificate
+      ansible.builtin.command:
+        argv: "{{ ['/usr/bin/python3', web_tls_tool] + web_tls_ensure_args }}"
+      register: web_tls_ensure
+      changed_when: (web_tls_ensure.stdout | from_json).ca_created or (web_tls_ensure.stdout | from_json).server_issued
+      when: not ansible_check_mode
+
+    - name: Show the CA fingerprint to compare on each device
+      ansible.builtin.debug:
+        msg:
+          - "CA SHA-256 fingerprint: {{ (web_tls_ensure.stdout | from_json).ca.sha256_fingerprint }}"
+          - "Server certificate valid until {{ (web_tls_ensure.stdout | from_json).server.not_after }}"
+          - "Trust it once per device: http://{{ web_tls_dns_names[0] }}/ca/"
+      when: not ansible_check_mode
+
+    - name: Ensure the controller-side trust directory exists
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../../docker/secrets"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Copy only the public CA certificate to the controller
+      ansible.builtin.fetch:
+        src: "{{ web_tls_dir }}/ca/ca.crt"
+        dest: "{{ playbook_dir }}/../../docker/secrets/musicpi-web-ca.crt"
+        flat: true
+      when: not ansible_check_mode
+
+    - name: Install the web proxy Caddy configuration
+      ansible.builtin.template:
+        src: ../templates/web-proxy.Caddyfile.j2
+        dest: "{{ web_tls_caddyfile }}"
+        owner: root
+        group: caddy
+        mode: "0640"
+        validate: "{{ web_tls_caddy_binary }} validate --config %s --adapter caddyfile"
+      register: web_tls_configuration
+
+    - name: Install the web proxy, renewal service and timer units
+      ansible.builtin.template:
+        src: "../templates/{{ item.template }}"
+        dest: "/etc/systemd/system/{{ item.unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {template: web-proxy.service.j2, unit: "{{ web_tls_unit }}.service"}
+        - {template: web-tls-renew.service.j2, unit: "{{ web_tls_renew_unit }}.service"}
+        - {template: web-tls-renew.timer.j2, unit: "{{ web_tls_renew_unit }}.timer"}
+      register: web_tls_units
+
+    - name: Reload system service definitions
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    # ------------------------------------------------------------ taking the ports
+
+    - name: List what nginx serves
+      ansible.builtin.find:
+        paths: [/etc/nginx/sites-enabled, /etc/nginx/conf.d]
+        file_type: any
+      register: web_tls_nginx_sites
+      when:
+        - web_tls_start | bool
+        - web_tls_disable_nginx_default | bool
+        - "'nginx.service' in ansible_facts.services"
+
+    - name: Refuse to stop an nginx that serves more than Debian's default site
+      ansible.builtin.assert:
+        that:
+          - web_tls_nginx_sites.files | map(attribute='path') | reject('equalto', '/etc/nginx/sites-enabled/default')
+            | list | length == 0
+        fail_msg: "nginx serves more than its default site; move those sites behind Caddy or free port 80 by hand."
+      when: web_tls_nginx_sites is not skipped and web_tls_nginx_sites.files is defined
+
+    - name: Record that this play disabled the nginx default site (for the rollback)
+      ansible.builtin.copy:
+        content: "nginx default site disabled by deploy-web-tls.yml\n"
+        dest: "{{ web_tls_dir }}/nginx-disabled"
+        owner: root
+        group: root
+        mode: "0644"
+      when: web_tls_nginx_sites is not skipped and web_tls_nginx_sites.files is defined
+            and web_tls_nginx_sites.files | length > 0
+
+    - name: Disable the nginx default site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      when: web_tls_nginx_sites is not skipped and web_tls_nginx_sites.files is defined
+
+    - name: Stop and disable nginx, which now serves nothing
+      ansible.builtin.systemd_service:
+        name: nginx.service
+        state: stopped
+        enabled: false
+      when: web_tls_nginx_sites is not skipped and web_tls_nginx_sites.files is defined
+
+    - name: Start and enable the web proxy
+      ansible.builtin.systemd_service:
+        name: "{{ web_tls_unit }}.service"
+        enabled: true
+        state: "{{ 'restarted' if web_tls_configuration.changed or web_tls_units.changed or web_tls_ensure.changed else 'started' }}"
+      when:
+        - web_tls_start | bool
+        - not ansible_check_mode
+
+    - name: Enable the daily renewal check
+      ansible.builtin.systemd_service:
+        name: "{{ web_tls_renew_unit }}.timer"
+        enabled: true
+        state: started
+      when:
+        - web_tls_start | bool
+        - not ansible_check_mode
+
+    - name: Verify the web UI over HTTPS with the CA pinned
+      ansible.builtin.uri:
+        url: "https://{{ web_tls_ip_addresses[0] }}:{{ web_tls_https_port }}/status"
+        ca_path: "{{ web_tls_dir }}/ca/ca.crt"
+        validate_certs: true
+        status_code: 200
+      register: web_tls_https_check
+      retries: 5
+      delay: 2
+      until: web_tls_https_check.status == 200
+      when:
+        - web_tls_start | bool
+        - not ansible_check_mode
+
+    - name: Verify plain HTTP redirects and the CA page is served
+      ansible.builtin.uri:
+        url: "http://{{ web_tls_ip_addresses[0] }}:{{ web_tls_http_port }}{{ item.path }}"
+        follow_redirects: none
+        status_code: "{{ item.status }}"
+      loop:
+        - {path: /status, status: 308}
+        - {path: /ca/, status: 200}
+        - {path: /ca/mpdrussoundpi-ca.crt, status: 200}
+      when:
+        - web_tls_start | bool
+        - not ansible_check_mode
+
+    # ------------------------------------------------------------ rollback (--tags rollback)
+
+    - name: Stop the web proxy and the renewal timer
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: ["{{ web_tls_unit }}.service", "{{ web_tls_renew_unit }}.timer"]
+      failed_when: false
+      tags: [never, rollback]
+
+    - name: Check whether this play disabled the nginx default site
+      ansible.builtin.stat:
+        path: "{{ web_tls_dir }}/nginx-disabled"
+      register: web_tls_nginx_marker
+      tags: [never, rollback]
+
+    - name: Re-enable the nginx default site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/default
+        dest: /etc/nginx/sites-enabled/default
+        state: link
+      when: web_tls_nginx_marker.stat.exists
+      tags: [never, rollback]
+
+    - name: Start nginx again
+      ansible.builtin.systemd_service:
+        name: nginx.service
+        state: started
+        enabled: true
+      when: web_tls_nginx_marker.stat.exists
+      tags: [never, rollback]
+
+    - name: Forget the nginx marker
+      ansible.builtin.file:
+        path: "{{ web_tls_dir }}/nginx-disabled"
+        state: absent
+      tags: [never, rollback]

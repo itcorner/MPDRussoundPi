@@ -1,6 +1,6 @@
 # HTTPS for the web UI
 
-**Status:** open. Planned and decided on 2026-11-22; nothing implemented yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
+**Status:** open. Planned and decided on 2026-11-22. Stage 2 (certificates and proxy) implemented on 2026-11-23, not rolled out yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (decision 6) so that no interim login protection is needed. A prerequisite for
 [administrator mode and protected settings](./web_open_admin-mode-and-protected-settings.md),
@@ -144,10 +144,25 @@ anyway. HTTPS solves all of it.
 
 - [x] **1. Decisions** confirmed by the user (2026-11-22), including disabling
       the nginx default site and keeping the CA key on the Pi for automatic renewal.
-- [ ] **2. Certificates and proxy:** the playbook with the CA, the server
-      certificate, the renewal timer, the Caddy unit and Caddyfile, the
-      redirect and the CA page; tests for the templates and the certificate
-      checks (SAN, constraints, validity).
+- [x] **2. Certificates and proxy** (2026-11-23):
+  - `tool/web_tls.py`: stdlib and `openssl` only, so it runs with the Pi's
+    system Python. It creates the CA once (ECDSA P-256, 10 years,
+    `pathlen:0`, critical name constraints), issues the server certificate
+    with a new key, verifies chain, constraints and key before replacing
+    anything, and writes the trust page, the `.crt` and an iOS profile;
+  - `ansible/playbooks/deploy-web-tls.yml` with its input defaults: tool,
+    CA, certificate, Caddyfile (validated by Caddy), proxy unit with only
+    `CAP_NET_BIND_SERVICE`, daily renewal service and timer, the nginx guard,
+    verification with the CA pinned, and `--tags rollback`;
+  - templates `web-proxy.Caddyfile.j2`, `web-proxy.service.j2`,
+    `web-tls-renew.{service,timer}.j2`;
+  - tests: `tests/test_web_tls.py` (real OpenSSL: constraints hold even for a
+    certificate signed outside the tool, renewal, idempotence, refusal
+    before writing) and `tests/test_web_tls_playbook.py` (templates, gating,
+    rollback, input validation, syntax check);
+  - guide: [HTTPS for the web UI](../documentation/web-ui-https.md);
+  - checked on the Pi without changing it: the tool runs with Python 3.13
+    and OpenSSL 3.5, and Caddy 2.6.2 accepts the generated configuration.
 - [ ] **3. Web application:** login refusal over HTTP, allowed origins,
       certificate expiry in the host card, sheet text; tests.
 - [ ] **4. Deployment spec:** loopback `publish_host`, trusted proxy count,

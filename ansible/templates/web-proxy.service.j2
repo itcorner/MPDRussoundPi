@@ -1,0 +1,28 @@
+[Unit]
+Description=HTTPS reverse proxy for the MPDRussoundPi web UI
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=caddy
+Group=caddy
+Environment=XDG_DATA_HOME=/var/lib/caddy/web-proxy
+ExecStart={{ web_tls_caddy_binary }} run --config {{ web_tls_caddyfile }} --adapter caddyfile
+ExecReload={{ web_tls_caddy_binary }} reload --config {{ web_tls_caddyfile }} --adapter caddyfile --address 127.0.0.1:{{ web_tls_admin_port }}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/caddy/web-proxy
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
