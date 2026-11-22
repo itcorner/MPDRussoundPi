@@ -199,6 +199,18 @@ operator.
   review showed `layout_change` and which passed every required check. The web
   container sees the socket read-only and reports `configured: true`, phase
   `idle`, installed `8d8079c`. Playback was unaffected.
+  - *Tooling upgrade* (2026-11-22): `/opt/mpdrussoundpi-deploy` upgraded from
+    `8d8079c` to `6418324` with `upgrade-deployment.yml` (no failed tasks; the
+    previous checkout is retained beside it as
+    `/opt/mpdrussoundpi-deploy.upgrade-6418324…`). The changes were the two
+    self-contained updater messages from #87 and comment-only path fixes; no
+    operator, state or unit change. The idle updater was restarted to load it.
+    It kept its record (`succeeded`, installed `6418324`) and recreated the
+    socket with the same owner and mode. The web container reached the new
+    socket without a restart. The application containers were not touched.
+    This is the pattern for later updater changes: upgrade the tooling with the
+    SSH play, then restart the idle updater; a web-triggered image update alone
+    does not change the updater.
 - [ ] **Later: whole-UI HTTPS** (decision 6): own certificate or a generated
   local CA with manual trust import and optional fingerprint check, HTTP
   redirect-only, trusted-proxy boundary; separate from the playback-agent TLS.
