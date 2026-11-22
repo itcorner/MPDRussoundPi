@@ -585,12 +585,12 @@ function renderInstall(box) {
   }
   const phase = status.phase;
   if (phase && phase !== "idle" && updatePhaseText[phase]) {
-    const lines = [updatePhaseText[phase]];
-    if (status.error && !["cancelled", "up_to_date"].includes(phase)) {
-      lines.push(status.error);
-    }
+    // The updater's error is a complete sentence for this exact outcome (a failed
+    // restore also ends in "failed"); the phase text is only the fallback, so the
+    // same failure is never stated twice.
+    const detailed = status.error && !["cancelled", "up_to_date"].includes(phase);
     box.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown" ? "admin-message" : "status-meta",
-      lines.join(" ")));
+      detailed ? status.error : updatePhaseText[phase]));
   }
   const row = document.createElement("div");
   row.className = "admin-form-row";

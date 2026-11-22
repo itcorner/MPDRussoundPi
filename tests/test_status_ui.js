@@ -533,3 +533,24 @@ test("software updates: the review keeps typed text across refreshes and fails s
   const unknown = renderUpdates(view, availableUpdates, { configured: true, phase: "outcome_unknown", busy: false });
   assert.deepEqual(buttons(unknown), ["Check now"], "no new update while the outcome is unknown");
 });
+
+test("software updates: a failure is stated once, in the updater's words when it gives them", () => {
+  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+  const message = (status) => {
+    const block = renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
+    const paragraphs = [];
+    block.find((node) => { if (node.tagName === "P") paragraphs.push(node.textContent); return false; });
+    return paragraphs;
+  };
+  assert.deepEqual(message({ phase: "failed", kind: "update", restore_available: true, operation: "op-1",
+    error: "The update failed after the services were stopped." }),
+  ["The update failed after the services were stopped."]);
+  assert.deepEqual(message({ phase: "failed", kind: "restore", error: "The restore failed; inspect the deployment state on the Pi." }),
+    ["The restore failed; inspect the deployment state on the Pi."], "a failed restore is not reported as a failed update");
+  assert.deepEqual(message({ phase: "failed_before_interruption",
+    error: "The newest image could not be resolved on Docker Hub. Nothing was interrupted." }),
+  ["The newest image could not be resolved on Docker Hub. Nothing was interrupted."]);
+  assert.deepEqual(message({ phase: "failed" }), ["The last update failed after the services were stopped."],
+    "without an updater message the phase text remains");
+  assert.deepEqual(message({ phase: "cancelled", error: "The review expired." }), ["The last update was not started."]);
+});
