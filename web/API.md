@@ -532,7 +532,10 @@ The cached result of the read-only web image update check (see the
 newest published tag of the compared channel (`dev` or `latest`), its revision,
 publication time and Docker Hub link. A failed check keeps the last result with
 `check_failed: true` and `stale: true`; the error text is fixed. Nothing is ever
-pulled or installed. The overview carries only the top-level `update_available`
+pulled or installed. `build` identifies the running build for every kind of
+build (`revision` and `built_at`, `null` when the build does not report them). An
+open Status page remembers it and reloads itself once when it changes, so after
+an update or a restore the page runs the new code. The overview carries only the top-level `update_available`
 flag (an arrow icon in the System overview header); the details are shown in the
 "Software updates" block of the Administrator panel.
 

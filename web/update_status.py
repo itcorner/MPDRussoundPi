@@ -89,6 +89,7 @@ class UpdateChecker:
         self._revision = env.get("RUSSOUND_BUILD_REVISION", "")
         build_time = env.get("RUSSOUND_BUILD_TIME", "")
         self._built_at = _parse_time(build_time) if BUILD_TIME.fullmatch(build_time) else None
+        self._build_time = build_time if BUILD_TIME.fullmatch(build_time) else None
         architecture = ARCHITECTURES.get((machine or platform.machine()).lower())
         self._platform = f"linux/{architecture}" if architecture else None
         self._state = "pending"
@@ -139,6 +140,9 @@ class UpdateChecker:
             "installed": {"image": self._repository, "version": self._version,
                           "revision": self._revision[:7] or None} if self._channel else None,
             "channel": self._channel,
+            # Identity of the running build, also for local builds: an open page
+            # reloads itself when this changes after an update.
+            "build": {"revision": self._revision or None, "built_at": self._build_time},
             "result": result,
             "checked_at": None if checked_at is None else _timestamp(checked_at),
             "attempted_at": None if attempted_at is None else _timestamp(attempted_at),

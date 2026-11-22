@@ -57,6 +57,15 @@ class CheckerTests(unittest.TestCase):
         off = self.checker(published("dev-" + THEIRS, THEIRS), RUSSOUND_UPDATE_CHECK="off")
         self.assertEqual(off.snapshot()["state"], "disabled")
 
+    def test_the_running_build_is_identified_for_every_kind_of_build(self):
+        build = self.checker(published("dev-" + THEIRS, THEIRS)).snapshot()["build"]
+        self.assertEqual(build, {"revision": OURS, "built_at": "2027-01-15T08:00:00Z"})
+        local = self.checker(None, RUSSOUND_BUILD_SOURCE="local").snapshot()
+        self.assertIsNone(local["installed"])
+        self.assertEqual(local["build"]["revision"], OURS, "a local build reloads open pages too")
+        bare = self.checker(None, RUSSOUND_BUILD_REVISION=None, RUSSOUND_BUILD_TIME="soon").snapshot()["build"]
+        self.assertEqual(bare, {"revision": None, "built_at": None})
+
     def test_development_image_compares_with_the_dev_tag(self):
         checker = self.checker(published("dev-" + THEIRS, THEIRS))
         self.assertEqual(checker.snapshot()["state"], "pending")

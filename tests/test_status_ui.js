@@ -576,3 +576,48 @@ test("software updates: a successful update says how many old images it removed"
     cleanup: "After a successful update, old images of this app are removed." } });
   assert.match(review.allText(), /Old images.*After a successful update, old images of this app are removed\./);
 });
+
+test("the page reloads once when the web application comes back as a new build", () => {
+  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  const reloads = [];
+  const stored = new Map();
+  view.context.window = {
+    location: { reload: () => reloads.push("reload") },
+    sessionStorage: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) },
+  };
+  const check = (build) => view.context.reloadForNewBuild(build);
+  const before = { revision: "a".repeat(40), built_at: "2026-11-22T16:14:17Z" };
+  assert.equal(check(before), false, "the first build seen is the page's own");
+  assert.equal(check(before), false);
+  assert.equal(check({ revision: null, built_at: null }), false, "no identity never reloads");
+  assert.deepEqual(reloads, []);
+  const after = { revision: "b".repeat(40), built_at: "2026-11-22T18:00:00Z" };
+  assert.equal(check(after), true);
+  assert.equal(check({ revision: "c".repeat(40), built_at: null }), true, "a later build may reload again");
+  assert.equal(reloads.length, 2);
+  assert.equal(stored.get("russoundReloadedForBuild"), "c".repeat(40) + "@");
+  assert.equal(check(after), true, "a restore back to an earlier build reloads too");
+  assert.equal(check(after), false, "but only once for the same build");
+  assert.equal(reloads.length, 3);
+});
+
+test("a reload loop is impossible even when the reloaded page is still the old one", () => {
+  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  const reloads = [];
+  const stored = new Map([["russoundReloadedForBuild", "b".repeat(40) + "@x"]]);
+  view.context.window = {
+    location: { reload: () => reloads.push("reload") },
+    sessionStorage: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) },
+  };
+  view.context.reloadForNewBuild({ revision: "a".repeat(40), built_at: "old" });
+  assert.equal(view.context.reloadForNewBuild({ revision: "b".repeat(40), built_at: "x" }), false,
+    "already reloaded for this build in this tab");
+  const blocked = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  blocked.context.window = { location: { reload: () => reloads.push("blocked") },
+    sessionStorage: { getItem: () => { throw new Error("denied"); } } };
+  blocked.context.reloadForNewBuild({ revision: "a".repeat(40), built_at: "1" });
+  assert.equal(blocked.context.reloadForNewBuild({ revision: "b".repeat(40), built_at: "2" }), true);
+  assert.equal(blocked.context.reloadForNewBuild({ revision: "c".repeat(40), built_at: "3" }), true);
+  assert.equal(blocked.context.reloadForNewBuild({ revision: "c".repeat(40), built_at: "3" }), false);
+  assert.deepEqual(reloads, ["blocked", "blocked"]);
+});
