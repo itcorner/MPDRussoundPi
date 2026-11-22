@@ -1,6 +1,6 @@
 # Clean up old Docker images after a successful update
 
-**Status:** open. Planned and decided on 2026-11-22; stages 1, 2 and 5 implemented the same day. Rollout and acceptance on the Pi are still open. Related to the
+**Status:** open. Planned, decided, implemented (stages 1, 2 and 5) and rolled out with the backlog removed (stage 3), all on 2026-11-22. Acceptance on the Pi (stage 4) is still open. Related to the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (every web or SSH update adds images) and to
 [publishing only changed images](./general_open_publish-only-changed-images.md)
@@ -130,12 +130,21 @@ result field.
   and its result keeps only the counts (`_cleanup`). Failed updates, restores
   and unknown outcomes never reach it, because only the successful deploy path
   calls it.
-- [ ] **3. Rollout:**
-  - tooling upgrade with `upgrade-deployment.yml`, then restart the idle
-    updater (the pattern recorded in the user-triggered updates plan);
-  - dry run on the Pi, review its list with the user, then `--apply` for the
-    backlog;
-  - record `docker system df` before and after.
+- [x] **3. Rollout** (2026-11-22 on the reference Pi):
+  - tooling upgraded from `6418324` to `0388399` with `upgrade-deployment.yml`
+    (no failed tasks), and the idle updater restarted; the web container
+    reaches it;
+  - the dry run listed 50 images (74 references: 49 recovery, 19 local and
+    6 old registry references). It kept the running `aafa099` pair and the
+    previous `6418324` pair, and listed the six images outside the namespaces;
+  - the user approved `--apply`. All 50 were removed and none skipped.
+    `docker system df` went from 60 images and 1.486 GB to 10 images and
+    1.229 GB (257 MB freed). The containers were not restarted, all three
+    outputs kept playing, and a second dry run listed nothing to remove.
+  - The dry run's byte estimate ("up to 10190 MB", the sum of full image
+    sizes) was misleading, because the images share most layers. It was
+    replaced by Docker's own reclaimable total with a note on what that
+    includes. `--apply` reports the space it actually freed.
 - [ ] **4. Acceptance on the Pi:**
   - a web-triggered update removes the images that just became old and keeps
     the current and previous versions;
