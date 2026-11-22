@@ -214,11 +214,21 @@ operator.
     pin and both running containers at `f82d2ee` with no restarts; on-Pi backup
     identity, review and result kept in the updater evidence; all three MPD
     outputs kept playing. The update check then reported `up_to_date`.
-  - [ ] *Failing candidate and restore:* a required post-apply check is made to
-    fail by stopping `mpdrussoundpi-playback-agent-proxy.service` before
-    approval; the update must end as `failed` with the backup retained, and
-    "Restore previous version" must bring back the previous images after the
-    proxy is started again.
+  - [x] *Failing candidate and restore* (2026-11-22, operation `63a58a79`): the
+    required playback check was made to fail by stopping
+    `mpdrussoundpi-playback-agent-proxy.service` before approval (MPD kept
+    playing). The update `f82d2ee` → `25bc16b` from the Status page took the
+    on-Pi backup, switched both containers to `25bc16b` and ended as `failed`
+    ("The update failed after the services were stopped.") after the health
+    deadline, with restore offered. As designed, nothing rolled back by itself:
+    the operator kept its reservation, the pending record with the backup and
+    the committed `f82d2ee` pin, and blocked further runs. After the proxy was
+    started again, "Restore previous version" from the page (with its own
+    review and confirmation) ended as `restored`: backend, containers, http
+    and playback passed; both containers back on `f82d2ee`; reservation and
+    pending record cleared; review, result and backup identity of both steps
+    kept in the updater evidence. *Follow-up:* the page shows the failure
+    message twice with slightly different wording.
 
 The [MPD web integration acceptance](./general_done_mpd-web-integration.md#acceptance-limitations-and-handover)
 rehearsed same-version config/state restoration, but did not test a cross-version
