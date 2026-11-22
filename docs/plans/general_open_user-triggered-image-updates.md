@@ -241,6 +241,13 @@ operator.
     pending record cleared; review, result and backup identity of both steps
     kept in the updater evidence. *Follow-up:* the page shows the failure
     message twice with slightly different wording.
+  - *Page code after an update* (found 2026-11-22 with the cleanup line): the open
+    page reconnected but kept running its old `status.js`, so new elements such
+    as "Removed N old images" appeared only after a manual reload. Fixed: the
+    page remembers the running build from `/api/status/updates` (`build`) and
+    reloads itself once when it changes. It does so after an update and after a
+    restore, and never loops (guarded per page and per tab). To be confirmed with
+    the next update from the page.
 
 The [MPD web integration acceptance](./general_done_mpd-web-integration.md#acceptance-limitations-and-handover)
 rehearsed same-version config/state restoration, but did not test a cross-version

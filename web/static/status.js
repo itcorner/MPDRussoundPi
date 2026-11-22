@@ -417,6 +417,7 @@ const updatePhaseText = {
   restored: "The previous version was restored.",
 };
 let latestUpdates = null;
+let pageBuild = null;
 let adminUpdateState = null;
 let adminUpdateReconnecting = false;
 let adminUpdateTimer = null;
@@ -626,6 +627,40 @@ function renderInstall(box) {
   }
 }
 
+function buildIdentity(build) {
+  if (!build || typeof build.revision !== "string" || build.revision === "") {
+    return "";
+  }
+  return `${build.revision}@${typeof build.built_at === "string" ? build.built_at : ""}`;
+}
+
+// After an update the web application comes back as a new build, but this page
+// still runs the old code. Reload once so the new page shows the result.
+function reloadForNewBuild(build) {
+  const identity = buildIdentity(build);
+  if (!identity) {
+    return false; // builds without an identity never trigger a reload
+  }
+  if (pageBuild === null) {
+    pageBuild = identity;
+    return false;
+  }
+  if (identity === pageBuild) {
+    return false;
+  }
+  pageBuild = identity; // never twice from this page
+  try {
+    if (window.sessionStorage.getItem("russoundReloadedForBuild") === identity) {
+      return false; // already reloaded for this build (for example a cached page): no loop
+    }
+    window.sessionStorage.setItem("russoundReloadedForBuild", identity);
+  } catch {
+    // Storage blocked: the page-level guard above still allows only one reload.
+  }
+  window.location.reload();
+  return true;
+}
+
 function renderSoftwareUpdates() {
   if (!adminUpdate.infoBox) {
     adminUpdate.replaceChildren();
@@ -654,6 +689,9 @@ async function fetchAdminUpdate() {
     const checked = await apiFetch("/api/status/updates");
     if (checked.ok) {
       latestUpdates = await checked.json();
+      if (reloadForNewBuild(latestUpdates.build)) {
+        return;
+      }
     }
     const response = await apiFetch(adminCsrfToken ? "/api/admin/update" : "/api/status/update-operation");
     const body = await response.json();
