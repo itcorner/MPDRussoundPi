@@ -18,6 +18,10 @@ tool/
 # Runtime mount points.
 docker/
 
+# Documentation is not served by the app; keeping it out of the image also means a
+# docs-only change publishes nothing (tool/ci/image-changes.mjs ignores it too).
+**/*.md
+
 # Never bake local runtime data or secrets into the image.
 web/russound_config.json
 web/russound_state.json

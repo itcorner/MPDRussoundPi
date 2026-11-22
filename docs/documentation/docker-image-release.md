@@ -39,6 +39,42 @@ the serial connector with `stdio` and check generated configuration, non-root
 runtime, architecture and the TCP listener on an isolated internal network.
 They do not certify serial-device passthrough or communication with controllers.
 
+### Publishing only when an image changed
+
+A develop push builds and publishes only when it is worth an update. The
+`changes` job ([`tool/ci/image-changes.mjs`](../../tool/ci/image-changes.mjs))
+reads the revision label of both `dev` images anonymously from Docker Hub and
+compares it with the pushed commit in Git. It builds and publishes when:
+
+- a web input changed (`Dockerfile`, `.dockerignore`, `web/`,
+  `mpdrussoundpi/__init__.py`, `mpdrussoundpi/common/`) or a ser2net input
+  changed (`Dockerfile.ser2net`, its `.dockerignore`,
+  `docker/entrypoint-ser2net.sh`), or the image workflow itself changed;
+- a commit since the published revision has a line `Publish-Images: force` in
+  its message (for example in a PR title merged with `gh pr merge --merge`, or
+  a commit body). Use it for a test candidate or a manual refresh;
+- the published images are 7 days old or more (by their
+  `org.opencontainers.image.created` label), so new base images and their
+  security fixes still arrive with the next push;
+- the published state cannot be read with certainty: registry errors, the
+  two images on different revisions, a missing build time, or a published
+  revision that is not in the pushed history.
+
+Otherwise, for pushes that touch only docs, plans, tests, Markdown or deployment tooling
+(`tool/`, `ansible/`), validation still runs, but nothing is built, nothing is
+published and `dev` stays where it is. The run summary states the decision and
+its reason. Markdown is excluded from the web build context, so documentation
+in `web/` never reaches the image. Deployment tooling reaches a host only
+through the SSH tooling upgrade, never through an image.
+
+The images' revision is therefore the commit they were built from, not
+necessarily the tip of `develop`. Both images are still built and published
+together when either changes. Publishing an unchanged ser2net image under the
+new revision is a separate, larger change: the candidate model requires one
+revision for both. Manual `build-only` runs always build. Without pushes there is no refresh:
+scheduled runs would start from `main` (the default branch), and publication
+and recovery accept only develop push runs.
+
 All build jobs use `push: false` and receive no Docker Hub secrets. The separate
 trusted development publisher consumes the tested archives after validation;
 only that publishing step receives the Docker Hub secret. Stable/candidate
