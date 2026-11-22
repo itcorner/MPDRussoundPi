@@ -222,6 +222,16 @@
         - web_tls_start | bool
         - not ansible_check_mode
 
+    - name: Verify the trust page is also served over HTTPS
+      ansible.builtin.uri:
+        url: "https://{{ web_tls_ip_addresses[0] }}:{{ web_tls_https_port }}/ca/mpdrussoundpi-ca.crt"
+        ca_path: "{{ web_tls_dir }}/ca/ca.crt"
+        validate_certs: true
+        status_code: 200
+      when:
+        - web_tls_start | bool
+        - not ansible_check_mode
+
     # ------------------------------------------------------------ rollback (--tags rollback)
 
     - name: Stop the web proxy and the renewal timer

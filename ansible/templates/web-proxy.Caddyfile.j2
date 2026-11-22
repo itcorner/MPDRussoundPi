@@ -11,9 +11,17 @@
 
 https://:{{ web_tls_https_port }} {
 	tls {{ web_tls_dir }}/server.crt {{ web_tls_dir }}/server.key
-	reverse_proxy 127.0.0.1:{{ web_tls_upstream_port }} {
-		# /api/events is a server-sent event stream: never buffer it.
-		flush_interval -1
+	# The trust page on HTTPS too: browsers upgrade http:// links to https:// on their own.
+	redir /ca /ca/ 308
+	handle_path /ca/* {
+		root * {{ web_tls_dir }}/public
+		file_server
+	}
+	handle {
+		reverse_proxy 127.0.0.1:{{ web_tls_upstream_port }} {
+			# /api/events is a server-sent event stream: never buffer it.
+			flush_interval -1
+		}
 	}
 }
 
