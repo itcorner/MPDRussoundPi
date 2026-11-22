@@ -145,7 +145,8 @@ class Updater:
         elif phase in ("approved", "running", "restoring"):
             # After the dispatch boundary: never retried, never assumed to have worked.
             state.update(phase="outcome_unknown", review=None,
-                         error="The updater restarted during the operation; inspect the deployment state.")
+                         error="The updater restarted during the operation, so its outcome is unknown. "
+                               "Check the deployment on the Pi before trying again.")
         self._save(state)
         return state
 
@@ -233,7 +234,7 @@ class Updater:
             installed = self._committed()
         except (OSError, ValueError, KeyError, StateError) as error:
             logger.warning("Update candidate could not be resolved: %s", error)
-            self._set(phase="failed_before_interruption", error="The newest image could not be resolved on Docker Hub.")
+            self._set(phase="failed_before_interruption", error="The newest image could not be resolved on Docker Hub. Nothing was interrupted.")
             return
         self._set(candidate_revision=candidate.get("revision"))
         if isinstance(installed, dict) and installed.get("revision") == candidate.get("revision"):
