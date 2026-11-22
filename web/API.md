@@ -509,10 +509,11 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   `up_to_date`, `cancelled`, `failed`, `failed_before_interruption`,
   `outcome_unknown`, `restore_awaiting_approval`, `restoring`, `restored`),
   `kind`, `operation`, `installed_revision`, `candidate_revision`, `error`,
-  `finished_at`, `restore_available`, `busy`, `updated_at`. Never the review.
+  `finished_at`, `cleanup` (after a successful update: `removed` old images and
+  `freed_bytes`, or `null`), `restore_available`, `busy`, `updated_at`. Never the review.
 - `GET /api/admin/update` (administrator session): the same plus `review`
   (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `images`,
-  `layout_change`, `interruption`, `backup`) while a confirmation is pending.
+  `layout_change`, `interruption`, `backup`, `cleanup`) while a confirmation is pending.
 - `POST /api/admin/update/review` (`{}`), `/approve`
   (`{"operation", "digest"}`) and `/restore` (`{"operation"}`) need the session,
   the `X-CSRF-Token` header and the password entered within the last 5 minutes;

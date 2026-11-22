@@ -554,3 +554,25 @@ test("software updates: a failure is stated once, in the updater's words when it
     "without an updater message the phase text remains");
   assert.deepEqual(message({ phase: "cancelled", error: "The review expired." }), ["The last update was not started."]);
 });
+
+test("software updates: a successful update says how many old images it removed", () => {
+  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+  const paragraphs = (status) => {
+    const block = renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
+    const found = [];
+    block.find((node) => { if (node.tagName === "P") found.push(node.textContent); return false; });
+    return found;
+  };
+  assert.deepEqual(paragraphs({ phase: "succeeded", cleanup: { removed: 4, freed_bytes: 650_400_000 } }),
+    ["The last update finished.", "Removed 4 old images (650 MB)."]);
+  assert.deepEqual(paragraphs({ phase: "succeeded", cleanup: { removed: 1, freed_bytes: 0 } }),
+    ["The last update finished.", "Removed 1 old image (0 MB)."]);
+  for (const cleanup of [null, { removed: 0, freed_bytes: 0 }, { removed: "4" }]) {
+    assert.deepEqual(paragraphs({ phase: "succeeded", cleanup }), ["The last update finished."]);
+  }
+  assert.deepEqual(paragraphs({ phase: "restored", cleanup: { removed: 4, freed_bytes: 1 } }),
+    ["The previous version was restored."], "only after a successful update");
+  const review = renderUpdates(view, availableUpdates, { ...pendingReview, review: { ...pendingReview.review,
+    cleanup: "After a successful update, old images of this app are removed." } });
+  assert.match(review.allText(), /Old images.*After a successful update, old images of this app are removed\./);
+});

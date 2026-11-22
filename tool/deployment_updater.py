@@ -61,8 +61,20 @@ ACTIVE_PHASES = ("resolving", "awaiting_approval", "approved", "running", "resto
 INTERRUPTION = ("The web application and the serial gateway stop and restart; the page loses its connection "
                 "for a few minutes and reconnects by itself.")
 BACKUP_NOTE = "The backup is kept on this Pi. It is not disaster recovery: it shares the Pi's storage."
+CLEANUP_NOTE = ("After a successful update, old images of this app that neither the new nor the previous "
+                "version uses are removed. The backup keeps its own copy of the old images.")
 
 logger = logging.getLogger("mpdrussoundpi.updater")
+
+
+def _cleanup(value: Any) -> dict[str, Any] | None:
+    """Only the counts of the operator's image cleanup (decision 4 of the cleanup plan)."""
+    if not isinstance(value, dict):
+        return None
+    counts = {key: value.get(key) if type(value.get(key)) is int and value.get(key) >= 0 else 0
+              for key in ("removed", "skipped", "freed_bytes")}
+    error = value.get("error")
+    return {**counts, "error": error[:200] if isinstance(error, str) else None}
 
 
 class UpdaterError(ValueError):
@@ -285,6 +297,7 @@ class Updater:
             "layout_change": scope.get("layout_change"),
             "interruption": INTERRUPTION,
             "backup": BACKUP_NOTE,
+            "cleanup": None if restoring else CLEANUP_NOTE,
         }
 
     def _execute(self, request: dict[str, Any], operation: str, *, restoring: bool,
@@ -309,7 +322,8 @@ class Updater:
             return
         checks = result.get("required") if isinstance(result, dict) else None
         self._set(phase="restored" if restoring else "succeeded", review=None, error=None,
-                  result={"event": result.get("event"), "checks": checks, "finished_at": _now_text(self._clock())},
+                  result={"event": result.get("event"), "checks": checks, "finished_at": _now_text(self._clock()),
+                          "cleanup": _cleanup(result.get("cleanup") if isinstance(result, dict) else None)},
                   restore=None)
 
     def _backup_identity(self, operation: str) -> dict[str, str] | None:

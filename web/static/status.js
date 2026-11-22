@@ -511,6 +511,14 @@ function renderUpdateInfo(box) {
   }
 }
 
+function cleanupText(cleanup) {
+  if (!cleanup || !Number.isInteger(cleanup.removed) || cleanup.removed <= 0) {
+    return "";
+  }
+  const megabytes = Math.round((cleanup.freed_bytes || 0) / 1e6);
+  return `Removed ${cleanup.removed} old image${cleanup.removed === 1 ? "" : "s"} (${megabytes} MB).`;
+}
+
 function renderReview(review) {
   const box = document.createElement("div");
   box.className = "admin-review";
@@ -518,6 +526,9 @@ function renderReview(review) {
   box.appendChild(textElement("strong", "", isRestore ? "Review: restore the previous version"
     : `Review: update to dev-${shortRevision(review.revision)}`));
   const rows = [["Interruption", review.interruption || ""], ["Backup", review.backup || ""]];
+  if (review.cleanup) {
+    rows.push(["Old images", review.cleanup]);
+  }
   if (review.layout_change) {
     rows.push(["Layout change", review.layout_change]);
   }
@@ -591,6 +602,10 @@ function renderInstall(box) {
     const detailed = status.error && !["cancelled", "up_to_date"].includes(phase);
     box.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown" ? "admin-message" : "status-meta",
       detailed ? status.error : updatePhaseText[phase]));
+    const removed = cleanupText(status.cleanup);
+    if (phase === "succeeded" && removed) {
+      box.appendChild(textElement("p", "status-meta", removed));
+    }
   }
   const row = document.createElement("div");
   row.className = "admin-form-row";

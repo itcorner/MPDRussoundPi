@@ -1,6 +1,6 @@
 # Clean up old Docker images after a successful update
 
-**Status:** new. Planned on 2026-11-22, decisions confirmed the same day, not implemented. Related to the
+**Status:** open. Planned and decided on 2026-11-22; stages 1, 2 and 5 implemented the same day. Rollout and acceptance on the Pi are still open. Related to the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (every web or SSH update adds images) and to
 [publishing only changed images](./general_open_publish-only-changed-images.md)
@@ -81,7 +81,7 @@ Docker handles that. Build cache is out of scope (no builds run on the Pi).
   successful update into a failed one and never touches the committed state.
   It does not run after a failed update, a restore or an `outcome_unknown`. The
   failed operation's images are exactly what someone may want to inspect.
-- **Manually:** `python -m tool.deployment_cleanup images --deployment russound-dev`
+- **Manually:** `python -m tool.deployment_cleanup images`
   (as root in the tooling directory). It is a dry run by default and lists the
   keep set with reasons, the removal candidates and their sizes. With
   `--apply` it removes them. It takes the operator lock like an operation.
@@ -98,21 +98,38 @@ result field.
 
 ## Stages
 
-- [ ] **1. Keep set and manual command:**
-  - `tool/deployment_cleanup.py`, with a pure keep/remove decision from the
-    state store, the retained backups and `docker image ls`/`inspect` output;
-  - the dry run and `--apply` under the operator lock;
-  - tests with a fake Docker runner covering:
-    - the namespaces only;
-    - the running, committed and previous versions kept;
-    - blocked or pending state means no removal;
-    - images used by stopped containers kept;
-    - no `--force`;
-    - an image vanishing during cleanup reported, not fatal.
-- [ ] **2. Automatic cleanup after a verified-complete update:** in the operator's
-  target side after commit, with the review text and the `cleanup` result field.
-  Tests that a cleanup error leaves the update `succeeded` and that failed
-  updates, restores and unknown outcomes never clean up.
+- [x] **1. Keep set and manual command** (implemented 2026-11-22):
+  - `tool/deployment_cleanup.py`, with a pure decision (`keep_set`, `plan`) from
+    the state store, the backup's `images.json` and `docker image ls` /
+    `container inspect` output;
+  - `python -m tool.deployment_cleanup images [--apply] [--json]` under the
+    operator lock;
+  - tests in `tests/test_deployment_cleanup.py` with a fake Docker runner. They
+    check that:
+    - only the project namespaces are touched;
+    - the running, committed (all three digests), previous and local-candidate
+      images are kept;
+    - images used by stopped containers are kept;
+    - a blocked, reserved or pending state, or a missing commit, removes
+      nothing and asks Docker nothing;
+    - tags are removed before the ID, and an image also tagged outside the
+      project is never removed by ID;
+    - nothing is removed with `--force` or `prune`;
+    - a refused removal is reported and the cleanup continues;
+    - freed space is measured with `docker system df`.
+
+  A read-only dry run against the reference Pi's real state on 2026-11-22
+  would remove 50 images and kept exactly the running `aafa099` pair and the
+  previous `6418324` pair, which are the images the backup of operation
+  `33548cc0` saved. The images outside the namespaces were only listed.
+- [x] **2. Automatic cleanup after a verified-complete update** (implemented
+  2026-11-22): `after_update()` runs in the operator's `serve` after
+  `runner.execute()` returns, still under the lock. It never raises, and the
+  `complete` event carries `cleanup`. The SSH review prints the cleanup note.
+  The updater's review summary has a `cleanup` sentence (none for a restore),
+  and its result keeps only the counts (`_cleanup`). Failed updates, restores
+  and unknown outcomes never reach it, because only the successful deploy path
+  calls it.
 - [ ] **3. Rollout:**
   - tooling upgrade with `upgrade-deployment.yml`, then restart the idle
     updater (the pattern recorded in the user-triggered updates plan);
@@ -127,8 +144,11 @@ result field.
     backup, so the removed recovery tags do not matter;
   - an SSH operator update cleans up the same way;
   - the manual dry run lists nothing removable right after an update.
-- [ ] **5. Page line:** "Removed N old images (X MB)" in the update
-  result (`sanitize_status` field and `status.js`), with the next web change.
+- [x] **5. Page line** (implemented 2026-11-22): "Removed N old images (X MB)."
+  after a successful update, and an "Old images" row in the review
+  (`sanitize_status` passes `removed` and `freed_bytes` only; UI test). The line
+  appears once both the web image and the tooling with the new result field are
+  on the Pi.
 
 ## Later: operation file retention
 
