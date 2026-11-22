@@ -87,7 +87,11 @@ recovery and verification. If it ever matters, the update review can say
   #77, #80, #82 and #87 publish. #83, a docs PR that touched only `web/API.md`,
   now skips.
 - [ ] **2. Acceptance:**
-  - this change itself publishes, because the workflow changed;
+  - [x] this change itself publishes (run 45042430789 for `aafa099`, 2026-11-22):
+    the `changes` job decided "Image inputs changed since 948a23e: web."
+    (`.dockerignore` and the Status page wording); both images were built and
+    published, and both `dev` images now carry `org.opencontainers.image.created`
+    (16:14 UTC) and revision `aafa099`;
   - a docs-only push afterwards skips, with its reason in the run summary, and
     `dev` does not move;
   - the Pi's update check stays `up_to_date`;
