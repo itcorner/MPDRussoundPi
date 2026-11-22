@@ -110,7 +110,7 @@ def web_section(*, uptime_seconds: int, runtime: str, revision: str | None, clie
         rows.append(_row("Image", "not reported by this build"))
     rows += [
         _row("Build", (source or "not reported by this build") + (" (reported by the build)" if source else "")),
-        _row("Revision", f"{reported[:7]} (latest commit, reported by the build)" if reported else "not reported by this build"),
+        _row("Revision", f"{reported[:7]} (build commit, reported by the build)" if reported else "not reported by this build"),
         _row("Built", f"{built} (reported by the build)" if built else "not reported by this build"),
         _row("Uptime", _duration(uptime_seconds)),
         _row("Live clients", str(clients)),

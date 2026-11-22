@@ -53,7 +53,7 @@ class AudioValidationTests(unittest.TestCase):
 class SectionTests(unittest.TestCase):
     def test_web_revision_wording(self):
         shown = overview.web_section(uptime_seconds=90000, runtime="container", revision="a" * 40, clients=2)
-        self.assertIn("aaaaaaa (latest commit, reported by the build)", [row["value"] for row in shown["rows"]])
+        self.assertIn("aaaaaaa (build commit, reported by the build)", [row["value"] for row in shown["rows"]])
         built = overview.web_section(uptime_seconds=5, runtime="container", revision="b" * 40, clients=0,
                                      build_time="2026-11-21T08:25:07Z", build_source="local")
         values = {row["label"]: row["value"] for row in built["rows"]}

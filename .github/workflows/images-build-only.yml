@@ -70,8 +70,31 @@ jobs:
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
         run: node tool/ci/registry-inventory.mjs
 
+  changes:
+    # Publish only what changed (docs/plans/general_open_publish-only-changed-images.md):
+    # read-only, anonymous registry access, no secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Decide whether the images changed since the published development images
+        id: decide
+        env:
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: node tool/ci/image-changes.mjs
+
   images:
-    needs: [validation, policy]
+    needs: [validation, policy, changes]
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -116,6 +139,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/itcorner/MPDRussoundPi
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.policy.outputs.version }}
+            org.opencontainers.image.created=${{ steps.built.outputs.time }}
           build-args: |
             BUILD_REVISION=${{ github.sha }}
             BUILD_TIME=${{ steps.built.outputs.time }}
