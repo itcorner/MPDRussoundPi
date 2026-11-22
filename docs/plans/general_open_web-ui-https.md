@@ -1,6 +1,6 @@
 # HTTPS for the web UI
 
-**Status:** open. Planned and decided on 2026-11-22. Stage 2 (certificates and proxy) implemented on 2026-11-23, not rolled out yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
+**Status:** open. Planned and decided on 2026-11-22. Stages 2 (certificates and proxy) and 3 (web application) implemented on 2026-11-23, not rolled out yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (decision 6) so that no interim login protection is needed. A prerequisite for
 [administrator mode and protected settings](./web_open_admin-mode-and-protected-settings.md),
@@ -163,8 +163,29 @@ anyway. HTTPS solves all of it.
   - guide: [HTTPS for the web UI](../documentation/web-ui-https.md);
   - checked on the Pi without changing it: the tool runs with Python 3.13
     and OpenSSL 3.5, and Caddy 2.6.2 accepts the generated configuration.
-- [ ] **3. Web application:** login refusal over HTTP, allowed origins,
-      certificate expiry in the host card, sheet text; tests.
+- [x] **3. Web application** (2026-11-23):
+  - `RUSSOUND_REQUIRE_HTTPS_LOGIN`: login and reauthentication over plain
+    HTTP get `403 https_required` before the body is read (nothing checked,
+    nothing counted). The server refuses to start with it but without a
+    trusted proxy;
+  - `GET /api/admin/session` reports `secure`, `https_required` and
+    `https_url`. The Status page shows the plain-HTTP warning only on HTTP
+    and, where HTTPS is required, a link to the HTTPS address instead of the
+    password field;
+  - `tool/web_tls.py` also publishes `public/status.json`. The web
+    application reads it from `RUSSOUND_WEB_TLS_STATUS_FILE` (default
+    `/run/web-tls/status.json`) and shows the "HTTPS certificate" row in the
+    web section, whose level now follows its rows;
+  - no change was needed for origins: the same-origin check compares with
+    `request.host_url`, which is `https://…` behind the trusted proxy, and
+    browsers also send `Sec-Fetch-Site: same-origin`;
+  - **finding:** `RUSSOUND_TRUSTED_PROXY_COUNT` must only be set together
+    with the loopback publish address (stage 4). On a port the LAN can reach,
+    a client could send `X-Forwarded-Proto: https` and `X-Forwarded-For` to
+    bypass the HTTPS rule and the per-client login throttle;
+  - tests in `test_admin_auth.py`, `test_status_overview.py`,
+    `test_status_ui.js` and `test_web_tls.py`; `web/API.md`, `README.md` and
+    the guide updated.
 - [ ] **4. Deployment spec:** loopback `publish_host`, trusted proxy count,
       the https verification check; tests; documentation in
       `container-deployment.md`, `README.md` (Security) and `web/API.md`.

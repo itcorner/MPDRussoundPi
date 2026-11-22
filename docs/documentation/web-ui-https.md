@@ -32,7 +32,7 @@ Files on the Pi (`/etc/mpdrussoundpi-web-tls`, `root:caddy 0750`):
 | `ca/ca.crt` | `0644` | The root certificate devices trust |
 | `server.key` | `root:caddy 0640` | Server key, replaced on every renewal |
 | `server.crt` | `0644` | Server certificate |
-| `public/` | `0755` | Trust page, certificate and iOS profile served at `/ca/` |
+| `public/` | `0755` | Trust page, certificate and iOS profile served at `/ca/`, plus `status.json` (certificate expiry, names, CA fingerprint) for the Status page |
 | `nginx-disabled` | `0644` | Marker: this play disabled the nginx default site |
 
 **The CA is created once and never replaced** by the play or the timer. If the
@@ -68,6 +68,23 @@ when the CA is created), and the ports `web_tls_https_port`,
 
 Until the web container is moved to loopback (stage 4 of the plan), the UI is
 still reachable at `http://<pi>:8000` as well.
+
+## Web application settings
+
+Stage 4 of the plan sets these in the managed deployment, together with the
+loopback publish address:
+
+- `RUSSOUND_TRUSTED_PROXY_COUNT=1`: trust Caddy's `X-Forwarded-*` headers, so
+  the app sees HTTPS, sets `Secure` cookies and logs the client's address.
+  **Only safe on a loopback publish address**: on a port the network can reach,
+  any client could claim HTTPS or another address and bypass the login rules.
+- `RUSSOUND_REQUIRE_HTTPS_LOGIN=true`: the administrator login and
+  reauthentication are refused over plain HTTP. The Status page then shows the
+  HTTPS address instead of the password field. The server does not start with
+  this setting but without a trusted proxy, because nobody could log in.
+- `public/` mounted read-only at `/run/web-tls`: the Status page's web section
+  shows "HTTPS certificate: valid until …", a warning below 30 days (the
+  renewal has failed) and a problem once expired.
 
 ## Trust the CA on a device
 

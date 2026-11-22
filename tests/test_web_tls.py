@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -129,7 +130,11 @@ class WebTlsTests(unittest.TestCase):
                              capture_output=True, check=True).stdout
         self.assertEqual(payload["PayloadContent"], der)
         self.assertEqual(sorted(path.name for path in public.iterdir()),
-                         ["index.html", "mpdrussoundpi-ca.crt", "mpdrussoundpi-ca.mobileconfig"])
+                         ["index.html", "mpdrussoundpi-ca.crt", "mpdrussoundpi-ca.mobileconfig", "status.json"])
+        facts = json.loads((public / "status.json").read_text())
+        self.assertEqual(facts, {"schema_version": 1, "server_not_after": report["server"]["not_after"],
+                                 "server_dns": ["musicpi", "musicpi.local"], "server_ips": ["192.168.1.105"],
+                                 "ca_sha256_fingerprint": report["ca"]["sha256_fingerprint"]})
 
     def test_reload_runs_only_when_a_certificate_was_issued(self):
         real = subprocess.run

@@ -89,7 +89,8 @@ def image_facts(image: str | None, version: str | None) -> tuple[str, str, str] 
 
 def web_section(*, uptime_seconds: int, runtime: str, revision: str | None, clients: int,
                 build_time: str | None = None, build_source: str | None = None,
-                image: str | None = None, version: str | None = None) -> dict[str, Any]:
+                image: str | None = None, version: str | None = None,
+                tls_certificate: dict[str, Any] | None = None) -> dict[str, Any]:
     reported = revision if isinstance(revision, str) and REVISION.fullmatch(revision) else None
     moment = BUILD_TIME.fullmatch(build_time) if isinstance(build_time, str) else None
     source = BUILD_SOURCES.get(build_source or "")
@@ -115,10 +116,13 @@ def web_section(*, uptime_seconds: int, runtime: str, revision: str | None, clie
         _row("Uptime", _duration(uptime_seconds)),
         _row("Live clients", str(clients)),
     ]
+    https = certificate_row(tls_certificate, "HTTPS certificate") if tls_certificate else None
+    if https is not None:
+        rows.append(https)
     origin = (published[1] + (f" {version}" if published[1] != "Development image" else "")) if published else (
         "local build" if build_source == "local" else None)
     tail = " · ".join(part for part in (origin, reported[:7] if reported else None) if part)
-    return _section("web", "Web application", "ok", f"Running · {_duration(uptime_seconds)}" + (f" · {tail}" if tail else ""), rows)
+    return _section("web", "Web application", _worst([row["level"] for row in rows]), f"Running · {_duration(uptime_seconds)}" + (f" · {tail}" if tail else ""), rows)
 
 
 # --------------------------------------------------------------- playback agent
@@ -129,16 +133,16 @@ def _controls(operations: object) -> str:
     return "Manual control enabled: " + ", ".join(groups) if groups else "Read-only"
 
 
-def certificate_row(certificate: dict[str, Any]) -> dict[str, str] | None:
+def certificate_row(certificate: dict[str, Any], label: str = "TLS certificate") -> dict[str, str] | None:
     status = certificate.get("status")
     if status == "ok" and isinstance(certificate.get("days_left"), int):
         days, expires = certificate["days_left"], str(certificate["expires_at"])[:10]
         if days < 0:
-            return _row("TLS certificate", f"Expired on {expires}", "problem")
+            return _row(label, f"Expired on {expires}", "problem")
         level = "warning" if days < CERTIFICATE_WARNING_DAYS else "ok"
-        return _row("TLS certificate", f"Valid until {expires} ({days} days)", level)
+        return _row(label, f"Valid until {expires} ({days} days)", level)
     if status == "unavailable":
-        return _row("TLS certificate", "could not be checked", "unknown")
+        return _row(label, "could not be checked", "unknown")
     return None
 
 

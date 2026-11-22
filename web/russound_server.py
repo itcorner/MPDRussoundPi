@@ -45,6 +45,8 @@ WEB_ROOT = Path(__file__).resolve().parent
 WEB_STATIC = WEB_ROOT / "static"
 
 SESSION_COOKIE_NAME = "russound_session_id"
+# Public facts of the HTTPS proxy certificate (tool/web_tls.py), mounted read-only; absent without HTTPS.
+DEFAULT_WEB_TLS_STATUS_FILE = "/run/web-tls/status.json"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Streams are closed periodically so a dead client cannot pin a worker thread indefinitely.
@@ -176,12 +178,19 @@ class RussoundHTTPServer:
         update_checker: UpdateChecker | None = None,
         admin: AdminAuth | None = None,
         updater: UpdaterClient | None = None,
+        require_https_login: bool = False,
+        web_tls_status_file: str | Path | None = None,
     ) -> None:
         self.config_path = config_path
         self.state_path = state_path
         # Empty means any Host is accepted; set it to block DNS-rebinding attacks.
         self._allowed_hosts = {_hostname(host) for host in allowed_hosts or []}
         self._allowed_origins = {origin.rstrip("/").lower() for origin in allowed_origins or []}
+        # With HTTPS in front (docs/documentation/web-ui-https.md) the password is never accepted over plain HTTP.
+        # request.is_secure comes from the trusted proxy's X-Forwarded-Proto, so this needs a listener that
+        # only the proxy can reach (RUSSOUND_TRUSTED_PROXY_COUNT on a loopback publish address).
+        self._require_https_login = require_https_login
+        self._web_tls_status_file = Path(web_tls_status_file) if web_tls_status_file else None
         # Bumped whenever the published state changes or is broadcast; the epoch lets clients detect restarts.
         self.state_revision = 0
         self.state_epoch = secrets.token_hex(8)
@@ -424,10 +433,13 @@ class RussoundHTTPServer:
         # password is never logged; see web/admin_auth.py.
         @app.get("/api/admin/session")
         def api_admin_session():
-            return self._no_store(jsonify(self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME))))
+            return self._no_store(jsonify({**self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME)),
+                                           **self._transport()}))
 
         @app.post("/api/admin/login")
         def api_admin_login():
+            if self._https_required():
+                return self._https_refusal()
             password = self._read_json_body().get("password")
             result, session_id, retry = self.admin.login(password, self._request_ip())
             if result == "ok" and session_id is not None:
@@ -449,6 +461,8 @@ class RussoundHTTPServer:
 
         @app.post("/api/admin/reauthenticate")
         def api_admin_reauthenticate():
+            if self._https_required():
+                return self._https_refusal()
             denied = self.admin_required()
             if denied is not None:
                 return denied
@@ -1061,6 +1075,39 @@ class RussoundHTTPServer:
         response.status_code = 202
         return response
 
+    def _https_url(self) -> str:
+        return f"https://{_hostname(request.host)}/"
+
+    def _https_required(self) -> bool:
+        return self._require_https_login and not request.is_secure
+
+    def _transport(self) -> dict[str, Any]:
+        """How this page reached the server; the page shows the plain-HTTP warning or the HTTPS link from it."""
+        return {"secure": request.is_secure, "https_required": self._require_https_login,
+                "https_url": self._https_url() if self._require_https_login else None}
+
+    def _https_refusal(self) -> Response:
+        # Refused before the body is read: the password is neither checked nor counted as a failure.
+        message = f"Log in over HTTPS: {self._https_url()}"
+        response = self._no_store(jsonify({"api_version": 1, "error": {
+            "code": "https_required", "message": message, "https_url": self._https_url()}}))
+        response.status_code = 403
+        return response
+
+    def _web_tls_status(self) -> dict[str, Any] | None:
+        """The proxy certificate's facts, published by tool/web_tls.py; None when HTTPS is not set up."""
+        if self._web_tls_status_file is None:
+            return None
+        try:
+            data = json.loads(self._web_tls_status_file.read_text())
+            expires = datetime.strptime(str(data["server_not_after"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, KeyError, TypeError):
+            return {"status": "unavailable"}
+        days = int((expires - datetime.now(timezone.utc)).total_seconds() // 86400)
+        return {"status": "ok", "expires_at": expires.strftime("%Y-%m-%dT%H:%M:%SZ"), "days_left": days}
+
     def _admin_failure(self, result: str, retry: int) -> Response:
         status, code, message = {
             "invalid": (401, "invalid", "Login failed."),
@@ -1465,7 +1512,8 @@ class RussoundHTTPServer:
                 runtime="container" if Path("/.dockerenv").exists() else "native",
                 revision=os.environ.get("RUSSOUND_BUILD_REVISION"), clients=clients,
                 build_time=os.environ.get("RUSSOUND_BUILD_TIME"), build_source=os.environ.get("RUSSOUND_BUILD_SOURCE"),
-                image=os.environ.get("RUSSOUND_BUILD_IMAGE"), version=os.environ.get("RUSSOUND_BUILD_VERSION")),
+                image=os.environ.get("RUSSOUND_BUILD_IMAGE"), version=os.environ.get("RUSSOUND_BUILD_VERSION"),
+                tls_certificate=self._web_tls_status()),
             status_overview.gateway_section(
                 config=config,
                 effective_backend=backend_endpoint_metadata(coerce_russound_config(config)) if config else {},
@@ -1582,6 +1630,10 @@ def main() -> None:
         args.debug = args.debug if args.debug is not None else _env_flag("RUSSOUND_DEBUG")
         args.waitress_threads = args.waitress_threads if args.waitress_threads is not None else _env_int("RUSSOUND_WAITRESS_THREADS", DEFAULT_WAITRESS_THREADS)
         proxy_count = _env_int("RUSSOUND_TRUSTED_PROXY_COUNT", 0)
+        require_https_login = _env_flag("RUSSOUND_REQUIRE_HTTPS_LOGIN")
+        if require_https_login and proxy_count < 1:
+            # Without a trusted proxy no request is ever secure, so nobody could log in.
+            raise ValueError("RUSSOUND_REQUIRE_HTTPS_LOGIN needs the HTTPS proxy: set RUSSOUND_TRUSTED_PROXY_COUNT")
         max_streams = _env_int("RUSSOUND_MAX_EVENT_STREAMS", 0) or None
         tcp_timeout = _env_int("RUSSOUND_TCP_USER_TIMEOUT_SECONDS", DEFAULT_TCP_USER_TIMEOUT_SECONDS)
         if tcp_timeout > MAX_TCP_USER_TIMEOUT_SECONDS:
@@ -1607,6 +1659,8 @@ def main() -> None:
         allowed_origins=_split_env_list("RUSSOUND_ALLOWED_ORIGINS"),
         trusted_proxy_count=proxy_count,
         max_event_streams=max_streams,
+        require_https_login=require_https_login,
+        web_tls_status_file=env_str("RUSSOUND_WEB_TLS_STATUS_FILE") or DEFAULT_WEB_TLS_STATUS_FILE,
     )
     if not args.daemon:
         print(f"Listening on http://{args.host}:{args.port}")

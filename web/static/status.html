@@ -39,8 +39,9 @@
                 <button class="compact-button compact-button-primary" type="submit">Log in</button>
               </div>
               <p id="adminMessage" class="admin-message" role="alert" hidden></p>
-              <p class="status-meta">This page uses plain HTTP: on this network the password can be observed. Use it only on a network you trust.</p>
+              <p id="adminHttpWarning" class="status-meta" hidden>This page uses plain HTTP: on this network the password can be observed. Use it only on a network you trust.</p>
             </form>
+            <p id="adminHttps" class="status-meta" hidden>Log in over HTTPS, where the password is encrypted: <a id="adminHttpsLink" href="#"></a></p>
             <div id="adminSession" class="admin-form-row" hidden>
               <span id="adminSessionText" class="status-meta"></span>
               <button id="adminLogout" class="compact-button" type="button">Log out</button>

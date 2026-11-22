@@ -12,6 +12,7 @@ from unittest.mock import patch
 from web import admin_auth
 from web.admin_auth import AdminAuth, hash_password, verify_password
 from web.russound_server import RussoundHTTPServer
+from web import russound_server
 
 PASSWORD = "correct horse battery staple"
 FAST = {"n": 2 ** 14, "r": 8, "p": 1}
@@ -243,6 +244,93 @@ class EndpointTests(Fixture):
             self.assertEqual(response.status_code, 503)
         finally:
             server.server_close()
+
+
+class HttpsOnlyLoginTests(Fixture):
+    """Behind the HTTPS proxy (RUSSOUND_REQUIRE_HTTPS_LOGIN with one trusted proxy)."""
+
+    HTTPS = {"X-Forwarded-Proto": "https", "X-Forwarded-For": "192.168.1.20"}
+
+    def setUp(self):
+        super().setUp()
+        self.server = RussoundHTTPServer(None, None, admin=self.auth(), trusted_proxy_count=1,
+                                         require_https_login=True)
+        self.addCleanup(self.server.server_close)
+        self.client = self.server.app.test_client()
+
+    def test_plain_http_login_is_refused_before_the_password_is_checked(self):
+        for _ in range(admin_auth.MAX_FAILURES + 1):
+            response = self.client.post("/api/admin/login", json={"password": "wrong"})
+            self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json["error"]["code"], "https_required")
+        self.assertEqual(response.json["error"]["https_url"], "https://localhost/")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertFalse(any(cookie.startswith(admin_auth.COOKIE_NAME + "=")
+                             for cookie in response.headers.getlist("Set-Cookie")))
+        self.assertEqual(self.auth().locked_for(), 0, "refused requests are not failed attempts")
+        right = self.client.post("/api/admin/login", json={"password": PASSWORD})
+        self.assertEqual(right.status_code, 403, "not even the right password over plain HTTP")
+        self.assertFalse(self.audit_file.exists() and "login_failed" in self.audit_file.read_text())
+
+    def test_https_login_sets_a_secure_cookie(self):
+        response = self.client.post("/api/admin/login", json={"password": PASSWORD}, headers=self.HTTPS)
+        self.assertEqual(response.status_code, 200)
+        cookies = response.headers.getlist("Set-Cookie")
+        admin = [cookie for cookie in cookies if cookie.startswith(admin_auth.COOKIE_NAME + "=")]
+        self.assertEqual(len(admin), 1)
+        for attribute in ("Secure", "HttpOnly", "SameSite=Strict", "Path=/api/"):
+            self.assertIn(attribute, admin[0])
+        self.assertTrue(response.json["authenticated"])
+
+    def test_reauthentication_follows_the_same_rule(self):
+        self.client.post("/api/admin/login", json={"password": PASSWORD}, headers=self.HTTPS)
+        csrf = self.client.get("/api/admin/session", headers=self.HTTPS).json["csrf_token"]
+        plain = self.client.post("/api/admin/reauthenticate", json={"password": PASSWORD},
+                                 headers={admin_auth.CSRF_HEADER: csrf})
+        self.assertEqual((plain.status_code, plain.json["error"]["code"]), (403, "https_required"))
+        secure = self.client.post("/api/admin/reauthenticate", json={"password": PASSWORD},
+                                  headers={**self.HTTPS, admin_auth.CSRF_HEADER: csrf})
+        self.assertEqual(secure.status_code, 200)
+
+    def test_session_reports_the_transport(self):
+        plain = self.client.get("/api/admin/session").json
+        self.assertEqual((plain["secure"], plain["https_required"], plain["https_url"]),
+                         (False, True, "https://localhost/"))
+        self.assertTrue(self.client.get("/api/admin/session", headers=self.HTTPS).json["secure"])
+
+    def test_without_the_setting_plain_http_login_still_works(self):
+        server = RussoundHTTPServer(None, None, admin=self.auth())
+        self.addCleanup(server.server_close)
+        client = server.app.test_client()
+        session = client.get("/api/admin/session").json
+        self.assertEqual((session["secure"], session["https_required"], session["https_url"]), (False, False, None))
+        self.assertEqual(client.post("/api/admin/login", json={"password": PASSWORD}).status_code, 200)
+
+
+class WebTlsStatusTests(Fixture):
+    def server(self, path):
+        server = RussoundHTTPServer(None, None, admin=self.auth(), web_tls_status_file=path)
+        self.addCleanup(server.server_close)
+        return server
+
+    def test_certificate_facts_from_the_published_status_file(self):
+        self.assertIsNone(self.server(None)._web_tls_status())
+        self.assertIsNone(self.server(self.root / "missing.json")._web_tls_status(), "no HTTPS, no row")
+        status = self.root / "status.json"
+        status.write_text(json.dumps({"server_not_after": "2099-01-01T00:00:00Z"}))
+        facts = self.server(status)._web_tls_status()
+        self.assertEqual((facts["status"], facts["expires_at"]), ("ok", "2099-01-01T00:00:00Z"))
+        self.assertGreater(facts["days_left"], 365)
+        for broken in ("not json", json.dumps({"server_not_after": "soon"}), json.dumps([])):
+            status.write_text(broken)
+            self.assertEqual(self.server(status)._web_tls_status(), {"status": "unavailable"})
+
+    def test_https_only_login_needs_a_trusted_proxy(self):
+        environment = {"RUSSOUND_REQUIRE_HTTPS_LOGIN": "true", "RUSSOUND_TRUSTED_PROXY_COUNT": "0"}
+        with patch.dict(os.environ, environment), patch("sys.argv", ["russound_server"]), \
+                patch("sys.stderr", io.StringIO()) as stderr, self.assertRaises(SystemExit):
+            russound_server.main()
+        self.assertIn("RUSSOUND_TRUSTED_PROXY_COUNT", stderr.getvalue())
 
 
 if __name__ == "__main__":

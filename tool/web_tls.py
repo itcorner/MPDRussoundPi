@@ -19,7 +19,7 @@ Layout below ``--dir``::
     ca/ca.crt        public root certificate
     server.key       root:<key group> 0640
     server.crt       server certificate (leaf only)
-    public/          what the HTTP listener serves at /ca
+    public/          what the HTTP listener serves at /ca, plus status.json for the Status page
 """
 
 from __future__ import annotations
@@ -299,6 +299,13 @@ def publish(directory: Path, label: str, identifier: str, https_url: str) -> Non
     _write(public / (PUBLIC_NAME + ".crt"), ca_pem, 0o644)
     _write(public / (PUBLIC_NAME + ".mobileconfig"), mobileconfig(ca_pem, label, identifier), 0o644)
     _write(public / "index.html", ca_page(label, sha256_fingerprint(directory / "ca" / "ca.crt"), https_url), 0o644)
+    # Public facts for the web application's Status page (mounted read-only into the container).
+    if (directory / "server.crt").exists():
+        dns, ips = san(directory / "server.crt")
+        _write(public / "status.json", json.dumps({
+            "schema_version": 1, "server_not_after": not_after(directory / "server.crt"),
+            "server_dns": sorted(dns), "server_ips": sorted(ips),
+            "ca_sha256_fingerprint": sha256_fingerprint(directory / "ca" / "ca.crt")}, indent=2) + "\n", 0o644)
 
 
 # ------------------------------------------------------------------ commands

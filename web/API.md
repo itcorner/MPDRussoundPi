@@ -480,12 +480,19 @@ never record frontend events and never log the password.
 
 - `GET /api/admin/session`: `configured`, `authenticated`, `locked_for_seconds`;
   when logged in also `csrf_token`, `idle_expires_in_seconds`,
-  `expires_in_seconds` and `recently_authenticated`.
+  `expires_in_seconds` and `recently_authenticated`. Always also the transport:
+  `secure` (the request came over HTTPS through the trusted proxy),
+  `https_required` (`RUSSOUND_REQUIRE_HTTPS_LOGIN`) and `https_url` (the
+  HTTPS address for this host when required, otherwise `null`).
 - `POST /api/admin/login` with `{"password": "..."}`: `200` with the session
   description and the cookie `russound_admin` (`HttpOnly`, `SameSite=Strict`,
   `Path=/api/`, `Secure` over HTTPS); `401` "Login failed." for any wrong input;
   `429` with `Retry-After` when locked (five failures in total, 15 minutes) or
   throttled (ten attempts per minute from one client); `503` when not set up.
+  With `RUSSOUND_REQUIRE_HTTPS_LOGIN`, a login over plain HTTP gets `403` with
+  code `https_required` and `https_url`. It is refused before the body is
+  read, so the password is neither checked nor counted as a failure. The same
+  applies to reauthentication.
 - `POST /api/admin/logout` and `POST /api/admin/reauthenticate` (`{"password"}`)
   need the session cookie **and** the `X-CSRF-Token` header with the session's
   token. Reauthentication refreshes the "recently authenticated" window (5
