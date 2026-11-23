@@ -350,8 +350,11 @@ def ensure(args: argparse.Namespace) -> dict[str, object]:
         os.chown(directory / "server.key", -1, gid)
     publish(directory, args.label, args.identifier, args.https_url or f"https://{(args.dns or args.ip)[0].lower()}/")
     report.update(status(directory))
-    if report["server_issued"] and args.reload_unit:
-        subprocess.run(["systemctl", "reload-or-restart", args.reload_unit], check=False, timeout=60)
+    if report["server_issued"] and args.restart_unit:
+        # A restart, not a reload: Caddy 2.6 skips a reload whose configuration is unchanged (so the new
+        # certificate would never be served), and a forced reload panicked with open event streams.
+        # The restart takes about a second; open pages reconnect on their own.
+        subprocess.run(["systemctl", "restart", args.restart_unit], check=False, timeout=60)
     return report
 
 
@@ -370,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--label", default="MPDRussoundPi")
     run.add_argument("--identifier", default="net.itcorner.mpdrussoundpi.web-ca")
     run.add_argument("--https-url", help="address shown on the download page")
-    run.add_argument("--reload-unit", help="systemd unit to reload when a new certificate was issued")
+    run.add_argument("--restart-unit", help="systemd unit (the proxy) to restart when a new certificate was issued")
     show = sub.add_parser("status", help="fingerprint and expiry")
     show.add_argument("--dir", default="/etc/mpdrussoundpi-web-tls")
     args = parser.parse_args(argv)

@@ -40,7 +40,7 @@ class HttpsRouteCheckTests(unittest.TestCase):
     def serve(self, tls_dir: Path, dns: str) -> int:
         args = web_tls.main.__globals__["argparse"].Namespace(
             dir=str(tls_dir), dns=[dns], ip=["192.168.1.105"], permit_dns=None, permit_ip=None, days=397,
-            renew_days=60, key_group=None, label="MPDRussoundPi", identifier="x", https_url=None, reload_unit=None)
+            renew_days=60, key_group=None, label="MPDRussoundPi", identifier="x", https_url=None, restart_unit=None)
         web_tls.ensure(args)
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -69,7 +69,7 @@ class HttpsRouteCheckTests(unittest.TestCase):
         port = self.serve(self.root / "tls", "musicpi.local")
         web_tls.ensure(web_tls.main.__globals__["argparse"].Namespace(
             dir=str(self.root / "other"), dns=["musicpi.local"], ip=[], permit_dns=None, permit_ip=None, days=397,
-            renew_days=60, key_group=None, label="x", identifier="x", https_url=None, reload_unit=None))
+            renew_days=60, key_group=None, label="x", identifier="x", https_url=None, restart_unit=None))
         with self.assertRaises(ssl.SSLError):
             self.check(self.root / "tls", self.root / "other", port)
         with self.assertRaises(ssl.SSLError):

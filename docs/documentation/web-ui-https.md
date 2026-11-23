@@ -21,8 +21,11 @@ how to roll it back. Background and decisions:
   for nothing else.
 - The server certificate is valid for 397 days. The timer
   `mpdrussoundpi-web-tls-renew.timer` checks it daily and reissues it, with a
-  new key, when less than 60 days are left or the names changed. It then reloads
-  the proxy.
+  new key, when less than 60 days are left or the names changed. It then
+  restarts the proxy (about a second; open pages reconnect). Not a reload:
+  Caddy 2.6 skips a reload whose configuration is unchanged, so the new
+  certificate would never be served, and a forced reload crashed it while
+  event streams were open.
 - `tool/web_tls.py` does all certificate work. Ansible copies it to
   `/usr/local/lib/mpdrussoundpi/web_tls.py`, where it runs with the system
   Python, independent of the deployment tooling.
