@@ -1,6 +1,6 @@
 # HTTPS for the web UI
 
-**Status:** open. Planned and decided on 2026-11-22. Stages 2 to 4 (certificates and proxy, web application, deployment layout) implemented on 2026-11-23, not rolled out yet. Brought forward from the "Later: whole-UI HTTPS" stage of the
+**Status:** open. Planned and decided on 2026-11-22. Stages 2 to 5 implemented and rolled out on the reference Pi on 2026-11-23; acceptance (stage 6) in progress. Brought forward from the "Later: whole-UI HTTPS" stage of the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (decision 6) so that no interim login protection is needed. A prerequisite for
 [administrator mode and protected settings](./web_open_admin-mode-and-protected-settings.md),
@@ -243,7 +243,20 @@ anyway. HTTPS solves all of it.
     allows the proxy settings only with a loopback listener). A new test runs
     a real Waitress server. The fixed image has to be installed with the SSH
     operator, because the page cannot log in;
-  - [ ] fixed image installed with the SSH operator; HTTPS login works.
+  - [x] fixed image `7573cf2` installed with the SSH operator (operation
+    `15f5d587`, approved by the user at the terminal, because the operator
+    reads the approval from `/dev/tty`). Verified-complete, all five checks
+    passed (the `http` check now includes the HTTPS route through the proxy).
+    Checked afterwards:
+    - `GET /api/admin/session` over HTTPS reports `secure: true`;
+    - `http://` redirects (308), and port 8000 is closed to the LAN (only
+      `127.0.0.1:8000` listens);
+    - the certificate mount is read-only in the container, and the Status
+      page shows "HTTPS certificate: Valid until 2027-12-24";
+    - the cleanup kept the previous version (`cdbc3c5`, recovery tag
+      `15f5d587`), still 10 images; the renewal timer is scheduled; nginx and
+      the package's Caddy are inactive; no warnings in the journals;
+    - all components ok, 3 of 3 outputs playing.
 - [ ] **6. Acceptance:**
   - desktop (macOS Safari and Chrome) and phone (iOS Safari, Android Chrome)
     without certificate warnings, by IP and by `musicpi.local`;
