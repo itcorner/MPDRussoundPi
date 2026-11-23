@@ -45,7 +45,7 @@ def is_updater_mount(mount: Any) -> bool:
             and mount.get("bind", {}).get("create_host_path", False) is False)
 
 
-# HTTPS for the web UI (docs/plans/general_open_web-ui-https.md): the web listener moves to loopback
+# HTTPS for the web UI (docs/plans/general_done_web-ui-https.md): the web listener moves to loopback
 # behind the host's Caddy proxy, the app trusts that one proxy and refuses plain-HTTP logins, and the
 # proxy certificate's public facts are mounted for the Status page. All three parts or none.
 WEB_TLS_PUBLIC_DIR = "/etc/mpdrussoundpi-web-tls/public"

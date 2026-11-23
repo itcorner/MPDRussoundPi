@@ -1,6 +1,6 @@
 """Local certificate authority and server certificate for the web UI's HTTPS proxy.
 
-See docs/plans/general_open_web-ui-https.md. Standard library plus the ``openssl``
+See docs/plans/general_done_web-ui-https.md. Standard library plus the ``openssl``
 command only: Ansible copies this file to the Pi, where it runs with the system
 Python, independent of the deployment tooling.
 
