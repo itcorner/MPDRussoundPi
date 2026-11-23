@@ -10,17 +10,10 @@ const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
 const overviewUpdate = document.getElementById("overviewUpdate");
-const adminPanel = document.getElementById("adminPanel");
-const adminState = document.getElementById("adminState");
-const adminLoginForm = document.getElementById("adminLoginForm");
-const adminPassword = document.getElementById("adminPassword");
-const adminSession = document.getElementById("adminSession");
-const adminSessionText = document.getElementById("adminSessionText");
-const adminLogout = document.getElementById("adminLogout");
-const adminSetup = document.getElementById("adminSetup");
-const adminHttpWarning = document.getElementById("adminHttpWarning");
-const adminHttps = document.getElementById("adminHttps");
-const adminHttpsLink = document.getElementById("adminHttpsLink");
+const updatesState = document.getElementById("updatesState");
+const restorePanel = document.getElementById("restorePanel");
+const restoreState = document.getElementById("restoreState");
+const restoreBox = document.getElementById("restoreBox");
 const adminMessage = document.getElementById("adminMessage");
 const adminUpdate = document.getElementById("adminUpdate");
 
@@ -118,6 +111,7 @@ function renderStatus(payload, historyPayload) {
     const row = document.createElement("tr");
 
     const timeCell = document.createElement("td");
+    timeCell.className = "event-time";
     const timeBlock = document.createElement("div");
     timeBlock.className = "status-time";
     timeBlock.append(
@@ -127,6 +121,7 @@ function renderStatus(payload, historyPayload) {
     timeCell.appendChild(timeBlock);
 
     const payloadCell = document.createElement("td");
+    payloadCell.className = "event-payload";
     const payloadToggle = document.createElement("button");
     payloadToggle.className = "payload-toggle";
     payloadToggle.type = "button";
@@ -137,7 +132,8 @@ function renderStatus(payload, historyPayload) {
     payloadToggle.appendChild(payloadPreview);
     payloadCell.appendChild(payloadToggle);
 
-    row.append(timeCell, textElement("td", "", event.ip), textElement("td", "", event.path), payloadCell);
+    row.append(timeCell, textElement("td", "event-ip", event.ip), textElement("td", "event-action", event.path),
+      payloadCell);
     eventsTableBody.appendChild(row);
 
     // Always test truncation in collapsed mode so expanded rows are not misclassified.
@@ -227,10 +223,10 @@ function overviewRows(rows) {
 function overviewHeader(title, level, strong) {
   const header = document.createElement("div");
   header.className = "status-item-row";
-  header.append(
-    textElement(strong ? "strong" : "span", strong ? "" : "overview-group-title", title),
-    textElement("span", `status-pill host-level host-level-${hostLevelText[level] ? level : "unknown"}`, hostLevelText[level] || "Unknown"),
-  );
+  const pill = textElement("span", `status-pill host-level host-level-${hostLevelText[level] ? level : "unknown"}`,
+    hostLevelText[level] || "Unknown");
+  pill.title = pill.textContent;  // the icon-only pill on phones still names its level
+  header.append(textElement(strong ? "strong" : "span", strong ? "" : "overview-group-title", title), pill);
   return header;
 }
 
@@ -283,58 +279,15 @@ function overviewCard(section) {
 // Administrator session. The CSRF token stays in memory and is sent with every
 // privileged request; the password field is cleared after each attempt.
 let adminCsrfToken = null;
-let adminShownState = null;
-
-function minutesText(seconds) {
-  const minutes = Math.max(1, Math.round(seconds / 60));
-  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
-}
-
+// The session itself is shown by admin.js (strip, header, login dialog); this page
+// only needs to know whether privileged requests can be sent.
 function renderAdmin(session) {
-  const configured = session.configured === true;
-  const authenticated = configured && session.authenticated === true;
-  adminCsrfToken = authenticated && typeof session.csrf_token === "string" ? session.csrf_token : null;
-  const [text, level] = !configured ? ["Not set up", "unknown"]
-    : authenticated ? ["Logged in", "ok"]
-      : session.locked_for_seconds > 0 ? ["Locked", "warning"] : ["Not logged in", "unknown"];
-  adminState.textContent = text;
-  adminState.className = `status-pill host-level host-level-${level}`;
-  // Open the panel when a login is possible but not done; collapse it once logged
-  // in or when nothing can be done here. Only on a change of state, so a panel the
-  // user opened or closed stays that way across refreshes.
-  // On page load: open when a login is possible but not done. Later, logging in
-  // keeps the panel open; logging out or an expired session opens it again.
-  const shownState = !configured ? "setup" : authenticated ? "in" : "out";
-  if (shownState !== adminShownState) {
-    if (adminShownState === null) {
-      adminPanel.open = shownState === "out";
-    } else if (shownState === "out") {
-      adminPanel.open = true;
-    } else if (shownState === "setup") {
-      adminPanel.open = false;
-    }
-    adminShownState = shownState;
-  }
-  // Behind the HTTPS proxy the server refuses logins over plain HTTP; offer the HTTPS address instead.
-  const secure = session.secure === true;
-  const httpsUrl = typeof session.https_url === "string" && session.https_url.startsWith("https://")
-    ? session.https_url : null;
-  const httpsOnly = session.https_required === true && !secure && httpsUrl !== null;
-  adminSetup.hidden = configured;
-  adminLoginForm.hidden = !configured || authenticated || httpsOnly;
-  adminHttpWarning.hidden = secure;
-  adminHttps.hidden = !configured || authenticated || !httpsOnly;
-  if (httpsOnly) {
-    adminHttpsLink.href = `${httpsUrl}status`;
-    adminHttpsLink.textContent = `${httpsUrl}status`;
-  }
-  adminSession.hidden = !authenticated;
-  if (authenticated) {
-    adminSessionText.textContent = `Logged in. The session ends after ${minutesText(session.idle_expires_in_seconds)} without activity`
-      + ` and at the latest in ${minutesText(session.expires_in_seconds)}.`;
-  }
-  if (configured && !authenticated && session.locked_for_seconds > 0) {
-    showAdminMessage(`Too many failed attempts. Login is locked for about ${minutesText(session.locked_for_seconds)}.`);
+  const authenticated = session.configured === true && session.authenticated === true;
+  const token = authenticated && typeof session.csrf_token === "string" ? session.csrf_token : null;
+  const changed = token !== adminCsrfToken;
+  adminCsrfToken = token;
+  if (changed) {
+    fetchAdminUpdate();  // signed in or out: the update view (with or without a review) differs
   }
 }
 
@@ -343,10 +296,15 @@ function showAdminMessage(text) {
   adminMessage.hidden = !text;
 }
 
-function showAdminFailure(text) {
-  showAdminMessage(text);
-  // Back to the field, so the next attempt can be typed right away.
-  adminPassword.focus();
+// Runs a privileged action, signing in first through the login dialog (admin.js).
+function privilegedAction(reason, action) {
+  return () => {
+    if (adminCsrfToken || typeof window === "undefined" || typeof window.adminLogin !== "function") {
+      action();
+      return;
+    }
+    window.adminLogin({ reason, onSuccess: action });
+  };
 }
 
 async function fetchAdminSession() {
@@ -373,35 +331,6 @@ async function adminRequest(path, body) {
     payload = {};
   }
   return { response, payload };
-}
-
-async function submitAdminLogin(event) {
-  event.preventDefault();
-  const password = adminPassword.value;
-  adminPassword.value = "";
-  showAdminMessage("");
-  try {
-    const { response, payload } = await adminRequest("/api/admin/login", { password });
-    if (response.ok) {
-      renderAdmin(payload);
-      fetchAdminUpdate();
-    } else {
-      showAdminFailure(payload.error && payload.error.message ? payload.error.message : "Login failed.");
-    }
-  } catch {
-    showAdminFailure("The server could not be reached.");
-  }
-  fetchAdminSession();
-}
-
-async function submitAdminLogout() {
-  try {
-    await adminRequest("/api/admin/logout");
-  } catch {
-    // The session state below shows the result.
-  }
-  showAdminMessage("");
-  fetchAdminSession();
 }
 
 // Software updates in the Administrator panel. Everyone sees what is installed,
@@ -435,8 +364,6 @@ let pageBuild = null;
 let adminUpdateState = null;
 let adminUpdateReconnecting = false;
 let adminUpdateTimer = null;
-let pendingReauthAction = null;
-let renderedReviewKey = null;
 let updateCheckInFlight = false;
 
 function shortVersion(version) {
@@ -456,11 +383,13 @@ function ageText(iso) {
     return null;
   }
   const seconds = Math.max(0, Math.round((Date.now() - moment) / 1000));
-  return seconds < 60 ? "just now" : seconds < 7200 ? `${Math.round(seconds / 60)} min ago` : `${Math.round(seconds / 3600)} h ago`;
+  return seconds < 60 ? "just now" : seconds < 7200 ? `${Math.round(seconds / 60)} min ago`
+    : seconds < 172800 ? `${Math.round(seconds / 3600)} h ago` : `${Math.round(seconds / 86400)} days ago`;
 }
 
-function updateButton(label, handler, { primary = false, disabled = false } = {}) {
-  const button = textElement("button", primary ? "compact-button compact-button-primary" : "compact-button", label);
+function updateButton(label, handler, { primary = false, disabled = false, privileged = false } = {}) {
+  const classes = (primary ? "compact-button compact-button-primary" : "compact-button") + (privileged ? " admin-action" : "");
+  const button = textElement("button", classes, label);
   button.type = "button";
   button.disabled = disabled;
   button.addEventListener("click", handler);
@@ -473,6 +402,17 @@ function updateAvailableVersion() {
     ? result.available : null;
 }
 
+function dockerHubLink(available) {
+  if (!available || typeof available.link !== "string" || !available.link.startsWith("https://hub.docker.com/r/")) {
+    return null;
+  }
+  const link = textElement("a", "status-meta", "Docker Hub");
+  link.setAttribute("href", available.link);
+  link.setAttribute("target", "_blank");
+  link.setAttribute("rel", "noopener noreferrer");
+  return link;
+}
+
 function renderUpdateInfo(box) {
   box.replaceChildren();
   const updates = latestUpdates;
@@ -480,50 +420,59 @@ function renderUpdateInfo(box) {
     box.appendChild(textElement("p", "status-meta", "Loading…"));
     return;
   }
-  const rows = [];
+  const list = document.createElement("dl");
+  list.className = "host-rows";
+  const add = (label, value) => {
+    const dd = typeof value === "string" ? textElement("dd", "", value) : value;
+    list.append(textElement("dt", "", label), dd);
+  };
   if (updates.installed) {
-    rows.push(["Installed", shortVersion(updates.installed.version)]);
+    add("Installed", shortVersion(updates.installed.version));
   }
   const result = updates.result || null;
   const available = result && result.available ? result.available : null;
   if (available) {
     const published = ageText(available.published_at);
-    rows.push(["Newest published", shortVersion(available.version) + (published ? ` (published ${published})` : "")]);
+    const dd = textElement("dd", "update-inline",
+      shortVersion(available.version) + (published ? ` (published ${published})` : ""));
+    const link = updates.state === "update_available" ? dockerHubLink(available) : null;
+    if (link) {
+      dd.append(" ", link);
+    }
+    add("Newest published", dd);
   }
   const state = updateStateText[updates.state] || "Unknown";
-  rows.push(["Status", state + (updates.stale ? " (last known result)" : "")]);
-  if (updates.check_failed && updates.error) {
-    rows.push(["Last check", updates.error]);
+  add("Status", state + (updates.stale ? " (last known result)" : ""));
+  if (updates.state !== "unsupported" && updates.state !== "disabled") {
+    // Label, age and button form one group: on wide screens a row of the list (the age in a
+    // fixed-width slot, so the button never moves); on phones the button sits to the right of
+    // label and age together, like a merged cell.
+    const manual = updates.manual_check || {};
+    const group = document.createElement("div");
+    group.className = "update-check-group";
+    const cells = document.createElement("div");
+    cells.className = "update-check-cells";
+    const action = document.createElement("div");
+    action.className = "update-check-action";
+    action.appendChild(updateButton("Check now", requestUpdateCheck,
+      { disabled: !manual.available || updateCheckInFlight }));
+    if (!manual.available && manual.retry_after_seconds > 0) {
+      action.appendChild(textElement("span", "status-meta", `again in ${manual.retry_after_seconds} s`));
+    }
+    cells.append(textElement("dd", "update-check-age",
+      updates.checked_at ? ageText(updates.checked_at) || "unknown" : "not yet"), action);
+    group.append(textElement("dt", "", "Last check"), cells);
+    list.appendChild(group);
   } else if (updates.checked_at) {
-    rows.push(["Last check", ageText(updates.checked_at) || "unknown"]);
+    add("Last check", ageText(updates.checked_at) || "unknown");
+  }
+  if (updates.check_failed && updates.error) {
+    add("Check failed", updates.error);
   }
   if (updates.reason) {
-    rows.push(["Note", updates.reason]);
-  }
-  const list = document.createElement("dl");
-  list.className = "host-rows";
-  for (const [label, value] of rows) {
-    list.append(textElement("dt", "", label), textElement("dd", "", value));
+    add("Note", updates.reason);
   }
   box.appendChild(list);
-  if (updates.state !== "unsupported" && updates.state !== "disabled") {
-    const manual = updates.manual_check || {};
-    const row = document.createElement("div");
-    row.className = "admin-form-row";
-    row.appendChild(updateButton("Check now", requestUpdateCheck, { disabled: !manual.available || updateCheckInFlight }));
-    if (available && updates.state === "update_available" && typeof available.link === "string"
-        && available.link.startsWith("https://hub.docker.com/r/")) {
-      const link = textElement("a", "status-meta", "Docker Hub");
-      link.setAttribute("href", available.link);
-      link.setAttribute("target", "_blank");
-      link.setAttribute("rel", "noopener noreferrer");
-      row.appendChild(link);
-    }
-    if (!manual.available && manual.retry_after_seconds > 0) {
-      row.appendChild(textElement("span", "status-meta", `Check again in ${manual.retry_after_seconds} s`));
-    }
-    box.appendChild(row);
-  }
 }
 
 function cleanupText(cleanup) {
@@ -534,11 +483,40 @@ function cleanupText(cleanup) {
   return `Removed ${cleanup.removed} old image${cleanup.removed === 1 ? "" : "s"} (${megabytes} MB).`;
 }
 
+// "itcornernet/mpdrussoundpi-web@sha256:2777aa50ce6f…" → "2777aa50ce6f": 12 characters
+// identify an image on one Pi; the full reference stays in the tooltip.
+function shortImage(reference) {
+  const text = String(reference || "");
+  const digest = text.match(/sha256:([0-9a-f]{12})[0-9a-f]*/);
+  if (digest) {
+    return digest[1];
+  }
+  const tag = text.split("/").pop().split(":")[1];
+  return tag ? tag.slice(0, 24) : text.slice(0, 24);
+}
+
+function imagesRow(images) {
+  const value = document.createElement("dd");
+  value.className = "review-images";
+  const entries = Object.entries(images || {});
+  entries.forEach(([name, reference], index) => {
+    const part = document.createElement("span");
+    part.className = "review-image";
+    part.title = String(reference || "");
+    part.append(document.createTextNode(`${name} `), textElement("code", "", shortImage(reference)));
+    value.appendChild(part);
+    if (index < entries.length - 1) {
+      value.appendChild(document.createTextNode(" · "));
+    }
+  });
+  return value;
+}
+
 function renderReview(review) {
   const box = document.createElement("div");
   box.className = "admin-review";
   const isRestore = review.action === "restore";
-  box.appendChild(textElement("strong", "", isRestore ? "Review: restore the previous version"
+  box.appendChild(textElement("strong", "", isRestore ? "Review: restore backup"
     : `Review: update to dev-${shortRevision(review.revision)}`));
   const rows = [["Interruption", review.interruption || ""], ["Backup", review.backup || ""]];
   if (review.cleanup) {
@@ -547,13 +525,13 @@ function renderReview(review) {
   if (review.layout_change) {
     rows.push(["Layout change", review.layout_change]);
   }
-  for (const [name, reference] of Object.entries(review.images || {})) {
-    rows.push([`Image (${name})`, reference || ""]);
-  }
   const list = document.createElement("dl");
   list.className = "host-rows";
   for (const [label, value] of rows) {
     list.append(textElement("dt", "", label), textElement("dd", "", value));
+  }
+  if (Object.keys(review.images || {}).length) {
+    list.append(textElement("dt", "", "Images"), imagesRow(review.images));
   }
   const countdown = textElement("dd", "review-countdown", `${review.expires_in_seconds} s`);
   list.append(textElement("dt", "", "Confirm within"), countdown);
@@ -568,7 +546,8 @@ function renderReview(review) {
   input.setAttribute("aria-label", `Type ${word} to confirm`);
   input.placeholder = `Type "${word}" to confirm`;
   const confirm = updateButton(isRestore ? "Confirm restore" : "Confirm update",
-    () => runUpdateAction("approve", { operation: review.operation, digest: review.digest }), { primary: true, disabled: true });
+    () => runUpdateAction("approve", { operation: review.operation, digest: review.digest }),
+    { primary: true, disabled: true, privileged: true });
   input.addEventListener("input", () => {
     confirm.disabled = input.value.trim().toLowerCase() !== word;
   });
@@ -578,26 +557,58 @@ function renderReview(review) {
   return box;
 }
 
+// A restore is its own section ("Previous version"), so updating and going back are
+// never two buttons side by side. Messages and reviews go to the section of their kind.
+function isRestoreKind(status) {
+  return Boolean(status && (status.kind === "restore" || ["restoring", "restored", "restore_awaiting_approval"]
+    .includes(status.phase) || (status.review && status.review.action === "restore")));
+}
+
+function renderReviewInto(box, review, keyName) {
+  const key = `${review.operation}/${review.digest}`;
+  if (box[keyName] === key && box.reviewCard) {
+    // Same review: only the countdown changes, the typed confirmation stays.
+    box.reviewCard.countdown.textContent = `${review.expires_in_seconds} s`;
+    return;
+  }
+  box[keyName] = key;
+  box.reviewCard = renderReview(review);
+  box.replaceChildren(box.reviewCard);
+}
+
+function clearReview(box, keyName) {
+  box[keyName] = null;
+  box.reviewCard = null;
+  box.replaceChildren();
+}
+
+function phaseMessage(box, status) {
+  const phase = status.phase;
+  if (!phase || phase === "idle" || !updatePhaseText[phase]) {
+    return;
+  }
+  // The updater's error is a complete sentence for this exact outcome (a failed
+  // restore also ends in "failed"); the phase text is only the fallback, so the
+  // same failure is never stated twice.
+  const detailed = status.error && !["cancelled", "up_to_date"].includes(phase);
+  box.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown" ? "admin-message" : "status-meta",
+    detailed ? status.error : updatePhaseText[phase]));
+  const removed = cleanupText(status.cleanup);
+  if (phase === "succeeded" && removed) {
+    box.appendChild(textElement("p", "status-meta", removed));
+  }
+}
+
 function renderInstall(box) {
   const status = adminUpdateState;
   const review = status && status.review;
   const awaiting = status && (status.phase === "awaiting_approval" || status.phase === "restore_awaiting_approval");
-  if (awaiting && review && adminCsrfToken) {
-    const key = `${review.operation}/${review.digest}`;
-    if (key === renderedReviewKey && box.reviewCard) {
-      // Same review: only the countdown changes, the typed confirmation stays.
-      box.reviewCard.countdown.textContent = `${review.expires_in_seconds} s`;
-      return;
-    }
-    renderedReviewKey = key;
-    box.reviewCard = renderReview(review);
-    box.replaceChildren(box.reviewCard);
+  if (awaiting && review && review.action !== "restore" && adminCsrfToken) {
+    renderReviewInto(box, review, "reviewKey");
     return;
   }
-  renderedReviewKey = null;
-  box.reviewCard = null;
-  box.replaceChildren();
-  if (adminUpdateReconnecting) {
+  clearReview(box, "reviewKey");
+  if (adminUpdateReconnecting && !isRestoreKind(status)) {
     box.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
     return;
   }
@@ -609,36 +620,126 @@ function renderInstall(box) {
     }
     return;
   }
-  const phase = status.phase;
-  if (phase && phase !== "idle" && updatePhaseText[phase]) {
-    // The updater's error is a complete sentence for this exact outcome (a failed
-    // restore also ends in "failed"); the phase text is only the fallback, so the
-    // same failure is never stated twice.
-    const detailed = status.error && !["cancelled", "up_to_date"].includes(phase);
-    box.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown" ? "admin-message" : "status-meta",
-      detailed ? status.error : updatePhaseText[phase]));
-    const removed = cleanupText(status.cleanup);
-    if (phase === "succeeded" && removed) {
-      box.appendChild(textElement("p", "status-meta", removed));
-    }
+  if (!isRestoreKind(status)) {
+    phaseMessage(box, status);
   }
-  const row = document.createElement("div");
-  row.className = "admin-form-row";
-  if (adminCsrfToken && status.restore_available) {
-    row.appendChild(updateButton("Restore previous version",
-      () => runUpdateAction("restore", { operation: status.operation }), { primary: true }));
-  }
-  if (available && !status.busy && phase !== "outcome_unknown") {
-    if (adminCsrfToken) {
-      row.appendChild(updateButton(`Update to ${shortVersion(available.version)}`,
-        () => runUpdateAction("review", {}), { primary: true }));
-    } else {
-      box.appendChild(textElement("p", "status-meta", "Log in as administrator to install it."));
-    }
-  }
-  if (row.children.length) {
+  // After a failed (or unknown) update the same version is offered as a retry; the restore
+  // has its own section. A newer version is a normal update again.
+  const updateFailed = ["failed", "outcome_unknown"].includes(status.phase) && !isRestoreKind(status);
+  const sameAsFailed = updateFailed && (!status.candidate_revision
+    || (available && available.version === `dev-${status.candidate_revision}`));
+  const reviewPending = ["awaiting_approval", "restore_awaiting_approval"].includes(status.phase);
+  // An unknown outcome is checked on the Pi first (see its message): no retry from here.
+  if (available && !status.busy && !reviewPending && status.phase !== "outcome_unknown") {
+    const version = shortVersion(available.version);
+    const row = document.createElement("div");
+    row.className = "admin-form-row";
+    row.appendChild(updateButton(sameAsFailed ? `Retry update to ${version}` : `Update to ${version}`,
+      privilegedAction(sameAsFailed ? `Retry the update to ${version}` : `Install the update to ${version}`,
+        () => runUpdateAction("review", {})),
+      { primary: true, privileged: true }));
     box.appendChild(row);
   }
+}
+
+let restoreOpenedFor = null;
+
+function renderRestore() {
+  const status = adminUpdateState;
+  const restoring = isRestoreKind(status);
+  const updateFailed = Boolean(status && !restoring && ["failed", "outcome_unknown"].includes(status.phase));
+  const shown = Boolean(status && status.configured !== false && (status.restore_available || restoring));
+  restorePanel.hidden = !shown;
+  if (!shown) {
+    clearReview(restoreBox, "reviewKey");
+    return;
+  }
+  // A failed update opens this section once per operation; the user may close it again.
+  if (updateFailed && status.restore_available && restoreOpenedFor !== status.operation) {
+    restorePanel.open = true;
+    restoreOpenedFor = status.operation;
+  }
+  const review = status.review;
+  const awaiting = status.phase === "awaiting_approval" || status.phase === "restore_awaiting_approval";
+  const restoreReview = Boolean(awaiting && review && review.action === "restore" && adminCsrfToken);
+  const [text, level] = restoring && status.busy ? ["Restoring", "update"]
+    : restoreReview ? ["Confirm restore", "update"]
+      : updateFailed ? ["Update failed", "warning"] : ["Available", "unknown"];
+  restoreState.textContent = text;
+  restoreState.title = text;
+  restoreState.className = `status-pill host-level host-level-${level}`;
+  if (restoreReview) {
+    restorePanel.open = true;  // the review is the next step; never hide it in a closed section
+    renderReviewInto(restoreBox, review, "reviewKey");
+    return;
+  }
+  clearReview(restoreBox, "reviewKey");
+  if (restoring) {
+    if (adminUpdateReconnecting) {
+      restoreBox.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
+      return;
+    }
+    phaseMessage(restoreBox, status);
+  }
+  if (status.restore_available && !status.busy) {
+    const backups = Array.isArray(status.backups) && status.backups.length
+      ? status.backups : [{ operation: status.operation }];
+    const list = document.createElement("div");
+    list.className = "backup-list";
+    for (const backup of backups) {
+      list.appendChild(backupEntry(backup));
+    }
+    restoreBox.appendChild(list);
+  }
+}
+
+function backupTime(value) {
+  const moment = typeof value === "string" ? new Date(value) : null;
+  if (!moment || Number.isNaN(moment.getTime())) {
+    return null;
+  }
+  const date = moment.toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" });
+  const time = moment.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return { text: `${date}, ${time}`, ago: ageText(value) || "" };
+}
+
+function backupSize(bytes) {
+  if (typeof bytes !== "number" || bytes < 0) {
+    return null;
+  }
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
+// One restorable backup. Today there is only the failed update's own backup; the list
+// is ready for more once more backups are kept.
+function backupEntry(backup) {
+  const item = document.createElement("article");
+  item.className = "backup-entry";
+  const taken = backupTime(backup.taken_at);
+  const title = taken ? `Backup from ${taken.text}` : "Backup from the last update";
+  item.appendChild(textElement("strong", "backup-title", title));
+  const facts = document.createElement("dl");
+  facts.className = "backup-facts";
+  const rows = [
+    ["Taken", taken ? `${taken.ago}${backup.reason ? `, ${backup.reason}` : ""}` : backup.reason || "before the last update"],
+    ["Version", backup.revision ? `dev-${shortRevision(backup.revision)}` : "not recorded"],
+  ];
+  const size = backupSize(backup.size_bytes);
+  if (size) {
+    rows.push(["Size", size]);
+  }
+  for (const [label, value] of rows) {
+    facts.append(textElement("dt", "", label), textElement("dd", "", value));
+  }
+  item.appendChild(facts);
+  const row = document.createElement("div");
+  row.className = "admin-form-row";
+  const operation = typeof backup.operation === "string" ? backup.operation : adminUpdateState.operation;
+  row.appendChild(updateButton("Restore this backup",
+    privilegedAction(taken ? `Restore the backup from ${taken.text}` : "Restore the backup",
+      () => runUpdateAction("restore", { operation })), { primary: true, privileged: true }));
+  item.appendChild(row);
+  return item;
 }
 
 function buildIdentity(build) {
@@ -675,16 +776,31 @@ function reloadForNewBuild(build) {
   return true;
 }
 
+function renderUpdatesState() {
+  const state = latestUpdates && latestUpdates.state;
+  const [text, level] = adminUpdateState && adminUpdateState.busy ? ["Updating", "update"]
+    : state === "update_available" ? ["Update available", "update"]
+      : state === "up_to_date" ? ["Up to date", "ok"]
+        : state ? ["Not checked", "unknown"] : ["Checking…", "unknown"];
+  updatesState.textContent = text;
+  updatesState.title = text;
+  updatesState.className = `status-pill host-level host-level-${level}`;
+}
+
 function renderSoftwareUpdates() {
+  renderUpdatesState();
   if (!adminUpdate.infoBox) {
     adminUpdate.replaceChildren();
-    adminUpdate.appendChild(textElement("h3", "overview-subtitle", "Software updates"));
     adminUpdate.infoBox = document.createElement("div");
     adminUpdate.installBox = document.createElement("div");
     adminUpdate.append(adminUpdate.infoBox, adminUpdate.installBox);
   }
   renderUpdateInfo(adminUpdate.infoBox);
   renderInstall(adminUpdate.installBox);
+  renderRestore();
+  // While a review (or the password prompt that may follow) is open, it is the only thing
+  // shown: the version overview and "Check now" return after cancel or completion.
+  adminUpdate.infoBox.hidden = Boolean(adminUpdate.installBox.reviewCard);
 }
 
 function scheduleAdminUpdate(delayMs) {
@@ -748,9 +864,16 @@ async function runUpdateAction(action, body) {
   showAdminMessage("");
   try {
     const { response, payload } = await adminRequest(`/api/admin/update/${action}`, body);
-    if (response.status === 403 && payload.error && payload.error.code === "reauthenticate") {
-      pendingReauthAction = [action, body];
-      showReauthPrompt();
+    // The password and its errors belong to the dialog (admin.js), never to this section.
+    const code = payload.error && payload.error.code;
+    const again = () => runUpdateAction(action, body);
+    const reason = action === "restore" ? "Restore the previous version" : "Install the update";
+    if (response.status === 403 && code === "reauthenticate" && typeof window.adminReauthenticate === "function") {
+      window.adminReauthenticate({ reason, onSuccess: again });
+      return;
+    }
+    if (response.status === 401 && typeof window.adminLogin === "function") {
+      window.adminLogin({ reason, onSuccess: again });  // the session ended meanwhile
       return;
     }
     if (!response.ok) {
@@ -762,44 +885,12 @@ async function runUpdateAction(action, body) {
   fetchAdminUpdate();
 }
 
-function showReauthPrompt() {
-  renderedReviewKey = null;
-  const box = adminUpdate.installBox || adminUpdate;
-  box.reviewCard = null;
-  box.replaceChildren();
-  box.appendChild(textElement("p", "status-meta", "Enter the administrator password again to continue."));
-  const form = document.createElement("form");
-  form.className = "admin-form-row";
-  const input = document.createElement("input");
-  input.type = "password";
-  input.autocomplete = "current-password";
-  input.className = "admin-confirm-input";
-  input.setAttribute("aria-label", "Administrator password");
-  form.append(input, textElement("button", "compact-button compact-button-primary", "Continue"));
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const password = input.value;
-    input.value = "";
-    const { response, payload } = await adminRequest("/api/admin/reauthenticate", { password });
-    if (!response.ok) {
-      showAdminMessage(payload.error && payload.error.message ? payload.error.message : "Login failed.");
-      return;
-    }
-    const retry = pendingReauthAction;
-    pendingReauthAction = null;
-    if (retry) {
-      runUpdateAction(retry[0], retry[1]);
-    }
-  });
-  box.appendChild(form);
-  input.focus();
-}
-
 function renderOverview(payload) {
   const sections = payload.sections || [];
   overviewEmpty.hidden = sections.length !== 0;
   const overall = hostLevelText[payload.overall] ? payload.overall : "unknown";
   overviewLevel.textContent = hostLevelText[overall];
+  overviewLevel.title = hostLevelText[overall];
   overviewLevel.className = `status-pill host-level host-level-${overall}`;
   overviewUpdate.hidden = payload.update_available !== true;
   overviewList.replaceChildren();
@@ -926,7 +1017,7 @@ function startStatusPolling() {
       fetchHost();
       fetchOverview();
       fetchAdminSession();
-      if (adminUpdateTimer === null && !pendingReauthAction) {
+      if (adminUpdateTimer === null) {
         fetchAdminUpdate();
       }
     }, statusPollIntervalMs);
@@ -945,8 +1036,16 @@ fetchHost();
 fetchOverview();
 fetchAdminSession();
 fetchAdminUpdate();
-adminLoginForm.addEventListener("submit", submitAdminLogin);
-adminLogout.addEventListener("click", submitAdminLogout);
+// A login or exit in admin.js (dialog, strip or menu) carries the new session, so a
+// pending privileged action already finds the token when it runs.
+document.addEventListener("admin-session-changed", (event) => {
+  if (event.detail && event.detail.session) {
+    renderAdmin(event.detail.session);
+  } else {
+    fetchAdminSession();
+  }
+  fetchAdminUpdate();
+});
 startStatusSync();
 startStatusPolling();
 

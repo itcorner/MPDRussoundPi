@@ -10,6 +10,7 @@ documented fields before they reach a browser.
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 import socket
@@ -54,6 +55,30 @@ def _cleanup(value: object) -> dict[str, int] | None:
     return counts
 
 
+TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})\Z")
+MAX_BACKUPS = 5
+
+
+def _backups(value: object) -> list[dict[str, Any]]:
+    """Restorable backups (newest first) with when they were taken, their version and size."""
+    if not isinstance(value, list):
+        return []
+    backups = []
+    for item in value[:MAX_BACKUPS]:
+        if not isinstance(item, dict) or not _text(item.get("operation"), 64):
+            continue
+        taken = item.get("taken_at")
+        size = item.get("size_bytes")
+        backups.append({
+            "operation": _text(item.get("operation"), 64),
+            "taken_at": taken if isinstance(taken, str) and TIMESTAMP.fullmatch(taken) else None,
+            "revision": _revision(item.get("revision")),
+            "size_bytes": size if type(size) is int and size >= 0 else None,
+            "reason": _text(item.get("reason"), 80),
+        })
+    return backups
+
+
 def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str, Any]:
     """Only the documented fields; the review (with its confirmation digest) only for administrators."""
     phase = value.get("phase") if value.get("phase") in PHASES else "idle"
@@ -68,6 +93,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
         "finished_at": _text(result.get("finished_at"), 32) if result else None,
         "cleanup": _cleanup(result.get("cleanup")) if result else None,
         "restore_available": value.get("restore_available") is True,
+        "backups": _backups(value.get("backups")),
         "busy": value.get("busy") is True,
         "updated_at": _text(value.get("updated_at"), 32),
     }

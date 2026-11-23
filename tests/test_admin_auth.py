@@ -190,6 +190,21 @@ class EndpointTests(Fixture):
         self.assertEqual(out.status_code, 200)
         self.assertFalse(self.client.get("/api/admin/session").json["authenticated"])
 
+    def test_extend_restarts_the_idle_time_and_needs_the_token(self):
+        self.login()
+        csrf = self.client.get("/api/admin/session").json["csrf_token"]
+        self.clock[0] += 600
+        self.assertEqual(self.client.get("/api/admin/session").json["idle_expires_in_seconds"], 300,
+                         "reading the session does not extend it")
+        self.assertEqual(self.client.post("/api/admin/extend", json={}).status_code, 403, "token required")
+        extended = self.client.post("/api/admin/extend", json={}, headers={admin_auth.CSRF_HEADER: csrf})
+        self.assertEqual(extended.status_code, 200)
+        self.assertEqual(extended.json["idle_expires_in_seconds"], admin_auth.IDLE_SECONDS)
+        self.assertEqual(extended.headers["Cache-Control"], "no-store")
+        self.client.post("/api/admin/logout", json={}, headers={admin_auth.CSRF_HEADER: csrf})
+        self.assertEqual(self.client.post("/api/admin/extend", json={}, headers={admin_auth.CSRF_HEADER: csrf})
+                         .status_code, 401, "nothing to extend after logout")
+
     def test_failures_are_generic_then_locked(self):
         first = self.login("wrong")
         self.assertEqual((first.status_code, first.json["error"]["message"]), (401, "Login failed."))

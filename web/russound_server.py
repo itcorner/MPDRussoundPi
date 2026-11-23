@@ -460,6 +460,16 @@ class RussoundHTTPServer:
             response.delete_cookie(admin_auth.COOKIE_NAME, path="/api/", samesite="Strict", secure=request.is_secure)
             return response
 
+        @app.post("/api/admin/extend")
+        def api_admin_extend():
+            # "Extend" in the administrator strip: an administrator request is activity, so the
+            # session's idle time starts again. Needs the session and its CSRF token, no password.
+            denied = self.admin_required()
+            if denied is not None:
+                return denied
+            return self._no_store(jsonify({**self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME)),
+                                           **self._transport()}))
+
         @app.post("/api/admin/reauthenticate")
         def api_admin_reauthenticate():
             if self._https_required():
@@ -484,14 +494,16 @@ class RussoundHTTPServer:
                 return self._admin_failure("unauthenticated", 0)
             return self._updater_response(lambda: self.updater.status(include_review=True))
 
+        # Installing an update needs the session, not the password again (decided 2026-11-22);
+        # only a restore asks again (docs/plans/web_open_admin-mode-and-protected-settings.md).
         @app.post("/api/admin/update/review")
         def api_admin_update_review():
-            return self._updater_action("review", recent=True)
+            return self._updater_action("review", recent=False)
 
         @app.post("/api/admin/update/approve")
         def api_admin_update_approve():
             body = self._read_json_body()
-            return self._updater_action("approve", recent=True,
+            return self._updater_action("approve", recent=False,
                                         operation=body.get("operation"), digest=body.get("digest"))
 
         @app.post("/api/admin/update/cancel")

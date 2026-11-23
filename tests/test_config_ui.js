@@ -269,7 +269,8 @@ test("saving unrelated changes omits an unchanged incomplete backend", async () 
     collectSourceSlots: () => [],
     collectShortcuts: () => [],
     updateSaveButtonState() {},
-    setMessage: (...args) => messages.push(args),
+    // Save results go to the save bar: setSaveResult(text, succeeded).
+    setSaveResult: (...args) => messages.push(args),
     renderEditor() {},
     apiFetch: async (url, options) => {
       request = JSON.parse(options.body);
@@ -280,7 +281,7 @@ test("saving unrelated changes omits an unchanged incomplete backend", async () 
   vm.runInContext(save, context);
   await context.saveConfig();
   assert.equal(Object.hasOwn(request, "backend"), false);
-  assert.equal(messages.at(-1)[0], "Configuration saved.");
+  assert.deepEqual(messages.at(-1), ["Configuration saved.", true]);
 
   request = undefined;
   context.collectBackend = () => ({ ...savedBackend, poll_interval_seconds: 3 });
@@ -324,7 +325,8 @@ test("saving sends the loaded config revision and keeps edits on conflict", asyn
     collectSourceSlots: () => [],
     collectShortcuts: () => [],
     updateSaveButtonState() {},
-    setMessage: (...args) => messages.push(args),
+    // Save results go to the save bar: setSaveResult(text, succeeded).
+    setSaveResult: (...args) => messages.push(args),
     renderEditor() { rendered = true; },
     apiFetch: async (url, options) => {
       requests.push(options.headers);
@@ -339,7 +341,7 @@ test("saving sends the loaded config revision and keeps edits on conflict", asyn
   vm.runInContext(save, context);
   await context.saveConfig();
   assert.equal(requests[0]["X-Config-Revision"], "rev-1");
-  assert.deepEqual(messages.at(-1), ["The configuration was changed in another tab.", true]);
+  assert.deepEqual(messages.at(-1), ["The configuration was changed in another tab.", false], "a failure stays in the bar");
   assert.equal(rendered, false);
   assert.equal(context.hasUnsavedChanges, true);
 

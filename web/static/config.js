@@ -1,4 +1,7 @@
 const saveConfigButton = document.getElementById("saveConfigButton");
+const discardConfigButton = document.getElementById("discardConfigButton");
+const configSaveBar = document.getElementById("configSaveBar");
+const configSaveText = document.getElementById("configSaveText");
 const configEditorMessage = document.getElementById("configEditorMessage");
 const configEmptyState = document.getElementById("configEmptyState");
 const configEmptyMessage = document.getElementById("configEmptyMessage");
@@ -467,18 +470,72 @@ function hashSourceSlots(sourceSlots) {
   return JSON.stringify(normalizeSourceSlots(sourceSlots));
 }
 
+// The save bar at the bottom of the page replaces a permanent save button: it shows
+// while there are unsaved changes, while saving and with the result of a save. A
+// success replaces the buttons and the bar leaves shortly after; a failure stays,
+// with the buttons, until the next attempt or a discard.
+const SAVE_SUCCESS_MS = 2500;
+const SAVE_LEAVE_MS = 450;  // matches the slide-out transition in styles.css
+let saveResult = null;
+let saveResultTimer = null;
+
+function setSaveResult(text, ok = false) {
+  window.clearTimeout(saveResultTimer);
+  saveResultTimer = null;
+  configSaveBar.classList.remove("is-leaving");
+  saveResult = text ? { text, ok } : null;
+  if (saveResult && ok) {
+    saveResultTimer = window.setTimeout(() => {
+      // Slide down and fade, then hide for good.
+      configSaveBar.classList.add("is-leaving");
+      saveResultTimer = window.setTimeout(() => {
+        configSaveBar.classList.remove("is-leaving");
+        saveResult = null;
+        updateSaveButtonState();
+      }, SAVE_LEAVE_MS);
+    }, SAVE_SUCCESS_MS);
+  }
+  updateSaveButtonState();
+}
+
 function updateSaveButtonState() {
-  if (saveInFlight || !configPayload || configPayload.config_writable === false) {
-    saveConfigButton.disabled = true;
+  const writable = Boolean(configPayload) && configPayload.config_writable !== false;
+  const succeeded = Boolean(saveResult && saveResult.ok && !hasUnsavedChanges && !saveInFlight);
+  const failed = Boolean(saveResult && !saveResult.ok && !saveInFlight);
+  const visible = writable && (hasUnsavedChanges || saveInFlight || succeeded || failed);
+  configSaveBar.hidden = !visible;
+  configSaveBar.classList.toggle("is-success", succeeded);
+  configSaveBar.classList.toggle("is-error", failed);
+  document.body.classList.toggle("has-save-bar", visible);
+  // On success the buttons turn invisible but keep their space, so the bar keeps its size.
+  discardConfigButton.hidden = Boolean(configPayload?.config_required);
+  saveConfigButton.disabled = saveInFlight || !hasUnsavedChanges || !writable;
+  discardConfigButton.disabled = saveInFlight;
+  configSaveText.setAttribute("role", failed ? "alert" : "status");
+  configSaveText.textContent = saveInFlight ? "Saving…"
+    : succeeded || failed ? saveResult.text
+      : configPayload?.config_required ? "The setup is not saved yet" : "Unsaved changes";
+  saveConfigButton.textContent = configPayload?.config_required ? "Save setup" : "Save";
+}
+
+// Saving the configuration is an administrator action: a guest signs in first.
+function requestSave() {
+  const elevated = document.body.classList.contains("admin-elevated");
+  if (!elevated && typeof window.adminLogin === "function") {
+    window.adminLogin({ reason: "Save the configuration", onSuccess: saveConfig });
     return;
   }
-  saveConfigButton.disabled = !hasUnsavedChanges;
+  saveConfig();
 }
 
 function recomputeUnsavedChanges() {
   const currentHash = hashZoneSlots(collectZoneSlots());
   const currentSourceHash = hashSourceSlots(collectSourceSlots());
   hasUnsavedChanges = Boolean(configPayload?.config_required) || currentHash !== baselineZoneSlotsHash || currentSourceHash !== baselineSourceSlotsHash || connectionHash() !== baselineConnectionHash || JSON.stringify(collectShortcuts()) !== baselineShortcutsHash;
+  if (hasUnsavedChanges && saveResult && saveResult.ok) {
+    setSaveResult(null);  // a new edit after a save: back to the buttons
+    return;
+  }
   updateSaveButtonState();
 }
 
@@ -720,37 +777,37 @@ async function saveConfig() {
     ["host", "port", "device", "baud"].every((key) => backend[key] === savedBackend[key]);
   if (preserveIncompleteEndpoint &&
       backend.poll_interval_seconds !== (savedBackend.poll_interval_seconds ?? 2)) {
-    setMessage("Complete the saved backend endpoint before changing the poll interval.", true);
+    setSaveResult("Complete the saved backend endpoint before changing the poll interval.", false);
     return;
   }
   if (!preserveIncompleteEndpoint && effective?.mode?.source === "environment" &&
       !savedBackend.device && !(savedBackend.host && savedBackend.port) &&
       (!backend.host || !backend.port)) {
-    setMessage(
+    setSaveResult(
       "No saved backend endpoint is available to complete setup. Remove or change the environment override, restart the web service, then save the endpoint in the config file.",
-      true,
+      false,
     );
     return;
   }
   if (!Number.isFinite(backend.poll_interval_seconds) || backend.poll_interval_seconds < 1) {
-    setMessage("Enter a poll interval of at least 1 second.", true);
+    setSaveResult("Enter a poll interval of at least 1 second.", false);
     return;
   }
   if (!preserveIncompleteEndpoint && persistenceMode === "tcp" && (!backend.host || !Number.isInteger(backend.port) || backend.port < 1 || backend.port > 65535)) {
-    setMessage("Enter a gateway host and a TCP port from 1 to 65535.", true);
+    setSaveResult("Enter a gateway host and a TCP port from 1 to 65535.", false);
     return;
   }
   if (persistenceMode === "serial" && (!backend.device || !Number.isInteger(backend.baud) || backend.baud < 1 || backend.baud > 4000000)) {
-    setMessage("Enter a serial device and a baud rate from 1 to 4000000.", true);
+    setSaveResult("Enter a serial device and a baud rate from 1 to 4000000.", false);
     return;
   }
   if (!collectControllers().length) {
-    setMessage("Enable at least one controller.", true);
+    setSaveResult("Enable at least one controller.", false);
     return;
   }
   saveInFlight = true;
   updateSaveButtonState();
-  setMessage("");
+  setSaveResult(null);
   try {
     // The revision makes the server reject the save if the config changed since
     // this page loaded it (409), instead of overwriting newer edits.
@@ -771,13 +828,13 @@ async function saveConfig() {
     });
     const payload = await response.json();
     if (!response.ok) {
-      setMessage(payload.error || "Failed to save configuration.", true);
+      setSaveResult(payload.error || "Failed to save configuration.", false);
       return;
     }
     renderEditor(payload);
-    setMessage("Configuration saved.");
+    setSaveResult("Configuration saved.", true);
   } catch {
-    setMessage("Failed to save configuration. Check the connection and retry.", true);
+    setSaveResult("Failed to save configuration. Check the connection and retry.", false);
   } finally {
     saveInFlight = false;
     updateSaveButtonState();
@@ -851,8 +908,10 @@ window.addEventListener("beforeunload", (event) => {
   event.returnValue = "";
 });
 
-saveConfigButton.addEventListener("click", () => {
-  saveConfig();
+saveConfigButton.addEventListener("click", requestSave);
+discardConfigButton.addEventListener("click", () => {
+  setSaveResult(null);
+  fetchConfigEditor();  // the saved configuration replaces every edit
 });
 
 controllerZones.addEventListener("input", (event) => {

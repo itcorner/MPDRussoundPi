@@ -43,7 +43,16 @@ class FakeElement {
   }
 
   append(...nodes) {
-    for (const node of nodes) this.appendChild(node);
+    for (const node of nodes) {
+      if (typeof node === "string") {
+        // Like the DOM: a string becomes a text node.
+        const text = new FakeElement("#text");
+        text.textContent = node;
+        this.appendChild(text);
+      } else {
+        this.appendChild(node);
+      }
+    }
   }
 
   appendChild(node) {
@@ -401,93 +410,40 @@ test("an empty overview shows the placeholder and an unknown level", () => {
 });
 
 
-function renderAdminState(session) {
+// The session and the login dialog belong to admin.js (tests/test_admin_mode.js); the
+// Status page keeps the token for privileged requests and shows the update sections.
+function renderStatusView(session, login = []) {
   const elements = {
-    adminPanel: new FakeElement("details"), adminState: new FakeElement("span"), adminLoginForm: new FakeElement("form"), adminPassword: new FakeElement("input"),
-    adminSession: new FakeElement("div"), adminSessionText: new FakeElement("span"), adminLogout: new FakeElement("button"),
-    adminSetup: new FakeElement("p"), adminMessage: new FakeElement("p"), adminUpdate: new FakeElement("section"),
-    adminHttpWarning: new FakeElement("p"), adminHttps: new FakeElement("p"), adminHttpsLink: new FakeElement("a"),
+    updatesState: new FakeElement("span"), adminMessage: new FakeElement("p"), adminUpdate: new FakeElement("section"),
+    restorePanel: new FakeElement("details"), restoreState: new FakeElement("span"), restoreBox: new FakeElement("section"),
   };
-  elements.adminPassword.focus = () => { elements.adminPassword.focused = true; };
-  const context = { ...elements, document: { createElement: (tagName) => new FakeElement(tagName) } };
+  const context = {
+    ...elements,
+    document: { createElement: (tagName) => new FakeElement(tagName), createTextNode: (text) => {
+      const node = new FakeElement("#text");
+      node.textContent = String(text);
+      return node;
+    } },
+    window: { adminLogin: (options) => login.push(options) },
+  };
   vm.createContext(context);
   vm.runInContext(rendering, context);
   context.renderAdmin(session);
-  return { ...elements, context };
+  return { ...elements, context, login };
 }
 
-test("administrator panel opens only when a login is possible and keeps the user's choice", () => {
-  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
-  assert.equal(view.adminPanel.open, true, "set up but not logged in: open");
-  view.adminPanel.open = false;  // the user closes it
-  view.context.renderAdmin({ configured: true, authenticated: false, locked_for_seconds: 0 });
-  assert.equal(view.adminPanel.open, false, "a refresh with the same state keeps the user's choice");
-  view.adminPanel.open = true;  // the user opens it again and logs in
-  view.context.renderAdmin({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
-  assert.equal(view.adminPanel.open, true, "logging in keeps the panel open");
-  view.context.renderAdmin({ configured: true, authenticated: false, locked_for_seconds: 0 });
-  assert.equal(view.adminPanel.open, true, "after logout or expiry it opens again");
-  assert.equal(renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 }).adminPanel.open, false,
-    "not set up: collapsed");
-  assert.equal(renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900,
-    expires_in_seconds: 28800 }).adminPanel.open, false, "already logged in when the page loads: collapsed");
+const guest = { configured: true, authenticated: false, locked_for_seconds: 0 };
+const signedIn = { configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900,
+  expires_in_seconds: 28800 };
+
+test("the page keeps only the token of a signed-in session", () => {
+  const view = renderStatusView(guest);
+  assert.equal(vm.runInContext("adminCsrfToken", view.context), null);
+  view.context.renderAdmin(signedIn);
+  assert.equal(vm.runInContext("adminCsrfToken", view.context), "t");
+  view.context.renderAdmin({ configured: false, authenticated: true, csrf_token: "x" });
+  assert.equal(vm.runInContext("adminCsrfToken", view.context), null, "no token where no login is set up");
 });
-
-test("a failed login shows the message and returns to the password field", () => {
-  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
-  view.context.showAdminFailure("Login failed.");
-  assert.equal(view.adminMessage.hidden, false);
-  assert.equal(view.adminMessage.textContent, "Login failed.");
-  assert.equal(view.adminPassword.focused, true);
-  view.context.showAdminMessage("");
-  assert.equal(view.adminMessage.hidden, true);
-});
-
-test("administrator panel shows setup, login, locked and logged-in states in words", () => {
-  const setup = renderAdminState({ configured: false, authenticated: false, locked_for_seconds: 0 });
-  assert.equal(setup.adminState.textContent, "Not set up");
-  assert.equal(setup.adminSetup.hidden, false);
-  assert.equal(setup.adminLoginForm.hidden, true);
-  const out = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
-  assert.equal(out.adminState.textContent, "Not logged in");
-  assert.equal(out.adminLoginForm.hidden, false);
-  assert.equal(out.adminSession.hidden, true);
-  const locked = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 600 });
-  assert.equal(locked.adminState.textContent, "Locked");
-  assert.match(locked.adminMessage.textContent, /locked for about 10 minutes/);
-  const inside = renderAdminState({ configured: true, authenticated: true, csrf_token: "token-1",
-    idle_expires_in_seconds: 900, expires_in_seconds: 28800, recently_authenticated: true });
-  assert.equal(inside.adminState.textContent, "Logged in");
-  assert.equal(inside.adminLoginForm.hidden, true);
-  assert.equal(inside.adminSession.hidden, false);
-  assert.match(inside.adminSessionText.textContent, /15 minutes without activity and at the latest in 480 minutes/);
-  assert.equal(vm.runInContext("adminCsrfToken", inside.context), "token-1");
-});
-
-
-test("the plain-HTTP warning shows only on HTTP, and an HTTPS-only login offers the HTTPS address", () => {
-  const http = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: false,
-    https_required: false, https_url: null });
-  assert.equal(http.adminLoginForm.hidden, false);
-  assert.equal(http.adminHttpWarning.hidden, false);
-  assert.equal(http.adminHttps.hidden, true);
-  const https = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: true,
-    https_required: true, https_url: "https://musicpi.local/" });
-  assert.equal(https.adminLoginForm.hidden, false, "over HTTPS the form is offered");
-  assert.equal(https.adminHttpWarning.hidden, true, "no plain-HTTP warning over HTTPS");
-  assert.equal(https.adminHttps.hidden, true);
-  const refused = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: false,
-    https_required: true, https_url: "https://musicpi.local/" });
-  assert.equal(refused.adminLoginForm.hidden, true, "no password field where the server would refuse it");
-  assert.equal(refused.adminHttps.hidden, false);
-  assert.equal(refused.adminHttpsLink.href, "https://musicpi.local/status");
-  assert.equal(refused.adminHttpsLink.textContent, "https://musicpi.local/status");
-  const hostile = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0, secure: false,
-    https_required: true, https_url: "javascript:alert(1)" });
-  assert.equal(hostile.adminHttps.hidden, true, "only an https:// address becomes a link");
-  assert.equal(hostile.adminLoginForm.hidden, false);
-});
-
 
 const availableUpdates = {
   state: "update_available", installed: { version: "dev-" + "a".repeat(40) }, stale: false, check_failed: false,
@@ -497,9 +453,14 @@ const availableUpdates = {
 };
 const pendingReview = { configured: true, phase: "awaiting_approval", busy: true, review: {
   operation: "op-1", digest: "sha256:abc", action: "update", revision: "c".repeat(40), expires_in_seconds: 95,
-  images: { web: "itcornernet/mpdrussoundpi-web@sha256:1" }, layout_change: "adds the read-only updater socket mount",
-  interruption: "The web application restarts.", backup: "The backup is kept on this Pi. It is not disaster recovery.",
+  images: { web: "itcornernet/mpdrussoundpi-web@sha256:" + "2777aa50ce6f".padEnd(64, "0") },
+  layout_change: "adds the read-only updater socket mount",
+  interruption: "Web app and gateway restart.", backup: "Taken first, kept on this Pi only (not disaster recovery).",
 } };
+const failedUpdate = { configured: true, phase: "failed", kind: "update", busy: false, restore_available: true,
+  operation: "op-1", candidate_revision: "c".repeat(40), error: "<img src=x onerror=1>",
+  backups: [{ operation: "op-1", taken_at: new Date(Date.now() - 2 * 3600000).toISOString(), revision: "a".repeat(40),
+    size_bytes: 108130296, reason: "before the update that failed" }] };
 
 function renderUpdates(view, updates, status, csrf = "t") {
   vm.runInContext(`adminCsrfToken = ${JSON.stringify(csrf)};`, view.context);
@@ -516,28 +477,68 @@ function buttons(node) {
   return labels;
 }
 
-test("software updates: one block with check info for everyone and install for the administrator", () => {
-  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+// Values created inside the page's sandbox have its own Object prototype; compare as data.
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function button(node, label) {
+  return node.find((child) => child.tagName === "BUTTON" && child.textContent === label);
+}
+
+test("software updates: privileged buttons are amber for everyone and a guest signs in first", () => {
+  const view = renderStatusView(guest);
+  const ran = [];
+  vm.runInContext("runUpdateAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
   const anonymous = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false }, null);
   assert.match(anonymous.allText(), /Installed dev-aaaaaaa/);
   assert.match(anonymous.allText(), /Newest published dev-ccccccc \(published just now\)/);
-  assert.match(anonymous.allText(), /Log in as administrator to install it\./);
-  assert.deepEqual(buttons(anonymous), ["Check now"]);
+  assert.deepEqual(buttons(anonymous), ["Check now", "Update to dev-ccccccc"]);
+  const install = button(anonymous, "Update to dev-ccccccc");
+  assert.match(install.className, /admin-action/, "the amber shield style");
+  install.fire("click");
+  assert.equal(view.login.length, 1, "a guest's click opens the login dialog");
+  assert.equal(view.login[0].reason, "Install the update to dev-ccccccc");
+  assert.deepEqual(ran, []);
+  view.login[0].onSuccess();
+  assert.deepEqual(plain(ran), [["review", {}]], "and the action continues after signing in");
   const admin = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });
-  assert.deepEqual(buttons(admin), ["Check now", "Update to dev-ccccccc"]);
+  button(admin, "Update to dev-ccccccc").fire("click");
+  assert.deepEqual(plain(ran.at(-1)), ["review", {}]);
+  assert.equal(view.login.length, 1, "signed in: no dialog");
   const upToDate = renderUpdates(view, { ...availableUpdates, state: "up_to_date" }, { configured: true, phase: "idle", busy: false });
   assert.deepEqual(buttons(upToDate), ["Check now"], "no install button without an available update");
   const notSetUp = renderUpdates(view, availableUpdates, { configured: false, phase: "idle" });
   assert.match(notSetUp.allText(), /not set up here/);
+  assert.equal(view.updatesState.textContent, "Update available");
+  assert.match(view.updatesState.className, /host-level-update/);
 });
 
-test("software updates: the review keeps typed text across refreshes and fails safely", () => {
-  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+test("software updates: Check now sits in one group with the label and the age of the last check", () => {
+  const view = renderStatusView(signedIn);
+  const block = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });
+  const group = block.find((node) => node.className === "update-check-group");
+  assert.ok(group, "label, age and button form one group");
+  assert.match(group.allText(), /Last check/);
+  assert.equal(group.find((node) => node.className === "update-check-age").textContent, "just now");
+  assert.ok(button(group, "Check now"));
+  const newest = block.find((node) => node.tagName === "DD" && /dev-ccccccc/.test(node.textContent));
+  assert.ok(newest.find((node) => node.tagName === "A" && node.textContent === "Docker Hub"), "the link sits with the version");
+  const failedCheck = renderUpdates(view, { ...availableUpdates, check_failed: true, error: "Docker Hub did not answer." },
+    { configured: true, phase: "idle", busy: false });
+  assert.match(failedCheck.allText(), /Check failed Docker Hub did not answer\./, "an error gets its own line");
+});
+
+test("software updates: the review keeps typed text across refreshes and hides the version overview", () => {
+  const view = renderStatusView(signedIn);
   const block = renderUpdates(view, availableUpdates, pendingReview);
   assert.match(block.allText(), /Review: update to dev-ccccccc/);
   assert.match(block.allText(), /not disaster recovery/);
+  assert.match(block.allText(), /Images\s+web\s+2777aa50ce6f/, "short image digests");
+  assert.equal(block.infoBox.hidden, true, "while the review is open it is the only thing shown");
   const input = block.find((node) => node.tagName === "INPUT");
-  const confirm = block.find((node) => node.tagName === "BUTTON" && node.textContent === "Confirm update");
+  const confirm = button(block, "Confirm update");
+  assert.match(confirm.className, /admin-action/);
   input.value = "upd";
   input.fire("input");
   assert.equal(confirm.disabled, true);
@@ -551,20 +552,58 @@ test("software updates: the review keeps typed text across refreshes and fails s
   again.value = "update";
   again.fire("input");
   assert.equal(confirm.disabled, false);
-  const failed = renderUpdates(view, availableUpdates, { configured: true, phase: "failed", busy: false, restore_available: true,
-    operation: "op-1", error: "<img src=x onerror=1>" });
-  assert.deepEqual(buttons(failed), ["Check now", "Restore previous version", "Update to dev-ccccccc"]);
-  assert.equal(failed.find((node) => node.tagName === "IMG"), null);
-  const unknown = renderUpdates(view, availableUpdates, { configured: true, phase: "outcome_unknown", busy: false });
-  assert.deepEqual(buttons(unknown), ["Check now"], "no new update while the outcome is unknown");
 });
 
-test("software updates: a failure is stated once, in the updater's words when it gives them", () => {
-  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+test("a failed update offers a retry and opens the Restore backup section with the backup's facts", () => {
+  const view = renderStatusView(signedIn);
+  const ran = [];
+  vm.runInContext("runUpdateAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
+  const failed = renderUpdates(view, availableUpdates, failedUpdate);
+  assert.deepEqual(buttons(failed), ["Check now", "Retry update to dev-ccccccc"], "the same version is a retry");
+  assert.equal(failed.find((node) => node.tagName === "IMG"), null, "the updater's text is never markup");
+  assert.equal(view.restorePanel.hidden, false);
+  assert.equal(view.restorePanel.open, true, "the section opens by itself after a failed update");
+  assert.equal(view.restoreState.textContent, "Update failed");
+  assert.match(view.restoreBox.allText(), /Backup from /);
+  assert.match(view.restoreBox.allText(), /Taken 2 h ago, before the update that failed/);
+  assert.match(view.restoreBox.allText(), /Version dev-aaaaaaa/);
+  assert.match(view.restoreBox.allText(), /Size 108 MB/);
+  button(view.restoreBox, "Restore this backup").fire("click");
+  assert.deepEqual(plain(ran), [["restore", { operation: "op-1" }]]);
+  view.restorePanel.open = false;  // the user closes it
+  renderUpdates(view, availableUpdates, failedUpdate);
+  assert.equal(view.restorePanel.open, false, "opened once per operation, the user's choice then stays");
+  const newer = renderUpdates(view, availableUpdates, { ...failedUpdate, candidate_revision: "b".repeat(40) });
+  assert.deepEqual(buttons(newer), ["Check now", "Update to dev-ccccccc"], "a newer version is a normal update");
+  const unknown = renderUpdates(view, availableUpdates, { configured: true, phase: "outcome_unknown", kind: "update",
+    busy: false, restore_available: true, operation: "op-1" });
+  assert.deepEqual(buttons(unknown), ["Check now"], "no retry while the outcome is unknown");
+  const idle = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });
+  assert.equal(view.restorePanel.hidden, true, "nothing to restore, no section");
+  assert.deepEqual(buttons(idle), ["Check now", "Update to dev-ccccccc"]);
+});
+
+test("a pending restore review opens its section and pauses the update button", () => {
+  const view = renderStatusView(signedIn);
+  const status = { ...failedUpdate, phase: "restore_awaiting_approval", kind: "restore", review: {
+    operation: "op-1", digest: "sha256:r", action: "restore", revision: "a".repeat(40), expires_in_seconds: 100,
+    images: {}, interruption: "Web app and gateway restart.", backup: "Taken first." } };
+  const updates = renderUpdates(view, availableUpdates, status);
+  assert.deepEqual(buttons(updates), ["Check now"]);
+  assert.equal(view.restorePanel.open, true);
+  assert.equal(view.restoreState.textContent, "Confirm restore");
+  assert.match(view.restoreBox.allText(), /Review: restore backup/);
+  assert.ok(button(view.restoreBox, "Confirm restore"));
+});
+
+test("software updates: a failure is stated once, in its own section, in the updater's words", () => {
+  const view = renderStatusView(signedIn);
   const message = (status) => {
-    const block = renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
+    renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
     const paragraphs = [];
-    block.find((node) => { if (node.tagName === "P") paragraphs.push(node.textContent); return false; });
+    for (const box of [view.adminUpdate, view.restoreBox]) {
+      box.find((node) => { if (node.tagName === "P") paragraphs.push(node.textContent); return false; });
+    }
     return paragraphs;
   };
   assert.deepEqual(message({ phase: "failed", kind: "update", restore_available: true, operation: "op-1",
@@ -572,6 +611,7 @@ test("software updates: a failure is stated once, in the updater's words when it
   ["The update failed after the services were stopped."]);
   assert.deepEqual(message({ phase: "failed", kind: "restore", error: "The restore failed; inspect the deployment state on the Pi." }),
     ["The restore failed; inspect the deployment state on the Pi."], "a failed restore is not reported as a failed update");
+  assert.match(view.restoreBox.allText(), /The restore failed/, "and it appears in the restore section");
   assert.deepEqual(message({ phase: "failed_before_interruption",
     error: "The newest image could not be resolved on Docker Hub. Nothing was interrupted." }),
   ["The newest image could not be resolved on Docker Hub. Nothing was interrupted."]);
@@ -581,11 +621,13 @@ test("software updates: a failure is stated once, in the updater's words when it
 });
 
 test("software updates: a successful update says how many old images it removed", () => {
-  const view = renderAdminState({ configured: true, authenticated: true, csrf_token: "t", idle_expires_in_seconds: 900, expires_in_seconds: 28800 });
+  const view = renderStatusView(signedIn);
   const paragraphs = (status) => {
-    const block = renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
+    renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
     const found = [];
-    block.find((node) => { if (node.tagName === "P") found.push(node.textContent); return false; });
+    for (const box of [view.adminUpdate, view.restoreBox]) {
+      box.find((node) => { if (node.tagName === "P") found.push(node.textContent); return false; });
+    }
     return found;
   };
   assert.deepEqual(paragraphs({ phase: "succeeded", cleanup: { removed: 4, freed_bytes: 650_400_000 } }),
@@ -598,12 +640,12 @@ test("software updates: a successful update says how many old images it removed"
   assert.deepEqual(paragraphs({ phase: "restored", cleanup: { removed: 4, freed_bytes: 1 } }),
     ["The previous version was restored."], "only after a successful update");
   const review = renderUpdates(view, availableUpdates, { ...pendingReview, review: { ...pendingReview.review,
-    cleanup: "After a successful update, old images of this app are removed." } });
-  assert.match(review.allText(), /Old images.*After a successful update, old images of this app are removed\./);
+    cleanup: "Removed after success; the backup keeps a copy." } });
+  assert.match(review.allText(), /Old images.*Removed after success; the backup keeps a copy\./);
 });
 
 test("the page reloads once when the web application comes back as a new build", () => {
-  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  const view = renderStatusView({ configured: true, authenticated: false, locked_for_seconds: 0 });
   const reloads = [];
   const stored = new Map();
   view.context.window = {
@@ -627,7 +669,7 @@ test("the page reloads once when the web application comes back as a new build",
 });
 
 test("a reload loop is impossible even when the reloaded page is still the old one", () => {
-  const view = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  const view = renderStatusView({ configured: true, authenticated: false, locked_for_seconds: 0 });
   const reloads = [];
   const stored = new Map([["russoundReloadedForBuild", "b".repeat(40) + "@x"]]);
   view.context.window = {
@@ -637,7 +679,7 @@ test("a reload loop is impossible even when the reloaded page is still the old o
   view.context.reloadForNewBuild({ revision: "a".repeat(40), built_at: "old" });
   assert.equal(view.context.reloadForNewBuild({ revision: "b".repeat(40), built_at: "x" }), false,
     "already reloaded for this build in this tab");
-  const blocked = renderAdminState({ configured: true, authenticated: false, locked_for_seconds: 0 });
+  const blocked = renderStatusView({ configured: true, authenticated: false, locked_for_seconds: 0 });
   blocked.context.window = { location: { reload: () => reloads.push("blocked") },
     sessionStorage: { getItem: () => { throw new Error("denied"); } } };
   blocked.context.reloadForNewBuild({ revision: "a".repeat(40), built_at: "1" });

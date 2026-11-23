@@ -22,11 +22,9 @@
             </nav>
           </details>
         </div>
-        <p id="configEditorMessage" class="config-hint" role="status" hidden></p>
-        <div class="header-actions-bottom">
-          <button id="saveConfigButton" class="power-button" type="button">Save configuration</button>
-        </div>
       </section>
+
+      <p id="configEditorMessage" class="config-hint config-editor-message" role="status" hidden></p>
 
       <details id="connectionConfig" class="panel status-panel collapsible-panel">
         <summary class="collapsible-summary">
@@ -110,7 +108,16 @@
       </details>
     </main>
 
+    <!-- Appears only with unsaved changes, at the bottom inside the administrator frame. -->
+    <div id="configSaveBar" class="admin-save-bar" role="region" aria-label="Unsaved configuration changes" hidden>
+      <span id="configSaveText" class="admin-save-text">Unsaved changes</span>
+      <span class="admin-save-spacer"></span>
+      <button id="discardConfigButton" class="admin-save-discard" type="button">Discard</button>
+      <button id="saveConfigButton" class="admin-save-button admin-action" type="button">Save</button>
+    </div>
+
     <script src="/static/api.js"></script>
+    <script src="/static/admin.js"></script>
     <script src="/static/config.js"></script>
   </body>
 </html>

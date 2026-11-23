@@ -58,11 +58,10 @@ REVIEW_SECONDS = 120
 MAX_REQUEST = 64 * 1024
 ACTIVE_PHASES = ("resolving", "awaiting_approval", "approved", "running", "restore_awaiting_approval",
                  "restoring")
-INTERRUPTION = ("The web application and the serial gateway stop and restart; the page loses its connection "
-                "for a few minutes and reconnects by itself.")
-BACKUP_NOTE = "The backup is kept on this Pi. It is not disaster recovery: it shares the Pi's storage."
-CLEANUP_NOTE = ("After a successful update, old images of this app that neither the new nor the previous "
-                "version uses are removed. The backup keeps its own copy of the old images.")
+# Short lines for the review card on the Status page (label: text).
+INTERRUPTION = "Web app and gateway restart; this page reconnects after a few minutes."
+BACKUP_NOTE = "Taken first, kept on this Pi only (not disaster recovery)."
+CLEANUP_NOTE = "Removed after success; the backup keeps a copy."
 
 logger = logging.getLogger("mpdrussoundpi.updater")
 
@@ -76,6 +75,19 @@ def _cleanup(value: Any) -> dict[str, Any] | None:
     error = value.get("error")
     return {**counts, "error": error[:200] if isinstance(error, str) else None}
 
+
+
+def _restorable_backups(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The backups a restore can use, newest first: today only the failed update's own backup.
+
+    A list so that keeping more backups later adds entries without changing the protocol.
+    """
+    restore = state.get("restore")
+    if not isinstance(restore, dict) or state.get("phase") not in ("failed", "outcome_unknown"):
+        return []
+    return [{"operation": restore.get("operation"), "taken_at": restore.get("taken_at"),
+             "revision": restore.get("revision"), "size_bytes": restore.get("size_bytes"),
+             "reason": "before the update that failed"}]
 
 class UpdaterError(ValueError):
     """A request the updater refuses; the message is safe to show."""
@@ -221,6 +233,7 @@ class Updater:
             "candidate_revision": state.get("candidate_revision"), "review": review,
             "result": state.get("result"), "error": state.get("error"),
             "restore_available": bool(state.get("restore")) and state["phase"] in ("failed", "outcome_unknown"),
+            "backups": _restorable_backups(state),
             "updated_at": state.get("updated_at"), "busy": state["phase"] in ACTIVE_PHASES,
         }
 
@@ -333,7 +346,25 @@ class Updater:
             return None
         if value.get("operation") != operation or not isinstance(value.get("manifest_sha256"), str):
             return None
-        return {"operation": operation, "manifest_sha256": value["manifest_sha256"]}
+        identity = {"operation": operation, "manifest_sha256": value["manifest_sha256"],
+                    "taken_at": None, "size_bytes": None, "revision": None}
+        # When the backup was taken and how big it is: from its own manifest. Its version is
+        # the one still recorded as installed, because a failed update is never committed.
+        try:
+            manifest = json.loads(private_read(self.evidence / operation / "manifest.json"))
+            if isinstance(manifest, dict) and manifest.get("operation") == operation:
+                if isinstance(manifest.get("created_at"), str):
+                    identity["taken_at"] = manifest["created_at"][:40]
+                if type(manifest.get("total_bytes")) is int and manifest["total_bytes"] >= 0:
+                    identity["size_bytes"] = manifest["total_bytes"]
+        except (OSError, ValueError, ComposeError):
+            pass
+        try:
+            current = self._committed()
+            identity["revision"] = current.get("revision") if isinstance(current, dict) else None
+        except (OSError, ValueError, KeyError, StateError):
+            pass
+        return identity
 
     def approve(self, operation: object, digest: object, actor: dict[str, str]) -> dict[str, Any]:
         with self._lock:

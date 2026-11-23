@@ -496,7 +496,11 @@ never record frontend events and never log the password.
 - `POST /api/admin/logout` and `POST /api/admin/reauthenticate` (`{"password"}`)
   need the session cookie **and** the `X-CSRF-Token` header with the session's
   token. Reauthentication refreshes the "recently authenticated" window (5
-  minutes) that disruptive actions require.
+  minutes) that a restore requires.
+- `POST /api/admin/extend` (`{}`, session and `X-CSRF-Token`): counts as activity,
+  so the idle time starts again ("Extend" in the administrator strip). Answers the
+  session description like `GET /api/admin/session`. Reading the session never
+  extends it.
 
 Privileged routes answer `401` without a session, `403` with code `csrf` without
 a valid token and `403` with code `reauthenticate` when the password must be
@@ -517,14 +521,19 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   `outcome_unknown`, `restore_awaiting_approval`, `restoring`, `restored`),
   `kind`, `operation`, `installed_revision`, `candidate_revision`, `error`,
   `finished_at`, `cleanup` (after a successful update: `removed` old images and
-  `freed_bytes`, or `null`), `restore_available`, `busy`, `updated_at`. Never the review.
+  `freed_bytes`, or `null`), `restore_available`, `backups`, `busy`, `updated_at`.
+  Never the review. `backups` lists the restorable backups, newest first (today
+  at most the failed update's own one, up to five later): `operation`, `taken_at`
+  (ISO time from the backup's manifest), `revision` (the version it contains),
+  `size_bytes` and a short `reason`; unknown values are `null`.
 - `GET /api/admin/update` (administrator session): the same plus `review`
   (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `images`,
   `layout_change`, `interruption`, `backup`, `cleanup`) while a confirmation is pending.
 - `POST /api/admin/update/review` (`{}`), `/approve`
-  (`{"operation", "digest"}`) and `/restore` (`{"operation"}`) need the session,
-  the `X-CSRF-Token` header and the password entered within the last 5 minutes;
-  `/cancel` (`{"operation"}`) needs session and token. `202` when the updater
+  (`{"operation", "digest"}`) and `/cancel` (`{"operation"}`) need the session
+  and the `X-CSRF-Token` header. `/restore` (`{"operation"}`) additionally needs
+  the password entered within the last 5 minutes (`403 reauthenticate`
+  otherwise). `202` when the updater
   accepted the request, `409` with its reason when it refused (busy, no pending
   review, wrong or expired confirmation), `503` when it is not installed or does
   not answer. Each action is written to the audit log.
