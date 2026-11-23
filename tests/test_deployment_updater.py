@@ -49,6 +49,11 @@ class FakeTransaction:
             identity = evidence / (operation + ".backup-identity.json")
             identity.write_text(json.dumps({"operation": operation, "manifest_sha256": "d" * 64}))
             identity.chmod(0o600)
+            (evidence / operation).mkdir(mode=0o700)
+            manifest = evidence / operation / "manifest.json"
+            manifest.write_text(json.dumps({"operation": operation, "created_at": "2026-11-23T00:04:18.238842+00:00",
+                                            "total_bytes": 108130296, "entries": []}))
+            manifest.chmod(0o600)
         self.release.wait(5)
         if self.outcome == "fail":
             raise ChannelError("Target operation failed")
@@ -116,7 +121,7 @@ class UpdateFlowTests(Fixture):
         updater = self.make(transaction)
         operation = updater.handle({"op": "review", "actor": ACTOR})["operation"]
         review = self.wait_for(updater, "awaiting_approval")["review"]
-        self.assertIn("old images", review["summary"]["cleanup"])
+        self.assertEqual(review["summary"]["cleanup"], "Removed after success; the backup keeps a copy.")
         updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
         transaction.release.set()
         result = self.wait_for(updater, "succeeded")["result"]
@@ -155,6 +160,10 @@ class UpdateFlowTests(Fixture):
         self.transaction.release.set()
         status = self.wait_for(updater, "failed")
         self.assertTrue(status["restore_available"])
+        self.assertEqual(status["backups"], [{
+            "operation": operation, "taken_at": "2026-11-23T00:04:18.238842+00:00",
+            "revision": self.installed["revision"], "size_bytes": 108130296,
+            "reason": "before the update that failed"}], "when it was taken, its version and size")
         self.transaction.outcome = "complete"
         updater.handle({"op": "restore", "operation": operation, "actor": ACTOR})
         review = self.wait_for(updater, "restore_awaiting_approval")["review"]
@@ -173,6 +182,7 @@ class UpdateFlowTests(Fixture):
         updater.handle({"op": "review", "actor": ACTOR})
         status = self.wait_for(updater, "failed_before_interruption")
         self.assertFalse(status["restore_available"])
+        self.assertEqual(status["backups"], [])
         with self.assertRaisesRegex(UpdaterError, "No restore"):
             updater.handle({"op": "restore", "operation": str(uuid4()), "actor": ACTOR})
 

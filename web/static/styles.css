@@ -84,7 +84,35 @@ h1 {
 }
 
 .system-panel h1 {
+  margin: 0;
   font-size: clamp(1.15rem, 4vw, 1.55rem);
+  line-height: 1.2;
+  /* Never more than two lines next to the header buttons on a phone. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Blocks directly below the page header (shortcuts, save action): the header itself
+   holds only the title, the administrator button and the menu on every page. */
+.page-panel {
+  padding: 0.85rem 1.1rem;
+}
+
+.page-panel > .section-title:first-of-type,
+.page-panel > .config-hint:first-child:not([hidden]) {
+  margin-top: 0;
+}
+
+.page-panel .shortcuts:first-child,
+.page-panel > .header-actions-bottom {
+  margin-top: 0.65rem;
+}
+
+.page-panel > [hidden] + .header-actions-bottom,
+.page-panel > .header-actions-bottom:first-child {
+  margin-top: 0;
 }
 
 .panel-copy {
@@ -185,7 +213,10 @@ h1 {
   right: 0;
   display: grid;
   gap: 0.25rem;
-  width: 13rem;
+  /* As wide as its widest entry ("Sign in as administrator"), never narrower than before. */
+  width: max-content;
+  min-width: 13rem;
+  max-width: calc(100vw - 2rem);
   margin: 0;
   padding: 0.4rem;
   border-radius: 16px;
@@ -1365,9 +1396,7 @@ h1 {
 }
 
 .admin-update {
-  margin-top: 1rem;
-  padding-top: 0.8rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: 0;
 }
 
 .admin-review {
@@ -1812,3 +1841,794 @@ input[type="range"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ------------------------------------------------------------------ administrator mode
+   Amber is reserved for administrator power: nothing else on the pages uses it.
+   docs/plans/web_open_admin-mode-and-protected-settings.md */
+:root {
+  --admin: #f5b942;
+  --admin-low: #ff9a3c;
+  --admin-ink: #241a00;
+  --admin-tint: rgba(245, 185, 66, 0.12);
+}
+
+.admin-strip-button:focus-visible,
+.page-menu-admin:focus-visible {
+  outline: 2px solid var(--admin);
+  outline-offset: 3px;
+}
+
+.page-menu-admin-icon,
+.admin-strip-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.page-menu-admin-icon svg,
+.admin-strip-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.page-menu-divider {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 0.2rem 0.3rem;
+}
+
+.page-menu-admin {
+  gap: 0.6rem;
+  width: 100%;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-elevated .page-menu-admin {
+  color: var(--admin);
+}
+
+/* The strip stays in view while scrolling, so an exit is always one tap away. */
+.admin-strip {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  background: var(--admin);
+  color: var(--admin-ink);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.admin-strip[hidden] {
+  display: none;
+}
+
+.admin-low .admin-strip {
+  background: var(--admin-low);
+}
+
+.admin-strip-short {
+  display: none;
+}
+
+.admin-strip-spacer {
+  flex: 1;
+}
+
+.admin-strip-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-strip-button {
+  min-height: 32px;
+  padding: 0.3rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--admin-ink);
+  color: var(--admin);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.admin-strip-button[hidden] {
+  display: none;
+}
+
+/* Frame around the whole window: an overlay, so it takes no layout space. */
+.admin-frame {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  border: 0 solid var(--admin);
+  transition: border-width 150ms ease;
+}
+
+.admin-elevated .admin-frame {
+  border-width: 3px;
+  box-shadow: inset 0 0 22px rgba(245, 185, 66, 0.33);
+}
+
+.admin-low .admin-frame {
+  border-color: var(--admin-low);
+}
+
+/* Every action that needs the administrator account: amber with the shield, for
+   guests too (a guest's click opens the login first). */
+.admin-action,
+.compact-button.admin-action,
+.compact-button-primary.admin-action {
+  background: var(--admin);
+  border-color: var(--admin);
+  color: var(--admin-ink);
+  font-weight: 700;
+}
+
+.admin-action:hover:not(:disabled) {
+  background: #ffc95c;
+  border-color: #ffc95c;
+}
+
+.admin-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-action::before {
+  content: "";
+  display: inline-block;
+  width: 0.7em;
+  height: 0.85em;
+  margin-right: 0.45em;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 18%, 100% 55%, 50% 100%, 0 55%, 0 18%);
+  vertical-align: -0.1em;
+}
+
+/* Login dialog: centred on wide screens, a bottom sheet on phones. */
+.admin-dialog {
+  width: min(400px, calc(100vw - 2rem));
+  padding: 1.25rem;
+  border: 1px solid rgba(245, 185, 66, 0.55);
+  border-radius: 20px;
+  background: #10233a;
+  color: var(--text);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.admin-dialog::backdrop {
+  background: rgba(3, 10, 18, 0.78);
+}
+
+.admin-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+}
+
+.admin-dialog-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  color: var(--admin);
+}
+
+.admin-dialog-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.admin-dialog-reason {
+  margin: 0.5rem 0 0.25rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(7, 19, 31, 0.8);
+  font-size: 0.9rem;
+}
+
+.admin-dialog-reason[hidden],
+.admin-dialog-message[hidden],
+.admin-dialog-note[hidden],
+.admin-dialog-form[hidden],
+.admin-dialog-cancel[hidden] {
+  display: none;
+}
+
+.admin-dialog-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.admin-dialog-form label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.admin-dialog-form input {
+  min-height: 44px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #2a4764;
+  border-radius: 12px;
+  background: #0b1a2b;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+}
+
+.admin-dialog-form input:focus-visible {
+  outline: 2px solid var(--admin);
+  outline-offset: 2px;
+}
+
+.admin-dialog-message {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.admin-dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.admin-dialog-submit,
+.admin-dialog-cancel {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-dialog-submit {
+  border: 1px solid var(--admin);
+  background: var(--admin);
+  color: var(--admin-ink);
+}
+
+.admin-dialog-submit:disabled {
+  opacity: 0.6;
+}
+
+.admin-dialog-cancel {
+  border: 1px solid rgba(91, 185, 255, 0.28);
+  background: rgba(91, 185, 255, 0.08);
+  color: var(--text);
+}
+
+.admin-dialog > .admin-dialog-cancel {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+.admin-dialog-note {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.admin-dialog-note code {
+  word-break: break-all;
+}
+
+.admin-dialog-note a {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+@media (max-width: 700px) {
+  .system-panel h1 {
+    hyphens: auto;
+    overflow-wrap: break-word;
+  }
+
+  .admin-dialog {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    border-radius: 22px 22px 0 0;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  }
+
+  .admin-strip {
+    padding: 0.45rem 0.85rem;
+  }
+
+  .admin-strip-long {
+    display: none;
+  }
+
+  .admin-strip-short {
+    display: inline;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-frame {
+    transition: none;
+  }
+}
+
+/* Recent frontend events on phones: one compact card per event instead of four
+   columns a few characters wide. Time and address on top, then the action and the
+   payload at full width. The markup stays a table for screen readers. */
+@media (max-width: 700px) {
+  .status-table,
+  .status-table tbody {
+    display: block;
+  }
+
+  .status-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .status-table tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "time ip"
+      "action action"
+      "payload payload";
+    gap: 0.3rem 0.75rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .status-table td {
+    width: auto !important;
+    padding: 0;
+    border: 0;
+  }
+
+  .status-table .event-time {
+    grid-area: time;
+  }
+
+  .status-table .event-time .status-time {
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .status-table .event-time .status-time-value {
+    color: var(--text);
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+
+  .status-table .event-time .status-time-date {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 0.85rem;
+  }
+
+  .status-table .event-ip {
+    grid-area: ip;
+    justify-self: end;
+    color: var(--muted);
+    font-size: 0.82rem;
+    text-align: right;
+  }
+
+  .status-table .event-action {
+    grid-area: action;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+  }
+
+  .status-table .event-payload {
+    grid-area: payload;
+    min-width: 0;
+  }
+}
+
+/* License notices on phones: component and license on one line, "used by" below. */
+@media (max-width: 700px) {
+  .license-table,
+  .license-table tbody {
+    display: block;
+  }
+
+  .license-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .license-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "component license"
+      "usedby usedby";
+    gap: 0.2rem 0.75rem;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .license-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .license-table td:nth-child(1) {
+    grid-area: component;
+    font-weight: 700;
+  }
+
+  .license-table td:nth-child(2) {
+    grid-area: usedby;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  .license-table td:nth-child(3) {
+    grid-area: license;
+    justify-self: end;
+    white-space: nowrap;
+    font-size: 0.9rem;
+  }
+}
+
+/* Save bar of the configuration page: at the bottom of the window, inside the
+   administrator frame, only while there are unsaved changes. */
+.admin-save-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem calc(0.7rem + env(safe-area-inset-bottom));
+  border-top: 2px solid var(--admin);
+  background: #2a2108;
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.admin-save-bar[hidden] {
+  display: none;
+}
+
+.admin-save-bar.is-success {
+  border-top-color: #4cd39a;
+  background: #0f2e22;
+}
+
+.admin-save-bar.is-error {
+  border-top-color: var(--danger);
+  background: #34121c;
+}
+
+.admin-save-bar.is-error .admin-save-text {
+  color: #ffc2cf;
+}
+
+.admin-save-bar {
+  transition: transform 450ms ease-in, opacity 450ms ease-in;
+}
+
+.admin-save-bar.is-success .admin-save-button,
+.admin-save-bar.is-success .admin-save-discard {
+  visibility: hidden;
+}
+
+/* The message takes the whole bar, centred, while the invisible buttons hold its size. */
+.admin-save-bar.is-success .admin-save-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem env(safe-area-inset-bottom);
+}
+
+.admin-save-bar.is-leaving {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-save-bar {
+    transition: none;
+  }
+}
+
+.admin-save-spacer {
+  flex: 1;
+}
+
+.admin-save-discard,
+.admin-save-button {
+  min-height: 44px;
+  padding: 0.55rem 1.1rem;
+  border-radius: 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-save-discard {
+  border: 1px solid rgba(245, 185, 66, 0.45);
+  background: transparent;
+  color: var(--text);
+}
+
+.admin-save-discard[hidden] {
+  display: none;
+}
+
+.has-save-bar .app-shell {
+  padding-bottom: 5.5rem;
+}
+
+.config-editor-message[hidden] {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .admin-save-bar {
+    flex-wrap: wrap;
+  }
+
+  .admin-save-text {
+    flex: 1 1 100%;
+  }
+
+  .admin-save-spacer {
+    display: none;
+  }
+
+  .admin-save-discard,
+  .admin-save-button {
+    flex: 1;
+  }
+
+  .has-save-bar .app-shell {
+    padding-bottom: 8.5rem;
+  }
+}
+
+/* Level badges carry an icon in their colour: check (ok), triangle (warning),
+   cross (problem), dash (unknown), arrow (update). The text stays for screen readers
+   and as the tooltip; on phones the section badges show the icon only. */
+.host-level::before {
+  content: "";
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-right: 0.35rem;
+  background: currentColor;
+  -webkit-mask: var(--level-icon) center / contain no-repeat;
+  mask: var(--level-icon) center / contain no-repeat;
+}
+
+.host-level-ok {
+  --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm-1.2 14.4-4.2-4.2 1.4-1.4 2.8 2.8 5.8-5.8 1.4 1.4z'/%3E%3C/svg%3E");
+  background: rgba(76, 211, 154, 0.12);
+  border-color: rgba(76, 211, 154, 0.4);
+  color: #6fdcaa;
+}
+
+.host-level-warning { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2 1 21h22zm-1 7h2v6h-2zm0 8h2v2h-2z'/%3E%3C/svg%3E"); }
+.host-level-problem { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm3.5 12.1-1.4 1.4-2.1-2.1-2.1 2.1-1.4-1.4 2.1-2.1-2.1-2.1 1.4-1.4 2.1 2.1 2.1-2.1 1.4 1.4-2.1 2.1z'/%3E%3C/svg%3E"); }
+.host-level-unknown { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm-5 9h10v2H7z'/%3E%3C/svg%3E"); }
+
+.host-level-update {
+  --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm1 16h-2v-7.2l-2.6 2.6L7 12l5-5 5 5-1.4 1.4-2.6-2.6z'/%3E%3C/svg%3E");
+  background: rgba(91, 185, 255, 0.14);
+  border-color: rgba(91, 185, 255, 0.4);
+  color: var(--accent);
+}
+
+.update-pill.host-level::before {
+  margin-right: 0;
+}
+
+@media (max-width: 700px) {
+  .collapsible-summary .host-level,
+  .status-item-row .host-level {
+    font-size: 0;
+    gap: 0;
+    padding: 0.35rem;
+  }
+
+  .collapsible-summary .host-level::before,
+  .status-item-row .host-level::before {
+    width: 1.15rem;
+    height: 1.15rem;
+    margin-right: 0;
+  }
+}
+
+/* Connection states use the same icons as the level badges. */
+.backend-summary-status::before {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  border-radius: 0;
+  -webkit-mask: var(--level-icon) center / contain no-repeat;
+  mask: var(--level-icon) center / contain no-repeat;
+}
+
+.backend-summary-status { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm-5 9h10v2H7z'/%3E%3C/svg%3E"); }
+.backend-summary-status[data-state="connected"] { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm-1.2 14.4-4.2-4.2 1.4-1.4 2.8 2.8 5.8-5.8 1.4 1.4z'/%3E%3C/svg%3E"); }
+.backend-summary-status[data-state="disconnected"] { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm3.5 12.1-1.4 1.4-2.1-2.1-2.1 2.1-1.4-1.4 2.1-2.1-2.1-2.1 1.4-1.4 2.1 2.1 2.1-2.1 1.4 1.4-2.1 2.1z'/%3E%3C/svg%3E"); }
+.backend-summary-status[data-state="incomplete"] { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2 1 21h22zm-1 7h2v6h-2zm0 8h2v2h-2z'/%3E%3C/svg%3E"); }
+
+.restore-intro {
+  margin: 0 0 0.75rem;
+}
+
+.playback-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm-5 9h10v2H7z'/%3E%3C/svg%3E");
+}
+
+.playback-health::before {
+  content: "";
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  background: currentColor;
+  -webkit-mask: var(--level-icon) center / contain no-repeat;
+  mask: var(--level-icon) center / contain no-repeat;
+}
+
+.playback-health[data-status="ok"] { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm-1.2 14.4-4.2-4.2 1.4-1.4 2.8 2.8 5.8-5.8 1.4 1.4z'/%3E%3C/svg%3E"); }
+.playback-health[data-status="unavailable"] { --level-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20zm3.5 12.1-1.4 1.4-2.1-2.1-2.1 2.1-1.4-1.4 2.1-2.1-2.1-2.1 1.4-1.4 2.1 2.1 2.1-2.1 1.4 1.4-2.1 2.1z'/%3E%3C/svg%3E"); color: #ff9fb3; }
+
+/* Restore backup: one entry per restorable backup (today one, later more). */
+.backup-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.backup-entry {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(7, 19, 31, 0.55);
+}
+
+.backup-title {
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+.backup-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.2rem 1rem;
+  margin: 0 0 0.6rem;
+  font-size: 0.9rem;
+}
+
+.backup-facts dt {
+  color: var(--muted);
+}
+
+.backup-facts dd {
+  margin: 0;
+}
+
+.review-images code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.review-image {
+  white-space: nowrap;
+}
+
+/* Software updates: label, age and "Check now" as one group. Wide screens: a row of the
+   list, sharing its columns (subgrid), the age in a fixed-width slot so the button keeps
+   its place. Phones: label over age on the left, the button centred to the right of both. */
+.update-check-group {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.update-check-cells {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.update-check-group dd {
+  margin: 0;
+}
+
+.update-check-age {
+  min-width: 11ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.update-check-action {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.update-check-action .compact-button {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+@media (max-width: 520px) {
+  .update-check-group {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "label action"
+      "age action";
+    column-gap: 0.75rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .update-check-group > dt {
+    grid-area: label;
+  }
+
+  .update-check-cells {
+    display: contents;
+  }
+
+  .update-check-age {
+    grid-area: age;
+  }
+
+  .update-check-action {
+    grid-area: action;
+  }
+}
+
+/* Menu entries carry an icon like the administrator row (drawn from the link target, so
+   the pages' markup stays as it is). */
+.page-menu-link[href] {
+  gap: 0.6rem;
+}
+
+.page-menu-link[href]::before {
+  content: "";
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: currentColor;
+  -webkit-mask: var(--menu-icon) center / contain no-repeat;
+  mask: var(--menu-icon) center / contain no-repeat;
+}
+
+.page-menu-link[href="/"] { --menu-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='2.5' width='14' height='19' rx='2.5'/%3E%3Ccircle cx='12' cy='14.5' r='3.5'/%3E%3Ccircle cx='12' cy='7' r='1' fill='black'/%3E%3C/svg%3E"); }
+
+.page-menu-link[href="/playback"] { --menu-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M10 8.5v7l5.5-3.5z' fill='black'/%3E%3C/svg%3E"); }
+
+.page-menu-link[href="/config"] { --menu-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E"); }
+
+.page-menu-link[href="/status"] { --menu-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l3-7 4 14 3-7h4'/%3E%3C/svg%3E"); }

@@ -3,16 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Playback Status</title>
+    <title>Russound Playback</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="app-shell status-shell">
-      <div id="playbackMessage" class="playback-message" role="alert" hidden></div>
       <section class="panel system-panel">
         <div class="panel-header">
-          <h1>Playback status</h1>
+          <h1>Russound playback</h1>
           <details class="page-navigation">
             <summary class="menu-toggle"><span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>Menu</summary>
             <nav class="page-menu" aria-label="Page navigation">
@@ -24,6 +23,8 @@
           </details>
         </div>
       </section>
+
+      <div id="playbackMessage" class="playback-message" role="alert" hidden></div>
 
       <section class="panel playback-panel" aria-live="polite">
         <div class="panel-header">
@@ -46,6 +47,7 @@
     </dialog>
 
     <script src="/static/api.js"></script>
+    <script src="/static/admin.js"></script>
     <script src="/static/playback.js"></script>
   </body>
 </html>

@@ -435,7 +435,7 @@ class RussoundServerTests(unittest.TestCase):
                 self.assertNotIn(b"Advanced sound", response.data)
             with client.get("/playback") as response:
                 self.assertEqual(response.status_code, 200)
-                self.assertIn(b"Playback status", response.data)
+                self.assertIn(b"Russound playback", response.data)
                 self.assertIn(b'class="page-navigation"', response.data)
             with client.get("/config") as response:
                 self.assertEqual(response.status_code, 200)

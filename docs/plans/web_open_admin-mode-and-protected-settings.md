@@ -1,6 +1,6 @@
 # Administrator mode: global sign-in and protected settings
 
-**Status:** open. Planned and decided on 2026-11-22; nothing implemented yet. The
+**Status:** open. Planned and decided on 2026-11-22. Stages 2 and 3 and the visual part of stage 4 implemented on 2026-11-24 after a local preview session; the server enforcement (stage 1) is open. The
 mockups are in the session that produced this plan; their decisions are recorded
 below. Related to [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (the first user of the administrator account) and
@@ -124,24 +124,49 @@ Changes:
 
 ## Stages
 
-- [ ] **1. Server.** Admin check on `POST /api/config`; reauthentication moved
-      to restore and password change; password change endpoint (after the mount
-      check); tests and `web/API.md`.
-- [ ] **2. Shared admin module and header.** `admin.js`, login sheet, shield
-      button, Menu row, strip, frame, countdown; tests; phone check.
-- [ ] **3. Status page.** Remove the Administrator section; guest and
-      elevated states of the update card.
-- [ ] **4. Configuration page.** Read-only guest view, edit mode, Save bar,
-      behaviour on session end; tests.
+- [ ] **1. Server.** Admin check on `POST /api/config`; password change endpoint
+      (after the mount check); tests and `web/API.md`. *Done 2026-11-24:* update
+      review and approve no longer ask for the password again (only a restore
+      does), `POST /api/admin/extend` for "Extend".
+- [x] **2. Shared admin module** (2026-11-24): `web/static/admin.js` on every
+      page. Tuned in a local preview session with the user:
+  - amber frame and sticky strip ("Administrator mode", countdown, Extend in
+    the last minute, Exit); the strip no longer says "changes affect the whole
+    installation";
+  - **no header button:** the strip already shows the state, so the header
+    holds only the title and Menu. Sign-in and exit are a row in the Menu;
+  - **login as a modal dialog** (`<dialog>`, a bottom sheet on phones), opened
+    from the Menu or from any privileged button. It says what was asked and
+    continues the action after signing in. It also handles the password
+    confirmation for a restore, the HTTPS-only case and lockout. Login errors
+    appear only in the dialog;
+  - privileged buttons are amber with the shield for guests too;
+  - menu entries got icons.
+- [x] **3. Status page** (2026-11-24):
+  - the Administrator section is gone; "Software updates" shows the version
+    overview, "Check now" in one group with the age of the last check, and
+    "Update to …" (after a failure "Retry update to …");
+  - a separate **"Restore backup"** section lists the restorable backups with
+    when they were taken, version and size (updater field `backups`, ready
+    for more than one). It opens by itself after a failed update and for a
+    pending restore review;
+  - reviews show short image digests and short updater texts;
+  - level badges have icons (also the connection states on the Configuration
+    and Playback pages); events and license tables become cards on phones;
+  - all page headers are consistent ("Russound …"; title, Menu; banners below).
+- [ ] **4. Configuration page.** *Done 2026-11-24:* the save button is replaced
+      by a save bar at the bottom inside the amber frame, shown only with
+      unsaved changes. It reports success (shrinks away after 2.5 s) or failure
+      (stays, with the buttons), and a guest signs in from it. *Open:*
+      read-only guest view and the server check (with stage 1).
 - [ ] **5. Acceptance on the Pi**, desktop and phone: sign in from each page,
       edit and save settings, a guest write is refused, idle logout after 15
       minutes, manual exit, restore asks for the password, update install does
       not, password change, lockout after wrong passwords, keyboard use and a
-      screen reader pass over the sheet and the strip.
+      screen reader pass over the dialog and the strip.
 
-Order: stage 1 can ship alone and is safe, but it closes the open configuration
-page for guests, so ship it together with stage 4 (otherwise nobody can save
-settings from the page). Stages 2 and 3 can go first.
+Order: stage 1 closes the open configuration page for guests, so it ships with
+the rest of stage 4.
 
 ## Risks and notes
 

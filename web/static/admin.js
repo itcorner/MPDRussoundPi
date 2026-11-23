@@ -1,0 +1,443 @@
+// Administrator mode on every page: amber frame, sticky strip with countdown and
+// exit, and a row in the page menu (sign in / exit admin mode). See
+// docs/plans/web_open_admin-mode-and-protected-settings.md. The login is a modal
+// dialog opened from the header, the menu or any privileged action
+// (window.adminLogin).
+//
+// Reading the session never extends it; only "Extend" and real administrator
+// actions count as activity.
+
+const ADMIN_POLL_MS = 15000;
+const ADMIN_LOW_SECONDS = 60;
+const ADMIN_SETUP_COMMAND = "python -m web.admin_auth set --file <secrets directory>/russound-admin.scrypt";
+
+const SHIELD_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 1 3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5z"/></svg>';
+const LOCK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
+
+function adminCountdown(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+}
+
+// Pure view model: everything the page shows follows from the session and the time left.
+function adminView(session, secondsLeft) {
+  const elevated = Boolean(session && session.configured === true && session.authenticated === true);
+  const left = elevated ? Math.max(0, Math.floor(Number(secondsLeft) || 0)) : 0;
+  return {
+    elevated,
+    configured: Boolean(session && session.configured === true),
+    low: elevated && left <= ADMIN_LOW_SECONDS,
+    countdown: adminCountdown(left),
+    menuLabel: elevated ? "Exit admin mode" : "Sign in as administrator",
+  };
+}
+
+const adminMode = {
+  session: null,
+  secondsLeft: 0,
+  receivedAt: 0,
+  elements: null,
+  pollTimer: null,
+  tickTimer: null,
+  dialog: null,
+  pending: null,
+  reauth: false,
+};
+
+// What the login dialog shows for a session answer (pure, for tests).
+function adminLoginView(session) {
+  const configured = Boolean(session && session.configured === true);
+  const secure = Boolean(session && session.secure === true);
+  const httpsUrl = session && typeof session.https_url === "string" && session.https_url.startsWith("https://")
+    ? session.https_url : null;
+  const httpsOnly = Boolean(session && session.https_required === true && !secure && httpsUrl);
+  const locked = configured && session && session.locked_for_seconds > 0 ? Math.ceil(session.locked_for_seconds / 60) : 0;
+  return {
+    mode: !configured ? "setup" : httpsOnly ? "https" : "password",
+    httpsUrl: httpsOnly ? httpsUrl : null,
+    plainHttpWarning: configured && !httpsOnly && !secure,
+    lockedMessage: locked ? `Too many failed attempts. Login is locked for about ${locked === 1 ? "1 minute" : `${locked} minutes`}.` : "",
+  };
+}
+
+function adminIcon(element, svg) {
+  // Fixed markup from this file only; never session data.
+  element.innerHTML = svg;
+}
+
+function buildAdminElements() {
+  const header = document.querySelector(".system-panel .panel-header");
+  const navigation = header ? header.querySelector(".page-navigation") : null;
+  if (!header || !navigation) {
+    return null;
+  }
+  const menu = navigation.querySelector(".page-menu");
+  const divider = document.createElement("hr");
+  divider.className = "page-menu-divider";
+  const menuItem = document.createElement("button");
+  menuItem.type = "button";
+  menuItem.className = "page-menu-link page-menu-admin";
+  const menuIcon = document.createElement("span");
+  menuIcon.className = "page-menu-admin-icon";
+  const menuText = document.createElement("span");
+  menuItem.append(menuIcon, menuText);
+  if (menu) {
+    menu.append(divider, menuItem);
+  }
+
+  const strip = document.createElement("div");
+  strip.className = "admin-strip";
+  strip.setAttribute("role", "status");
+  strip.hidden = true;
+  const stripIcon = document.createElement("span");
+  stripIcon.className = "admin-strip-icon";
+  adminIcon(stripIcon, SHIELD_SVG);
+  const stripLong = document.createElement("span");
+  stripLong.className = "admin-strip-long";
+  stripLong.textContent = "Administrator mode";
+  const stripShort = document.createElement("span");
+  stripShort.className = "admin-strip-short";
+  stripShort.textContent = "Admin mode";
+  const spacer = document.createElement("span");
+  spacer.className = "admin-strip-spacer";
+  const stripTime = document.createElement("span");
+  stripTime.className = "admin-strip-time admin-countdown";
+  const extend = document.createElement("button");
+  extend.type = "button";
+  extend.className = "admin-strip-button";
+  extend.textContent = "Extend";
+  extend.hidden = true;
+  const exit = document.createElement("button");
+  exit.type = "button";
+  exit.className = "admin-strip-button";
+  exit.textContent = "Exit";
+  strip.append(stripIcon, stripLong, stripShort, spacer, stripTime, extend, exit);
+  document.body.prepend(strip);
+
+  const frame = document.createElement("div");
+  frame.className = "admin-frame";
+  frame.setAttribute("aria-hidden", "true");
+  document.body.append(frame);
+
+  const onMenuAction = () => {
+    navigation.open = false;
+    if (adminMode.session && adminMode.session.authenticated) {
+      exitAdminMode();
+    } else {
+      openAdminLogin();
+    }
+  };
+  menuItem.addEventListener("click", onMenuAction);
+  exit.addEventListener("click", exitAdminMode);
+  extend.addEventListener("click", extendAdminMode);
+  return { menuItem, menuIcon, menuText, strip, extend, frame, divider };
+}
+
+// ------------------------------------------------------------------ login dialog
+
+function buildAdminDialog() {
+  const dialog = document.createElement("dialog");
+  dialog.className = "admin-dialog";
+  dialog.setAttribute("aria-labelledby", "adminDialogTitle");
+  const title = document.createElement("h2");
+  title.id = "adminDialogTitle";
+  title.className = "admin-dialog-title";
+  const titleIcon = document.createElement("span");
+  titleIcon.className = "admin-dialog-icon";
+  adminIcon(titleIcon, SHIELD_SVG);
+  const titleText = document.createElement("span");
+  titleText.textContent = "Sign in as administrator";
+  title.append(titleIcon, titleText);
+  const reason = document.createElement("p");
+  reason.className = "admin-dialog-reason";
+
+  const form = document.createElement("form");
+  form.className = "admin-dialog-form";
+  form.method = "dialog";
+  const label = document.createElement("label");
+  label.htmlFor = "adminDialogPassword";
+  label.textContent = "Password";
+  const input = document.createElement("input");
+  input.id = "adminDialogPassword";
+  input.type = "password";
+  input.autocomplete = "current-password";
+  input.maxLength = 256;
+  input.required = true;
+  const message = document.createElement("p");
+  message.className = "admin-dialog-message";
+  message.setAttribute("role", "alert");
+  message.hidden = true;
+  const actions = document.createElement("div");
+  actions.className = "admin-dialog-actions";
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.className = "admin-dialog-submit";
+  submit.textContent = "Sign in";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "admin-dialog-cancel";
+  cancel.textContent = "Cancel";
+  actions.append(submit, cancel);
+  const warning = document.createElement("p");
+  warning.className = "admin-dialog-note";
+  warning.textContent = "This page uses plain HTTP: on this network the password can be observed. Use it only on a network you trust.";
+  form.append(label, input, message, actions, warning);
+
+  const https = document.createElement("p");
+  https.className = "admin-dialog-note";
+  const httpsLead = document.createElement("span");
+  httpsLead.textContent = "Sign in over HTTPS, where the password is encrypted: ";
+  const httpsLink = document.createElement("a");
+  https.append(httpsLead, httpsLink);
+  const setup = document.createElement("p");
+  setup.className = "admin-dialog-note";
+  const setupLead = document.createElement("span");
+  setupLead.textContent = "Administrator login is not set up on this installation. Set a password locally on the host with ";
+  const setupCode = document.createElement("code");
+  setupCode.textContent = ADMIN_SETUP_COMMAND;
+  setup.append(setupLead, setupCode);
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "admin-dialog-cancel";
+  close.textContent = "Close";
+
+  dialog.append(title, reason, form, https, setup, close);
+  document.body.append(dialog);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitAdminLogin();
+  });
+  cancel.addEventListener("click", () => closeAdminLogin(false));
+  close.addEventListener("click", () => closeAdminLogin(false));
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeAdminLogin(false);
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) {
+      closeAdminLogin(false);  // a click on the backdrop
+    }
+  });
+  return { dialog, titleText, reason, form, input, message, submit, warning, https, httpsLink, setup, close };
+}
+
+function showAdminDialogMessage(text) {
+  const parts = adminMode.dialog;
+  parts.message.textContent = text || "";
+  parts.message.hidden = !text;
+}
+
+function renderAdminDialog() {
+  const parts = adminMode.dialog;
+  const view = adminLoginView(adminMode.session);
+  parts.form.hidden = view.mode !== "password";
+  parts.warning.hidden = !view.plainHttpWarning;
+  parts.https.hidden = view.mode !== "https";
+  parts.setup.hidden = view.mode !== "setup";
+  parts.close.hidden = view.mode === "password";
+  if (view.httpsUrl) {
+    const target = view.httpsUrl + window.location.pathname.replace(/^\//, "");
+    parts.httpsLink.href = target;
+    parts.httpsLink.textContent = target;
+  }
+  if (view.lockedMessage) {
+    showAdminDialogMessage(view.lockedMessage);
+  }
+  return view;
+}
+
+// Opens the login dialog. ``reason`` names what the user asked to do; ``onSuccess``
+// runs once signed in (the action that needed the login). With ``reauth`` the signed-in
+// administrator confirms the password again (a restore asks for it).
+async function openAdminLogin({ reason = "", onSuccess = null, reauth = false } = {}) {
+  if (!adminMode.dialog) {
+    adminMode.dialog = buildAdminDialog();
+  }
+  const parts = adminMode.dialog;
+  adminMode.pending = onSuccess;
+  await refreshAdminMode();
+  adminMode.reauth = Boolean(reauth && adminMode.session && adminMode.session.authenticated);
+  parts.titleText.textContent = adminMode.reauth ? "Enter your password again" : "Sign in as administrator";
+  parts.submit.textContent = adminMode.reauth ? "Confirm" : "Sign in";
+  parts.reason.textContent = reason ? `You asked to: ${reason}` : "";
+  parts.reason.hidden = !reason;
+  parts.input.value = "";
+  showAdminDialogMessage("");
+  const view = renderAdminDialog();
+  if (!parts.dialog.open) {
+    parts.dialog.showModal();
+  }
+  (view.mode === "password" ? parts.input : parts.close).focus();
+}
+
+function closeAdminLogin(succeeded) {
+  const parts = adminMode.dialog;
+  const pending = adminMode.pending;
+  adminMode.pending = null;
+  if (parts && parts.dialog.open) {
+    parts.dialog.close();
+  }
+  if (parts) {
+    parts.input.value = "";
+  }
+  if (succeeded && typeof pending === "function") {
+    pending();
+  }
+}
+
+async function submitAdminLogin() {
+  const parts = adminMode.dialog;
+  const password = parts.input.value;
+  parts.input.value = "";
+  showAdminDialogMessage("");
+  parts.submit.disabled = true;
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (adminMode.reauth && adminMode.session && typeof adminMode.session.csrf_token === "string") {
+      headers["X-CSRF-Token"] = adminMode.session.csrf_token;
+    }
+    const response = await fetch(adminMode.reauth ? "/api/admin/reauthenticate" : "/api/admin/login", {
+      method: "POST", credentials: "same-origin", headers, body: JSON.stringify({ password }),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    if (response.ok) {
+      acceptAdminSession({ ...(adminMode.session || {}), ...payload });
+      announceAdminChange();
+      closeAdminLogin(true);
+      return;
+    }
+    showAdminDialogMessage(payload.error && payload.error.message ? payload.error.message : "Login failed.");
+  } catch {
+    showAdminDialogMessage("The server could not be reached.");
+  } finally {
+    parts.submit.disabled = false;
+  }
+  parts.input.focus();
+}
+
+function secondsLeftNow() {
+  const elapsed = (Date.now() - adminMode.receivedAt) / 1000;
+  return Math.max(0, adminMode.secondsLeft - elapsed);
+}
+
+function renderAdminMode() {
+  const elements = adminMode.elements;
+  if (!elements) {
+    return;
+  }
+  const view = adminView(adminMode.session, secondsLeftNow());
+  document.body.classList.toggle("admin-elevated", view.elevated);
+  document.body.classList.toggle("admin-low", view.low);
+  elements.strip.hidden = !view.elevated;
+  elements.extend.hidden = !view.low;
+  elements.menuItem.hidden = !view.configured;
+  elements.divider.hidden = !view.configured;
+  if (elements.menuIcon.dataset.state !== String(view.elevated)) {
+    adminIcon(elements.menuIcon, view.elevated ? SHIELD_SVG : LOCK_SVG);
+    elements.menuIcon.dataset.state = String(view.elevated);
+  }
+  elements.menuText.textContent = view.menuLabel;
+  document.querySelectorAll(".admin-countdown").forEach((node) => {
+    node.textContent = view.countdown;
+  });
+}
+
+function acceptAdminSession(session) {
+  adminMode.session = session;
+  adminMode.secondsLeft = session && session.authenticated ? Number(session.idle_expires_in_seconds) || 0 : 0;
+  adminMode.receivedAt = Date.now();
+  renderAdminMode();
+}
+
+async function refreshAdminMode() {
+  try {
+    const response = await fetch("/api/admin/session", { credentials: "same-origin", cache: "no-store" });
+    if (response.ok) {
+      acceptAdminSession(await response.json());
+    }
+  } catch {
+    // The next poll retries; the page keeps its last state.
+  }
+}
+
+async function adminModePost(path) {
+  const token = adminMode.session && adminMode.session.csrf_token;
+  const headers = { "Content-Type": "application/json" };
+  if (typeof token === "string") {
+    headers["X-CSRF-Token"] = token;
+  }
+  return fetch(path, { method: "POST", credentials: "same-origin", headers, body: "{}" });
+}
+
+function announceAdminChange() {
+  document.dispatchEvent(new CustomEvent("admin-session-changed", {
+    detail: { source: "admin-mode", session: adminMode.session } }));
+}
+
+async function exitAdminMode() {
+  try {
+    await adminModePost("/api/admin/logout");
+  } catch {
+    // The refresh below shows the real state.
+  }
+  await refreshAdminMode();
+  announceAdminChange();
+}
+
+async function extendAdminMode() {
+  try {
+    const response = await adminModePost("/api/admin/extend");
+    if (response.ok) {
+      acceptAdminSession(await response.json());
+      return;
+    }
+  } catch {
+    // Fall through to a plain refresh.
+  }
+  refreshAdminMode();
+}
+
+function tickAdminMode() {
+  if (adminMode.session && adminMode.session.authenticated && secondsLeftNow() <= 0) {
+    refreshAdminMode();  // the server has ended the session; show it right away
+  }
+  renderAdminMode();
+}
+
+function startAdminMode() {
+  adminMode.elements = buildAdminElements();
+  if (!adminMode.elements) {
+    return;
+  }
+  renderAdminMode();
+  refreshAdminMode();
+  adminMode.pollTimer = setInterval(refreshAdminMode, ADMIN_POLL_MS);
+  adminMode.tickTimer = setInterval(tickAdminMode, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      refreshAdminMode();
+    }
+  });
+  document.addEventListener("admin-session-changed", (event) => {
+    if (!event.detail || event.detail.source !== "admin-mode") {
+      refreshAdminMode();
+    }
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.adminLogin = openAdminLogin;
+  window.adminReauthenticate = (options = {}) => openAdminLogin({ ...options, reauth: true });
+}
+
+if (typeof document !== "undefined" && document.readyState !== "loading") {
+  startAdminMode();
+} else if (typeof document !== "undefined") {
+  document.addEventListener("DOMContentLoaded", startAdminMode);
+}

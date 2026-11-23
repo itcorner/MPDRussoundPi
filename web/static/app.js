@@ -217,7 +217,9 @@ function renderBackendBanner(status) {
     const title = createElement("strong");
     title.textContent = "Hardware communication unavailable";
     backendBanner.append(title, createElement("span"));
-    appShell.insertBefore(backendBanner, appShell.firstChild);
+    // Below the page header, which stays first on every page.
+    const header = appShell.querySelector(".system-panel");
+    appShell.insertBefore(backendBanner, header ? header.nextSibling : appShell.firstChild);
   }
   setText(backendBanner.lastChild, status.message || "Communication with Russound hardware is currently unavailable.");
 }

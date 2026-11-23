@@ -78,15 +78,18 @@ class PageFlowTests(unittest.TestCase):
         self.transaction.release.set()
         self.assertEqual(self.wait_phase("succeeded")["phase"], "succeeded")
 
-    def test_actions_need_login_csrf_and_a_recent_password(self):
+    def test_actions_need_login_and_csrf_and_only_restore_a_recent_password(self):
         self.assertEqual(self.client.post("/api/admin/update/review", json={}).status_code, 401)
         self.assertEqual(self.client.get("/api/admin/update").status_code, 401)
         headers = self.login()
         self.assertEqual(self.client.post("/api/admin/update/review", json={}).status_code, 403, "CSRF token required")
         self.clock[0] += admin_auth.REAUTH_SECONDS + 1
-        stale = self.client.post("/api/admin/update/review", json={}, headers=headers)
-        self.assertEqual((stale.status_code, stale.json["error"]["code"]), (403, "reauthenticate"))
+        stale = self.client.post("/api/admin/update/restore", json={"operation": "x"}, headers=headers)
+        self.assertEqual((stale.status_code, stale.json["error"]["code"]), (403, "reauthenticate"),
+                         "a restore asks for the password again")
         self.assertEqual(self.updater.status()["phase"], "idle", "nothing started without a recent password")
+        review = self.client.post("/api/admin/update/review", json={}, headers=headers)
+        self.assertEqual(review.status_code, 202, "installing an update does not ask again")
 
     def test_cancel_and_restore_paths(self):
         headers = self.login()
@@ -130,6 +133,19 @@ class PageFlowTests(unittest.TestCase):
         review = sanitize_status({"phase": "awaiting_approval", "review": {"operation": "o", "digest": "d", "summary": {
             "cleanup": "Old images are removed."}}}, include_review=True)["review"]
         self.assertEqual(review["cleanup"], "Old images are removed.")
+
+    def test_sanitize_passes_the_restorable_backups(self):
+        good = {"operation": "e98f54a1-625a-428f-b4d5-574d1b357557", "taken_at": "2026-11-23T00:04:18.238842+00:00",
+                "revision": "a" * 40, "size_bytes": 108130296, "reason": "before the update that failed"}
+        backups = sanitize_status({"phase": "failed", "backups": [good]}, include_review=False)["backups"]
+        self.assertEqual(backups, [good])
+        odd = sanitize_status({"phase": "failed", "backups": [
+            {**good, "taken_at": "yesterday", "revision": "nope", "size_bytes": -1, "extra": "x"},
+            {"taken_at": good["taken_at"]}, "text"] + [good] * 9}, include_review=False)["backups"]
+        self.assertEqual(odd[0], {"operation": good["operation"], "taken_at": None, "revision": None,
+                                  "size_bytes": None, "reason": good["reason"]})
+        self.assertEqual(len(odd), 3, "entries without an operation are dropped and at most five are read")
+        self.assertEqual(sanitize_status({"phase": "idle", "backups": "x"}, include_review=False)["backups"], [])
 
 
 if __name__ == "__main__":
