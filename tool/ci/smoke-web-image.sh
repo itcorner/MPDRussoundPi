@@ -89,7 +89,7 @@ require(not Path("/data/russound_state.json").exists(), "State volume was not em
 for path, marker in (
     ("/", 'id="zones"'),
     ("/config", 'id="saveConfigButton"'),
-    ("/playback", "Playback status"),
+    ("/playback", "Russound playback"),
     ("/status", "License"),
     ("/static/config.js", "config_required"),
 ):
