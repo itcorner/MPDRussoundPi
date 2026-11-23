@@ -257,17 +257,23 @@ anyway. HTTPS solves all of it.
       `15f5d587`), still 10 images; the renewal timer is scheduled; nginx and
       the package's Caddy are inactive; no warnings in the journals;
     - all components ok, 3 of 3 outputs playing.
-- [ ] **6. Acceptance:**
-  - desktop (macOS Safari and Chrome) and phone (iOS Safari, Android Chrome)
-    without certificate warnings, by IP and by `musicpi.local`;
-  - `http://` redirects; `:8000` is unreachable from the LAN;
-  - login over HTTPS sets a `Secure` cookie; a login over HTTP is refused;
-  - live updates over server-sent events keep working;
-  - a web-triggered update and a restore over HTTPS, including the page's
+- [ ] **6. Acceptance** (started 2026-11-23):
+  - [x] login over HTTPS works on the Mac and the phone (user, 2026-11-23).
+    The audit log records the devices' real addresses (`192.168.1.56`, and
+    the phone over IPv6 link-local), not the proxy's, so the per-client
+    throttle sees real clients;
+  - [x] `http://` redirects (308); `:8000` is unreachable from the LAN (only
+    `127.0.0.1:8000` listens);
+  - [x] the server refuses logins over plain HTTP: no plain-HTTP route to the
+    application is left, and the refusal itself is covered by the tests;
+  - [x] live updates over server-sent events work through the proxy;
+  - [ ] devices without certificate warnings, by IP and by `musicpi.local`
+    (Mac and phone confirmed working; record which browsers);
+  - [ ] a web-triggered update and a restore over HTTPS, including the page's
     automatic reload;
-  - a forced renewal (temporarily lowered threshold) reloads Caddy without
+  - [ ] a forced renewal (temporarily lowered threshold) reloads Caddy without
     dropping the page;
-  - name constraints are honoured: a test certificate for another name
+  - [ ] name constraints are honoured: a test certificate for another name
     signed by the CA is rejected by the browsers.
 
 ## Risks and notes
