@@ -38,6 +38,7 @@ class WebTlsTemplateTests(unittest.TestCase):
         text = render("web-proxy.Caddyfile.j2")
         self.assertIn("admin 127.0.0.1:2021", text, "not the playback proxy's admin port")
         self.assertIn("auto_https off", text)
+        self.assertIn("grace_period 2s", text, "a restart must not wait for open event streams")
         self.assertIn("default_sni musicpi.local", text)
         self.assertIn("https://:443 {", text)
         self.assertIn("tls /etc/mpdrussoundpi-web-tls/server.crt /etc/mpdrussoundpi-web-tls/server.key", text)
@@ -65,7 +66,7 @@ class WebTlsTemplateTests(unittest.TestCase):
     def test_renewal_uses_the_play_arguments_and_reloads_the_proxy(self):
         service = render("web-tls-renew.service.j2")
         self.assertIn("ExecStart=/usr/bin/python3 /usr/local/lib/mpdrussoundpi/web_tls.py ensure --dir "
-                      "/etc/mpdrussoundpi-web-tls --dns=musicpi.local --reload-unit mpdrussoundpi-web-proxy.service",
+                      "/etc/mpdrussoundpi-web-tls --dns=musicpi.local --restart-unit mpdrussoundpi-web-proxy.service",
                       service)
         self.assertIn("Type=oneshot", service)
         self.assertIn("ReadWritePaths=/etc/mpdrussoundpi-web-tls", service)

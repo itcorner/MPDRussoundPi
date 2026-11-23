@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 {{ web_tls_tool }} {{ web_tls_ensure_args | join(' ') }} --reload-unit {{ web_tls_unit }}.service
+ExecStart=/usr/bin/python3 {{ web_tls_tool }} {{ web_tls_ensure_args | join(' ') }} --restart-unit {{ web_tls_unit }}.service
 UMask=0077
 PrivateTmp=true
 ProtectSystem=strict

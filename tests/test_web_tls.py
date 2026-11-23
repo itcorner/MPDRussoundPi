@@ -137,7 +137,7 @@ class WebTlsTests(unittest.TestCase):
                                  "server_dns": ["musicpi", "musicpi.local"], "server_ips": ["192.168.1.105"],
                                  "ca_sha256_fingerprint": report["ca"]["sha256_fingerprint"]})
 
-    def test_reload_runs_only_when_a_certificate_was_issued(self):
+    def test_the_proxy_restarts_only_when_a_certificate_was_issued(self):
         real = subprocess.run
 
         def run(argv, **kwargs):
@@ -146,10 +146,11 @@ class WebTlsTests(unittest.TestCase):
             return real(argv, **kwargs)
 
         with mock.patch.object(web_tls.subprocess, "run", side_effect=run) as spy:
-            ensure(self.dir, "--reload-unit", "web-proxy.service")
-            ensure(self.dir, "--reload-unit", "web-proxy.service")
-        reloads = [call.args[0] for call in spy.call_args_list if call.args[0][0] == "systemctl"]
-        self.assertEqual(reloads, [["systemctl", "reload-or-restart", "web-proxy.service"]])
+            ensure(self.dir, "--restart-unit", "web-proxy.service")
+            ensure(self.dir, "--restart-unit", "web-proxy.service")
+        restarts = [call.args[0] for call in spy.call_args_list if call.args[0][0] == "systemctl"]
+        # Not a reload: Caddy 2.6 ignores a reload with unchanged configuration (found on the Pi).
+        self.assertEqual(restarts, [["systemctl", "restart", "web-proxy.service"]])
 
     def test_input_validation(self):
         for value in ("bad name", "-x.local", "1.2.3"):

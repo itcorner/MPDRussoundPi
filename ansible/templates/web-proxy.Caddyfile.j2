@@ -2,6 +2,9 @@
 {
 	admin 127.0.0.1:{{ web_tls_admin_port }}
 	auto_https off
+	# Event streams stay open indefinitely; without a limit a restart waits for them (up to the
+	# unit's stop timeout) with the listener already closed. Pages reconnect on their own.
+	grace_period 2s
 	# Clients that send no SNI (addressing the Pi by IP) still get the server certificate.
 	default_sni {{ web_tls_dns_names[0] }}
 	servers {
