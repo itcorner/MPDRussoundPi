@@ -230,8 +230,20 @@ anyway. HTTPS solves all of it.
     `127.0.0.1` and `compose` pointing to the new input; the updater was
     reinstalled with it (`deploy-updater.yml`);
   - [ ] devices trust the CA;
-  - [ ] an update with a new candidate applies the HTTPS layout (this commit
-    forces new development images for it).
+  - [x] the update from the Status page to `cdbc3c5` (operation `e98f54a1`)
+    applied the HTTPS layout: listener on `127.0.0.1:8000`, both proxy
+    settings set, verified-complete;
+  - **bug found:** afterwards nobody could log in. The session reported
+    `secure: false` over HTTPS because Waitress 3 deletes `X-Forwarded-*`
+    from peers it does not trust (`clear_untrusted_proxy_headers`, on by
+    default) before ProxyFix sees them. `RUSSOUND_TRUSTED_PROXY_COUNT` had
+    therefore never worked under Waitress, and the stage 3 tests used the Flask
+    test client, which skips Waitress. Fix: with a trusted proxy, Waitress
+    keeps the headers and ProxyFix evaluates them (safe because the tooling
+    allows the proxy settings only with a loopback listener). A new test runs
+    a real Waitress server. The fixed image has to be installed with the SSH
+    operator, because the page cannot log in;
+  - [ ] fixed image installed with the SSH operator; HTTPS login works.
 - [ ] **6. Acceptance:**
   - desktop (macOS Safari and Chrome) and phone (iOS Safari, Android Chrome)
     without certificate warnings, by IP and by `musicpi.local`;

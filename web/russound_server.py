@@ -243,6 +243,7 @@ class RussoundHTTPServer:
         self._zone_refresh_addresses: set[tuple[int, int]] = set()
         self._helpers = RussoundRequestHandler()
         self.app = self._build_flask_app()
+        self._trusted_proxy_count = trusted_proxy_count
         if trusted_proxy_count > 0:
             self.app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
                 self.app.wsgi_app,
@@ -693,7 +694,8 @@ class RussoundHTTPServer:
                 except ModuleNotFoundError as exc:
                     raise RuntimeError("waitress is required to run the web server. Install it with 'pip install waitress'.") from exc
                 create_server = getattr(waitress_module, "create_server")
-                server = create_server(self.app, host=host, port=port, threads=thread_count)
+                server = create_server(self.app, host=host, port=port, threads=thread_count,
+                                       **self._waitress_proxy_options())
                 # Waitress applies these options to every accepted connection.
                 server.adj.socket_options = _connection_socket_options(tcp_user_timeout_seconds)
                 self._start_backend_change_watcher()
@@ -1074,6 +1076,15 @@ class RussoundHTTPServer:
                                            "operation": result.get("operation")}))
         response.status_code = 202
         return response
+
+    def _waitress_proxy_options(self) -> dict[str, Any]:
+        """Waitress deletes X-Forwarded-* from peers it does not trust before the app sees them.
+
+        With a trusted proxy, ProxyFix evaluates those headers (counting proxies), so Waitress must
+        keep them. Only safe when the listener is reachable from the proxy alone; the deployment
+        tooling allows the proxy settings only together with a loopback listener.
+        """
+        return {"clear_untrusted_proxy_headers": False} if self._trusted_proxy_count > 0 else {}
 
     def _https_url(self) -> str:
         return f"https://{_hostname(request.host)}/"

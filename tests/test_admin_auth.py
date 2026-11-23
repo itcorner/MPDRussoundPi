@@ -307,6 +307,44 @@ class HttpsOnlyLoginTests(Fixture):
         self.assertEqual(client.post("/api/admin/login", json={"password": PASSWORD}).status_code, 200)
 
 
+class WaitressProxyHeaderTests(Fixture):
+    """Through a real Waitress server, which the Flask test client skips."""
+
+    def session_over_waitress(self, server, headers):
+        import http.client
+        import threading
+        from waitress import create_server
+
+        wsgi = create_server(server.app, host="127.0.0.1", port=0, threads=2, **server._waitress_proxy_options())
+        def serve():
+            try:
+                wsgi.run()
+            except OSError:
+                pass  # the socket closes under the event loop when the test stops the server
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", wsgi.effective_port, timeout=5)
+            connection.request("GET", "/api/admin/session", headers={"Host": "musicpi.local", **headers})
+            return json.loads(connection.getresponse().read())
+        finally:
+            wsgi.close()
+            thread.join(1)
+
+    def test_the_trusted_proxy_headers_reach_the_app(self):
+        server = RussoundHTTPServer(None, None, admin=self.auth(), trusted_proxy_count=1, require_https_login=True)
+        self.addCleanup(server.server_close)
+        session = self.session_over_waitress(server, {"X-Forwarded-Proto": "https", "X-Forwarded-For": "192.168.1.20"})
+        self.assertTrue(session["secure"], "Waitress must not strip X-Forwarded-Proto behind the trusted proxy")
+        self.assertFalse(self.session_over_waitress(server, {})["secure"])
+
+    def test_without_a_trusted_proxy_forwarded_headers_are_ignored(self):
+        server = RussoundHTTPServer(None, None, admin=self.auth())
+        self.addCleanup(server.server_close)
+        self.assertFalse(self.session_over_waitress(server, {"X-Forwarded-Proto": "https"})["secure"])
+
+
 class WebTlsStatusTests(Fixture):
     def server(self, path):
         server = RussoundHTTPServer(None, None, admin=self.auth(), web_tls_status_file=path)
