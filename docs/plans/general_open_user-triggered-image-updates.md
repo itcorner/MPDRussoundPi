@@ -147,7 +147,7 @@ directly. (Decided 2026-11-21 instead of a token-authenticated listener on the
 Docker bridge, which would not have helped split hosts either.)
 Since 2026-11-23 a second named addition exists, the HTTPS layout (loopback
 listener, proxy settings and certificate mount as one change); see
-[HTTPS for the web UI](./general_open_web-ui-https.md), stage 4.
+[HTTPS for the web UI](./general_done_web-ui-https.md), stage 4.
 
 ### Split-host layouts (not supported yet)
 
@@ -214,13 +214,17 @@ operator.
     This is the pattern for later updater changes: upgrade the tooling with the
     SSH play, then restart the idle updater; a web-triggered image update alone
     does not change the updater.
-- [ ] **Later: whole-UI HTTPS** (decision 6): own certificate or a generated
-  local CA with manual trust import and optional fingerprint check, HTTP
-  redirect-only, trusted-proxy boundary; separate from the playback-agent TLS.
+- [x] **Whole-UI HTTPS** (decision 6): done 2026-11-23 in its own plan,
+  [HTTPS for the web UI](./general_done_web-ui-https.md). Local CA with name
+  constraints, Caddy on 443, web listener on loopback, logins only over
+  HTTPS.
 - [ ] **5. Acceptance on the Pi:** a successful update between two development
   images; a deliberately failing candidate and restore; an interrupted update
   (power or service stop) and its documented recovery; concurrent requests; wrong
   password and CSRF rejection; and the cross-version data rehearsal below.
+  Since HTTPS (2026-11-23), also: a web-triggered update and a restore over
+  HTTPS, including the page's automatic reload (moved from the
+  [HTTPS plan](./general_done_web-ui-https.md)).
   - [x] *Successful update* (2026-11-22): `e49ced5` → `f82d2ee` started from the
     Status page by the administrator (operation `b25f90cd`). An earlier review on
     2026-11-21 expired and was cancelled before any interruption, as designed.

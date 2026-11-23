@@ -1,5 +1,5 @@
 ---
-# HTTPS for the web UI: docs/plans/general_open_web-ui-https.md
+# HTTPS for the web UI: docs/plans/general_done_web-ui-https.md
 #
 # Install or refresh (no ports taken, nothing stopped):
 #   ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-web-tls.yml --limit musicpi

@@ -81,7 +81,8 @@ Changes:
   own login code.
 - **Login sheet** opens where the user is and says what they asked to do
   ("You asked to: Edit settings"), then resumes it. On phones it is a bottom
-  sheet. The plain-HTTP warning moves into it.
+  sheet. The plain-HTTP warning (only shown on HTTP) and the HTTPS link for
+  `https_required` move into it.
 - **Amber elevation**:
   - frame: a fixed overlay with `pointer-events: none` and inset border;
   - strip: sticky above the header, shortened text on narrow screens, Extend
@@ -144,9 +145,12 @@ settings from the page). Stages 2 and 3 can go first.
 
 ## Risks and notes
 
-- **Plain HTTP.** The password and the session cookie can be observed on the
-  network (documented limitation, HTTPS is a separate open item). Settings
-  protection is therefore only as strong as the network. Say so on the sheet.
+- **HTTPS (done 2026-11-23).** The UI runs over HTTPS with a local CA, and the
+  server refuses logins over plain HTTP
+  ([plan](./general_done_web-ui-https.md)). The sheet keeps the plain-HTTP
+  warning only for installations without the HTTPS proxy, and the shared
+  admin module must handle the `https_required` answer (link to the HTTPS
+  address instead of a password field), as the Status page already does.
 - **One shared password**, no user names; the audit log records a client address
   and a short session reference only.
 - **Lock-out of the owner.** Password change must verify the current password

@@ -2,7 +2,7 @@
 
 How the web UI is served over HTTPS on a single Pi, how devices trust it, and
 how to roll it back. Background and decisions:
-[the plan](../plans/general_open_web-ui-https.md).
+[the plan](../plans/general_done_web-ui-https.md).
 
 ## How it works
 

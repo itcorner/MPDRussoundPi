@@ -1,5 +1,5 @@
 ---
-# HTTPS for the web UI: docs/plans/general_open_web-ui-https.md
+# HTTPS for the web UI: docs/plans/general_done_web-ui-https.md
 deployment_component: web_tls
 deployment_boolean_inputs: [web_tls_start, web_tls_disable_nginx_default]
 deployment_port_inputs: [web_tls_https_port, web_tls_http_port, web_tls_upstream_port, web_tls_admin_port]

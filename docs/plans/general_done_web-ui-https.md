@@ -1,6 +1,6 @@
 # HTTPS for the web UI
 
-**Status:** open. Planned and decided on 2026-11-22. Stages 2 to 5 implemented and rolled out on the reference Pi on 2026-11-23; acceptance (stage 6) in progress. Brought forward from the "Later: whole-UI HTTPS" stage of the
+**Status:** done (2026-11-23). Planned and decided on 2026-11-22; implemented, rolled out on the reference Pi and accepted on 2026-11-23. The one remaining check, a web update and a restore over HTTPS, moved to the [user-triggered image updates](./general_open_user-triggered-image-updates.md) acceptance. Brought forward from the "Later: whole-UI HTTPS" stage of the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (decision 6) so that no interim login protection is needed. A prerequisite for
 [administrator mode and protected settings](./web_open_admin-mode-and-protected-settings.md),
@@ -257,7 +257,7 @@ anyway. HTTPS solves all of it.
       `15f5d587`), still 10 images; the renewal timer is scheduled; nginx and
       the package's Caddy are inactive; no warnings in the journals;
     - all components ok, 3 of 3 outputs playing.
-- [ ] **6. Acceptance** (started 2026-11-23):
+- [x] **6. Acceptance** (2026-11-23):
   - [x] login over HTTPS works on the Mac and the phone (user, 2026-11-23).
     The audit log records the devices' real addresses (`192.168.1.56`, and
     the phone over IPv6 link-local), not the proxy's, so the per-client
@@ -267,14 +267,26 @@ anyway. HTTPS solves all of it.
   - [x] the server refuses logins over plain HTTP: no plain-HTTP route to the
     application is left, and the refusal itself is covered by the tests;
   - [x] live updates over server-sent events work through the proxy;
-  - [ ] devices without certificate warnings, by IP and by `musicpi.local`
-    (Mac and phone confirmed working; record which browsers);
-  - [ ] a web-triggered update and a restore over HTTPS, including the page's
-    automatic reload;
-  - [ ] a forced renewal (temporarily lowered threshold) reloads Caddy without
-    dropping the page;
-  - [ ] name constraints are honoured: a test certificate for another name
-    signed by the CA is rejected by the browsers.
+  - [x] devices without certificate warnings: Mac (Safari, Chrome, Firefox)
+    and phone, by `musicpi.local` and by IP;
+  - [x] forced renewal through the real renewal service, with an open event
+    stream and availability probes. **Found two problems:**
+    - Caddy 2.6.2 skipped the reload ("config is unchanged"), so a renewed
+      certificate was never served;
+    - a forced reload panicked with an open stream, and a restart waited for
+      open streams with the listener closed (about 20 s).
+
+    Fixed in PR #106: the renewal restarts the proxy, and `grace_period 2s`
+    caps the wait. Measured afterwards: the new certificate is served, no
+    panic, about 2 s of refused connections, and pages reconnect on their own;
+  - [x] name constraints honoured. A test certificate signed by the CA for
+    `IP:192.168.1.105` plus `DNS:bank.example`, served on a temporary port, was
+    rejected by OpenSSL and curl ("permitted subtree violation"), by Firefox
+    (`SEC_ERROR_CERT_NOT_IN_NAME_SPACE`), by Chrome (`ERR_CERT_INVALID`) and by
+    Safari. The test site, key and certificate were removed afterwards;
+  - moved to the [user-triggered image updates](./general_open_user-triggered-image-updates.md)
+    acceptance: a web-triggered update and a restore over HTTPS, including
+    the page's automatic reload (needs the next real code change).
 
 ## Risks and notes
 
