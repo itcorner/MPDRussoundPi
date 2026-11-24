@@ -48,6 +48,7 @@ const adminMode = {
   tickTimer: null,
   dialog: null,
   pending: null,
+  returnFocus: null,
   reauth: false,
 };
 
@@ -362,7 +363,32 @@ function renderAdminDialog() {
 // Opens the login dialog. ``reason`` names what the user asked to do; ``onSuccess``
 // runs once signed in (the action that needed the login). With ``reauth`` the signed-in
 // administrator confirms the password again (a restore asks for it).
+// Keyboard and screen reader users continue where they were after the dialog closes: on the
+// control that opened it, or on the Menu button when that control is gone (a closed menu).
+function rememberFocus() {
+  const parts = adminMode.dialog;
+  if (!parts || !parts.dialog.open) {
+    adminMode.returnFocus = document.activeElement;
+  }
+}
+
+function restoreFocus() {
+  const back = adminMode.returnFocus;
+  adminMode.returnFocus = null;
+  // Try the opener and check: a row of a closed menu still has a box but cannot take focus.
+  if (back && back.isConnected && typeof back.focus === "function") {
+    back.focus();
+  }
+  if (!back || document.activeElement !== back) {
+    const menu = document.querySelector(".menu-toggle");
+    if (menu) {
+      menu.focus();
+    }
+  }
+}
+
 async function openAdminLogin({ reason = "", onSuccess = null, reauth = false } = {}) {
+  rememberFocus();
   if (!adminMode.dialog) {
     adminMode.dialog = buildAdminDialog();
   }
@@ -389,6 +415,7 @@ function closeAdminLogin(succeeded) {
   adminMode.pending = null;
   if (parts && parts.dialog.open) {
     parts.dialog.close();
+    restoreFocus();
   }
   if (parts) {
     parts.input.value = "";
@@ -405,6 +432,7 @@ function closeAdminLogin(succeeded) {
 
 // The password change dialog, for the signed-in administrator.
 async function openPasswordChange() {
+  rememberFocus();
   if (!adminMode.dialog) {
     adminMode.dialog = buildAdminDialog();
   }
