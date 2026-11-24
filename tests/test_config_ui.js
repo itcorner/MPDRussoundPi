@@ -271,6 +271,8 @@ test("saving unrelated changes omits an unchanged incomplete backend", async () 
     updateSaveButtonState() {},
     // Save results go to the save bar: setSaveResult(text, succeeded).
     setSaveResult: (...args) => messages.push(args),
+    adminToken: () => null,
+    applyEditLock() {},
     renderEditor() {},
     apiFetch: async (url, options) => {
       request = JSON.parse(options.body);
@@ -327,6 +329,8 @@ test("saving sends the loaded config revision and keeps edits on conflict", asyn
     updateSaveButtonState() {},
     // Save results go to the save bar: setSaveResult(text, succeeded).
     setSaveResult: (...args) => messages.push(args),
+    adminToken: () => null,
+    applyEditLock() {},
     renderEditor() { rendered = true; },
     apiFetch: async (url, options) => {
       requests.push(options.headers);
@@ -435,4 +439,45 @@ test("connectivity consumes authoritative metadata, never raw override precedenc
     assert.equal(elements.backendConnectionStatus.hidden, expected === "connected");
     assert.equal(context.statusInFlight, false);
   }
+});
+
+const editLock = source.slice(source.indexOf("function editorControls("), source.indexOf("function recomputeUnsavedChanges("));
+
+test("guests see the configuration read-only; signing in unlocks only what the lock disabled", () => {
+  const control = (inside = null, disabled = false) => ({
+    disabled, dataset: {}, closest: (selector) => (inside && selector.split(/,\s*/).includes(inside) ? {} : null),
+  });
+  const name = control();
+  const environmentField = control(null, true);  // disabled for its own reason
+  const sound = control(".config-slot-sound");
+  const menu = control(".system-panel");
+  const classes = new Set();
+  const state = { known: true, configured: true, elevated: false };
+  const context = {
+    configLockNote: { hidden: true },
+    document: {
+      querySelectorAll: () => [name, environmentField, sound, menu],
+      body: { classList: { toggle: (cls, on) => (on ? classes.add(cls) : classes.delete(cls)) } },
+    },
+    window: { adminModeState: () => ({ ...state }) },
+  };
+  vm.createContext(context);
+  vm.runInContext(editLock, context);
+  context.applyEditLock();
+  assert.equal(context.configLockNote.hidden, false, "the note offers the login");
+  assert.equal(classes.has("config-locked"), true);
+  assert.equal(name.disabled, true);
+  assert.equal(sound.disabled, false, "live sound controls stay usable");
+  assert.equal(menu.disabled, false, "the page menu stays usable");
+  state.elevated = true;
+  context.applyEditLock();
+  assert.equal(name.disabled, false, "unlocked after signing in");
+  assert.equal(environmentField.disabled, true, "a field disabled for another reason stays disabled");
+  assert.equal(context.configLockNote.hidden, true);
+  Object.assign(state, { elevated: false, configured: false });
+  context.applyEditLock();
+  assert.equal(name.disabled, false, "no administrator login on this installation: nothing is locked");
+  Object.assign(state, { configured: true, known: false });
+  context.applyEditLock();
+  assert.equal(name.disabled, false, "nothing is locked before the session is known");
 });

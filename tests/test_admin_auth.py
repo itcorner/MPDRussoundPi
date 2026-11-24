@@ -322,6 +322,111 @@ class HttpsOnlyLoginTests(Fixture):
         self.assertEqual(client.post("/api/admin/login", json={"password": PASSWORD}).status_code, 200)
 
 
+class PasswordChangeTests(Fixture):
+    """Changing the password on the page writes the override file next to the state."""
+
+    NEW = "a brand new passphrase"
+
+    def setUp(self):
+        super().setUp()
+        self.override = self.root / "data" / admin_auth.OVERRIDE_FILE_NAME
+        self.override.parent.mkdir()
+        self.password_file.chmod(0o400)  # the deployment's file stays read-only
+
+    def auth(self):
+        return AdminAuth(self.password_file, self.lockout_file, clock=lambda: self.clock[0],
+                         audit_file=self.audit_file, override_file=self.override)
+
+    def test_the_change_keeps_this_session_ends_the_others_and_wins_over_the_secrets_file(self):
+        auth = self.auth()
+        _, mine, _ = auth.login(PASSWORD, "a")
+        _, other, _ = auth.login(PASSWORD, "b")
+        self.assertEqual(auth.change_password(mine, PASSWORD, self.NEW, "a"), ("ok", 0))
+        self.assertTrue(verify_password(self.NEW, self.override.read_text().strip()))
+        self.assertEqual(self.override.stat().st_mode & 0o777, 0o600)
+        self.assertTrue(verify_password(PASSWORD, self.password_file.read_text().strip()), "secrets file untouched")
+        self.assertIsNotNone(auth.session(mine), "this session continues with the new password")
+        self.assertIsNone(auth.session(other), "every other session ends")
+        self.assertEqual(auth.login(PASSWORD, "c")[0], "invalid", "the old password no longer works")
+        self.assertEqual(auth.login(self.NEW, "c")[0], "ok")
+        self.assertIn("password_changed", self.audit_file.read_text())
+        self.assertNotIn(self.NEW, self.audit_file.read_text())
+
+    def test_wrong_current_password_counts_towards_the_lockout_and_rules_apply(self):
+        auth = self.auth()
+        _, mine, _ = auth.login(PASSWORD, "a")
+        self.assertEqual(auth.change_password(mine, PASSWORD, "short", "a"), ("weak", 0))
+        self.assertEqual(auth.change_password(mine, PASSWORD, "x" * 257, "a"), ("weak", 0))
+        for _ in range(admin_auth.MAX_FAILURES - 1):
+            self.assertEqual(auth.change_password(mine, "wrong", self.NEW, "a")[0], "invalid")
+        self.assertEqual(auth.change_password(mine, "wrong", self.NEW, "a")[0], "locked")
+        self.assertFalse(self.override.exists(), "nothing written on any failure")
+        self.assertEqual(auth.change_password(None, PASSWORD, self.NEW, "a")[0], "unauthenticated")
+        self.assertEqual(AdminAuth(self.password_file).change_password(mine, PASSWORD, self.NEW, "a")[0],
+                         "unauthenticated")
+
+    def test_without_a_writable_location_the_page_cannot_change_it(self):
+        auth = AdminAuth(self.password_file, self.lockout_file, clock=lambda: self.clock[0])
+        _, mine, _ = auth.login(PASSWORD, "a")
+        self.assertFalse(auth.changeable())
+        self.assertEqual(auth.change_password(mine, PASSWORD, self.NEW, "a"), ("not_changeable", 0))
+
+    def test_a_reset_on_the_host_writes_the_same_file_and_wins(self):
+        auth = self.auth()
+        _, mine, _ = auth.login(PASSWORD, "a")
+        with patch("getpass.getpass", side_effect=[self.NEW, self.NEW]), patch("sys.stderr", io.StringIO()):
+            admin_auth.main(["set", "--file", str(self.override)])
+        self.assertIsNone(auth.session(mine), "a reset ends every session")
+        self.assertEqual(auth.login(self.NEW, "a")[0], "ok")
+
+    def test_endpoint(self):
+        server = RussoundHTTPServer(None, None, admin=self.auth())
+        self.addCleanup(server.server_close)
+        client = server.app.test_client()
+        self.assertEqual(client.post("/api/admin/password", json={}).status_code, 401)
+        client.post("/api/admin/login", json={"password": PASSWORD})
+        session = client.get("/api/admin/session").json
+        self.assertTrue(session["password_changeable"])
+        headers = {admin_auth.CSRF_HEADER: session["csrf_token"]}
+        self.assertEqual(client.post("/api/admin/password", json={"current_password": PASSWORD,
+                                                                   "new_password": self.NEW}).status_code, 403)
+        wrong = client.post("/api/admin/password", json={"current_password": "nope", "new_password": self.NEW},
+                            headers=headers)
+        self.assertEqual((wrong.status_code, wrong.json["error"]["code"]), (403, "invalid"))
+        weak = client.post("/api/admin/password", json={"current_password": PASSWORD, "new_password": "short"},
+                           headers=headers)
+        self.assertEqual((weak.status_code, weak.json["error"]["code"]), (400, "weak"))
+        done = client.post("/api/admin/password", json={"current_password": PASSWORD, "new_password": self.NEW},
+                           headers=headers)
+        self.assertEqual(done.status_code, 200)
+        self.assertTrue(done.json["authenticated"], "still signed in afterwards")
+        self.assertEqual(done.headers["Cache-Control"], "no-store")
+
+
+class ProtectedConfigTests(Fixture):
+    """Saving the configuration needs the administrator, once a password exists."""
+
+    def test_config_saves_need_the_session_and_its_token(self):
+        server = RussoundHTTPServer(None, None, admin=self.auth())
+        self.addCleanup(server.server_close)
+        client = server.app.test_client()
+        guest = client.post("/api/config", json={}, headers={"X-Config-Revision": "x"})
+        self.assertEqual((guest.status_code, guest.json["error"]["code"]), (401, "unauthenticated"))
+        client.post("/api/admin/login", json={"password": PASSWORD})
+        no_token = client.post("/api/config", json={}, headers={"X-Config-Revision": "x"})
+        self.assertEqual((no_token.status_code, no_token.json["error"]["code"]), (403, "csrf"))
+        csrf = client.get("/api/admin/session").json["csrf_token"]
+        passed = client.post("/api/config", json={}, headers={admin_auth.CSRF_HEADER: csrf})
+        self.assertEqual(passed.status_code, 428, "past the administrator check, at the revision check")
+        self.assertTrue(client.get("/api/config").status_code == 200, "reading stays open")
+
+    def test_without_an_administrator_password_the_first_setup_stays_possible(self):
+        server = RussoundHTTPServer(None, None, admin=AdminAuth(self.root / "missing.scrypt"))
+        self.addCleanup(server.server_close)
+        response = server.app.test_client().post("/api/config", json={})
+        self.assertEqual(response.status_code, 428, "no login exists, so the save reaches the revision check")
+
+
 class WaitressProxyHeaderTests(Fixture):
     """Through a real Waitress server, which the Flask test client skips."""
 

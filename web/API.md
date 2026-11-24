@@ -497,6 +497,13 @@ never record frontend events and never log the password.
   need the session cookie **and** the `X-CSRF-Token` header with the session's
   token. Reauthentication refreshes the "recently authenticated" window (5
   minutes) that a restore requires.
+- `POST /api/admin/password` (`{"current_password", "new_password"}`, session and
+  `X-CSRF-Token`): changes the password when `password_changeable` (in the session
+  description) is true. The current password is checked like a login (throttle and
+  lockout count). `200` with the session description (this session continues, every
+  other one ends), `403 invalid` for a wrong current password, `400 weak` outside
+  12–256 characters, `409 not_changeable` without a writable location. The hash is
+  written next to the state and wins over the deployment's file.
 - `POST /api/admin/extend` (`{}`, session and `X-CSRF-Token`): counts as activity,
   so the idle time starts again ("Extend" in the administrator strip). Answers the
   session description like `GET /api/admin/session`. Reading the session never
@@ -754,6 +761,12 @@ Shortcut targets now use physical Russound addresses:
 ### POST /api/config
 
 Creates or updates the backend, controller topology, zones, and sources, and persists the configuration.
+
+**Administrator only** once an administrator password exists on the installation:
+it needs the session cookie and the `X-CSRF-Token` header (`401 unauthenticated`
+or `403 csrf` otherwise, before anything else is checked). Without a password
+(first setup) it stays open, so an installation can still be set up. Reading
+(`GET /api/config`) is always open; the page shows guests a read-only view.
 
 The optional `shortcuts` array replaces the saved shortcuts (`[]` deletes all).
 Each shortcut needs a unique non-empty string `id`, a non-empty `name`, an enabled

@@ -520,12 +520,39 @@ function updateSaveButtonState() {
 
 // Saving the configuration is an administrator action: a guest signs in first.
 function requestSave() {
-  const elevated = document.body.classList.contains("admin-elevated");
-  if (!elevated && typeof window.adminLogin === "function") {
+  const state = typeof window.adminModeState === "function" ? window.adminModeState() : null;
+  if (state && state.configured && !state.elevated && typeof window.adminLogin === "function") {
     window.adminLogin({ reason: "Save the configuration", onSuccess: saveConfig });
     return;
   }
   saveConfig();
+}
+
+// Read-only for guests where an administrator login exists: every editor control is
+// disabled (the zones' live sound controls stay, they are everyday controls) and a note
+// offers the login. Controls disabled for other reasons are left alone.
+const configLockNote = document.getElementById("configLockNote");
+const configSignIn = document.getElementById("configSignIn");
+
+function editorControls() {
+  return Array.from(document.querySelectorAll("main input, main select, main textarea, main button"))
+    .filter((control) => !control.closest(".system-panel, .config-slot-sound, .config-lock-note"));
+}
+
+function applyEditLock() {
+  const state = typeof window.adminModeState === "function" ? window.adminModeState() : null;
+  const locked = Boolean(state && state.known && state.configured && !state.elevated);
+  configLockNote.hidden = !locked;
+  document.body.classList.toggle("config-locked", locked);
+  for (const control of editorControls()) {
+    if (locked && !control.disabled) {
+      control.disabled = true;
+      control.dataset.adminLocked = "true";
+    } else if (!locked && control.dataset.adminLocked) {
+      control.disabled = false;
+      delete control.dataset.adminLocked;
+    }
+  }
 }
 
 function recomputeUnsavedChanges() {
@@ -757,9 +784,14 @@ async function fetchConfigEditor() {
   }
   const payload = await response.json();
   renderEditor(payload);
+  applyEditLock();
   } catch {
     setMessage("Failed to load configuration. Check the connection and retry.", true);
   }
+}
+
+function adminToken() {
+  return typeof window.adminCsrfToken === "function" ? window.adminCsrfToken() : null;
 }
 
 async function saveConfig() {
@@ -817,6 +849,7 @@ async function saveConfig() {
       headers: {
         "Content-Type": "application/json",
         ...(revision ? { "X-Config-Revision": revision } : {}),
+        ...(adminToken() ? { "X-CSRF-Token": adminToken() } : {}),
       },
       body: JSON.stringify({
         ...(preserveIncompleteEndpoint ? {} : { backend }),
@@ -828,10 +861,21 @@ async function saveConfig() {
     });
     const payload = await response.json();
     if (!response.ok) {
-      setSaveResult(payload.error || "Failed to save configuration.", false);
+      const code = payload.error && typeof payload.error === "object" ? payload.error.code : payload.code;
+      if (response.status === 401 && typeof window.adminLogin === "function") {
+        // The session ended meanwhile: sign in again, then save the same edits.
+        setSaveResult(null);
+        window.adminLogin({ reason: "Save the configuration", onSuccess: saveConfig });
+        return;
+      }
+      const message = typeof payload.error === "string" ? payload.error
+        : payload.error && typeof payload.error.message === "string" ? payload.error.message : null;
+      setSaveResult(message || (code === "csrf" ? "Reload the page and save again."
+        : "Failed to save configuration."), false);
       return;
     }
     renderEditor(payload);
+    applyEditLock();
     setSaveResult("Configuration saved.", true);
   } catch {
     setSaveResult("Failed to save configuration. Check the connection and retry.", false);
@@ -909,6 +953,12 @@ window.addEventListener("beforeunload", (event) => {
 });
 
 saveConfigButton.addEventListener("click", requestSave);
+configSignIn.addEventListener("click", () => {
+  if (typeof window.adminLogin === "function") {
+    window.adminLogin({ reason: "Change the configuration" });
+  }
+});
+document.addEventListener("admin-mode-changed", applyEditLock);
 discardConfigButton.addEventListener("click", () => {
   setSaveResult(null);
   fetchConfigEditor();  // the saved configuration replaces every edit

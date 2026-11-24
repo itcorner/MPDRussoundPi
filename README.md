@@ -369,7 +369,8 @@ Remove an explicit override to let browser edits take effect for that field.
 | `RUSSOUND_TRUSTED_PROXY_COUNT` | Number of reverse proxies whose `X-Forwarded-*` headers are trusted. Set it only when the web port is reachable from the proxy alone (for example published on `127.0.0.1`); otherwise any client can claim HTTPS or another address | `0` |
 | `RUSSOUND_REQUIRE_HTTPS_LOGIN` | Refuse administrator login and reauthentication over plain HTTP (see [HTTPS for the web UI](docs/documentation/web-ui-https.md)); needs `RUSSOUND_TRUSTED_PROXY_COUNT` | `false` |
 | `RUSSOUND_WEB_TLS_STATUS_FILE` | Public facts of the HTTPS certificate written by `tool/web_tls.py`, shown on the Status page; missing means no HTTPS row | `/run/web-tls/status.json` |
-| `RUSSOUND_ADMIN_PASSWORD_FILE` | Administrator password hash file (see [Administrator login](#administrator-login)); missing means no administrator login | `/run/secrets/russound-admin.scrypt` |
+| `RUSSOUND_ADMIN_PASSWORD_FILE` | Administrator password hash file set by the deployment (see [Administrator login](#administrator-login)); missing means no administrator login | `/run/secrets/russound-admin.scrypt` |
+| `RUSSOUND_ADMIN_PASSWORD_OVERRIDE_FILE` | Writable hash file for a password changed on the page; when present it wins over `RUSSOUND_ADMIN_PASSWORD_FILE` | `russound-admin.scrypt` next to the state file (`/data` in the container) |
 | `RUSSOUND_UPDATE_CHECK` | `off` stops the read-only check for a newer published web image on Docker Hub (Status page, every 6 h); local builds are never checked | `on` |
 
 Core server settings also have command-line flags (`--host`, `--port`,
@@ -413,19 +414,38 @@ Neither establishes fresh-machine provisioning or arbitrary version migration.
 
 ## Deployment Notes
 
-- Rooms, playback and configuration have no user authentication: anyone who can reach the web port can control them. Privileged actions (installing updates, later restarts) need the administrator password, see [Administrator login](#administrator-login). Until the UI runs over HTTPS, that password and the session cookie travel in plain text on the local network. State-changing API requests are protected against cross-site request forgery (same-origin check via `Origin`/`Sec-Fetch-Site`, JSON-only bodies), see `web/API.md`.
+- Rooms and playback have no user authentication: anyone who can reach the web UI can control them. Saving the configuration and installing updates or restoring backups need the administrator password once one is set, see [Administrator login](#administrator-login); everyone can still read the configuration. Without HTTPS (see [HTTPS for the web UI](docs/documentation/web-ui-https.md)) that password and the session cookie travel in plain text on the local network. State-changing API requests are protected against cross-site request forgery (same-origin check via `Origin`/`Sec-Fetch-Site`, JSON-only bodies), see `web/API.md`.
 - Set `RUSSOUND_ALLOWED_HOSTS` to the host names/IPs you use to reach the UI to block DNS-rebinding attacks.
 - For non-local deployments, place the service behind a TLS-terminating reverse proxy and set `RUSSOUND_TRUSTED_PROXY_COUNT`.
 - Restrict network access to trusted clients.
 
 ## Administrator login
 
-Privileged actions need one shared administrator password. Only its scrypt hash
-is stored, in a file in the secrets directory (`RUSSOUND_ADMIN_PASSWORD_FILE`,
-default `/run/secrets/russound-admin.scrypt` inside the container). Without that
-file the login is reported as "not set up" and no privileged action is possible.
-Set or reset the password locally on the host, never over the web; a new file
-revokes every administrator session and clears the login lockout:
+Privileged actions (saving the configuration, installing updates, restoring a
+backup) need one shared administrator password. Only its scrypt hash is stored.
+The deployment provides it in the secrets directory (`RUSSOUND_ADMIN_PASSWORD_FILE`,
+default `/run/secrets/russound-admin.scrypt` inside the container, read-only).
+Without it the login is reported as "not set up", no privileged action is
+possible, and the configuration stays open for the first setup.
+
+**Change it on the page:** signed in, Menu → *Change password* (current password,
+then the new one twice, at least 12 characters). The new hash goes to a writable
+file next to the state (`/data/russound-admin.scrypt` in the container,
+`RUSSOUND_ADMIN_PASSWORD_OVERRIDE_FILE`), which wins over the deployment's file.
+Every other session ends; yours continues.
+
+**Lost password:** reset it on the Pi over SSH. The command asks for the new
+password twice and writes the same file; every session ends and the lockout is
+cleared (the login dialog shows this command under "Forgot the password?"):
+
+```sh
+docker exec -it $(docker ps -qf name=russound-web) python -m web.admin_auth set --file /data/russound-admin.scrypt
+```
+
+To go back to the deployment's password instead, remove that file
+(`docker exec $(docker ps -qf name=russound-web) rm /data/russound-admin.scrypt`).
+Setting the deployment's file itself works as before, locally on the host; a new
+file revokes every administrator session and clears the login lockout:
 
 ```sh
 # Native or on a host with this checkout: write the file directly
@@ -438,10 +458,11 @@ sudo chown <service uid>:<service gid> /path/to/data/secrets/russound-admin.scry
 sudo chmod 0400 /path/to/data/secrets/russound-admin.scrypt
 ```
 
-After logging in, the Administrator panel can install the newest development
-image: it shows a review (version, images, interruption, where the backup is kept),
-asks you to type `update` to confirm, follows the progress across the restart of
-the web application and offers "Restore previous version" if the update fails.
+Signed in, the Software updates section of the Status page can install the newest
+development image: it shows a review (version, images, interruption, where the
+backup is kept), asks you to type `update` to confirm and follows the progress
+across the restart of the web application. If the update fails, the Restore
+backup section opens with the backup taken just before it (time, version, size).
 This works only on a single Pi running the Docker containers with the updater
 service installed (see the
 [container deployment guide](docs/documentation/container-deployment.md)); other

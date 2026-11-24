@@ -2632,3 +2632,101 @@ input[type="range"] {
 .page-menu-link[href="/config"] { --menu-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E"); }
 
 .page-menu-link[href="/status"] { --menu-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l3-7 4 14 3-7h4'/%3E%3C/svg%3E"); }
+
+/* Configuration page for guests: read-only, with a note that offers the login. */
+.config-lock-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.8rem 1rem;
+  border: 1px dashed rgba(245, 185, 66, 0.45);
+  border-radius: 16px;
+  background: rgba(245, 185, 66, 0.07);
+  color: var(--text);
+}
+
+.config-lock-note[hidden] {
+  display: none;
+}
+
+.config-lock-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  background: var(--admin);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M7 10V8a5 5 0 0 1 10 0v2h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zm2 0h6V8a3 3 0 0 0-6 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M7 10V8a5 5 0 0 1 10 0v2h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zm2 0h6V8a3 3 0 0 0-6 0z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.config-lock-text {
+  flex: 1 1 14rem;
+}
+
+.config-lock-button {
+  min-height: 40px;
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--admin);
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Locked fields stay readable: values in full colour, only the frame says "not editable". */
+.config-locked main input:disabled,
+.config-locked main select:disabled,
+.config-locked main textarea:disabled {
+  opacity: 1;
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  border-style: dashed;
+  cursor: default;
+}
+
+/* Password change and the forgotten-password help in the administrator dialog. */
+.admin-dialog-message.is-success {
+  color: #6fdcaa;
+}
+
+.admin-dialog-help {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.admin-dialog-help[hidden] {
+  display: none;
+}
+
+.admin-dialog-help summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.admin-dialog-help p {
+  margin: 0.5rem 0 0.35rem;
+}
+
+.admin-dialog-help code {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: #0b1a2b;
+  color: var(--text);
+  font-size: 0.78rem;
+  word-break: break-all;
+  user-select: all;
+}
+
+.admin-dialog-copy {
+  margin-top: 0.4rem;
+  min-height: 32px;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid rgba(91, 185, 255, 0.35);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}

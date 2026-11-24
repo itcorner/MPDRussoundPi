@@ -211,10 +211,15 @@ class RussoundHTTPServer:
         self._updates = update_checker or UpdateChecker()
         log_file = env_str("RUSSOUND_LOG_FILE")
         self.updater = updater or UpdaterClient()
+        state_dir = Path(state_path).expanduser().resolve().parent if state_path else None
         self.admin = admin or AdminAuth(
             env_str("RUSSOUND_ADMIN_PASSWORD_FILE") or admin_auth.DEFAULT_PASSWORD_FILE,
-            Path(state_path).expanduser().resolve().parent / "admin-lockout.json" if state_path else None,
+            state_dir / "admin-lockout.json" if state_dir else None,
             audit_file=Path(log_file).parent / "admin-audit.log" if log_file else None,
+            # A password changed on the page lives next to the state (writable /data in the
+            # container); the deployment's secrets file stays read-only and is the fallback.
+            override_file=env_str("RUSSOUND_ADMIN_PASSWORD_OVERRIDE_FILE")
+            or (state_dir / admin_auth.OVERRIDE_FILE_NAME if state_dir else None),
         )
         playback_configs = PlaybackAgentConfig.from_environment() if playback_clients is None else None
         self._playback_clients = playback_clients or [
@@ -470,6 +475,34 @@ class RussoundHTTPServer:
             return self._no_store(jsonify({**self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME)),
                                            **self._transport()}))
 
+        @app.post("/api/admin/password")
+        def api_admin_password():
+            # Changing the password: the session and its token, plus the current password in the body.
+            if self._https_required():
+                return self._https_refusal()
+            denied = self.admin_required()
+            if denied is not None:
+                return denied
+            body = self._read_json_body()
+            result, retry = self.admin.change_password(request.cookies.get(admin_auth.COOKIE_NAME),
+                                                       body.get("current_password"), body.get("new_password"),
+                                                       self._request_ip())
+            if result == "ok":
+                return self._no_store(jsonify({**self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME)),
+                                               **self._transport()}))
+            if result in ("weak", "not_changeable"):
+                message = (f"Use between {admin_auth.MIN_PASSWORD_LENGTH} and {admin_auth.MAX_PASSWORD_LENGTH} characters."
+                           if result == "weak" else "The password cannot be changed from the page on this installation.")
+                response = self._no_store(jsonify({"api_version": 1, "error": {"code": result, "message": message}}))
+                response.status_code = 400 if result == "weak" else 409
+                return response
+            if result == "invalid":
+                response = self._no_store(jsonify({"api_version": 1, "error": {
+                    "code": "invalid", "message": "The current password is not correct."}}))
+                response.status_code = 403
+                return response
+            return self._admin_failure(result, retry)
+
         @app.post("/api/admin/reauthenticate")
         def api_admin_reauthenticate():
             if self._https_required():
@@ -538,6 +571,12 @@ class RussoundHTTPServer:
 
         @app.post("/api/config")
         def api_update_config():
+            # Saving the configuration is an administrator action. Without an administrator
+            # password on this installation (first setup) it stays open, or nobody could set it up.
+            if self.admin.configured():
+                denied = self.admin_required()
+                if denied is not None:
+                    return denied
             # Every save is conditional, so no client can overwrite edits it never saw.
             expected_revision = request.headers.get(CONFIG_REVISION_HEADER)
             if expected_revision is None:
