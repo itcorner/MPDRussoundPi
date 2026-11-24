@@ -225,6 +225,16 @@ operator.
   Since HTTPS (2026-11-23), also: a web-triggered update and a restore over
   HTTPS, including the page's automatic reload (moved from the
   [HTTPS plan](./general_done_web-ui-https.md)).
+  - [x] *Web update over HTTPS with automatic reload* (2026-11-24): `7573cf2` →
+    `979da5f` started from `https://musicpi.local/status` (operation
+    `3d3d4f72`), after a tooling upgrade to `979da5f`. Verified-complete, all
+    five checks passed (the `http` check includes the HTTPS route), the cleanup
+    removed the old pair. The open page reloaded itself into the new version
+    (confirmed by the user). The publication first failed: Docker Hub answered
+    404 on the read-back of the freshly written exact tag (eventual consistency).
+    `recover-development.yml` (run 45292336558, approved by the user) completed
+    it from the original tested archives;
+  - [ ] *Restore over HTTPS*: with the next deliberate failure test.
   - [x] *Successful update* (2026-11-22): `e49ced5` → `f82d2ee` started from the
     Status page by the administrator (operation `b25f90cd`). An earlier review on
     2026-11-21 expired and was cancelled before any interruption, as designed.

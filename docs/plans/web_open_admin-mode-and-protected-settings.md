@@ -164,6 +164,12 @@ Changes:
       minutes, manual exit, restore asks for the password, update install does
       not, password change, lockout after wrong passwords, keyboard use and a
       screen reader pass over the dialog and the strip.
+  - [x] rolled out with `979da5f` on 2026-11-24 (web update over HTTPS; tooling
+    upgraded first for the updater's `backups` field). The user confirmed on the
+    Mac and the phone: the page reloaded into the new version, the login dialog
+    (bottom sheet on the phone) and the amber mode work, and the Configuration
+    save bar appears with changes and saves;
+  - [ ] the rest above, together with stage 1.
 
 Order: stage 1 closes the open configuration page for guests, so it ships with
 the rest of stage 4.
