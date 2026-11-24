@@ -297,7 +297,7 @@ class AdminAuth:
             self._audit("logout", client, removed.reference)
 
     def change_password(self, session_id: str | None, current_password: object, new_password: object,
-                        client: str) -> tuple[str, int]:
+                        client: str, *, allow_short: bool = False) -> tuple[str, int]:
         """Results: ok, unauthenticated, weak, not_changeable, invalid, locked, throttled, not_configured.
 
         The current password is checked like a login (throttle and lockout count). Afterwards
@@ -308,7 +308,9 @@ class AdminAuth:
             return "unauthenticated", 0
         if self._override_file is None:
             return "not_changeable", 0
-        if not isinstance(new_password, str) or not MIN_PASSWORD_LENGTH <= len(new_password) <= MAX_PASSWORD_LENGTH:
+        # Shorter than 12 characters (a PIN) only when the risk was explicitly accepted.
+        minimum = MIN_SHORT_PASSWORD_LENGTH if allow_short else MIN_PASSWORD_LENGTH
+        if not isinstance(new_password, str) or not minimum <= len(new_password) <= MAX_PASSWORD_LENGTH:
             return "weak", 0
         result, retry = self._verify(current_password, client, "password_change")
         if result != "ok":
@@ -333,7 +335,8 @@ class AdminAuth:
             current.generation = self._generation() or ""
             current.authenticated_at = self._clock()
             self._prune(self._clock())
-        self._audit("password_changed", client, current.reference)
+        self._audit("password_changed_short" if len(new_password) < MIN_PASSWORD_LENGTH else "password_changed",
+                    client, current.reference)
         return "ok", 0
 
     def reauthenticate(self, session_id: str | None, password: object, client: str) -> tuple[str, int]:

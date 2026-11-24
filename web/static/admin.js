@@ -9,6 +9,9 @@
 
 const ADMIN_POLL_MS = 15000;
 const ADMIN_LOW_SECONDS = 60;
+const SHORT_PASSWORD_RISK = "A password shorter than 12 characters is protected online only by the login lockout "
+  + "(5 tries per 15 minutes, about 10 days on average for a 4-digit PIN), and it can be guessed offline within "
+  + "seconds if the password file is ever copied, for example from a backup.";
 const ADMIN_SETUP_COMMAND = "python -m web.admin_auth set --file <secrets directory>/russound-admin.scrypt";
 // Resetting a lost password on the Pi: writes the page's password file in the web container
 // (it wins over the deployment's secrets file), asks for the new password twice.
@@ -240,7 +243,27 @@ function buildAdminDialog() {
   }
   const changeRule = document.createElement("p");
   changeRule.className = "admin-dialog-note";
-  changeRule.textContent = "At least 12 characters. All other signed-in devices are signed out.";
+  changeRule.textContent = "At least 12 characters (a short password or PIN needs the risk accepted below). "
+    + "All other signed-in devices are signed out.";
+  // A short password (4–11 characters, e.g. a PIN) only after reading and accepting the risk.
+  const shortBox = document.createElement("div");
+  shortBox.className = "admin-dialog-risk";
+  shortBox.hidden = true;
+  const shortText = document.createElement("p");
+  shortText.textContent = SHORT_PASSWORD_RISK;
+  const shortLabel = document.createElement("label");
+  shortLabel.className = "admin-dialog-check";
+  const shortAccept = document.createElement("input");
+  shortAccept.type = "checkbox";
+  shortLabel.append(shortAccept, document.createTextNode(" I understand the risk and want to use a short password"));
+  shortBox.append(shortText, shortLabel);
+  changeFields.next.addEventListener("input", () => {
+    const short = changeFields.next.value.length > 0 && changeFields.next.value.length < 12;
+    shortBox.hidden = !short;
+    if (!short) {
+      shortAccept.checked = false;
+    }
+  });
   const changeMessage = document.createElement("p");
   changeMessage.className = "admin-dialog-message";
   changeMessage.setAttribute("role", "alert");
@@ -256,7 +279,7 @@ function buildAdminDialog() {
   changeCancel.className = "admin-dialog-cancel";
   changeCancel.textContent = "Cancel";
   changeActions.append(changeSubmit, changeCancel);
-  change.append(changeRule, changeMessage, changeActions);
+  change.append(changeRule, shortBox, changeMessage, changeActions);
 
   // A forgotten password is reset on the Pi itself; the page can only say how.
   const help = document.createElement("details");
@@ -305,7 +328,7 @@ function buildAdminDialog() {
     }
   });
   return { dialog, titleText, reason, form, input, message, submit, warning, https, httpsLink, setup, close,
-    change, changeFields, changeMessage, changeSubmit, help };
+    change, changeFields, changeMessage, changeSubmit, help, shortBox, shortAccept };
 }
 
 function showAdminDialogMessage(text) {
@@ -372,6 +395,8 @@ function closeAdminLogin(succeeded) {
     for (const field of Object.values(parts.changeFields)) {
       field.value = "";
     }
+    parts.shortAccept.checked = false;
+    parts.shortBox.hidden = true;
   }
   if (succeeded && typeof pending === "function") {
     pending();
@@ -415,9 +440,15 @@ function showChangeMessage(text, success = false) {
 async function submitPasswordChange() {
   const parts = adminMode.dialog;
   const { current, next, repeat } = parts.changeFields;
-  if (next.value.length < 12) {
-    showChangeMessage("Use at least 12 characters.");
+  const short = next.value.length < 12;
+  if (next.value.length < 4) {
+    showChangeMessage("Use at least 4 characters (12 or more is recommended).");
     next.focus();
+    return;
+  }
+  if (short && !parts.shortAccept.checked) {
+    showChangeMessage("Accept the risk of a short password, or use at least 12 characters.");
+    parts.shortAccept.focus();
     return;
   }
   if (next.value !== repeat.value) {
@@ -431,7 +462,7 @@ async function submitPasswordChange() {
     const response = await fetch("/api/admin/password", {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/json", ...(typeof token === "string" ? { "X-CSRF-Token": token } : {}) },
-      body: JSON.stringify({ current_password: current.value, new_password: next.value }),
+      body: JSON.stringify({ current_password: current.value, new_password: next.value, allow_short: short }),
     });
     let payload = {};
     try {
@@ -444,6 +475,8 @@ async function submitPasswordChange() {
       for (const field of Object.values(parts.changeFields)) {
         field.value = "";
       }
+      parts.shortAccept.checked = false;
+      parts.shortBox.hidden = true;
       showChangeMessage("Password changed. Other signed-in devices were signed out.", true);
       window.setTimeout(() => closeAdminLogin(false), 1800);
       return;

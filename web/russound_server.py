@@ -486,12 +486,13 @@ class RussoundHTTPServer:
             body = self._read_json_body()
             result, retry = self.admin.change_password(request.cookies.get(admin_auth.COOKIE_NAME),
                                                        body.get("current_password"), body.get("new_password"),
-                                                       self._request_ip())
+                                                       self._request_ip(), allow_short=body.get("allow_short") is True)
             if result == "ok":
                 return self._no_store(jsonify({**self.admin.describe(request.cookies.get(admin_auth.COOKIE_NAME)),
                                                **self._transport()}))
             if result in ("weak", "not_changeable"):
-                message = (f"Use between {admin_auth.MIN_PASSWORD_LENGTH} and {admin_auth.MAX_PASSWORD_LENGTH} characters."
+                message = (f"Use between {admin_auth.MIN_PASSWORD_LENGTH} and {admin_auth.MAX_PASSWORD_LENGTH} characters, "
+                           f"or {admin_auth.MIN_SHORT_PASSWORD_LENGTH} or more after accepting the risk of a short password."
                            if result == "weak" else "The password cannot be changed from the page on this installation.")
                 response = self._no_store(jsonify({"api_version": 1, "error": {"code": result, "message": message}}))
                 response.status_code = 400 if result == "weak" else 409
