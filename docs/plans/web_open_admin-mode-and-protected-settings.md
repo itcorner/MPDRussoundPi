@@ -1,6 +1,6 @@
 # Administrator mode: global sign-in and protected settings
 
-**Status:** open. Planned and decided on 2026-11-22. Stages 1 to 4 implemented on 2026-11-24 (after a local preview session): configuration saves need the administrator, the password can be changed on the page. Acceptance on the Pi (stage 5) remains. The
+**Status:** open. Planned and decided on 2026-11-22. Stages 1 to 4 implemented on 2026-11-24 (after a local preview session): configuration saves need the administrator, the password can be changed on the page. Rolled out on the reference Pi and largely accepted on 2026-11-24; the remaining checks are listed in stage 5. The
 mockups are in the session that produced this plan; their decisions are recorded
 below. Related to [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (the first user of the administrator account) and
@@ -184,7 +184,17 @@ Changes:
     Mac and the phone: the page reloaded into the new version, the login dialog
     (bottom sheet on the phone) and the amber mode work, and the Configuration
     save bar appears with changes and saves;
-  - [ ] the rest above, together with stage 1.
+  - [x] stage 1 rolled out with `a785f6b` on 2026-11-24 (web update over HTTPS,
+    operation `1fd23d69`, verified-complete). Checked on the Pi: a guest save
+    of the configuration gets `401`, the session reports
+    `password_changeable: true`. The user confirmed on the Mac and the phone:
+    the Configuration page is read-only for guests (live sound controls still
+    work), saving works after signing in, the password change works (also a
+    short password after accepting the risk) and signs out the other device,
+    and the login dialog shows the SSH reset command;
+  - [ ] still open: idle logout after 15 minutes, lockout after wrong
+    passwords, a restore asking for the password again (with the next failure
+    test), keyboard use and a screen reader pass over the dialog and the strip.
 
 Order: stage 1 closes the open configuration page for guests, so it ships with
 the rest of stage 4.
