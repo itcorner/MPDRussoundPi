@@ -1,0 +1,21 @@
+# Managed by ansible/playbooks/deploy-mdns.yml (docs/documentation/mdns-hostname.md).
+# The original file was kept next to this one as a timestamped backup.
+[server]
+use-ipv4=yes
+# Only the IPv4 address is published: clients otherwise try the fe80:: link-local address first.
+use-ipv6={{ 'yes' if mdns_ipv6 else 'no' }}
+# Only the LAN interfaces: Docker bridges and veth pairs come and go with every container restart.
+allow-interfaces={{ mdns_interfaces | join(',') }}
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+publish-hinfo=no
+publish-workstation=yes
+
+[reflector]
+
+[rlimits]
