@@ -192,9 +192,15 @@ Changes:
     work), saving works after signing in, the password change works (also a
     short password after accepting the risk) and signs out the other device,
     and the login dialog shows the SSH reset command;
-  - [ ] still open: idle logout after 15 minutes, lockout after wrong
-    passwords, a restore asking for the password again (with the next failure
-    test), keyboard use and a screen reader pass over the dialog and the strip.
+  - [ ] still open, run on 2026-11-24 (results follow): idle logout after 15
+    minutes and "Extend" (measured with the real server code in the local
+    preview, since the agent has no administrator password for the Pi);
+    lockout after five wrong passwords (on the Pi, with wrong passwords only);
+    a restore asking for the password again (failure test: the
+    playback-agent proxy is stopped before approval, so the update fails its
+    playback check, then the user restores from the Restore backup section);
+    keyboard and screen reader (automated check in headless Chrome, then a
+    short VoiceOver pass by the user).
 
 Order: stage 1 closes the open configuration page for guests, so it ships with
 the rest of stage 4.
