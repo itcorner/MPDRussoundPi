@@ -43,6 +43,8 @@ from typing import Any, Callable
 from mpdrussoundpi.common.atomicjson import write_json
 
 DEFAULT_PASSWORD_FILE = "/run/secrets/russound-admin.scrypt"
+# Written by a password change on the page, next to the state; wins over DEFAULT_PASSWORD_FILE.
+OVERRIDE_FILE_NAME = "russound-admin.scrypt"
 COOKIE_NAME = "russound_admin"
 CSRF_HEADER = "X-CSRF-Token"
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 15, 8, 1
@@ -104,36 +106,49 @@ class AdminAuth:
     """Password check, lockout, sessions and CSRF for the administrator."""
 
     def __init__(self, password_file: str | Path | None, lockout_file: str | Path | None = None, *,
-                 clock: Callable[[], float] = time.time, audit_file: str | Path | None = None) -> None:
+                 clock: Callable[[], float] = time.time, audit_file: str | Path | None = None,
+                 override_file: str | Path | None = None) -> None:
         self._password_file = Path(password_file) if password_file else None
+        # A password changed on the page is written here (a writable data directory); it takes
+        # precedence over the read-only secrets file, which a deployment provides.
+        self._override_file = Path(override_file) if override_file else None
+        self._hash_caches: dict[Path, tuple[tuple[int, int, int], str | None]] = {}
         self._lockout_file = Path(lockout_file) if lockout_file else None
         self._clock = clock
         self._lock = threading.Lock()
         self._sessions: dict[str, Session] = {}
         self._client_attempts: dict[str, list[float]] = {}
-        self._hash_cache: tuple[tuple[int, int, int], str | None] | None = None
         self._audit_file = Path(audit_file) if audit_file else None
         self._lockout = self._load_lockout()
 
     # ------------------------------------------------------------ credential
 
-    def _encoded_hash(self) -> str | None:
-        """The stored hash, re-read when the file changes (a reset needs no restart)."""
-        if self._password_file is None:
+    def _read_hash(self, path: Path | None) -> str | None:
+        """A hash file, re-read when it changes (a reset needs no restart)."""
+        if path is None:
             return None
         try:
-            stat = self._password_file.stat()
+            stat = path.stat()
         except OSError:
-            self._hash_cache = None
+            self._hash_caches.pop(path, None)
             return None
         signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
-        if self._hash_cache is None or self._hash_cache[0] != signature:
+        cached = self._hash_caches.get(path)
+        if cached is None or cached[0] != signature:
             try:
-                text = self._password_file.read_text(encoding="utf-8").strip()
+                text = path.read_text(encoding="utf-8").strip()
             except (OSError, UnicodeError):
                 text = ""
-            self._hash_cache = (signature, text if text.startswith("scrypt$") else None)
-        return self._hash_cache[1]
+            cached = (signature, text if text.startswith("scrypt$") else None)
+            self._hash_caches[path] = cached
+        return cached[1]
+
+    def _encoded_hash(self) -> str | None:
+        """The changed password if there is one, otherwise the deployment's."""
+        return self._read_hash(self._override_file) or self._read_hash(self._password_file)
+
+    def changeable(self) -> bool:
+        return self._override_file is not None and self.configured()
 
     def configured(self) -> bool:
         return self._encoded_hash() is not None
@@ -281,6 +296,46 @@ class AdminAuth:
         if removed is not None:
             self._audit("logout", client, removed.reference)
 
+    def change_password(self, session_id: str | None, current_password: object, new_password: object,
+                        client: str) -> tuple[str, int]:
+        """Results: ok, unauthenticated, weak, not_changeable, invalid, locked, throttled, not_configured.
+
+        The current password is checked like a login (throttle and lockout count). Afterwards
+        every other session ends with the old password; this one moves to the new one.
+        """
+        current = self.session(session_id)
+        if current is None:
+            return "unauthenticated", 0
+        if self._override_file is None:
+            return "not_changeable", 0
+        if not isinstance(new_password, str) or not MIN_PASSWORD_LENGTH <= len(new_password) <= MAX_PASSWORD_LENGTH:
+            return "weak", 0
+        result, retry = self._verify(current_password, client, "password_change")
+        if result != "ok":
+            return result, retry
+        encoded = hash_password(new_password)
+        target = self._override_file
+        temporary = target.with_name(f".{target.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(encoded + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, target)
+        except OSError:
+            logging.getLogger(__name__).warning("Could not write the changed administrator password")
+            return "not_changeable", 0
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        with self._lock:
+            current.generation = self._generation() or ""
+            current.authenticated_at = self._clock()
+            self._prune(self._clock())
+        self._audit("password_changed", client, current.reference)
+        return "ok", 0
+
     def reauthenticate(self, session_id: str | None, password: object, client: str) -> tuple[str, int]:
         current = self.session(session_id)
         if current is None:
@@ -310,7 +365,7 @@ class AdminAuth:
         current = self.session(session_id, touch=False)
         now = self._clock()
         body: dict[str, Any] = {"api_version": 1, "configured": self.configured(), "authenticated": current is not None,
-                                "locked_for_seconds": self.locked_for()}
+                                "locked_for_seconds": self.locked_for(), "password_changeable": self.changeable()}
         if current is not None:
             body.update({
                 "csrf_token": current.csrf,

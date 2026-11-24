@@ -1,6 +1,6 @@
 # Administrator mode: global sign-in and protected settings
 
-**Status:** open. Planned and decided on 2026-11-22. Stages 2 and 3 and the visual part of stage 4 implemented on 2026-11-24 after a local preview session; the server enforcement (stage 1) is open. The
+**Status:** open. Planned and decided on 2026-11-22. Stages 1 to 4 implemented on 2026-11-24 (after a local preview session): configuration saves need the administrator, the password can be changed on the page. Acceptance on the Pi (stage 5) remains. The
 mockups are in the session that produced this plan; their decisions are recorded
 below. Related to [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (the first user of the administrator account) and
@@ -124,10 +124,21 @@ Changes:
 
 ## Stages
 
-- [ ] **1. Server.** Admin check on `POST /api/config`; password change endpoint
-      (after the mount check); tests and `web/API.md`. *Done 2026-11-24:* update
-      review and approve no longer ask for the password again (only a restore
-      does), `POST /api/admin/extend` for "Extend".
+- [x] **1. Server.**
+  - [x] update review and approve no longer ask for the password again (only a
+    restore does); `POST /api/admin/extend` for "Extend" (2026-11-24);
+  - [x] `POST /api/config` needs the administrator session and `X-CSRF-Token`
+    once an administrator password exists; without one (first setup) it stays
+    open (2026-11-24);
+  - [x] password change from the page (2026-11-24). The secrets directory is
+    read-only in the container (checked on the Pi), so a changed password is
+    written next to the state (`/data/russound-admin.scrypt`, writable, no
+    deployment change) and wins over the deployment's file. Menu → *Change
+    password* while signed in: current password, the new one twice; this
+    session continues, every other one ends; wrong current passwords count
+    towards the lockout. The login dialog shows the SSH reset command under
+    "Forgot the password?" (`docker exec … python -m web.admin_auth set --file
+    /data/russound-admin.scrypt`, checked on the Pi with `--help`).
 - [x] **2. Shared admin module** (2026-11-24): `web/static/admin.js` on every
       page. Tuned in a local preview session with the user:
   - amber frame and sticky strip ("Administrator mode", countdown, Extend in
@@ -154,11 +165,13 @@ Changes:
   - level badges have icons (also the connection states on the Configuration
     and Playback pages); events and license tables become cards on phones;
   - all page headers are consistent ("Russound …"; title, Menu; banners below).
-- [ ] **4. Configuration page.** *Done 2026-11-24:* the save button is replaced
-      by a save bar at the bottom inside the amber frame, shown only with
-      unsaved changes. It reports success (shrinks away after 2.5 s) or failure
-      (stays, with the buttons), and a guest signs in from it. *Open:*
-      read-only guest view and the server check (with stage 1).
+- [x] **4. Configuration page** (2026-11-24): the save button is replaced by a
+      save bar at the bottom inside the amber frame, shown only with unsaved
+      changes. It reports success (shrinks away after 2.5 s) or failure (stays,
+      with the buttons). Guests see a read-only view: every editor control is
+      disabled (values stay readable, dashed frames), a note offers the login,
+      the zones' live sound controls stay usable. Saving sends the session's
+      token; an expired session opens the login and then saves the same edits.
 - [ ] **5. Acceptance on the Pi**, desktop and phone: sign in from each page,
       edit and save settings, a guest write is refused, idle logout after 15
       minutes, manual exit, restore asks for the password, update install does

@@ -52,6 +52,6 @@ test("session data never reaches innerHTML", () => {
   assert.deepEqual(writes, ["svg"], "only the fixed icons from this file");
   assert.match(source, /function adminIcon\(element, svg\)/);
   for (const call of source.matchAll(/adminIcon\([^,]+,\s*([^)]+)\)/g)) {
-    assert.match(call[1], /SHIELD_SVG|LOCK_SVG|svg/, call[0]);
+    assert.match(call[1], /SHIELD_SVG|LOCK_SVG|KEY_SVG|svg/, call[0]);
   }
 });

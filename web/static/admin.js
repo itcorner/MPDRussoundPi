@@ -10,8 +10,12 @@
 const ADMIN_POLL_MS = 15000;
 const ADMIN_LOW_SECONDS = 60;
 const ADMIN_SETUP_COMMAND = "python -m web.admin_auth set --file <secrets directory>/russound-admin.scrypt";
+// Resetting a lost password on the Pi: writes the page's password file in the web container
+// (it wins over the deployment's secrets file), asks for the new password twice.
+const ADMIN_RESET_COMMAND = "docker exec -it $(docker ps -qf name=russound-web) python -m web.admin_auth set --file /data/russound-admin.scrypt";
 
 const SHIELD_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 1 3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5z"/></svg>';
+const KEY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
 const LOCK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>';
 
 function adminCountdown(seconds) {
@@ -81,9 +85,23 @@ function buildAdminElements() {
   menuIcon.className = "page-menu-admin-icon";
   const menuText = document.createElement("span");
   menuItem.append(menuIcon, menuText);
+  const passwordItem = document.createElement("button");
+  passwordItem.type = "button";
+  passwordItem.className = "page-menu-link page-menu-admin page-menu-password";
+  const passwordIcon = document.createElement("span");
+  passwordIcon.className = "page-menu-admin-icon";
+  adminIcon(passwordIcon, KEY_SVG);
+  const passwordText = document.createElement("span");
+  passwordText.textContent = "Change password";
+  passwordItem.append(passwordIcon, passwordText);
+  passwordItem.hidden = true;
   if (menu) {
-    menu.append(divider, menuItem);
+    menu.append(divider, passwordItem, menuItem);
   }
+  passwordItem.addEventListener("click", () => {
+    navigation.open = false;
+    openPasswordChange();
+  });
 
   const strip = document.createElement("div");
   strip.className = "admin-strip";
@@ -130,7 +148,7 @@ function buildAdminElements() {
   menuItem.addEventListener("click", onMenuAction);
   exit.addEventListener("click", exitAdminMode);
   extend.addEventListener("click", extendAdminMode);
-  return { menuItem, menuIcon, menuText, strip, extend, frame, divider };
+  return { menuItem, menuIcon, menuText, passwordItem, strip, extend, frame, divider };
 }
 
 // ------------------------------------------------------------------ login dialog
@@ -201,7 +219,74 @@ function buildAdminDialog() {
   close.className = "admin-dialog-cancel";
   close.textContent = "Close";
 
-  dialog.append(title, reason, form, https, setup, close);
+  // Changing the password: current, new and repeated, checked here before sending.
+  const change = document.createElement("form");
+  change.className = "admin-dialog-form";
+  change.hidden = true;
+  const changeFields = {};
+  for (const [key, text, autocomplete] of [["current", "Current password", "current-password"],
+    ["next", "New password", "new-password"], ["repeat", "Repeat the new password", "new-password"]]) {
+    const fieldLabel = document.createElement("label");
+    fieldLabel.htmlFor = `adminDialog-${key}`;
+    fieldLabel.textContent = text;
+    const field = document.createElement("input");
+    field.id = `adminDialog-${key}`;
+    field.type = "password";
+    field.autocomplete = autocomplete;
+    field.maxLength = 256;
+    field.required = true;
+    changeFields[key] = field;
+    change.append(fieldLabel, field);
+  }
+  const changeRule = document.createElement("p");
+  changeRule.className = "admin-dialog-note";
+  changeRule.textContent = "At least 12 characters. All other signed-in devices are signed out.";
+  const changeMessage = document.createElement("p");
+  changeMessage.className = "admin-dialog-message";
+  changeMessage.setAttribute("role", "alert");
+  changeMessage.hidden = true;
+  const changeActions = document.createElement("div");
+  changeActions.className = "admin-dialog-actions";
+  const changeSubmit = document.createElement("button");
+  changeSubmit.type = "submit";
+  changeSubmit.className = "admin-dialog-submit";
+  changeSubmit.textContent = "Change password";
+  const changeCancel = document.createElement("button");
+  changeCancel.type = "button";
+  changeCancel.className = "admin-dialog-cancel";
+  changeCancel.textContent = "Cancel";
+  changeActions.append(changeSubmit, changeCancel);
+  change.append(changeRule, changeMessage, changeActions);
+
+  // A forgotten password is reset on the Pi itself; the page can only say how.
+  const help = document.createElement("details");
+  help.className = "admin-dialog-help";
+  const helpSummary = document.createElement("summary");
+  helpSummary.textContent = "Forgot the password?";
+  const helpText = document.createElement("p");
+  helpText.textContent = "Set a new one on the Pi over SSH, then sign in with it:";
+  const helpCode = document.createElement("code");
+  helpCode.textContent = ADMIN_RESET_COMMAND;
+  const helpCopy = document.createElement("button");
+  helpCopy.type = "button";
+  helpCopy.className = "admin-dialog-copy";
+  helpCopy.textContent = "Copy";
+  help.append(helpSummary, helpText, helpCode, helpCopy);
+  helpCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(ADMIN_RESET_COMMAND);
+      helpCopy.textContent = "Copied";
+    } catch {
+      helpCopy.textContent = "Select and copy";
+    }
+  });
+
+  dialog.append(title, reason, form, change, help, https, setup, close);
+  change.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitPasswordChange();
+  });
+  changeCancel.addEventListener("click", () => closeAdminLogin(false));
   document.body.append(dialog);
 
   form.addEventListener("submit", (event) => {
@@ -219,7 +304,8 @@ function buildAdminDialog() {
       closeAdminLogin(false);  // a click on the backdrop
     }
   });
-  return { dialog, titleText, reason, form, input, message, submit, warning, https, httpsLink, setup, close };
+  return { dialog, titleText, reason, form, input, message, submit, warning, https, httpsLink, setup, close,
+    change, changeFields, changeMessage, changeSubmit, help };
 }
 
 function showAdminDialogMessage(text) {
@@ -232,6 +318,9 @@ function renderAdminDialog() {
   const parts = adminMode.dialog;
   const view = adminLoginView(adminMode.session);
   parts.form.hidden = view.mode !== "password";
+  parts.change.hidden = true;
+  // Only a sign-in can have forgotten the password; a signed-in confirmation cannot.
+  parts.help.hidden = !(view.mode === "password" && !adminMode.reauth);
   parts.warning.hidden = !view.plainHttpWarning;
   parts.https.hidden = view.mode !== "https";
   parts.setup.hidden = view.mode !== "setup";
@@ -280,9 +369,92 @@ function closeAdminLogin(succeeded) {
   }
   if (parts) {
     parts.input.value = "";
+    for (const field of Object.values(parts.changeFields)) {
+      field.value = "";
+    }
   }
   if (succeeded && typeof pending === "function") {
     pending();
+  }
+}
+
+// The password change dialog, for the signed-in administrator.
+async function openPasswordChange() {
+  if (!adminMode.dialog) {
+    adminMode.dialog = buildAdminDialog();
+  }
+  const parts = adminMode.dialog;
+  await refreshAdminMode();
+  if (!(adminMode.session && adminMode.session.authenticated)) {
+    openAdminLogin({ reason: "Change the administrator password", onSuccess: openPasswordChange });
+    return;
+  }
+  adminMode.pending = null;
+  parts.titleText.textContent = "Change the administrator password";
+  parts.reason.hidden = true;
+  for (const node of [parts.form, parts.help, parts.https, parts.setup, parts.close]) {
+    node.hidden = true;
+  }
+  parts.warning.hidden = true;
+  parts.change.hidden = false;
+  parts.changeMessage.hidden = true;
+  parts.changeMessage.classList.remove("is-success");
+  if (!parts.dialog.open) {
+    parts.dialog.showModal();
+  }
+  parts.changeFields.current.focus();
+}
+
+function showChangeMessage(text, success = false) {
+  const parts = adminMode.dialog;
+  parts.changeMessage.textContent = text;
+  parts.changeMessage.hidden = !text;
+  parts.changeMessage.classList.toggle("is-success", success);
+}
+
+async function submitPasswordChange() {
+  const parts = adminMode.dialog;
+  const { current, next, repeat } = parts.changeFields;
+  if (next.value.length < 12) {
+    showChangeMessage("Use at least 12 characters.");
+    next.focus();
+    return;
+  }
+  if (next.value !== repeat.value) {
+    showChangeMessage("The new passwords differ.");
+    repeat.focus();
+    return;
+  }
+  parts.changeSubmit.disabled = true;
+  try {
+    const token = adminMode.session && adminMode.session.csrf_token;
+    const response = await fetch("/api/admin/password", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...(typeof token === "string" ? { "X-CSRF-Token": token } : {}) },
+      body: JSON.stringify({ current_password: current.value, new_password: next.value }),
+    });
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      payload = {};
+    }
+    if (response.ok) {
+      acceptAdminSession({ ...(adminMode.session || {}), ...payload });
+      for (const field of Object.values(parts.changeFields)) {
+        field.value = "";
+      }
+      showChangeMessage("Password changed. Other signed-in devices were signed out.", true);
+      window.setTimeout(() => closeAdminLogin(false), 1800);
+      return;
+    }
+    current.value = "";
+    showChangeMessage(payload.error && payload.error.message ? payload.error.message : "The password was not changed.");
+    current.focus();
+  } catch {
+    showChangeMessage("The server could not be reached.");
+  } finally {
+    parts.changeSubmit.disabled = false;
   }
 }
 
@@ -337,6 +509,7 @@ function renderAdminMode() {
   elements.strip.hidden = !view.elevated;
   elements.extend.hidden = !view.low;
   elements.menuItem.hidden = !view.configured;
+  elements.passwordItem.hidden = !(view.elevated && adminMode.session && adminMode.session.password_changeable === true);
   elements.divider.hidden = !view.configured;
   if (elements.menuIcon.dataset.state !== String(view.elevated)) {
     adminIcon(elements.menuIcon, view.elevated ? SHIELD_SVG : LOCK_SVG);
@@ -349,10 +522,22 @@ function renderAdminMode() {
 }
 
 function acceptAdminSession(session) {
+  const before = adminView(adminMode.session, 0);
   adminMode.session = session;
   adminMode.secondsLeft = session && session.authenticated ? Number(session.idle_expires_in_seconds) || 0 : 0;
   adminMode.receivedAt = Date.now();
   renderAdminMode();
+  const after = adminView(session, 0);
+  if (before.elevated !== after.elevated || before.configured !== after.configured) {
+    // Pages that lock editing for guests (the Configuration page) follow this.
+    document.dispatchEvent(new CustomEvent("admin-mode-changed", { detail: adminModeState() }));
+  }
+}
+
+// What other page scripts need: whether a login exists, whether it is active, and the token.
+function adminModeState() {
+  const view = adminView(adminMode.session, 0);
+  return { known: adminMode.session !== null, configured: view.configured, elevated: view.elevated };
 }
 
 async function refreshAdminMode() {
@@ -434,6 +619,9 @@ function startAdminMode() {
 if (typeof window !== "undefined") {
   window.adminLogin = openAdminLogin;
   window.adminReauthenticate = (options = {}) => openAdminLogin({ ...options, reauth: true });
+  window.adminModeState = adminModeState;
+  window.adminCsrfToken = () => (adminMode.session && typeof adminMode.session.csrf_token === "string"
+    ? adminMode.session.csrf_token : null);
 }
 
 if (typeof document !== "undefined" && document.readyState !== "loading") {

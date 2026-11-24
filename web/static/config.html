@@ -25,6 +25,11 @@
       </section>
 
       <p id="configEditorMessage" class="config-hint config-editor-message" role="status" hidden></p>
+      <div id="configLockNote" class="config-lock-note" hidden>
+        <span class="config-lock-icon" aria-hidden="true"></span>
+        <span class="config-lock-text">Settings are read-only. Sign in as administrator to change them.</span>
+        <button id="configSignIn" class="admin-action config-lock-button" type="button">Sign in</button>
+      </div>
 
       <details id="connectionConfig" class="panel status-panel collapsible-panel">
         <summary class="collapsible-summary">
