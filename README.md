@@ -429,7 +429,8 @@ Without it the login is reported as "not set up", no privileged action is
 possible, and the configuration stays open for the first setup.
 
 **Change it on the page:** signed in, Menu → *Change password* (current password,
-then the new one twice, at least 12 characters). The new hash goes to a writable
+then the new one twice, at least 12 characters; 4 or more, for example a PIN, after
+accepting the risk shown in the dialog, see below). The new hash goes to a writable
 file next to the state (`/data/russound-admin.scrypt` in the container,
 `RUSSOUND_ADMIN_PASSWORD_OVERRIDE_FILE`), which wins over the deployment's file.
 Every other session ends; yours continues.

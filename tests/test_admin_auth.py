@@ -365,6 +365,17 @@ class PasswordChangeTests(Fixture):
         self.assertEqual(AdminAuth(self.password_file).change_password(mine, PASSWORD, self.NEW, "a")[0],
                          "unauthenticated")
 
+    def test_a_short_password_needs_the_accepted_risk(self):
+        auth = self.auth()
+        _, mine, _ = auth.login(PASSWORD, "a")
+        self.assertEqual(auth.change_password(mine, PASSWORD, "4711", "a"), ("weak", 0), "not without accepting the risk")
+        self.assertEqual(auth.change_password(mine, PASSWORD, "471", "a", allow_short=True), ("weak", 0),
+                         "never below four characters")
+        self.assertFalse(self.override.exists())
+        self.assertEqual(auth.change_password(mine, PASSWORD, "4711", "a", allow_short=True), ("ok", 0))
+        self.assertEqual(auth.login("4711", "b")[0], "ok")
+        self.assertIn("password_changed_short", self.audit_file.read_text(), "a short password is audited as such")
+
     def test_without_a_writable_location_the_page_cannot_change_it(self):
         auth = AdminAuth(self.password_file, self.lockout_file, clock=lambda: self.clock[0])
         _, mine, _ = auth.login(PASSWORD, "a")
@@ -396,6 +407,13 @@ class PasswordChangeTests(Fixture):
         weak = client.post("/api/admin/password", json={"current_password": PASSWORD, "new_password": "short"},
                            headers=headers)
         self.assertEqual((weak.status_code, weak.json["error"]["code"]), (400, "weak"))
+        short = client.post("/api/admin/password", json={"current_password": PASSWORD, "new_password": "4711"},
+                            headers=headers)
+        self.assertEqual((short.status_code, short.json["error"]["code"]), (400, "weak"))
+        self.assertIn("accepting the risk", short.json["error"]["message"])
+        accepted = client.post("/api/admin/password", headers=headers, json={
+            "current_password": PASSWORD, "new_password": "4711", "allow_short": "yes"})
+        self.assertEqual(accepted.status_code, 400, "only a literal true accepts the risk")
         done = client.post("/api/admin/password", json={"current_password": PASSWORD, "new_password": self.NEW},
                            headers=headers)
         self.assertEqual(done.status_code, 200)

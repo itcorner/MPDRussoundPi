@@ -502,7 +502,10 @@ never record frontend events and never log the password.
   description) is true. The current password is checked like a login (throttle and
   lockout count). `200` with the session description (this session continues, every
   other one ends), `403 invalid` for a wrong current password, `400 weak` outside
-  12–256 characters, `409 not_changeable` without a writable location. The hash is
+  12–256 characters, `409 not_changeable` without a writable location. With
+  `"allow_short": true` (the user accepted the risk in the dialog) 4 to 11
+  characters are accepted too, for example a PIN; the audit log records it as
+  `password_changed_short`. The hash is
   written next to the state and wins over the deployment's file.
 - `POST /api/admin/extend` (`{}`, session and `X-CSRF-Token`): counts as activity,
   so the idle time starts again ("Extend" in the administrator strip). Answers the

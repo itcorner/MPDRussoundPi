@@ -136,7 +136,9 @@ Changes:
     deployment change) and wins over the deployment's file. Menu → *Change
     password* while signed in: current password, the new one twice; this
     session continues, every other one ends; wrong current passwords count
-    towards the lockout. The login dialog shows the SSH reset command under
+    towards the lockout. A short password (4–11 characters, e.g. a PIN) is
+    accepted after the user reads the risk and ticks the confirmation, like
+    `--allow-short` on the command line. The login dialog shows the SSH reset command under
     "Forgot the password?" (`docker exec … python -m web.admin_auth set --file
     /data/russound-admin.scrypt`, checked on the Pi with `--help`).
 - [x] **2. Shared admin module** (2026-11-24): `web/static/admin.js` on every
