@@ -583,6 +583,34 @@ test("a failed update offers a retry and opens the Restore backup section with t
   assert.deepEqual(buttons(idle), ["Check now", "Update to dev-ccccccc"]);
 });
 
+test("a failed update whose candidate is still running is offered as a retry, not as up to date", () => {
+  // On the Pi the failed candidate kept running: the check compared against it and said "up to date".
+  const view = renderStatusView(signedIn);
+  const candidate = { version: "dev-" + "c".repeat(40), revision: "ccccccc", published_at: new Date().toISOString(),
+    link: "https://hub.docker.com/r/itcornernet/mpdrussoundpi-web/tags?name=dev-c" };
+  const runningCandidate = { ...availableUpdates, state: "up_to_date",
+    installed: { version: candidate.version, revision: "ccccccc" }, result: { state: "up_to_date", available: candidate } };
+  const recorded = { ...failedUpdate, installed_revision: "a".repeat(40) };
+  const failed = renderUpdates(view, runningCandidate, recorded);
+  assert.deepEqual(buttons(failed), ["Check now", "Retry update to dev-ccccccc"]);
+  assert.match(failed.allText(), /Status\s*Update failed/);
+  assert.doesNotMatch(failed.allText(), /Up to date/);
+  assert.match(failed.allText(), /Docker Hub/);
+  assert.equal(view.updatesState.textContent, "Update failed");
+  assert.match(view.updatesState.className, /host-level-problem/);
+  assert.equal(view.restorePanel.open, true);
+  for (const [label, status] of [
+    ["after the restore", { ...recorded, kind: "restore", phase: "restored", restore_available: false }],
+    ["when the candidate was recorded as installed", { ...recorded, installed_revision: "c".repeat(40) }],
+    ["for an unknown outcome", { ...recorded, phase: "outcome_unknown" }],
+    ["for another candidate", { ...recorded, candidate_revision: "b".repeat(40) }],
+  ]) {
+    const node = renderUpdates(view, runningCandidate, status);
+    assert.deepEqual(buttons(node), ["Check now"], label);
+    assert.equal(view.updatesState.textContent, "Up to date", label);
+  }
+});
+
 test("a pending restore review opens its section and pauses the update button", () => {
   const view = renderStatusView(signedIn);
   const status = { ...failedUpdate, phase: "restore_awaiting_approval", kind: "restore", review: {

@@ -399,7 +399,27 @@ function updateButton(label, handler, { primary = false, disabled = false, privi
 function updateAvailableVersion() {
   const result = latestUpdates && latestUpdates.result;
   return latestUpdates && latestUpdates.state === "update_available" && result && result.available
-    ? result.available : null;
+    ? result.available : failedUpdateRetry();
+}
+
+function isFailedCandidate(status, available) {
+  const candidate = status && status.candidate_revision;
+  return Boolean(candidate && available && (available.version === `dev-${candidate}`
+    || (typeof available.revision === "string" && available.revision.length >= 7 && candidate.startsWith(available.revision))));
+}
+
+// A failed update can leave its candidate running. The check then compares the newest
+// image with that candidate and says "up to date", while the updater still records the
+// previous version as installed: the candidate stays on offer as a retry.
+function failedUpdateRetry() {
+  const status = adminUpdateState;
+  const result = latestUpdates && latestUpdates.result;
+  const available = result && result.available;
+  if (!status || isRestoreKind(status) || status.phase !== "failed"
+      || status.installed_revision === status.candidate_revision || !isFailedCandidate(status, available)) {
+    return null;
+  }
+  return available;
 }
 
 function dockerHubLink(available) {
@@ -435,13 +455,13 @@ function renderUpdateInfo(box) {
     const published = ageText(available.published_at);
     const dd = textElement("dd", "update-inline",
       shortVersion(available.version) + (published ? ` (published ${published})` : ""));
-    const link = updates.state === "update_available" ? dockerHubLink(available) : null;
+    const link = updateAvailableVersion() ? dockerHubLink(available) : null;
     if (link) {
       dd.append(" ", link);
     }
     add("Newest published", dd);
   }
-  const state = updateStateText[updates.state] || "Unknown";
+  const state = failedUpdateRetry() ? "Update failed" : updateStateText[updates.state] || "Unknown";
   add("Status", state + (updates.stale ? " (last known result)" : ""));
   if (updates.state !== "unsupported" && updates.state !== "disabled") {
     // Label, age and button form one group: on wide screens a row of the list (the age in a
@@ -626,8 +646,7 @@ function renderInstall(box) {
   // After a failed (or unknown) update the same version is offered as a retry; the restore
   // has its own section. A newer version is a normal update again.
   const updateFailed = ["failed", "outcome_unknown"].includes(status.phase) && !isRestoreKind(status);
-  const sameAsFailed = updateFailed && (!status.candidate_revision
-    || (available && available.version === `dev-${status.candidate_revision}`));
+  const sameAsFailed = updateFailed && (!status.candidate_revision || isFailedCandidate(status, available));
   const reviewPending = ["awaiting_approval", "restore_awaiting_approval"].includes(status.phase);
   // An unknown outcome is checked on the Pi first (see its message): no retry from here.
   if (available && !status.busy && !reviewPending && status.phase !== "outcome_unknown") {
@@ -779,6 +798,7 @@ function reloadForNewBuild(build) {
 function renderUpdatesState() {
   const state = latestUpdates && latestUpdates.state;
   const [text, level] = adminUpdateState && adminUpdateState.busy ? ["Updating", "update"]
+    : failedUpdateRetry() ? ["Update failed", "problem"]
     : state === "update_available" ? ["Update available", "update"]
       : state === "up_to_date" ? ["Up to date", "ok"]
         : state ? ["Not checked", "unknown"] : ["Checking…", "unknown"];
