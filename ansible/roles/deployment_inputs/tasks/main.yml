@@ -64,3 +64,14 @@
     quiet: true
   when: deployment_component == 'web_tls'
   tags: always
+
+- name: Validate mDNS interface names before changing the target
+  ansible.builtin.assert:
+    that:
+      - mdns_interfaces is sequence and mdns_interfaces is not string and mdns_interfaces | length > 0
+      - mdns_interfaces | reject('match', '^[A-Za-z0-9_.-]{1,15}$') | list | length == 0
+      - mdns_check_interval is match('^[0-9]+(s|min|h)$')
+    fail_msg: "mDNS needs a list of interface names (at most 15 characters each) and an interval like 2min."
+    quiet: true
+  when: deployment_component == 'mdns'
+  tags: always

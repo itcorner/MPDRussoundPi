@@ -1,0 +1,118 @@
+---
+# Reliable <hostname>.local: docs/documentation/mdns-hostname.md
+#
+#   ansible-playbook -i ansible/inventory.yaml ansible/playbooks/deploy-mdns.yml --limit musicpi
+#
+# Restarts Avahi once when its configuration changes (the name is gone for a few seconds).
+- name: Harden the mDNS name of the Pi
+  hosts: musicpi
+  become: true
+  pre_tasks:
+    - name: Validate mDNS inputs
+      ansible.builtin.import_role:
+        name: ../roles/deployment_inputs
+        defaults_from: mdns
+      tags: always
+  tasks:
+    - name: Keep only the configured LAN interfaces that exist on this host
+      ansible.builtin.set_fact:
+        mdns_present_interfaces: "{{ mdns_interfaces | select('in', ansible_facts['interfaces']) | list }}"
+
+    - name: Refuse to restrict Avahi to interfaces this host does not have
+      ansible.builtin.assert:
+        that:
+          - mdns_present_interfaces | length > 0
+        fail_msg: "None of {{ mdns_interfaces | join(', ') }} exists here; set mdns_interfaces to the LAN interface."
+
+    - name: Require Avahi and the mDNS name service switch module
+      ansible.builtin.package_facts:
+
+    - name: Refuse to configure an absent Avahi installation
+      ansible.builtin.assert:
+        that:
+          - "'avahi-daemon' in ansible_facts.packages"
+          - "'libnss-mdns' in ansible_facts.packages"
+        fail_msg: "Install avahi-daemon and libnss-mdns on the Pi first."
+
+    - name: Install the Avahi configuration for the LAN interfaces only
+      ansible.builtin.template:
+        src: ../templates/avahi-daemon.conf.j2
+        dest: /etc/avahi/avahi-daemon.conf
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      vars:
+        mdns_interfaces: "{{ mdns_present_interfaces }}"
+      notify: Restart Avahi
+
+    - name: Ensure the Avahi unit drop-in and tool directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/systemd/system/avahi-daemon.service.d
+        - "{{ mdns_check_tool | dirname }}"
+
+    - name: Restart Avahi automatically when it fails
+      ansible.builtin.template:
+        src: ../templates/avahi-restart.conf.j2
+        dest: /etc/systemd/system/avahi-daemon.service.d/mpdrussoundpi-restart.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Avahi
+
+    - name: Install the mDNS check tool
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../tool/mdns_check.py"
+        dest: "{{ mdns_check_tool }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the mDNS check service and timer units
+      ansible.builtin.template:
+        src: "../templates/{{ item.template }}"
+        dest: "/etc/systemd/system/{{ item.unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {template: mdns-check.service.j2, unit: "{{ mdns_check_unit }}.service"}
+        - {template: mdns-check.timer.j2, unit: "{{ mdns_check_unit }}.timer"}
+
+    - name: Reload system service definitions
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Apply a changed Avahi configuration before checking it
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable the mDNS check timer
+      ansible.builtin.systemd_service:
+        name: "{{ mdns_check_unit }}.timer"
+        state: started
+        enabled: true
+      when: not ansible_check_mode
+
+    - name: Wait until Avahi publishes the name again
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, "{{ mdns_check_tool }}", --name, "{{ mdns_name }}", --settle, "86400"]
+      register: mdns_check
+      changed_when: false
+      until: (mdns_check.stdout | from_json).ok
+      retries: 10
+      delay: 3
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart Avahi
+      ansible.builtin.systemd_service:
+        name: avahi-daemon.service
+        state: restarted
+        daemon_reload: true

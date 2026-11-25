@@ -1,0 +1,13 @@
+---
+# mDNS hardening for <hostname>.local: docs/documentation/mdns-hostname.md
+deployment_component: mdns
+deployment_boolean_inputs: [mdns_ipv6]
+deployment_port_inputs: []
+# LAN interfaces Avahi may use; those missing on the host are skipped, at least one must exist.
+mdns_interfaces: [eth0, wlan0]
+# Publish the IPv6 link-local address too (clients then try fe80:: before the IPv4 address).
+mdns_ipv6: false
+mdns_name: "{{ ansible_facts['hostname'] }}.local"
+mdns_check_interval: 2min
+mdns_check_tool: /usr/local/lib/mpdrussoundpi/mdns_check.py
+mdns_check_unit: mpdrussoundpi-mdns-check

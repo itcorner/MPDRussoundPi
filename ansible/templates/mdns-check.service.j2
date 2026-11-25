@@ -1,0 +1,9 @@
+[Unit]
+Description=Restart Avahi when {{ mdns_name }} stops answering
+After=avahi-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ mdns_check_tool }} --name {{ mdns_name }}
+PrivateTmp=true
+ProtectHome=true

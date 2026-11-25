@@ -21,7 +21,7 @@ RETAINED_PLAYS = {
     "stage-native-deployment.yml", "setup-musicpi.yml",
     "deploy-playback-agent.yml", "remove-playback-agent.yml",
     "deploy-playback-agent-proxy.yml", "deploy-playback-egress.yml", "deploy-updater.yml",
-    "deploy-web-tls.yml",
+    "deploy-web-tls.yml", "deploy-mdns.yml",
 }
 RETIRED_PATHS = (
     "docker-compose.yml", "docker-compose.dummy.yml",

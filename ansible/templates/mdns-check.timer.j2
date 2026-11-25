@@ -1,0 +1,9 @@
+[Unit]
+Description=Check every {{ mdns_check_interval }} that {{ mdns_name }} still answers
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ mdns_check_interval }}
+
+[Install]
+WantedBy=timers.target
