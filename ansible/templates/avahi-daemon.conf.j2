@@ -15,6 +15,8 @@ enable-wide-area=yes
 [publish]
 publish-hinfo=no
 publish-workstation=yes
+# Without this, the IPv6 address is still sent in answers over IPv4.
+publish-aaaa-on-ipv4={{ 'yes' if mdns_ipv6 else 'no' }}
 
 [reflector]
 

@@ -15,7 +15,7 @@ Playback is not affected.
 | Change | Why |
 |---|---|
 | `allow-interfaces=eth0,wlan0` (only the ones that exist) | By default Avahi also runs on every Docker bridge and veth pair. Those appear and disappear with each container restart or update (370 join/leave events in two weeks), and the Pi even answered its own name with a bridge address (`10.231.84.1`). |
-| `use-ipv6=no` | Clients received the `fe80::` link-local address first and tried it before `192.168.1.105`. Link-local IPv6 needs an interface scope, which some phones and browsers handle poorly. |
+| `use-ipv6=no`, `publish-aaaa-on-ipv4=no` | Clients received the `fe80::` link-local address first and tried it before `192.168.1.105`. Link-local IPv6 needs an interface scope, which some phones and browsers handle poorly. |
 | `Restart=on-failure` for `avahi-daemon` | Debian's unit leaves a crashed Avahi stopped, so the name would vanish until the next reboot. |
 | `mpdrussoundpi-mdns-check.timer` (every 2 minutes) | Runs `tool/mdns_check.py`. It restarts Avahi if Avahi is not running, stops answering on D-Bus, cannot resolve its own name, or published a different name. The last case is the known `musicpi-2.local` rename after a Wi-Fi reconnect makes Avahi see its own announcement as a conflict. It waits 5 minutes after any start before restarting again. |
 
