@@ -71,7 +71,7 @@ jobs:
         run: node tool/ci/registry-inventory.mjs
 
   changes:
-    # Publish only what changed (docs/plans/general_open_publish-only-changed-images.md):
+    # Publish only what changed (docs/plans/general_done_publish-only-changed-images.md):
     # read-only, anonymous registry access, no secrets.
     runs-on: ubuntu-latest
     timeout-minutes: 5
