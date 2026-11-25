@@ -62,6 +62,13 @@ ACTIVE_PHASES = ("resolving", "awaiting_approval", "approved", "running", "resto
 INTERRUPTION = "Web app and gateway restart; this page reconnects after a few minutes."
 BACKUP_NOTE = "Taken first, kept on this Pi only (not disaster recovery)."
 CLEANUP_NOTE = "Removed after success; the backup keeps a copy."
+# Target phases before any backup was recorded: nothing was applied, the original runtime is unchanged.
+BEFORE_BACKUP = ("prepared", "inputs-verified")
+NOT_APPLIED = ("The updater restarted before the update changed the installed version, but the services may "
+               "still be stopped. Restart them with the SSH operator's resume-original (see the deployment "
+               "documentation).")
+SETTLED = ("The updater restarted during the last operation. The Pi has no unfinished operation now (it was "
+           "recovered or never changed anything), so you can update again.")
 
 logger = logging.getLogger("mpdrussoundpi.updater")
 
@@ -138,7 +145,8 @@ class Updater:
                  resolve: Callable[[str, str], dict[str, Any]] | None = None,
                  committed: Callable[[], dict[str, Any] | None] | None = None,
                  transaction: Callable[..., dict[str, Any]] = run_transaction,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 target: Callable[[], dict[str, Any]] | None = None) -> None:
         identity(spec["deployment"])
         self.spec = spec
         self.evidence = evidence
@@ -147,6 +155,7 @@ class Updater:
         self._committed = committed or self._committed_from_store
         self._transaction = transaction
         self._clock = clock
+        self._target = target or (lambda: StateStore().status())
         self._lock = threading.Condition()
         self._decision: dict[str, Any] | None = None
         self._thread: threading.Thread | None = None
@@ -179,6 +188,11 @@ class Updater:
                 if state["restore"]:
                     state["error"] = ("The updater restarted during the update, so its outcome is unknown. "
                                       "Restore the backup taken before it, or check the deployment on the Pi.")
+                # The controller keeps the backup identity before the target records the backup: while the
+                # target is still before its backup, nothing was applied and the backup is the wrong recovery.
+                record, step = self._target_record(state["operation"])
+                if record == "pending" and step in BEFORE_BACKUP:
+                    state.update(restore=None, error=NOT_APPLIED)
         self._save(state)
         return state
 
@@ -198,6 +212,33 @@ class Updater:
     def _resolve_registry(self, gateway: str, platform: str) -> dict[str, Any]:
         from tool.deployment_images import resolve
         return resolve(gateway, platform)
+
+    def _target_record(self, operation: object) -> tuple[str, str | None]:
+        """What the Pi's deployment record says about an interrupted operation.
+
+        ``("clear", None)`` when no operation is reserved or unfinished, ``("pending", phase)`` when this
+        operation is still unfinished, otherwise ``("unknown", None)``: then nothing is concluded.
+        """
+        try:
+            status = self._target()
+            pending = (status["deployments"].get(self.spec["deployment"]) or {}).get("pending")
+            if status["blocked"] is False and status["reservation"] is None and pending is None:
+                return "clear", None
+            if isinstance(pending, dict) and pending.get("operation") == operation:
+                return "pending", pending.get("phase")
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, StateError):
+            pass
+        return "unknown", None
+
+    def _settle(self) -> None:
+        """An unknown outcome ends once the Pi has no unfinished operation (the SSH operator recovered it).
+
+        It becomes an ordinary failure without a restore, so the page offers updates again; the record
+        of the interrupted operation stays. Called with the lock held.
+        """
+        if self.state["phase"] == "outcome_unknown" and self._target_record(self.state.get("operation"))[0] == "clear":
+            self.state.update(phase="failed", restore=None, error=SETTLED)
+            self._save()
 
     def _committed_from_store(self) -> dict[str, Any] | None:
         status = StateStore().status()
@@ -225,6 +266,7 @@ class Updater:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            self._settle()
             state = copy.deepcopy(self.state)
         review = state.get("review")
         if isinstance(review, dict):
@@ -399,6 +441,7 @@ class Updater:
 
     def restore(self, operation: object, actor: dict[str, str]) -> dict[str, Any]:
         with self._lock:
+            self._settle()
             restore = self.state.get("restore")
             if (self.state["phase"] not in ("failed", "outcome_unknown") or not isinstance(restore, dict)
                     or operation != restore["operation"]):

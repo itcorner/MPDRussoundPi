@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from tool import deployment_updater as updater_module
 from tool.deployment_channel import ChannelError
+from tool.deployment_state import StateError
 from tool.deployment_updater import Updater, UpdaterError, UpdaterServer, request
 
 INSTALLED = "a" * 40
@@ -62,6 +63,17 @@ class FakeTransaction:
                 **({"cleanup": self.cleanup} if request["action"] == "deploy" and self.cleanup is not None else {})}
 
 
+def unreadable_target():
+    raise StateError("Cannot inspect deployment state; treat the outcome as unknown")
+
+
+def target_record(pending=None, reserved=None):
+    """The Pi's deployment record as StateStore().status() returns it, reduced to what the updater reads."""
+    return {"schema_version": 1, "blocked": bool(pending or reserved),
+            "reservation": {"schema_version": 1, "deployment": "russound-dev", "operation": reserved} if reserved else None,
+            "deployments": {"russound-dev": {"committed": None, "pending": pending}}}
+
+
 class Fixture(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -72,11 +84,13 @@ class Fixture(unittest.TestCase):
         self.state = self.root / "state.json"
         self.installed = candidate(INSTALLED)
         self.clock = [1_800_000_000.0]
+        self.target = unreadable_target
 
     def make(self, transaction=None, resolve=None, clock=None):
         self.transaction = transaction or FakeTransaction()
         return Updater(SPEC, self.evidence, self.state, resolve=resolve or (lambda gateway, platform: candidate()),
-                       committed=lambda: self.installed, transaction=self.transaction, clock=clock or time.time)
+                       committed=lambda: self.installed, transaction=self.transaction, clock=clock or time.time,
+                       target=lambda: self.target())
 
     def wait_for(self, updater, *phases, timeout=5):
         deadline = time.monotonic() + timeout
@@ -236,6 +250,73 @@ class UpdateFlowTests(Fixture):
                                           "restore": kept}))
         self.assertEqual(self.make().status()["phase"], "outcome_unknown")
         self.assertEqual(json.loads(self.state.read_text())["restore"], kept, "an interrupted restore keeps its backup")
+
+    def interrupted_after_backup_identity(self):
+        """A durable record of a running update whose controller already kept the backup identity."""
+        operation = str(uuid4())
+        self.state.write_text(json.dumps({"phase": "running", "kind": "update", "operation": operation,
+                                          "candidate_revision": NEWER}))
+        identity = self.evidence / (operation + ".backup-identity.json")
+        identity.write_text(json.dumps({"operation": operation, "manifest_sha256": "d" * 64}))
+        identity.chmod(0o600)
+        (self.evidence / operation).mkdir(mode=0o700)
+        manifest = self.evidence / operation / "manifest.json"
+        manifest.write_text(json.dumps({"operation": operation, "created_at": "2026-11-25T22:07:42+00:00",
+                                        "total_bytes": 1, "entries": []}))
+        manifest.chmod(0o600)
+        return operation
+
+    def test_a_restart_before_the_target_recorded_the_backup_points_to_resume_original(self):
+        operation = self.interrupted_after_backup_identity()
+        self.target = lambda: target_record({"operation": operation, "phase": "inputs-verified", "backup": None},
+                                            reserved=operation)
+        updater = self.make()
+        status = updater.status()
+        self.assertEqual(status["phase"], "outcome_unknown")
+        self.assertFalse(status["restore_available"], "nothing was applied: the backup is the wrong recovery")
+        self.assertIn("resume-original", status["error"])
+        with self.assertRaisesRegex(UpdaterError, "No restore"):
+            updater.handle({"op": "restore", "operation": operation, "actor": ACTOR})
+
+    def test_a_restart_after_the_target_recorded_the_backup_keeps_the_restore(self):
+        operation = self.interrupted_after_backup_identity()
+        self.target = lambda: target_record({"operation": operation, "phase": "backup-complete",
+                                             "backup": operation}, reserved=operation)
+        status = self.make().status()
+        self.assertEqual(status["phase"], "outcome_unknown")
+        self.assertTrue(status["restore_available"])
+        self.assertIn("Restore the backup taken before it", status["error"])
+
+    def test_an_unknown_outcome_settles_once_the_pi_has_no_unfinished_operation(self):
+        operation = self.interrupted_after_backup_identity()
+        self.target = lambda: target_record({"operation": operation, "phase": "inputs-verified", "backup": None},
+                                            reserved=operation)
+        updater = self.make()
+        self.assertEqual(updater.status()["phase"], "outcome_unknown")
+        # The SSH operator's resume-original (or recover) resolves the target record meanwhile.
+        self.target = lambda: target_record()
+        status = updater.status()
+        self.assertEqual(status["phase"], "failed", "the page offers updates again")
+        self.assertFalse(status["restore_available"])
+        self.assertEqual(status["backups"], [])
+        self.assertIn("no unfinished operation", status["error"])
+        self.assertEqual(status["candidate_revision"], NEWER, "the interrupted operation stays on record")
+        self.assertEqual(json.loads(self.state.read_text())["phase"], "failed", "settled durably")
+        with self.assertRaisesRegex(UpdaterError, "No restore"):
+            updater.handle({"op": "restore", "operation": operation, "actor": ACTOR})
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.assertEqual(self.wait_for(updater, "awaiting_approval")["phase"], "awaiting_approval")
+
+    def test_an_unknown_outcome_stays_while_the_pi_record_is_unfinished_or_unreadable(self):
+        operation = self.interrupted_after_backup_identity()
+        for target in (unreadable_target, lambda: target_record(reserved=operation),
+                       lambda: target_record({"operation": str(uuid4()), "phase": "prepared", "backup": None}),
+                       lambda: {"blocked": False}):
+            self.target = target
+            with self.subTest(target=target):
+                status = self.make().status()
+                self.assertEqual(status["phase"], "outcome_unknown")
+                self.assertTrue(status["restore_available"], "nothing concluded from an unclear record")
 
     def test_restart_never_resumes_or_claims_success(self):
         for phase, expected in (("awaiting_approval", "cancelled"), ("resolving", "cancelled"),
