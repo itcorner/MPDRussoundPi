@@ -1134,6 +1134,32 @@ sudo .venv/bin/python -m tool.deployment_cleanup images            # dry run: li
 sudo .venv/bin/python -m tool.deployment_cleanup images --apply
 ```
 
+**Operation file retention.** Each operation leaves large directories in
+`/var/lib/mpdrussoundpi-operations/{backups,assets,incoming,restores}` and the
+updater's backup copy in `/var/lib/mpdrussoundpi-updater/evidence/<op>/`, about
+300 MB per update ([`tool/deployment_retention.py`](../../tool/deployment_retention.py),
+[plan](../plans/general_open_operation-file-retention.md)). The retention removes
+those of older finished operations. It keeps:
+
+- each deployment's committed operation and the verified-complete operation
+  before it;
+- the updater's current operation and its restore source;
+- anything the containers' compose labels or project name refer to;
+- every directory the evidence does not attribute to a known operation or
+  recovery (listed as "not identified");
+- all small records (`evidence`, `runtime`, `staging`, the updater's JSON and log
+  files).
+
+Unlike the image cleanup, this reduces what can be restored: a removed backup is
+gone. It removes nothing while the state is blocked, reserved or pending, or when
+the updater record or the containers cannot be read, and it holds the operator
+lock. For now it runs only by hand (dry run first):
+
+```sh
+sudo .venv/bin/python -m tool.deployment_retention files            # dry run: lists removable, kept and unidentified
+sudo .venv/bin/python -m tool.deployment_retention files --apply
+```
+
 Rollout on an existing single-host installation, in this order:
 
 1. Upgrade the trusted tooling to a revision containing the updater
