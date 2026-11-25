@@ -1,9 +1,9 @@
 # Clean up old Docker images after a successful update
 
-**Status:** open. Planned, decided, implemented (stages 1, 2 and 5) and rolled out with the backlog removed (stage 3), all on 2026-11-22. Acceptance on the Pi (stage 4) is still open. Related to the
+**Status:** done (2026-11-25). Planned, decided, implemented (stages 1, 2 and 5) and rolled out with the backlog removed (stage 3), all on 2026-11-22. Accepted on the Pi on 2026-11-25 (stage 4); operation file retention stays a separate decision (see the end). Related to the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (every web or SSH update adds images) and to
-[publishing only changed images](./general_open_publish-only-changed-images.md)
+[publishing only changed images](./general_done_publish-only-changed-images.md)
 (fewer updates, but the growth stays).
 
 ## Why
@@ -145,14 +145,25 @@ result field.
     sizes) was misleading, because the images share most layers. It was
     replaced by Docker's own reclaimable total with a note on what that
     includes. `--apply` reports the space it actually freed.
-- [ ] **4. Acceptance on the Pi:**
-  - a web-triggered update removes the images that just became old and keeps
-    the current and previous versions;
-  - **a deliberately failing update followed by "Restore previous version"
-    still works after the cleanup**: the restore loads the archives from the
-    backup, so the removed recovery tags do not matter;
-  - an SSH operator update cleans up the same way;
-  - the manual dry run lists nothing removable right after an update.
+- [x] **4. Acceptance on the Pi** (done 2026-11-25):
+  - [x] *web-triggered update*: `a785f6b` → `8a8a08a` from the Status page
+    (19:29 UTC) removed 4 old images (14 MB) and kept the current and the
+    previous version (`a785f6b` as the recovery image);
+  - [x] *failing update and restore after a cleanup*: the update to `a785f6b`
+    on 2026-11-24 had cleaned up (2 images). The failure test with
+    `dev-3069110` on 2026-11-25 (operation `924d8003`) then failed as
+    intended, and "Restore this backup" restored `a785f6b` from the backup's
+    archives with all checks passed (details in
+    [user-triggered image updates](./general_open_user-triggered-image-updates.md));
+  - [x] *SSH operator update*: `8a8a08a` → `72ab8f0` with
+    `deployment_operator deploy --update` (operation `a97b8190`), approved by
+    the user in the terminal. All required checks passed, and the result
+    reported `cleanup: removed 2, freed 207 MB, skipped 0, error null`. The
+    current images and `8a8a08a` as the recovery image were kept;
+  - [x] *manual dry run right after an update*: `python -m
+    tool.deployment_cleanup images` listed "Would remove 0 image(s)" after both
+    updates. The 6 images outside the project namespaces are listed for a
+    manual decision, as designed.
 - [x] **5. Page line** (implemented 2026-11-22): "Removed N old images (X MB)."
   after a successful update, and an "Old images" row in the review
   (`sanitize_status` passes `removed` and `freed_bytes` only; UI test). The line

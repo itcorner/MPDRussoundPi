@@ -1,7 +1,7 @@
 # Publish development images only when they changed
 
-**Status:** open. Implemented 2026-11-22 (stage 1). The first pushes after the merge are
-the acceptance (stage 2). Recorded on 2026-11-22 after investigating which develop
+**Status:** done (2026-11-25). Implemented 2026-11-22 (stage 1), accepted with the
+following develop pushes (stage 2). Recorded on 2026-11-22 after investigating which develop
 pushes actually changed an image.
 
 ## Why
@@ -86,13 +86,22 @@ recovery and verification. If it ever matters, the update review can say
   image workflow changed) and 59 would have skipped. Of the last eleven, only
   #77, #80, #82 and #87 publish. #83, a docs PR that touched only `web/API.md`,
   now skips.
-- [ ] **2. Acceptance:**
+- [x] **2. Acceptance** (done 2026-11-25):
   - [x] this change itself publishes (run 45042430789 for `aafa099`, 2026-11-22):
     the `changes` job decided "Image inputs changed since 948a23e: web."
     (`.dockerignore` and the Status page wording); both images were built and
     published, and both `dev` images now carry `org.opencontainers.image.created`
     (16:14 UTC) and revision `aafa099`;
-  - a docs-only push afterwards skips, with its reason in the run summary, and
-    `dev` does not move;
-  - the Pi's update check stays `up_to_date`;
-  - a later web change publishes again.
+  - [x] docs-only pushes skip, with the reason in the `changes` job, for example
+    #107 (run 45093121013: "No image input changed since 7573cf2; the published
+    development images stay current."), #112 (run 45302709402, since `a785f6b`)
+    and #116, Ansible and docs only (run 45560048269, since `3069110`).
+    `publish-development` was skipped each time and `dev` did not move;
+  - [x] no false update offer after a skipped push: after #115 and #116 the Pi
+    still offered only `dev-3069110`, the image from #114, and was updated to it
+    from the page;
+  - [x] later web changes publish again: #117 (run 45683255979, the "Retry" fix,
+    `8a8a08a`) and #118 (run 45687982099: "Image inputs changed since 8a8a08a:
+    web.", comment-only changes in web files). Both were then installed on the
+    Pi, one from the page and one over SSH (see
+    [image cleanup](./general_done_docker-image-cleanup.md)).

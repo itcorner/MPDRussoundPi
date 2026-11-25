@@ -1094,7 +1094,7 @@ tooling directory) prints the current state.
 **Old image cleanup.** After a verified-complete update, from the page or the
 SSH operator, the target removes this project's Docker images that no version
 still needs ([`tool/deployment_cleanup.py`](../../tool/deployment_cleanup.py),
-[plan](../plans/general_open_docker-image-cleanup.md)). It keeps:
+[plan](../plans/general_done_docker-image-cleanup.md)). It keeps:
 
 - images used by any container, running or stopped;
 - every deployment's committed version;
