@@ -140,6 +140,33 @@ class OperatorContractTests(unittest.TestCase):
         timer.return_value.cancel.assert_called_once_with()
         process.kill.assert_not_called()
 
+    def test_a_failed_remote_names_the_private_target_log(self):
+        trust = self.root / "known_hosts"
+        trust.write_bytes(b"fixture trust snapshot\n")
+        trust.chmod(0o600)
+        args = argparse.Namespace(evidence=self.storage["evidence"], known_hosts=trust,
+                                  host="127.0.0.1", user="fixture", port=22, identity=None,
+                                  bundle=None, backup=None, backup_sha256=None)
+        operation = str(uuid4())
+        log = self.storage["evidence"] / (operation + ".ssh.log")
+        failure = ChannelError("Target operation failed; keep private evidence and inspect pending state before recovery")
+        with patch("tool.deployment_operator.subprocess.Popen") as popen, \
+                patch("tool.deployment_operator.controller", side_effect=failure), \
+                patch("tool.deployment_operator.threading.Timer"), \
+                self.assertRaises(ChannelError) as raised:
+            popen.return_value.__enter__.return_value.poll.return_value = 0
+            remote(args, {"action": "deploy", "operation": operation}, timeout_seconds=60)
+        self.assertEqual(str(raised.exception), f"{failure} (target messages: {log})")
+        self.assertIs(raised.exception.__cause__, failure)
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600, "the named log stays private")
+        argv = ["deployment_operator", "resume-original", "--host", "127.0.0.1", "--user", "fixture",
+                "--known-hosts", "known_hosts", "--evidence", "evidence", "--deployment", "fixture",
+                "--operation", operation]
+        with patch.object(sys, "argv", argv), patch.object(sys, "stderr", io.StringIO()) as stderr, \
+                patch("tool.deployment_operator.remote", side_effect=raised.exception):
+            self.assertEqual(main(), 1)
+        self.assertIn(f"(target messages: {log}). Retain private evidence", stderr.getvalue())
+
     def test_prepared_scope_preserves_exact_services_and_rejects_privilege_or_mount_changes(self):
         target = self.target()
         with self.assertRaises(ComposeError):

@@ -288,8 +288,8 @@ operator.
       refused at once by the operator lock. The terminal only showed the generic
       "Target operation failed; keep private evidence and inspect pending state
       before recovery"; the reason ("Another target operator is active") is only
-      in the private `<operation>.ssh.log`. Naming that log in the message is a
-      possible small follow-up;
+      in the private `<operation>.ssh.log`. Fixed afterwards: the operator's
+      message now names that log (`(target messages: …ssh.log)`);
     - the review was then cancelled from the page;
   - [x] *Updater restart during the update* (2026-11-25, test 2, operation
     `9feff66a`). After the approval, the updater was restarted 26 s after the

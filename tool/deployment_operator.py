@@ -457,6 +457,9 @@ def remote(args: argparse.Namespace, request: dict[str, Any], *,
                 if process.wait(timeout=15):
                     raise ChannelError("SSH exit was unsuccessful; completion is uncertain")
                 return result
+            except ChannelError as error:
+                # The target's own reason (for example a held operator lock) is only in its stderr.
+                raise ChannelError(f"{error} (target messages: {log_path})") from error
             finally:
                 timer.cancel()
                 if process.poll() is None:
