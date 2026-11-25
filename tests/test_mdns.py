@@ -121,7 +121,9 @@ class MdnsTemplateTests(unittest.TestCase):
         text = render("avahi-daemon.conf.j2", mdns_interfaces=["wlan0"], mdns_ipv6=False)
         self.assertIn("allow-interfaces=wlan0\n", text)
         self.assertIn("use-ipv6=no\n", text)
+        self.assertIn("publish-aaaa-on-ipv4=no\n", text, "use-ipv6=no alone still answers AAAA over IPv4")
         self.assertIn("use-ipv4=yes\n", text)
+        self.assertIn("publish-aaaa-on-ipv4=yes\n", render("avahi-daemon.conf.j2", mdns_interfaces=["wlan0"], mdns_ipv6=True))
         self.assertIn("use-ipv6=yes\n", render("avahi-daemon.conf.j2", mdns_interfaces=["eth0", "wlan0"], mdns_ipv6=True))
         self.assertIn("allow-interfaces=eth0,wlan0\n",
                       render("avahi-daemon.conf.j2", mdns_interfaces=["eth0", "wlan0"], mdns_ipv6=False))
