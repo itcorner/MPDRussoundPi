@@ -171,6 +171,14 @@ class Updater:
             state.update(phase="outcome_unknown", review=None,
                          error="The updater restarted during the operation, so its outcome is unknown. "
                                "Check the deployment on the Pi before trying again.")
+            if phase != "restoring" and isinstance(state.get("operation"), str):
+                # A backup verified before the restart can still be restored from the page (its own
+                # review, recent password); the target's recovery refuses if its state does not match.
+                # Without one, nothing was interrupted yet or recovery needs the SSH operator.
+                state["restore"] = self._backup_identity(state["operation"])
+                if state["restore"]:
+                    state["error"] = ("The updater restarted during the update, so its outcome is unknown. "
+                                      "Restore the backup taken before it, or check the deployment on the Pi.")
         self._save(state)
         return state
 

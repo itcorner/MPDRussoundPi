@@ -186,6 +186,57 @@ class UpdateFlowTests(Fixture):
         with self.assertRaisesRegex(UpdaterError, "No restore"):
             updater.handle({"op": "restore", "operation": str(uuid4()), "actor": ACTOR})
 
+    def test_a_restart_after_the_backup_still_offers_restore_from_the_page(self):
+        first = self.make()
+        interrupted = self.transaction
+
+        def end_old_run():  # the old process's run ends only now, before its directory is removed
+            interrupted.release.set()
+            first._thread.join(5)
+        self.addCleanup(end_old_run)
+        operation = first.handle({"op": "review", "actor": ACTOR})["operation"]
+        review = self.wait_for(first, "awaiting_approval")["review"]
+        first.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
+        deadline = time.monotonic() + 5
+        while not (self.evidence / (operation + ".backup-identity.json")).exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(first.status()["phase"], "running")
+        # The service restarts here: the new process only sees the durable record and the evidence.
+        restarted = self.make()
+        status = restarted.status()
+        self.assertEqual(status["phase"], "outcome_unknown")
+        self.assertIn("outcome is unknown", status["error"])
+        self.assertIn("Restore the backup taken before it", status["error"])
+        self.assertTrue(status["restore_available"], "the backup taken before the restart is offered")
+        self.assertEqual(status["backups"][0]["operation"], operation)
+        self.assertEqual(status["backups"][0]["size_bytes"], 108130296)
+        restarted.handle({"op": "restore", "operation": operation, "actor": ACTOR})
+        review = self.wait_for(restarted, "restore_awaiting_approval")["review"]
+        self.assertEqual(review["summary"]["action"], "restore")
+        restarted.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
+        self.transaction.release.set()
+        self.assertEqual(self.wait_for(restarted, "restored")["phase"], "restored")
+        self.assertEqual(self.transaction.requests[-1][0],
+                         {"action": "recover", "deployment": "russound-dev", "operation": operation})
+        self.assertEqual(self.transaction.requests[-1][1],
+                         {"recovery": self.evidence / operation, "recovery_checksum": "d" * 64})
+
+    def test_a_restart_before_the_backup_or_during_a_restore_offers_no_new_restore(self):
+        operation = str(uuid4())
+        self.state.write_text(json.dumps({"phase": "running", "kind": "update", "operation": operation}))
+        status = self.make().status()
+        self.assertEqual(status["phase"], "outcome_unknown")
+        self.assertFalse(status["restore_available"], "no verified backup: recovery needs the SSH operator")
+        self.assertIn("Check the deployment on the Pi before trying again", status["error"])
+        with self.assertRaisesRegex(UpdaterError, "No restore"):
+            self.make().handle({"op": "restore", "operation": operation, "actor": ACTOR})
+        kept = {"operation": operation, "manifest_sha256": "d" * 64, "taken_at": None, "size_bytes": None,
+                "revision": None}
+        self.state.write_text(json.dumps({"phase": "restoring", "kind": "restore", "operation": operation,
+                                          "restore": kept}))
+        self.assertEqual(self.make().status()["phase"], "outcome_unknown")
+        self.assertEqual(json.loads(self.state.read_text())["restore"], kept, "an interrupted restore keeps its backup")
+
     def test_restart_never_resumes_or_claims_success(self):
         for phase, expected in (("awaiting_approval", "cancelled"), ("resolving", "cancelled"),
                                 ("running", "outcome_unknown"), ("restoring", "outcome_unknown")):

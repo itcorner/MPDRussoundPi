@@ -1087,7 +1087,13 @@ mode `0660`; directory `0750`), with a fixed set of requests: `status`, `review`
 on the same host (not disaster recovery). The operation record in
 `/var/lib/mpdrussoundpi-updater/state.json` survives restarts: a pending review
 becomes `cancelled`, an approved operation `outcome_unknown`; nothing is
-retried. The operator lock makes an SSH operator run and an updater operation
+retried. If the interrupted update had already verified its on-Pi backup, the
+page still offers "Restore this backup" (with its own review and a recent
+password); the target's recovery refuses if its state does not match that
+backup. Without a verified backup, apply was not reached yet or the outcome
+needs inspection: check `tool.deployment_state status` on the Pi and use the
+SSH operator's `resume-original` for the original runtime (see
+[Failure, explicit recovery and retained evidence](#failure-explicit-recovery-and-retained-evidence)). The operator lock makes an SSH operator run and an updater operation
 exclude each other. `python -m tool.deployment_updater status` (as root in the
 tooling directory) prints the current state.
 
