@@ -1087,13 +1087,24 @@ mode `0660`; directory `0750`), with a fixed set of requests: `status`, `review`
 on the same host (not disaster recovery). The operation record in
 `/var/lib/mpdrussoundpi-updater/state.json` survives restarts: a pending review
 becomes `cancelled`, an approved operation `outcome_unknown`; nothing is
-retried. If the interrupted update had already verified its on-Pi backup, the
-page still offers "Restore this backup" (with its own review and a recent
-password); the target's recovery refuses if its state does not match that
-backup. Without a verified backup, apply was not reached yet or the outcome
-needs inspection: check `tool.deployment_state status` on the Pi and use the
-SSH operator's `resume-original` for the original runtime (see
-[Failure, explicit recovery and retained evidence](#failure-explicit-recovery-and-retained-evidence)). The operator lock makes an SSH operator run and an updater operation
+retried. The updater then compares its record with the Pi's deployment record
+(`tool.deployment_state status`):
+
+- The target already recorded the backup (`backup-complete` or later): the page
+  offers "Restore this backup" (with its own review and a recent password).
+  The target's recovery refuses if its state does not match that backup.
+- The target is still before its backup (`prepared`, `inputs-verified`), or
+  there is no verified backup: nothing was applied, but the services may
+  already be stopped, so the page itself is usually unreachable. Use the SSH
+  operator's `resume-original` for the original runtime (see
+  [Failure, explicit recovery and retained evidence](#failure-explicit-recovery-and-retained-evidence)).
+  The controller keeps the backup identity a moment before the target records
+  the backup, so a restart in that window does not offer the backup.
+- Once the Pi has no reserved or unfinished operation (after an SSH recovery),
+  the unknown outcome becomes an ordinary `failed` without a restore, and the
+  page offers updates again. An unreadable record changes nothing.
+
+The operator lock makes an SSH operator run and an updater operation
 exclude each other. `python -m tool.deployment_updater status` (as root in the
 tooling directory) prints the current state.
 
