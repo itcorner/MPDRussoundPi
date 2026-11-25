@@ -11,7 +11,9 @@ evidence names the operation they belong to. The small records (``evidence``,
 Nothing is removed while the state is blocked, reserved or pending.
 
 Unlike the image cleanup, this reduces what can be restored: an older backup is the
-only way back to that version's data. Manual use (dry run by default)::
+only way back to that version's data. Runs automatically on the target after a
+verified-complete update, right after the image cleanup (best effort, under the
+operator lock), and manually (dry run by default)::
 
     sudo .venv/bin/python -m tool.deployment_retention files
     sudo .venv/bin/python -m tool.deployment_retention files --apply
@@ -33,6 +35,8 @@ from typing import Any, Callable
 
 logger = logging.getLogger("mpdrussoundpi.retention")
 
+# The updater's root (tool.deployment_updater.ROOT); not imported, so the target's serve stays light.
+UPDATER_ROOT = Path("/var/lib/mpdrussoundpi-updater")
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 AREAS = ("backups", "assets", "incoming", "restores")
 # An operation whose apply was attempted, backed up and completed, without a recovery afterwards.
@@ -225,10 +229,11 @@ def retention(storage: dict[str, Path], status: dict[str, Any], *, apply: bool, 
     except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         raise RetentionError(f"Cannot read which files the containers use ({error}); nothing is removed.") from None
     decided = plan(storage, updater_evidence, evidence, keep_set(status, evidence, updater_state, in_use))
-    report: dict[str, Any] = {**decided, "applied": apply, "removed": 0, "skipped": [],
+    report: dict[str, Any] = {**decided, "applied": apply, "removed": 0, "operations": 0, "skipped": [],
                               "freed_bytes": 0, "would_free_bytes": sum(item["bytes"] for item in decided["remove"])}
     if not apply:
         return report
+    removed_operations: set[str] = set()
     for item in decided["remove"]:
         path = Path(item["path"])
         try:
@@ -237,15 +242,33 @@ def retention(storage: dict[str, Path], status: dict[str, Any], *, apply: bool, 
             shutil.rmtree(path)
             report["removed"] += 1
             report["freed_bytes"] += item["bytes"]
+            removed_operations.add(item["operation"])
         except OSError as error:
             report["skipped"].append({"path": item["path"], "error": str(error)[:200]})
+    report["operations"] = len(removed_operations)
     return report
 
 
 def summary(report: dict[str, Any]) -> dict[str, Any]:
     """The small result the operator and the updater pass on."""
-    return {"removed": report.get("removed", 0), "skipped": len(report.get("skipped", [])),
-            "freed_bytes": report.get("freed_bytes", 0), "error": report.get("error")}
+    return {"operations": report.get("operations", 0), "removed": report.get("removed", 0),
+            "skipped": len(report.get("skipped", [])), "freed_bytes": report.get("freed_bytes", 0),
+            "error": report.get("error")}
+
+
+def after_update(target: Any) -> dict[str, Any]:
+    """Best effort after a verified-complete update and the image cleanup; never raises."""
+    from tool.deployment_cleanup import docker_runner
+    try:
+        report = retention(target.storage, target.store.status(), apply=True,
+                           run=docker_runner(target.docker, target.env),
+                           updater_root=UPDATER_ROOT if UPDATER_ROOT.is_dir() else None)
+        logger.info("Removed the files of %s older operations, freed %s bytes", report["operations"],
+                    report["freed_bytes"])
+        return summary(report)
+    except Exception as error:  # noqa: BLE001 - a retention problem must never fail a committed update
+        logger.warning("Operation file retention after the update did not run: %s", error)
+        return {"operations": 0, "removed": 0, "skipped": 0, "freed_bytes": 0, "error": str(error)[:200]}
 
 
 def _megabytes(value: int) -> str:
@@ -274,7 +297,6 @@ def main(argv: list[str] | None = None) -> int:
     from tool.deployment_compose import ComposeError, local_engine, paths
     from tool.deployment_operator import STORAGE, operator_lock
     from tool.deployment_state import STATE_ROOT, StateError, StateStore
-    from tool.deployment_updater import ROOT as UPDATER_ROOT
 
     parser = argparse.ArgumentParser(description="Remove the large files of finished operations no version needs.")
     sub = parser.add_subparsers(dest="command", required=True)

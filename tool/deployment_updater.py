@@ -62,6 +62,7 @@ ACTIVE_PHASES = ("resolving", "awaiting_approval", "approved", "running", "resto
 INTERRUPTION = "Web app and gateway restart; this page reconnects after a few minutes."
 BACKUP_NOTE = "Taken first, kept on this Pi only (not disaster recovery)."
 CLEANUP_NOTE = "Removed after success; the backup keeps a copy."
+RETENTION_NOTE = "Kept for this and the previous update; older ones are removed after success."
 # Target phases before any backup was recorded: nothing was applied, the original runtime is unchanged.
 BEFORE_BACKUP = ("prepared", "inputs-verified")
 NOT_APPLIED = ("The updater restarted before the update changed the installed version, but the services may "
@@ -82,6 +83,16 @@ def _cleanup(value: Any) -> dict[str, Any] | None:
     error = value.get("error")
     return {**counts, "error": error[:200] if isinstance(error, str) else None}
 
+
+
+def _retention(value: Any) -> dict[str, Any] | None:
+    """Only the counts of the operator's operation file retention (decision 2 of the retention plan)."""
+    if not isinstance(value, dict):
+        return None
+    counts = {key: value.get(key) if type(value.get(key)) is int and value.get(key) >= 0 else 0
+              for key in ("operations", "removed", "skipped", "freed_bytes")}
+    error = value.get("error")
+    return {**counts, "error": error[:200] if isinstance(error, str) else None}
 
 
 def _restorable_backups(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -361,6 +372,7 @@ class Updater:
             "interruption": INTERRUPTION,
             "backup": BACKUP_NOTE,
             "cleanup": None if restoring else CLEANUP_NOTE,
+            "retention": None if restoring else RETENTION_NOTE,
         }
 
     def _execute(self, request: dict[str, Any], operation: str, *, restoring: bool,
@@ -386,7 +398,8 @@ class Updater:
         checks = result.get("required") if isinstance(result, dict) else None
         self._set(phase="restored" if restoring else "succeeded", review=None, error=None,
                   result={"event": result.get("event"), "checks": checks, "finished_at": _now_text(self._clock()),
-                          "cleanup": _cleanup(result.get("cleanup") if isinstance(result, dict) else None)},
+                          "cleanup": _cleanup(result.get("cleanup") if isinstance(result, dict) else None),
+                          "retention": _retention(result.get("retention") if isinstance(result, dict) else None)},
                   restore=None)
 
     def _backup_identity(self, operation: str) -> dict[str, str] | None:

@@ -55,6 +55,16 @@ def _cleanup(value: object) -> dict[str, int] | None:
     return counts
 
 
+def _retention(value: object) -> dict[str, int] | None:
+    """How many older operations' files the update removed and how much space it freed."""
+    if not isinstance(value, dict):
+        return None
+    counts = {key: value.get(key) for key in ("operations", "freed_bytes")}
+    if any(type(count) is not int or count < 0 for count in counts.values()):
+        return None
+    return counts
+
+
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})\Z")
 MAX_BACKUPS = 5
 
@@ -92,6 +102,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
         "error": _text(value.get("error")),
         "finished_at": _text(result.get("finished_at"), 32) if result else None,
         "cleanup": _cleanup(result.get("cleanup")) if result else None,
+        "retention": _retention(result.get("retention")) if result else None,
         "restore_available": value.get("restore_available") is True,
         "backups": _backups(value.get("backups")),
         "busy": value.get("busy") is True,
@@ -111,6 +122,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
             "interruption": _text(summary.get("interruption"), 300),
             "backup": _text(summary.get("backup"), 300),
             "cleanup": _text(summary.get("cleanup"), 300),
+            "retention": _text(summary.get("retention"), 300),
         }
     return status
 

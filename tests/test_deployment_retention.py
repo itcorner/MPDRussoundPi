@@ -10,7 +10,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from tool import deployment_retention as retention_module
-from tool.deployment_retention import RetentionError, render, retention, summary
+from tool.deployment_retention import RetentionError, after_update, render, retention, summary
 
 DEPLOYMENT = "russound-dev"
 
@@ -103,8 +103,8 @@ class RetentionTests(Fixture):
         for op in (previous, current):
             self.assertTrue((self.storage["backups"] / op).exists())
             self.assertTrue((self.updater / "evidence" / op).exists())
-        self.assertEqual(summary(applied), {"removed": 6, "skipped": 0, "freed_bytes": applied["freed_bytes"],
-                                            "error": None})
+        self.assertEqual(summary(applied), {"operations": 2, "removed": 6, "skipped": 0,
+                                            "freed_bytes": applied["freed_bytes"], "error": None})
         self.assertIn("Removed 6", render(applied))
 
     def test_previous_skips_recovered_unfinished_and_other_deployments(self):
@@ -206,6 +206,46 @@ class RetentionTests(Fixture):
         self.assertEqual([item["path"] for item in report["skipped"]], [str(self.storage["backups"] / first)])
         self.assertFalse((self.storage["backups"] / second).exists())
         self.assertEqual(summary(report)["skipped"], 1)
+
+
+class AfterUpdateTests(Fixture):
+    def target(self, status):
+        test = self
+
+        class Store:
+            def status(self):
+                return status
+
+        class Target:
+            docker, env, store, storage = ["docker", "--context", "default"], {}, Store(), test.storage
+        return Target()
+
+    def test_runs_with_the_target_docker_and_the_updater_root_and_summarizes(self):
+        self.operation(updater=True)
+        self.operation()
+        current = self.operation()
+        seen = []
+
+        def runner(command, env):
+            seen.append(command)
+            return self.docker
+        with patch("tool.deployment_cleanup.docker_runner", side_effect=runner), \
+                patch.object(retention_module, "UPDATER_ROOT", self.updater):
+            result = after_update(self.target(self.status(current)))
+        self.assertEqual(seen, [["docker", "--context", "default"]])
+        self.assertEqual((result["operations"], result["removed"], result["error"]), (1, 3, None))
+        self.assertGreater(result["freed_bytes"], 0)
+
+    def test_never_raises_and_reports_the_reason(self):
+        current = self.operation()
+        with patch("tool.deployment_cleanup.docker_runner", return_value=self.docker):
+            result = after_update(self.target(self.status(current, reserved=current)))
+        self.assertEqual((result["operations"], result["removed"], result["freed_bytes"]), (0, 0, 0))
+        self.assertIn("blocked or reserved", result["error"])
+
+    def test_the_updater_root_matches_the_updater(self):
+        from tool.deployment_updater import ROOT
+        self.assertEqual(retention_module.UPDATER_ROOT, ROOT)
 
 
 if __name__ == "__main__":

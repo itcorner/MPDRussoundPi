@@ -672,6 +672,29 @@ test("software updates: a successful update says how many old images it removed"
   assert.match(review.allText(), /Old images.*Removed after success; the backup keeps a copy\./);
 });
 
+test("software updates: a successful update also says how many older backups it removed", () => {
+  const view = renderStatusView(signedIn);
+  const paragraphs = (status) => {
+    renderUpdates(view, availableUpdates, { configured: true, busy: false, ...status });
+    const found = [];
+    view.adminUpdate.find((node) => { if (node.tagName === "P") found.push(node.textContent); return false; });
+    return found;
+  };
+  assert.deepEqual(paragraphs({ phase: "succeeded", cleanup: { removed: 2, freed_bytes: 7_000_000 },
+    retention: { operations: 2, freed_bytes: 580_400_000 } }),
+  ["The last update finished.", "Removed 2 old images (7 MB).", "Removed the backups of 2 older updates (580 MB)."]);
+  assert.deepEqual(paragraphs({ phase: "succeeded", retention: { operations: 1, freed_bytes: 290_000_000 } }),
+    ["The last update finished.", "Removed the backups of 1 older update (290 MB)."]);
+  for (const retention of [null, { operations: 0, freed_bytes: 0 }, { operations: "2" }]) {
+    assert.deepEqual(paragraphs({ phase: "succeeded", retention }), ["The last update finished."]);
+  }
+  assert.deepEqual(paragraphs({ phase: "failed", retention: { operations: 2, freed_bytes: 1 } }).slice(1), [],
+    "only after a successful update");
+  const review = renderUpdates(view, availableUpdates, { ...pendingReview, review: { ...pendingReview.review,
+    retention: "Kept for this and the previous update; older ones are removed after success." } });
+  assert.match(review.allText(), /Old backups.*Kept for this and the previous update; older ones are removed after success\./);
+});
+
 test("the page reloads once when the web application comes back as a new build", () => {
   const view = renderStatusView({ configured: true, authenticated: false, locked_for_seconds: 0 });
   const reloads = [];

@@ -532,6 +532,14 @@ function imagesRow(images) {
   return value;
 }
 
+function retentionText(retention) {
+  if (!retention || !Number.isInteger(retention.operations) || retention.operations <= 0) {
+    return "";
+  }
+  const megabytes = Math.round((retention.freed_bytes || 0) / 1e6);
+  return `Removed the backups of ${retention.operations} older update${retention.operations === 1 ? "" : "s"} (${megabytes} MB).`;
+}
+
 function renderReview(review) {
   const box = document.createElement("div");
   box.className = "admin-review";
@@ -541,6 +549,9 @@ function renderReview(review) {
   const rows = [["Interruption", review.interruption || ""], ["Backup", review.backup || ""]];
   if (review.cleanup) {
     rows.push(["Old images", review.cleanup]);
+  }
+  if (review.retention) {
+    rows.push(["Old backups", review.retention]);
   }
   if (review.layout_change) {
     rows.push(["Layout change", review.layout_change]);
@@ -613,9 +624,12 @@ function phaseMessage(box, status) {
   const detailed = status.error && !["cancelled", "up_to_date"].includes(phase);
   box.appendChild(textElement("p", phase === "failed" || phase === "outcome_unknown" ? "admin-message" : "status-meta",
     detailed ? status.error : updatePhaseText[phase]));
-  const removed = cleanupText(status.cleanup);
-  if (phase === "succeeded" && removed) {
-    box.appendChild(textElement("p", "status-meta", removed));
+  if (phase === "succeeded") {
+    for (const line of [cleanupText(status.cleanup), retentionText(status.retention)]) {
+      if (line) {
+        box.appendChild(textElement("p", "status-meta", line));
+      }
+    }
   }
 }
 

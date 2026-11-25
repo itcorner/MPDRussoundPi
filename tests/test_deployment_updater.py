@@ -32,6 +32,7 @@ class FakeTransaction:
     def __init__(self, outcome="complete", backup=True):
         self.outcome, self.backup = outcome, backup
         self.cleanup = None
+        self.retention = None
         self.requests, self.approvals = [], []
         self.release = threading.Event()
 
@@ -60,7 +61,8 @@ class FakeTransaction:
             raise ChannelError("Target operation failed")
         return {"event": "recovered" if request["action"] == "recover" else "complete",
                 "required": {"containers": "passed", "http": "passed"},
-                **({"cleanup": self.cleanup} if request["action"] == "deploy" and self.cleanup is not None else {})}
+                **({"cleanup": self.cleanup} if request["action"] == "deploy" and self.cleanup is not None else {}),
+                **({"retention": self.retention} if request["action"] == "deploy" and self.retention is not None else {})}
 
 
 def unreadable_target():
@@ -132,14 +134,23 @@ class UpdateFlowTests(Fixture):
         transaction = FakeTransaction()
         transaction.cleanup = {"removed": 4, "skipped": 1, "freed_bytes": 650_000_000, "error": None,
                                "unexpected": "dropped"}
+        transaction.retention = {"operations": 2, "removed": 6, "skipped": 0, "freed_bytes": 580_000_000,
+                                 "error": None, "paths": ["dropped"]}
         updater = self.make(transaction)
         operation = updater.handle({"op": "review", "actor": ACTOR})["operation"]
         review = self.wait_for(updater, "awaiting_approval")["review"]
         self.assertEqual(review["summary"]["cleanup"], "Removed after success; the backup keeps a copy.")
+        self.assertEqual(review["summary"]["retention"],
+                         "Kept for this and the previous update; older ones are removed after success.")
         updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
         transaction.release.set()
         result = self.wait_for(updater, "succeeded")["result"]
         self.assertEqual(result["cleanup"], {"removed": 4, "skipped": 1, "freed_bytes": 650_000_000, "error": None})
+        self.assertEqual(result["retention"], {"operations": 2, "removed": 6, "skipped": 0,
+                                               "freed_bytes": 580_000_000, "error": None})
+        self.assertEqual(updater_module._retention({"operations": -1, "freed_bytes": "lots", "error": 5}),
+                         {"operations": 0, "removed": 0, "skipped": 0, "freed_bytes": 0, "error": None})
+        self.assertIsNone(updater_module._retention(None))
         transaction.cleanup = {"removed": -3, "freed_bytes": "lots", "error": 5}
         self.assertEqual(updater_module._cleanup(transaction.cleanup),
                          {"removed": 0, "skipped": 0, "freed_bytes": 0, "error": None})
@@ -183,6 +194,7 @@ class UpdateFlowTests(Fixture):
         review = self.wait_for(updater, "restore_awaiting_approval")["review"]
         self.assertEqual(review["summary"]["action"], "restore")
         self.assertIsNone(review["summary"]["cleanup"], "a restore never cleans up")
+        self.assertIsNone(review["summary"]["retention"], "a restore never removes backups")
         updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
         self.assertEqual(self.wait_for(updater, "restored")["phase"], "restored")
         restore_request, recovery = self.transaction.requests[-1]
