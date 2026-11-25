@@ -1182,7 +1182,10 @@ delete reservation files, prune images, invoke legacy playbooks, or assume a
 timeout means remote work ended. The controlled Ansible deadline is ten minutes;
 the SSH controller defaults to one hour and can be set for a new session with
 `--controller-timeout-seconds` (maximum `18000`). Docker or target work may
-outlive either client. Use the fixed target tooling's read-only status command
+outlive either client. A failed SSH operator run ends its message with
+`(target messages: …/OPERATION.ssh.log)`: that private file holds the target's
+own reason, for example "Another target operator is active" when an updater
+operation holds the operator lock. Use the fixed target tooling's read-only status command
 and inspect related processes, Docker activity and private evidence first:
 
 ```sh
