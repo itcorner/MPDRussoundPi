@@ -17,6 +17,7 @@ record deployment acceptance in the plan it belongs to.
 - [Docker image preparation and release](./documentation/docker-image-release.md): build-only artifacts, image boundaries and publication prerequisites.
 - [Development and release workflow](./documentation/development-workflow.md): branch roles, feature PRs, release promotion and hotfix back-merges.
 - [HTTPS for the web UI](./documentation/web-ui-https.md): local CA, Caddy proxy on port 443, device trust, renewal and rollback.
+- [Reliable `musicpi.local`](./documentation/mdns-hostname.md): Avahi limited to the LAN and IPv4, restart on failure, a watchdog timer, and network-side advice.
 - [Playback deployment](./documentation/playback-agent-deployment.md): install or update the Pi playback stack and connect it to the web dashboard.
 - [Headless MPD deployment and recovery](./documentation/mpd-headless-deployment.md), including [audio graph and hardware notes](./documentation/mpd-headless-deployment.md#audio-graph-and-hardware-notes).
 - [Playback endurance and USB reconnect recorder](./documentation/mpd-playback-endurance-test.md)
@@ -68,8 +69,8 @@ When the status changes, rename the file with `git mv` and update the links to i
 | [Moving the installation to another network](./plans/general_idea_network-relocation.md) | Idea; inventory of address, DNS, certificate and subnet dependencies and what breaks per scenario |
 | [Guided diagnostics](./plans/general_idea_guided-diagnostics.md) | Idea, not scheduled; reuse deployment health observations |
 | [Safe configuration change handling](./plans/web_open_safe-configuration-changes.md) | Open; required revision checks and durable single-file writes implemented; preview, external writers and config/state transaction remain |
-| [User-triggered Docker image updates](./plans/general_open_user-triggered-image-updates.md) | Open: admin login, updater service and page flow rolled out; acceptance on the Pi in progress; single-Pi Docker installations only |
-| [Administrator mode and protected settings](./plans/web_open_admin-mode-and-protected-settings.md) | Open: amber admin mode, login dialog, Status page rework, Restore backup, protected configuration (read-only for guests) and password change on the page rolled out and accepted on Mac and phone 2026-11-24; idle logout, lockout, restore and accessibility checks remain |
+| [User-triggered Docker image updates](./plans/general_open_user-triggered-image-updates.md) | Open: admin login, updater service and page flow rolled out; acceptance on the Pi in progress (failure test and restore over HTTPS done 2026-11-25); single-Pi Docker installations only |
+| [Administrator mode and protected settings](./plans/web_done_admin-mode-and-protected-settings.md) | Done 2026-11-25. Amber admin mode, login dialog, Status page rework, Restore backup, a protected configuration (read-only for guests) and password change on the page. Accepted on the Pi, on Mac and phone, including idle logout, lockout, password re-entry for a restore, and keyboard and VoiceOver checks |
 | [HTTPS for the web UI](./plans/general_done_web-ui-https.md) | Done 2026-11-23; local CA with name constraints and automatic renewal, Caddy on 443, web listener on loopback, logins only over HTTPS; accepted on Mac and phone |
 | [Playback stability and management follow-up](./plans/mpd_open_playback-stability-follow-up.md) | Open; USB and reachability observation, watchdog visibility and deferred recovery ideas |
 | [MPD playback stall watchdog and USB audio stability](./plans/mpd_done_playback-stall-watchdog.md) | Watchdog implemented and live-validated 2026-11-02; remaining topics moved to follow-up |

@@ -3,7 +3,7 @@
 **Status:** done (2026-11-23). Planned and decided on 2026-11-22; implemented, rolled out on the reference Pi and accepted on 2026-11-23. The one remaining check, a web update and a restore over HTTPS, moved to the [user-triggered image updates](./general_open_user-triggered-image-updates.md) acceptance. Brought forward from the "Later: whole-UI HTTPS" stage of the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (decision 6) so that no interim login protection is needed. A prerequisite for
-[administrator mode and protected settings](./web_open_admin-mode-and-protected-settings.md),
+[administrator mode and protected settings](./web_done_admin-mode-and-protected-settings.md),
 which puts the configuration behind the administrator login.
 
 ## Why

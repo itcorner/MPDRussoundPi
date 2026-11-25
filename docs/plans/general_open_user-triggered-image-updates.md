@@ -3,7 +3,9 @@
 Status: **open** (2026-11-21). Decisions 1 to 7 were taken on 2026-11-21 (see
 [Decisions](#decisions-2026-11-21)). Stages 1 to 4 are implemented and rolled out
 on the reference Pi (administrator login, updater service, page flow, rollout);
-stage 5, the acceptance on the Pi, is in progress. Recorded as an idea on
+stage 5, the acceptance on the Pi, is in progress (failure test and restore over
+HTTPS done 2026-11-25; interrupted update, concurrency and the cross-version
+rehearsal remain). Recorded as an idea on
 2026-10-31. The unmerged preparation of 2026-11-16 was reviewed and its consistent
 parts are included here (see [Earlier preparation](#earlier-preparation-2026-11-16)).
 
@@ -234,7 +236,27 @@ operator.
     404 on the read-back of the freshly written exact tag (eventual consistency).
     `recover-development.yml` (run 45292336558, approved by the user) completed
     it from the original tested archives;
-  - [ ] *Restore over HTTPS*: with the next deliberate failure test.
+  - [x] *Restore over HTTPS* (2026-11-25, together with the
+    [administrator mode](./web_done_admin-mode-and-protected-settings.md)
+    acceptance). Test candidate `dev-3069110`; the playback-agent proxy was
+    stopped before approval, MPD kept playing. The update `a785f6b` → `3069110`
+    from `https://musicpi.local/status` took the on-Pi backup (108 MB) and
+    ended as `failed` at the playback check (operation `924d8003`). Nothing
+    rolled back by itself. The Restore backup section opened by itself with the
+    backup's time, version and size. After the proxy was started again,
+    "Restore this backup" asked for the password again (login older than 5
+    minutes) and ended as `restored` at 19:02 UTC: both containers back on
+    `a785f6b` and healthy, the backup consumed, `3069110` offered again.
+    *Found and fixed:* the failed candidate's containers kept running, and the
+    update check compares the newest image with the **running** build. So the
+    page said "up to date" and showed no "Retry update to …", although the
+    updater recorded `a785f6b` as installed. The page now shows such a
+    candidate as "Update failed" with a retry (#117, `8a8a08a`, covered by a UI
+    test);
+  - [x] *Successful update after the fix* (2026-11-25): `a785f6b` → `8a8a08a`
+    from the page, `succeeded` at 19:29 UTC, all required checks passed
+    including playback. Both containers are on `8a8a08a` and healthy, the
+    cleanup removed 4 old images (14 MB), and the check reports `up_to_date`;
   - [x] *Successful update* (2026-11-22): `e49ced5` → `f82d2ee` started from the
     Status page by the administrator (operation `b25f90cd`). An earlier review on
     2026-11-21 expired and was cancelled before any interruption, as designed.
@@ -256,15 +278,16 @@ operator.
     review and confirmation) ended as `restored`: backend, containers, http
     and playback passed; both containers back on `f82d2ee`; reservation and
     pending record cleared; review, result and backup identity of both steps
-    kept in the updater evidence. *Follow-up:* the page shows the failure
-    message twice with slightly different wording.
+    kept in the updater evidence. *Follow-up (fixed 2026-11-22, `5a056ae`):* the page
+    showed the failure message twice with slightly different wording. It is
+    now stated once, in the updater's words (covered by a UI test).
   - *Page code after an update* (found 2026-11-22 with the cleanup line): the open
     page reconnected but kept running its old `status.js`, so new elements such
     as "Removed N old images" appeared only after a manual reload. Fixed: the
     page remembers the running build from `/api/status/updates` (`build`) and
     reloads itself once when it changes. It does so after an update and after a
-    restore, and never loops (guarded per page and per tab). To be confirmed with
-    the next update from the page.
+    restore, and never loops (guarded per page and per tab). Confirmed by the
+    user with the web update over HTTPS on 2026-11-24.
 
 The [MPD web integration acceptance](./general_done_mpd-web-integration.md#acceptance-limitations-and-handover)
 rehearsed same-version config/state restoration, but did not test a cross-version

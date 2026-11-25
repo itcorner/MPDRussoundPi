@@ -1844,7 +1844,7 @@ input[type="range"] {
 
 /* ------------------------------------------------------------------ administrator mode
    Amber is reserved for administrator power: nothing else on the pages uses it.
-   docs/plans/web_open_admin-mode-and-protected-settings.md */
+   docs/plans/web_done_admin-mode-and-protected-settings.md */
 :root {
   --admin: #f5b942;
   --admin-low: #ff9a3c;

@@ -529,7 +529,7 @@ class RussoundHTTPServer:
             return self._updater_response(lambda: self.updater.status(include_review=True))
 
         # Installing an update needs the session, not the password again (decided 2026-11-22);
-        # only a restore asks again (docs/plans/web_open_admin-mode-and-protected-settings.md).
+        # only a restore asks again (docs/plans/web_done_admin-mode-and-protected-settings.md).
         @app.post("/api/admin/update/review")
         def api_admin_update_review():
             return self._updater_action("review", recent=False)
