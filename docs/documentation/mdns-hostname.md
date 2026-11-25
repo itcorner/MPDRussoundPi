@@ -48,6 +48,13 @@ mDNS is multicast, and Wi-Fi delivers multicast less reliably than unicast. In o
 2. **Router and access points:** keep multicast DNS working between Wi-Fi and LAN. Options such as
    "multicast enhancement", "IGMP snooping" without a querier, or "multicast and broadcast
    filtering" on the Wi-Fi network commonly break `.local` names for wireless clients.
-3. **Fallback address:** reserve `192.168.1.105` for the Pi in the router's DHCP settings. The
+3. **Access point firmware:** on 2026-11-25, `musicpi.local` failed on a Mac and a phone with
+   `DNS_PROBE_FINISHED_NXDOMAIN`, also after reconnecting to Wi-Fi. Both clients were on the
+   6 GHz band, the Pi on 5 GHz. The Pi answered unicast queries correctly and received the
+   clients' multicast, but no multicast from any device reached the clients. A pending access
+   point firmware update fixed it. To tell this apart from a Pi fault: if the Pi's watchdog
+   reports `"ok": true` and `https://192.168.1.105/` works, look at the Wi-Fi first (band,
+   multicast settings, firmware).
+4. **Fallback address:** reserve `192.168.1.105` for the Pi in the router's DHCP settings. The
    HTTPS certificate already includes that address, so `https://192.168.1.105/` works with the
    same trusted CA whenever `.local` does not resolve.

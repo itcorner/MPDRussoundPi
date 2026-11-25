@@ -2,10 +2,10 @@
 
 Status: **open** (2026-11-21). Decisions 1 to 7 were taken on 2026-11-21 (see
 [Decisions](#decisions-2026-11-21)). Stages 1 to 4 are implemented and rolled out
-on the reference Pi (administrator login, updater service, page flow, rollout);
-stage 5, the acceptance on the Pi, is in progress (failure test and restore over
-HTTPS done 2026-11-25; interrupted update, concurrency and the cross-version
-rehearsal remain). Recorded as an idea on
+on the reference Pi (administrator login, updater service, page flow, rollout).
+Stage 5, the acceptance on the Pi, was completed on 2026-11-25. The cross-version
+data rehearsal is deferred until persisted data carries a schema version (see
+[below](#cross-version-restore-deferred)). Recorded as an idea on
 2026-10-31. The unmerged preparation of 2026-11-16 was reviewed and its consistent
 parts are included here (see [Earlier preparation](#earlier-preparation-2026-11-16)).
 
@@ -220,7 +220,8 @@ operator.
   [HTTPS for the web UI](./general_done_web-ui-https.md). Local CA with name
   constraints, Caddy on 443, web listener on loopback, logins only over
   HTTPS.
-- [ ] **5. Acceptance on the Pi:** a successful update between two development
+- [x] **5. Acceptance on the Pi** (completed 2026-11-25; cross-version rehearsal
+  deferred): a successful update between two development
   images; a deliberately failing candidate and restore; an interrupted update
   (power or service stop) and its documented recovery; concurrent requests; wrong
   password and CSRF rejection; and the cross-version data rehearsal below.
@@ -257,6 +258,69 @@ operator.
     from the page, `succeeded` at 19:29 UTC, all required checks passed
     including playback. Both containers are on `8a8a08a` and healthy, the
     cleanup removed 4 old images (14 MB), and the check reports `up_to_date`;
+  - [x] *Authorization and CSRF* (2026-11-25). Against the Pi over HTTPS, without
+    any login attempt (the lockout counter stays untouched):
+    - anonymous requests to read the update state, review, approve, cancel,
+      restore, save the configuration, change the password and extend the
+      session: all `401`;
+    - a forged session cookie and a forged `X-Forwarded-For: 127.0.0.1`: `401`;
+    - a cross-site `Origin` on the review and on the login, and
+      `Sec-Fetch-Site: cross-site`: `403` before any password check;
+    - plain HTTP: `308` to HTTPS, so a POST never reaches the app.
+
+    With a session (the same web code run locally with a throwaway password,
+    because the Pi's password stays with the administrator): `extend` without
+    or with a wrong `X-CSRF-Token` gave `403 csrf`, with the session's token
+    `200`; saving the configuration and starting a review without the token:
+    `403`. Wrong passwords and the lockout were accepted with the
+    [administrator mode](./web_done_admin-mode-and-protected-settings.md);
+  - [x] *Updater restart before approval* (2026-11-25, test 1): the review of
+    `72ab8f0` → `3b437cd` was waiting for approval (operation `f2b7b8bc`) when
+    `mpdrussoundpi-updater` was restarted. It came back as `cancelled` ("The
+    updater restarted before approval."), and its tooling child stopped with it.
+    The containers stayed on `72ab8f0`, untouched; no backup was taken. The next
+    review started normally, so no lock was left behind;
+  - [x] *Concurrent requests* (2026-11-25, test 3, operation `ac8b4c38`):
+    - 3a: signed in on the Mac and on a phone, both pressed "Update to
+      dev-3b437cd" within about a second. Only the Mac's review started; the
+      phone showed "update in progress";
+    - 3b: while that review waited, the SSH operator `deploy --update` was
+      refused at once by the operator lock. The terminal only showed the generic
+      "Target operation failed; keep private evidence and inspect pending state
+      before recovery"; the reason ("Another target operator is active") is only
+      in the private `<operation>.ssh.log`. Naming that log in the message is a
+      possible small follow-up;
+    - the review was then cancelled from the page;
+  - [x] *Updater restart during the update* (2026-11-25, test 2, operation
+    `9feff66a`). After the approval, the updater was restarted 26 s after the
+    controller had verified the on-Pi backup (108 MB). It came back as
+    `outcome_unknown`; nothing was retried. The Pi's deployment record was still
+    at `inputs-verified`: no backup recorded, nothing applied. Both containers
+    were already stopped, so the page was unreachable (`502`), while MPD kept
+    playing. `tool.deployment_state status` showed that state, and the SSH
+    operator's `resume-original` (approved by the user) restarted the original
+    `72ab8f0` containers without restoring data. Its backend, containers,
+    http and playback checks passed. *Found and fixed:*
+    - #121 (`d44d5b6`) offers the verified backup after a restart, but in this
+      window the page cannot be reached and the backup is the wrong recovery;
+    - after the SSH recovery the updater stayed `outcome_unknown` with the
+      stale restore, and the page hid the update button with no way to clear
+      it.
+
+    #122 (`d4ccbcc`) compares the updater's record with the Pi's deployment
+    record. Before the target's backup, it withdraws the restore and points to
+    `resume-original`. Once the Pi has no reserved or unfinished operation, the
+    unknown outcome becomes an ordinary `failed` without a restore. After the
+    tooling upgrade to `d4ccbcc`, the page showed that message and "Retry update
+    to dev-3b437cd". The retry (operation `027b449e`) was `verified-complete`
+    with all five checks; both containers run `3b437cd` and are healthy, and the
+    cleanup removed 2 images (7 MB). The interrupted operation's recovery tags
+    (`mpdrussoundpi-recovery/*:9feff66a…`) remain, because the cleanup only
+    handles its own operation. They share their images with the newer rollback
+    tags and take no extra space; this belongs to operation file retention.
+    During this test, `musicpi.local` stopped resolving on 6 GHz clients because
+    of the access point, not the Pi (see
+    [mDNS hostname](../documentation/mdns-hostname.md#what-the-pi-cannot-fix));
   - [x] *Successful update* (2026-11-22): `e49ced5` → `f82d2ee` started from the
     Status page by the administrator (operation `b25f90cd`). An earlier review on
     2026-11-21 expired and was cancelled before any interruption, as designed.
@@ -288,6 +352,15 @@ operator.
     reloads itself once when it changes. It does so after an update and after a
     restore, and never loops (guarded per page and per tab). Confirmed by the
     user with the web update over HTTPS on 2026-11-24.
+
+### Cross-version restore (deferred)
+
+Deferred on 2026-11-25. Persisted data (configuration, state, password file) has
+no schema version yet, so a rehearsal could only show that today's formats
+happen to match; it could not detect an incompatible change. Add a schema
+version first, then rehearse. Until then, note that a restore brings back the
+data from before the update: a password changed after the backup is reverted to
+the old one.
 
 The [MPD web integration acceptance](./general_done_mpd-web-integration.md#acceptance-limitations-and-handover)
 rehearsed same-version config/state restoration, but did not test a cross-version
