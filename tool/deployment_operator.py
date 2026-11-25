@@ -217,10 +217,13 @@ def serve(channel: Channel, storage: dict[str, Path]) -> None:
 
     runner = target.runner(offhost, receive_images if selection["kind"] == LOCAL_CANDIDATE else None)
     result = runner.execute(lambda review: approve_remote(channel, review))
-    # Committed and verified: remove images no version needs (best effort, still under the lock).
+    # Committed and verified: remove images and older operations' large files no version needs
+    # (best effort, still under the lock; neither changes the outcome).
     from tool.deployment_cleanup import after_update
+    from tool.deployment_retention import after_update as retain_after_update
     cleanup = after_update(target)
-    channel.send({"event": "complete", **result, "cleanup": cleanup,
+    retention = retain_after_update(target)
+    channel.send({"event": "complete", **result, "cleanup": cleanup, "retention": retention,
                   "acceptance": {"controller": "reported-connected" if target.spec["require_controller"] else "not-requested",
                                  "playback": "reported-healthy" if target.spec["require_playback"] else "not-configured"}})
 

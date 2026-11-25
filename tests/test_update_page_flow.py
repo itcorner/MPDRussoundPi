@@ -134,6 +134,21 @@ class PageFlowTests(unittest.TestCase):
             "cleanup": "Old images are removed."}}}, include_review=True)["review"]
         self.assertEqual(review["cleanup"], "Old images are removed.")
 
+    def test_sanitize_passes_only_the_retention_counts(self):
+        def retention(value):
+            return sanitize_status({"phase": "succeeded", "result": {"retention": value}},
+                                   include_review=False)["retention"]
+        self.assertEqual(retention({"operations": 2, "removed": 6, "freed_bytes": 580_000_000, "error": "x",
+                                    "paths": ["/var/lib/x"]}), {"operations": 2, "freed_bytes": 580_000_000})
+        for bad in (None, "2", {"operations": -1, "freed_bytes": 0}, {"operations": 1, "freed_bytes": "a lot"},
+                    {"operations": True, "freed_bytes": 0}, {"removed": 6, "freed_bytes": 0}):
+            with self.subTest(bad=bad):
+                self.assertIsNone(retention(bad))
+        self.assertIsNone(sanitize_status({"phase": "idle"}, include_review=False)["retention"])
+        review = sanitize_status({"phase": "awaiting_approval", "review": {"operation": "o", "digest": "d", "summary": {
+            "retention": "Older backups are removed."}}}, include_review=True)["review"]
+        self.assertEqual(review["retention"], "Older backups are removed.")
+
     def test_sanitize_passes_the_restorable_backups(self):
         good = {"operation": "e98f54a1-625a-428f-b4d5-574d1b357557", "taken_at": "2026-11-23T00:04:18.238842+00:00",
                 "revision": "a" * 40, "size_bytes": 108130296, "reason": "before the update that failed"}

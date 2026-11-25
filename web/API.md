@@ -531,14 +531,16 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   `outcome_unknown`, `restore_awaiting_approval`, `restoring`, `restored`),
   `kind`, `operation`, `installed_revision`, `candidate_revision`, `error`,
   `finished_at`, `cleanup` (after a successful update: `removed` old images and
-  `freed_bytes`, or `null`), `restore_available`, `backups`, `busy`, `updated_at`.
+  `freed_bytes`, or `null`), `retention` (after a successful update: the number
+  of older `operations` whose large files were removed and `freed_bytes`, or
+  `null`), `restore_available`, `backups`, `busy`, `updated_at`.
   Never the review. `backups` lists the restorable backups, newest first (today
   at most the failed update's own one, up to five later): `operation`, `taken_at`
   (ISO time from the backup's manifest), `revision` (the version it contains),
   `size_bytes` and a short `reason`; unknown values are `null`.
 - `GET /api/admin/update` (administrator session): the same plus `review`
   (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `images`,
-  `layout_change`, `interruption`, `backup`, `cleanup`) while a confirmation is pending.
+  `layout_change`, `interruption`, `backup`, `cleanup`, `retention`) while a confirmation is pending.
 - `POST /api/admin/update/review` (`{}`), `/approve`
   (`{"operation", "digest"}`) and `/cancel` (`{"operation"}`) need the session
   and the `X-CSRF-Token` header. `/restore` (`{"operation"}`) additionally needs

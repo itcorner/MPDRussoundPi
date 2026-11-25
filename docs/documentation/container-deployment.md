@@ -1153,7 +1153,18 @@ those of older finished operations. It keeps:
 Unlike the image cleanup, this reduces what can be restored: a removed backup is
 gone. It removes nothing while the state is blocked, reserved or pending, or when
 the updater record or the containers cannot be read, and it holds the operator
-lock. For now it runs only by hand (dry run first):
+lock. It runs automatically after a verified-complete update, right after the image
+cleanup, from the page or the SSH operator. It is best effort: an error is reported
+in the result (`retention` with `operations`, `removed`, `skipped`, `freed_bytes`,
+`error`) but never changes the update's outcome, and it never runs after a failed
+update, a restore or an unknown outcome. The page shows "Removed the backups of N
+older updates", and the review says older backups are removed after success.
+
+The update's free-space check (room for the incoming images, the backup and an
+isolated restore) is unchanged. Because the retention runs only after a
+successful update, it does not make room for the update that is about to run. If
+that check fails, run the command below by hand first. For the backlog, or to check,
+run it by hand as root in the tooling directory (dry run first):
 
 ```sh
 sudo .venv/bin/python -m tool.deployment_retention files            # dry run: lists removable, kept and unidentified

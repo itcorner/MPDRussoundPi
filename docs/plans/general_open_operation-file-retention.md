@@ -1,7 +1,8 @@
 # Operation file retention
 
 **Status:** open (2026-11-26). Decisions 1 to 3 confirmed by the user on 2026-11-26;
-stage 1 (the retention core with a manual dry run) implemented. Follows the
+stages 1 to 3 implemented (the retention core, running it after each verified
+update, the space-check note); not rolled out yet. Follows the
 [Docker image cleanup](./general_done_docker-image-cleanup.md#later-operation-file-retention),
 which removed old images but left the much larger per-operation files as a separate
 decision. Related to the
@@ -97,13 +98,18 @@ outcome.
     committed `027b449e`, the previous `a97b8190` and the handover operation
     `e6513571`. 17 small `assets` directories without evidence (reviews that
     never started) are listed as not identified and left alone.
-- [ ] **2. After each update:** call it after the image cleanup in the operator's
-  verified-complete path. Report `{"removed", "kept", "freed_bytes", "error"}`
-  next to the image cleanup counts. The page's existing cleanup line covers both,
-  or gets one more line.
-- [ ] **3. Preflight space check:** keep the existing free-space rules (they
-  already require room for a new backup); document that retention runs after
-  success, so a full disk still needs the manual command first.
+- [x] **2. After each update** (2026-11-26): called right after the image cleanup
+  in the operator's verified-complete path; the `complete` event carries
+  `retention` with `{"operations", "removed", "skipped", "freed_bytes", "error"}`.
+  The updater stores those counts. The page shows one more line, "Removed the
+  backups of N older updates (X MB).", and the review has an "Old backups" row
+  ("Kept for this and the previous update; older ones are removed after
+  success."). The web client passes on only `operations` and `freed_bytes`. A
+  restore never runs it.
+- [x] **3. Preflight space check** (2026-11-26): the existing free-space rule
+  is unchanged (room for the incoming images, the backup and an isolated
+  restore). The deployment documentation now says that the retention runs only
+  after success, so a full disk still needs the manual command first.
 - [ ] **4. Tooling checkouts:** `upgrade-deployment.yml` removes all but the two
   most recent `/opt/mpdrussoundpi-deploy.upgrade-*` after a successful upgrade.
 - [ ] **5. Backlog on the reference Pi:** dry run, review the list with the user,
