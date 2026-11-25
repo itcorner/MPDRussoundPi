@@ -1,6 +1,6 @@
 // Administrator mode on every page: amber frame, sticky strip with countdown and
 // exit, and a row in the page menu (sign in / exit admin mode). See
-// docs/plans/web_open_admin-mode-and-protected-settings.md. The login is a modal
+// docs/plans/web_done_admin-mode-and-protected-settings.md. The login is a modal
 // dialog opened from the header, the menu or any privileged action
 // (window.adminLogin).
 //

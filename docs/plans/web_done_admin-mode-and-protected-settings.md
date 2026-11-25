@@ -1,6 +1,6 @@
 # Administrator mode: global sign-in and protected settings
 
-**Status:** open. Planned and decided on 2026-11-22. Stages 1 to 4 implemented on 2026-11-24 (after a local preview session): configuration saves need the administrator, the password can be changed on the page. Rolled out on the reference Pi and largely accepted on 2026-11-24; the remaining checks are listed in stage 5. The
+**Status:** done (2026-11-25). Planned and decided on 2026-11-22. Stages 1 to 4 implemented on 2026-11-24 (after a local preview session): configuration saves need the administrator, the password can be changed on the page. Rolled out on the reference Pi on 2026-11-24 and accepted on 2026-11-25 (stage 5). The
 mockups are in the session that produced this plan; their decisions are recorded
 below. Related to [user-triggered image updates](./general_open_user-triggered-image-updates.md)
 (the first user of the administrator account) and
@@ -174,7 +174,7 @@ Changes:
       disabled (values stay readable, dashed frames), a note offers the login,
       the zones' live sound controls stay usable. Saving sends the session's
       token; an expired session opens the login and then saves the same edits.
-- [ ] **5. Acceptance on the Pi**, desktop and phone: sign in from each page,
+- [x] **5. Acceptance on the Pi**, desktop and phone (done 2026-11-25): sign in from each page,
       edit and save settings, a guest write is refused, idle logout after 15
       minutes, manual exit, restore asks for the password, update install does
       not, password change, lockout after wrong passwords, keyboard use and a
@@ -192,15 +192,40 @@ Changes:
     work), saving works after signing in, the password change works (also a
     short password after accepting the risk) and signs out the other device,
     and the login dialog shows the SSH reset command;
-  - [ ] still open, run on 2026-11-24 (results follow): idle logout after 15
-    minutes and "Extend" (measured with the real server code in the local
-    preview, since the agent has no administrator password for the Pi);
-    lockout after five wrong passwords (on the Pi, with wrong passwords only);
-    a restore asking for the password again (failure test: the
-    playback-agent proxy is stopped before approval, so the update fails its
-    playback check, then the user restores from the Restore backup section);
-    keyboard and screen reader (automated check in headless Chrome, then a
-    short VoiceOver pass by the user).
+  - [x] *Idle logout and "Extend"* (night of 2026-11-24/25), measured with the
+    real server code in the local preview, since the agent has no administrator
+    password for the Pi. Session A was never touched. It started with 899 s left
+    and was signed out after 15 minutes (02:11:09 → 02:26:12). The page's
+    regular session checks did not extend it. Session B was extended in its last
+    minute (02:25:12) back to 899 s and stayed signed in;
+  - [x] *Lockout* (same night, on the Pi, with wrong passwords only). Four
+    failures were refused, the fifth locked the login, and a sixth attempt was
+    refused while locked. The lock lasted 900 s, and each step is in the audit
+    log. The lock expired by itself; the user's next correct login reset the
+    counter;
+  - [x] *Keyboard and screen reader*: an automated check in headless Chrome,
+    then a VoiceOver pass by the user (passed, 2026-11-25). The dialog is
+    announced as "Sign in as administrator" with a "Password" field, and errors
+    are announced as an alert. Focus stays inside the dialog and Escape closes
+    it. The strip is a status region, the amber frame is hidden from screen
+    readers, and reduced motion is respected. *Found and fixed:* after closing
+    the dialog the keyboard focus was lost; it now returns to the opener, or to
+    the Menu button as a fallback (#114, `3069110`);
+  - [x] *Restore asks for the password, update does not* (2026-11-25,
+    failure test with candidate `dev-3069110`). The update started without
+    asking for the password again. With the playback-agent proxy stopped before
+    approval, it failed its playback check (operation `924d8003`). The Restore
+    backup section opened by itself with the backup's time, version and size.
+    After the proxy was started again, "Restore this backup" asked "Enter your
+    password again" (the login was older than 5 minutes) and restored
+    `a785f6b`. The proper update to `8a8a08a` then succeeded. *Found and
+    fixed:* the failed candidate kept running, so the page said "up to date"
+    and showed no "Retry" (#117). Details in
+    [user-triggered image updates](./general_open_user-triggered-image-updates.md);
+  - *Network note:* during the test `musicpi.local` briefly stopped resolving
+    on the Mac. The Pi answered every query, but the Wi-Fi delivered no mDNS
+    multicast to the Mac. The Pi side was hardened at the same time (#115,
+    #116; [mDNS hostname](../documentation/mdns-hostname.md)).
 
 Order: stage 1 closes the open configuration page for guests, so it ships with
 the rest of stage 4.
