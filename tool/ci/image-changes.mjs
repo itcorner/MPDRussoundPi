@@ -1,5 +1,5 @@
 // Decides whether a develop push publishes new development images
-// (docs/plans/general_open_publish-only-changed-images.md).
+// (docs/plans/general_done_publish-only-changed-images.md).
 //
 // A push publishes when an image's build inputs changed since the revision the
 // `dev` alias points to, when that image is older than MAX_AGE_DAYS (so base-image

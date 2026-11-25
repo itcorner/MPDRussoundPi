@@ -1,6 +1,6 @@
 """Remove this project's Docker images that no version still needs.
 
-See docs/plans/general_open_docker-image-cleanup.md. Kept: images used by any
+See docs/plans/general_done_docker-image-cleanup.md. Kept: images used by any
 container, every deployment's committed version and the previous version (the
 images its committed operation backed up). Nothing is removed while the
 deployment state is blocked, reserved or pending. Only the project's own
