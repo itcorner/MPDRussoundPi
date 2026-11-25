@@ -1,7 +1,7 @@
 # Operation file retention
 
 **Status:** open (2026-11-26). Decisions 1 to 3 confirmed by the user on 2026-11-26;
-not implemented yet. Follows the
+stage 1 (the retention core with a manual dry run) implemented. Follows the
 [Docker image cleanup](./general_done_docker-image-cleanup.md#later-operation-file-retention),
 which removed old images but left the much larger per-operation files as a separate
 decision. Related to the
@@ -77,12 +77,26 @@ outcome.
 
 ## Stages
 
-- [ ] **1. Retention core** (`tool/deployment_retention.py`): compute the keep set
+- [x] **1. Retention core** (`tool/deployment_retention.py`, 2026-11-26): compute the keep set
   from the state store, the operations' evidence and the updater record. Then
   list the large entries outside it (`backups`, `assets`, `incoming`,
   `restores`, the updater's backup copies) with their sizes. Dry run by default,
   `--apply` to remove. Unit tests with fixture trees, including the
   never-remove cases above.
+  - Entries are attributed to an operation by their name. Recovery IDs are
+    mapped through the reviewed `<op>.recovery-attempt.json` (`review.recovery`);
+    a received backup in `incoming/<random>/` through its single `<op>/` child.
+    "Previous" is the newest operation of the same deployment with apply attempt,
+    backup and completion records and no recovery, other than the committed one.
+  - The running containers' compose labels (project name, config files, working
+    directory) are read so that nothing in use is removed. On the Pi, the
+    containers use `runtime/<committed op>/active.json`, and the project name
+    `pi-handover-e651357…` comes from the handover operation.
+  - *Dry run on the reference Pi* (2026-11-26, temporary copy, nothing
+    removed): it would remove 119 directories, about 9.8 GB. It keeps the
+    committed `027b449e`, the previous `a97b8190` and the handover operation
+    `e6513571`. 17 small `assets` directories without evidence (reviews that
+    never started) are listed as not identified and left alone.
 - [ ] **2. After each update:** call it after the image cleanup in the operator's
   verified-complete path. Report `{"removed", "kept", "freed_bytes", "error"}`
   next to the image cleanup counts. The page's existing cleanup line covers both,
