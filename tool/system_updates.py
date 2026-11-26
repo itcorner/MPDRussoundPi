@@ -45,6 +45,10 @@ Run = Callable[[list[str], float], tuple[int, str]]
 
 UNIT_PREFIX = "mpdrussoundpi-system-update-"
 REVIEW_SECONDS = 120
+# The confirmation window starts when an administrator's page first receives the
+# review (computing it takes about a minute for a few hundred packages, and a
+# page in a background tab polls late). A review nobody fetches ends after this.
+UNSEEN_REVIEW_SECONDS = 600
 MANUAL_CHECK_SECONDS = 600       # "Check now" refreshes the package lists at most every 10 minutes
 RECHECK_SECONDS = 6 * 3600       # the cached result is recomputed at least this often
 STALE_INDEX_SECONDS = 2 * 86400  # package lists older than this are reported as stale
@@ -560,7 +564,7 @@ class SystemUpdates:
     def handle(self, request: dict[str, Any], actor: Callable[[], dict[str, str]]) -> dict[str, Any]:
         operation = request["op"]
         if operation == "system_status":
-            return self.status()
+            return self.status(seen=request.get("seen") is True)
         if operation == "system_check":
             return self.manual_check()
         if operation == "system_review":
@@ -571,12 +575,21 @@ class SystemUpdates:
             return self.cancel(request.get("operation"))
         raise SystemRefused("Unknown request")
 
-    def status(self) -> dict[str, Any]:
+    def status(self, *, seen: bool = False) -> dict[str, Any]:
+        """``seen``: asked for an administrator's page, which shows a pending review; its window starts now."""
         with self._lock:
+            review = self.state.get("review")
+            if seen and isinstance(review, dict) and review.get("expires_at") is None:
+                review["expires_at"] = self._clock() + REVIEW_SECONDS
+                self._save()
+                self._lock.notify_all()
             state = copy.deepcopy(self.state)
         review = state.get("review")
         if isinstance(review, dict):
-            review = dict(review, expires_in_seconds=max(0, int(review["expires_at"] - self._clock())))
+            remaining = (REVIEW_SECONDS if review.get("expires_at") is None
+                         else max(0, int(review["expires_at"] - self._clock())))
+            review = dict(review, expires_in_seconds=remaining)
+            review.pop("unseen_until", None)
         return {"api_version": 1, "phase": state["phase"], "kind": state.get("kind"),
                 "operation": state.get("operation"), "review": review, "result": state.get("result"),
                 "error": state.get("error"), "busy": state["phase"] in ACTIVE,
@@ -653,17 +666,20 @@ class SystemUpdates:
             "interruption": INSTALL_INTERRUPTION, "undo": NO_UNDO, "config": CONFIG_NOTE,
         }
 
+    def _review_deadline(self, review: dict[str, Any]) -> float:
+        """Called with the own lock held: the confirmation deadline, or the unseen deadline before it was shown."""
+        return review["expires_at"] if review.get("expires_at") is not None else review["unseen_until"]
+
     def _await_approval(self, operation: str, digest: str, summary: dict[str, Any]) -> bool:
-        expires = self._clock() + REVIEW_SECONDS
         with self._lock:
             self._decision = None
-            self.state.update(phase="awaiting_approval",
-                              review={"operation": operation, "digest": digest, "expires_at": expires,
-                                      "summary": summary})
+            review = {"operation": operation, "digest": digest, "expires_at": None,
+                      "unseen_until": self._clock() + UNSEEN_REVIEW_SECONDS, "summary": summary}
+            self.state.update(phase="awaiting_approval", review=review)
             self._save()
             self._lock.notify_all()
-            while self._decision is None and self._clock() < expires:
-                self._lock.wait(timeout=min(1.0, max(0.0, expires - self._clock())))
+            while self._decision is None and self._clock() < self._review_deadline(review):
+                self._lock.wait(timeout=min(1.0, max(0.0, self._review_deadline(review) - self._clock())))
             decision = self._decision or {"approved": False, "reason": "expired"}
             if not decision["approved"]:
                 self.state.update(phase="cancelled", review=None,
@@ -682,7 +698,7 @@ class SystemUpdates:
                 raise SystemRefused("There is no pending review for this operation")
             if digest != review["digest"]:
                 raise SystemRefused("The confirmation does not match the pending review")
-            if self._clock() >= review["expires_at"]:
+            if self._clock() >= self._review_deadline(review):
                 raise SystemRefused("The review expired; start a new one")
             self._decision = {"approved": True, "actor": actor}
             self._lock.notify_all()
@@ -750,23 +766,25 @@ class SystemUpdates:
             self._sleep(2)
         try:
             code = int(exit_path.read_text().strip())
+            # When apt ended, also if the updater only noticed it later (after its own restart).
+            ended = _now_text(exit_path.stat().st_mtime)
         except (OSError, ValueError):
-            code = -1
+            code, ended = -1, _now_text(self._clock())
         kept = self._kept_configs()
         if code == CONFLICT_EXIT:
             self._set(phase="failed_before_install", error="Another operator was active. Nothing was installed.")
         elif code != 0:
             _, audit = self._run(["dpkg", "--audit"], 120)
             if audit.strip():
-                self._set(phase="outcome_unknown", result={"kept_configs": kept}, error=(
+                self._set(phase="outcome_unknown", result={"kept_configs": kept, "finished_at": ended}, error=(
                     "The installation stopped part way and some packages are not fully set up. Finish it over SSH "
                     "with 'sudo dpkg --configure -a', then check again."))
             else:
-                self._set(phase="install_failed", result={"kept_configs": kept}, error=(
+                self._set(phase="install_failed", result={"kept_configs": kept, "finished_at": ended}, error=(
                     "The installation failed; the packages that were already updated stay installed. "
                     "The details are in the updater's log on the Pi."))
         else:
-            self._set(phase="verifying", result={"kept_configs": kept})
+            self._set(phase="verifying", result={"kept_configs": kept, "finished_at": ended})
             self._verify("installed")
         self.recompute()
 
@@ -784,7 +802,8 @@ class SystemUpdates:
         while missing and self._clock() < deadline:
             self._sleep(5)
             missing = missing_services(before, self._run)
-        result = dict(self.state.get("result") or {}, finished_at=_now_text(self._clock()),
+        previous = self.state.get("result") or {}
+        result = dict(previous, finished_at=previous.get("finished_at") or _now_text(self._clock()),
                       checks="passed" if not missing else "failed", missing=missing[:10],
                       restart_needed=bool(self.restart_reasons()))
         if missing:

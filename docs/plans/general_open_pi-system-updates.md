@@ -125,6 +125,20 @@ security fixes should not wait for someone to remember.
   succeeds from the page with the containers healthy, the restart from the page
   boots kernel 6.18.60 and everything comes back. Then one automatic security run
   is observed on the page.
+  - [x] Rolled out on 2026-11-26: tooling `f75d67f`, `deploy-updater.yml`
+    (unit with `Wants=docker.service`, `unattended-upgrades` allowing only
+    `Debian-Security`, `Automatic-Reboot "false"`), web image `dev-f75d67f`.
+  - [x] Check: 496 upgrades, 37 new, 2 removals, 122 security, shown on the page.
+  - [x] Install from the page (operation `07ecc2e9`, 19:16 to 19:45 UTC): apt
+    exit code 0, `dpkg --audit` clean, no kept configuration files, Docker
+    29.10.1 restarted both containers, which came back healthy. Reported as
+    "outcome unknown" first (findings below); after the fix the updater picked it
+    up again and reported "installed", checks passed, restart needed.
+  - [x] Restart from the page (19:52 UTC): kernel 6.18.60, "restarted", checks
+    passed, both containers healthy, all `mpdrussoundpi-*` services active,
+    HTTPS 200, `/run/reboot-required` gone.
+  - [ ] One automatic security run seen on the page (needs the next Debian
+    security update).
 
 ## Implementation notes (2026-11-26)
 
@@ -172,11 +186,24 @@ security fixes should not wait for someone to remember.
   has written its exit code since is watched again after the updater restarts.
   An image update is also refused while anything holds the dpkg lock, not only
   during a recorded system operation.
-- **Open: the package list loses its scroll position** on every refresh of the
-  page, so a long list cannot be scrolled.
-- **Open: the review appeared late.** The review was ready about 52 s after
-  "Install system updates" (the check on the Pi), but the page showed it with
-  only about 20 s of the 120 s left (started 19:13:55, approved 19:16:17 UTC).
+- **The package list lost its scroll position** (and whether it was open) on
+  every refresh of the page, so a long list could not be read. Fixed: both carry
+  over to the rebuilt list.
+- **The review appeared late.** It was ready about 52 s after "Install system
+  updates", but the page showed it with only about 20 s of the 120 s left
+  (started 19:13:55, approved 19:16:17 UTC; the page had just asked for the
+  login, and a page in a background tab polls late). Fixed: the 120 s start when
+  an administrator's page first receives the review (`system_status` with
+  `seen`, sent only by the administrator endpoint); a review nobody fetches ends
+  after 10 minutes. The package list is still compared again right before the
+  install. The page says that computing takes about a minute.
+- **"There is no pending review for this operation"** after confirming the
+  restart, which did start: the confirmation row stayed enabled, so a second
+  Enter or click sent a second approval. Fixed for every review (image update,
+  restore, install, restart): the row is disabled once confirmed or cancelled and
+  enabled again only when the request fails.
+- **The finish time of a recovered install** was the time the updater noticed
+  it. Fixed: the time apt wrote its exit code.
 
 ## Related
 

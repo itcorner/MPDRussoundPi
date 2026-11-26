@@ -593,9 +593,30 @@ function confirmRow(word, label, approve, cancel) {
   input.className = "admin-confirm-input";
   input.setAttribute("aria-label", `Type ${word} to confirm`);
   input.placeholder = `Type "${word}" to confirm`;
-  const confirm = updateButton(label, approve, { primary: true, disabled: true, privileged: true });
+  // One decision per review: after confirming or cancelling the row is disabled until the
+  // request fails, so a second Enter or click never sends a second (refused) approval.
+  let sending = false;
+  const send = async (action) => {
+    if (sending) {
+      return;
+    }
+    sending = true;
+    input.disabled = confirm.disabled = cancelButton.disabled = true;
+    let accepted = false;
+    try {
+      accepted = (await action()) === true;
+    } finally {
+      if (!accepted) {
+        sending = false;
+        input.disabled = cancelButton.disabled = false;
+        confirm.disabled = input.value.trim().toLowerCase() !== word;
+      }
+    }
+  };
+  const confirm = updateButton(label, () => send(approve), { primary: true, disabled: true, privileged: true });
+  const cancelButton = updateButton("Cancel", () => send(cancel));
   input.addEventListener("input", () => {
-    confirm.disabled = input.value.trim().toLowerCase() !== word;
+    confirm.disabled = sending || input.value.trim().toLowerCase() !== word;
   });
   // Enter in the field confirms like the button, and only when the button would: the exact
   // word typed. Held keys and input-method composition never confirm.
@@ -605,10 +626,10 @@ function confirmRow(word, label, approve, cancel) {
     }
     event.preventDefault();
     if (!confirm.disabled) {
-      approve();
+      send(approve);
     }
   });
-  row.append(input, confirm, updateButton("Cancel", cancel));
+  row.append(input, confirm, cancelButton);
   return row;
 }
 
@@ -918,8 +939,10 @@ async function requestUpdateCheck() {
   }
 }
 
+// Returns true when the updater accepted the request (the review row stays disabled then).
 async function runUpdateAction(action, body) {
   showAdminMessage("");
+  let accepted = false;
   try {
     const { response, payload } = await adminRequest(`/api/admin/update/${action}`, body);
     // The password and its errors belong to the dialog (admin.js), never to this section.
@@ -928,26 +951,28 @@ async function runUpdateAction(action, body) {
     const reason = action === "restore" ? "Restore the previous version" : "Install the update";
     if (response.status === 403 && code === "reauthenticate" && typeof window.adminReauthenticate === "function") {
       window.adminReauthenticate({ reason, onSuccess: again });
-      return;
+      return false;
     }
     if (response.status === 401 && typeof window.adminLogin === "function") {
       window.adminLogin({ reason, onSuccess: again });  // the session ended meanwhile
-      return;
+      return false;
     }
     if (!response.ok) {
       showAdminMessage(payload.error && payload.error.message ? payload.error.message : "The request failed.");
     }
+    accepted = response.ok;
   } catch {
     showAdminMessage("The server could not be reached.");
   }
   fetchAdminUpdate();
+  return accepted;
 }
 
 // Pi system updates (docs/plans/general_open_pi-system-updates.md): everyone sees the counts,
 // the administrator sees the packages and can install them or restart the Pi. Like the image
 // review, the review card is built once per review so typing is never cleared.
 const systemPhaseText = {
-  preparing: "Computing the pending updates…",
+  preparing: "Computing the pending updates… With a few hundred packages this takes about a minute.",
   installing: "Installing system updates. This takes several minutes; if Docker is updated the page reconnects by itself.",
   verifying: "Installed. Checking that the containers and services are back…",
   installed: "The system updates were installed.",
@@ -1013,8 +1038,11 @@ function automaticText(automatic) {
   return `Last run ${when}: ${outcome}`;
 }
 
-function packageList(packages) {
+// The list is rebuilt on every refresh; whether it is open and where it is scrolled to
+// carry over from the previous one, so a long list can be read while the page polls.
+function packageList(packages, previous) {
   const details = document.createElement("details");
+  details.open = Boolean(previous && previous.open);
   details.className = "system-packages";
   details.appendChild(textElement("summary", "status-meta", `Show ${packages.length} package${packages.length === 1 ? "" : "s"}`));
   const list = document.createElement("ul");
@@ -1026,10 +1054,21 @@ function packageList(packages) {
     list.appendChild(line);
   }
   details.appendChild(list);
+  details.list = list;
+  details.restoreScroll = () => {
+    if (previous) {
+      list.scrollTop = previous.scrollTop;
+    }
+  };
   return details;
 }
 
-function renderSystemInfo(box) {
+function packageListState(box) {
+  const details = box.packageDetails;
+  return details ? { open: details.open, scrollTop: details.list.scrollTop } : null;
+}
+
+function renderSystemInfo(box, previousList) {
   const status = systemUpdateState;
   const check = status.check || {};
   const list = document.createElement("dl");
@@ -1062,7 +1101,10 @@ function renderSystemInfo(box) {
   }
   box.appendChild(list);
   if (adminCsrfToken && Array.isArray(check.packages) && check.packages.length) {
-    box.appendChild(packageList(check.packages));
+    const details = packageList(check.packages, previousList);
+    box.packageDetails = details;
+    box.appendChild(details);
+    details.restoreScroll();  // scrollTop applies only once the list is in the document
   }
 }
 
@@ -1117,6 +1159,8 @@ function renderSystemUpdates() {
     return;
   }
   renderSystemState();
+  const previousList = packageListState(systemBox);
+  systemBox.packageDetails = null;  // set again when this render shows the list
   const review = status.review;
   if (status.phase === "awaiting_approval" && review && adminCsrfToken) {
     systemPanel.open = true;
@@ -1136,7 +1180,7 @@ function renderSystemUpdates() {
       ? "Waiting for the Pi to come back…" : "Waiting for the web application to come back…"));
     return;
   }
-  renderSystemInfo(systemBox);
+  renderSystemInfo(systemBox, previousList);
   const phase = status.phase;
   if (phase && phase !== "idle" && systemPhaseText[phase]) {
     const problem = ["checks_failed", "install_failed", "outcome_unknown", "restart_failed"].includes(phase);
@@ -1213,21 +1257,24 @@ async function runSystemAction(action, body) {
   systemMessage.hidden = true;
   const reason = action === "check" ? "Check for system updates"
     : body && body.kind === "restart" ? "Restart the Pi" : "Install the system updates";
+  let accepted = false;
   try {
     const { response, payload } = await adminRequest(`/api/admin/system-updates/${action}`, body);
     if (response.status === 401 && typeof window.adminLogin === "function") {
       window.adminLogin({ reason, onSuccess: () => runSystemAction(action, body) });
-      return;
+      return false;
     }
     if (!response.ok) {
       systemMessage.textContent = payload.error && payload.error.message ? payload.error.message : "The request failed.";
       systemMessage.hidden = false;
     }
+    accepted = response.ok;
   } catch {
     systemMessage.textContent = "The server could not be reached.";
     systemMessage.hidden = false;
   }
   fetchSystemUpdates();
+  return accepted;
 }
 
 function renderOverview(payload) {
