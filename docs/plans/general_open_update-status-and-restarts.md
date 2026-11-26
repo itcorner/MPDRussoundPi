@@ -4,6 +4,10 @@ Status: **open** (2026-11-21). The first slice, a read-only update check for the
 web image, is implemented (see [First slice](#first-slice-web-image-update-check-2026-11-21)).
 Pi package updates and every restart or reboot action remain unimplemented and
 still need the decisions below. Proposed as an idea on 2026-11-12.
+*2026-11-26:* checking and installing Pi package updates, automatic security
+updates and the Pi restart moved to
+[Pi system updates from the Status page](./general_open_pi-system-updates.md),
+with the user's decisions; service restarts and other hosts stay here.
 
 ## Goal
 
