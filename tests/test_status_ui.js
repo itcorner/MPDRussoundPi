@@ -821,6 +821,21 @@ test("pi system: everyone sees the counts, the administrator the packages and th
   assert.deepEqual(plain(ran.at(-1)), ["review", { kind: "install" }]);
 });
 
+test("pi system: the package list stays open and scrolled across refreshes", () => {
+  const view = renderStatusView(signedIn);
+  const status = { configured: true, phase: "idle", busy: false, check: systemDetails };
+  const first = renderSystem(view, status).find((node) => node.tagName === "DETAILS");
+  first.open = true;
+  first.list.scrollTop = 240;
+  const again = renderSystem(view, status).find((node) => node.tagName === "DETAILS");
+  assert.notEqual(again, first, "rebuilt on refresh");
+  assert.equal(again.open, true);
+  assert.equal(again.list.scrollTop, 240);
+  renderSystem(view, systemReview);
+  const after = renderSystem(view, status).find((node) => node.tagName === "DETAILS");
+  assert.equal(after.open, false, "a review in between starts the list closed again");
+});
+
 test("pi system: restart needed, up to date and installations without the updater", () => {
   const view = renderStatusView(signedIn);
   const ran = [];
@@ -840,7 +855,7 @@ test("pi system: restart needed, up to date and installations without the update
   assert.equal(view.systemPanel.hidden, true);
 });
 
-test("pi system: the review keeps typed text, confirms with the exact word and Enter", () => {
+test("pi system: the review keeps typed text, confirms with the exact word and Enter", async () => {
   const view = renderStatusView(signedIn);
   const ran = [];
   vm.runInContext("runSystemAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
@@ -858,6 +873,11 @@ test("pi system: the review keeps typed text, confirms with the exact word and E
   assert.match(view.systemBox.allText(), /80 s/);
   input.fire("keydown", { key: "Enter", preventDefault: () => {} });
   assert.deepEqual(plain(ran.at(-1)), ["approve", { operation: "sys-1", digest: "sha256:def" }]);
+  input.fire("keydown", { key: "Enter", preventDefault: () => {} });
+  button(view.systemBox, "Confirm install").fire("click");
+  assert.equal(ran.filter((entry) => entry[0] === "approve").length, 1, "one approval per review, also on a second Enter or click");
+  assert.equal(input.disabled, true);
+  assert.equal(button(view.systemBox, "Cancel").disabled, true);
 
   const restartBox = renderSystem(view, { ...systemReview, kind: "restart",
     review: { ...systemReview.review, operation: "sys-2", action: "restart", reasons: ["updated since the last start: libc6"],
@@ -869,5 +889,16 @@ test("pi system: the review keeps typed text, confirms with the exact word and E
   word.value = "install";
   word.fire("input");
   assert.equal(button(restartBox, "Confirm restart").disabled, true);
+
+  // A refused approval enables the row again, so the administrator can retry or cancel.
+  vm.runInContext("runSystemAction = async (action, body) => { this.ran.push([action, body]); return false; };",
+    Object.assign(view.context, { ran }));
+  word.value = "restart";
+  word.fire("input");
+  button(restartBox, "Confirm restart").fire("click");
+  assert.equal(word.disabled, true, "disabled while the request runs");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(word.disabled, false);
+  assert.equal(button(restartBox, "Confirm restart").disabled, false);
 });
 

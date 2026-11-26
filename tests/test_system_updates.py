@@ -347,6 +347,55 @@ class InstallTests(Fixture):
         self.assertEqual(lost.status()["phase"], "outcome_unknown", "no unit and no exit code: unknown")
         self.assertIn("dpkg --audit", lost.status()["error"])
 
+    def test_the_confirmation_window_starts_when_an_administrator_sees_the_review(self):
+        clock = [time.time()]
+        self.system = self.make()
+        self.system._clock = lambda: clock[0]
+        operation = self.system.handle({"op": "system_review", "kind": "install"}, lambda: ACTOR)["operation"]
+        self.wait_for(self.system, "awaiting_approval")
+        clock[0] += module.REVIEW_SECONDS + 60  # computed long ago, nobody looked yet
+        public = self.system.handle({"op": "system_status"}, lambda: ACTOR)
+        self.assertEqual(public["review"]["expires_in_seconds"], module.REVIEW_SECONDS, "not started without a viewer")
+        self.assertNotIn("unseen_until", public["review"])
+        seen = self.system.handle({"op": "system_status", "seen": True}, lambda: ACTOR)
+        self.assertEqual(seen["review"]["expires_in_seconds"], module.REVIEW_SECONDS)
+        clock[0] += 30
+        again = self.system.handle({"op": "system_status", "seen": True}, lambda: ACTOR)
+        self.assertEqual(again["review"]["expires_in_seconds"], module.REVIEW_SECONDS - 30, "started once")
+        self.system.approve(operation, seen["review"]["digest"], ACTOR)
+        self.finish(0)
+        self.wait_for(self.system, "installed")
+
+    def test_a_review_nobody_sees_ends_and_a_seen_one_expires(self):
+        clock = [time.time()]
+        self.system = self.make()
+        self.system._clock = lambda: clock[0]
+        self.system.handle({"op": "system_review", "kind": "install"}, lambda: ACTOR)
+        self.wait_for(self.system, "awaiting_approval")
+        clock[0] += module.UNSEEN_REVIEW_SECONDS + 1
+        self.assertEqual(self.wait_for(self.system, "cancelled")["error"], "The review expired.")
+        operation = self.system.handle({"op": "system_review", "kind": "install"}, lambda: ACTOR)["operation"]
+        self.wait_for(self.system, "awaiting_approval")
+        digest = self.system.status(seen=True)["review"]["digest"]
+        clock[0] += module.REVIEW_SECONDS + 1
+        with self.assertRaisesRegex(SystemRefused, "expired"):
+            self.system.approve(operation, digest, ACTOR)
+        self.wait_for(self.system, "cancelled")
+        self.assertFalse(self.host.started.is_set())
+
+    def test_the_result_records_when_apt_ended_not_when_it_was_noticed(self):
+        operation, review = self.review()
+        self.system.approve(operation, review["digest"], ACTOR)
+        self.assertTrue(self.host.started.wait(5))
+        ended = time.time() - 300
+        temporary = self.evidence / (operation + ".system.exit.tmp")
+        temporary.write_text("0\n")
+        os.utime(temporary, (ended, ended))
+        temporary.rename(self.evidence / (operation + ".system.exit"))
+        self.host.unit_active = False
+        status = self.wait_for(self.system, "installed")
+        self.assertEqual(status["result"]["finished_at"], module._now_text(ended))
+
     def test_a_failing_systemctl_during_the_install_is_not_the_end(self):
         # On the Pi, systemctl failed once while dpkg replaced libssl (2026-11-26).
         operation, review = self.review()

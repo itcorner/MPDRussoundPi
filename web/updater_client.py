@@ -248,4 +248,6 @@ class UpdaterClient:
     def system_status(self, *, include_details: bool) -> dict[str, Any]:
         if not self.configured():
             return {"api_version": 1, "configured": False, "phase": "idle"}
-        return sanitize_system(self.request({"op": "system_status"}), include_details=include_details)
+        # An administrator's page shows a pending review: the updater starts its confirmation window then.
+        request = {"op": "system_status", "seen": True} if include_details else {"op": "system_status"}
+        return sanitize_system(self.request(request), include_details=include_details)

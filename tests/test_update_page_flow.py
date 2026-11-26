@@ -214,6 +214,8 @@ class SystemPageFlowTests(SystemFixture):
                 break
             time.sleep(0.02)
         self.assertEqual((review["action"], review["upgrades"], review["docker"]), ("install", 4, True))
+        with self.system._lock:
+            self.assertIsNotNone(self.system.state["review"]["expires_at"], "the administrator's page started the window")
         restart = self.client.post("/api/admin/system-updates/review", json={"kind": "restart"}, headers=headers)
         self.assertEqual(restart.status_code, 409, "one system operation at a time")
         cancelled = self.client.post("/api/admin/system-updates/cancel", json={"operation": review["operation"]},
