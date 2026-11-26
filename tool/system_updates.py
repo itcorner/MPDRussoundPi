@@ -57,7 +57,9 @@ REBOOT_SECONDS = 600             # the boot ID must change within this time
 CONFLICT_EXIT = 75               # flock: another operator holds the lock
 MAX_PACKAGES = 600
 RESTART_NAMES = frozenset({"raspi-firmware", "libc6", "systemd", "dbus"})
-RESTART_PREFIXES = ("linux-image-",)
+# firmware-*: device firmware (the Pi's onboard Wi-Fi and Bluetooth use firmware-brcm80211)
+# is loaded when the driver starts, so a new version takes effect only after a restart.
+RESTART_PREFIXES = ("linux-image-", "firmware-")
 DOCKER_NAMES = frozenset({"docker-ce", "docker-ce-cli", "containerd.io"})
 ACTIVE = ("preparing", "awaiting_approval", "installing", "verifying", "rebooting", "verifying_restart")
 
