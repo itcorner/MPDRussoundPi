@@ -15,6 +15,11 @@ user. Requests are a fixed vocabulary, one JSON object per connection:
 - ``cancel``: decline a pending review; nothing has been interrupted yet.
 - ``restore``: after a failed update, restore the previous version from the
   backup kept on this Pi, through the reviewed recovery and its own approval.
+- ``system_status``, ``system_check``, ``system_review`` (``kind`` install or
+  restart), ``system_approve`` and ``system_cancel``: Pi package updates and the
+  restart, handled by tool/system_updates.py
+  (docs/plans/general_open_pi-system-updates.md). An image operation and a
+  system operation never start at the same time.
 
 The transaction is the operator's own: ``controller()`` here and ``serve`` in a
 root child process, connected by pipes instead of SSH. Reservation, pull by
@@ -49,6 +54,7 @@ from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_compose import UPDATER_SOCKET_DIR, ComposeError, private_read
 from tool.deployment_files import checked_directory
 from tool.deployment_state import StateError, StateStore, identity, operation_id
+from tool.system_updates import SystemRefused, SystemUpdates
 
 TOOLS = Path("/opt/mpdrussoundpi-deploy")
 CONFIG = Path("/etc/mpdrussoundpi-updater/updater.json")
@@ -157,7 +163,8 @@ class Updater:
                  committed: Callable[[], dict[str, Any] | None] | None = None,
                  transaction: Callable[..., dict[str, Any]] = run_transaction,
                  clock: Callable[[], float] = time.time,
-                 target: Callable[[], dict[str, Any]] | None = None) -> None:
+                 target: Callable[[], dict[str, Any]] | None = None,
+                 system: SystemUpdates | None = None, gate: Any = None) -> None:
         identity(spec["deployment"])
         self.spec = spec
         self.evidence = evidence
@@ -167,6 +174,8 @@ class Updater:
         self._transaction = transaction
         self._clock = clock
         self._target = target or (lambda: StateStore().status())
+        self.system = system
+        self.gate = gate or threading.Lock()  # shared with the system part: one operation starts at a time
         self._lock = threading.Condition()
         self._decision: dict[str, Any] | None = None
         self._thread: threading.Thread | None = None
@@ -251,6 +260,22 @@ class Updater:
             self.state.update(phase="failed", restore=None, error=SETTLED)
             self._save()
 
+    def deployment_clear(self) -> bool:
+        """No deployment of this Pi is blocked, reserved or unfinished (for the system part)."""
+        try:
+            status = self._target()
+            return (status["blocked"] is False and status["reservation"] is None
+                    and all((record or {}).get("pending") is None for record in status["deployments"].values()))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, StateError):
+            return False
+
+    def busy(self) -> bool:
+        with self._lock:
+            return self.state["phase"] in ACTIVE_PHASES
+
+    def _system_busy(self) -> bool:
+        return self.system is not None and self.system.busy()
+
     def _committed_from_store(self) -> dict[str, Any] | None:
         status = StateStore().status()
         deployment = status["deployments"].get(self.spec["deployment"], {})
@@ -263,6 +288,13 @@ class Updater:
         if not isinstance(request, dict) or not isinstance(request.get("op"), str):
             raise UpdaterError("Invalid request")
         operation = request["op"]
+        if operation.startswith("system_"):
+            if self.system is None:
+                raise UpdaterError("System updates are not set up on this host")
+            try:
+                return self.system.handle(request, lambda: _actor(request.get("actor")))
+            except SystemRefused as error:
+                raise UpdaterError(str(error)) from None
         if operation == "status":
             return self.status()
         if operation == "review":
@@ -303,9 +335,11 @@ class Updater:
         self._thread.start()
 
     def review(self, actor: dict[str, str]) -> dict[str, Any]:
-        with self._lock:
+        with self.gate, self._lock:
             if self.state["phase"] in ACTIVE_PHASES:
                 raise UpdaterError("Another update operation is in progress")
+            if self._system_busy():
+                raise UpdaterError("A system update or restart is in progress")
             operation = str(uuid4())
             self.state = {"phase": "resolving", "kind": "update", "operation": operation, "actor": actor,
                           "started_at": _now_text(self._clock()), "review": None, "result": None,
@@ -453,7 +487,9 @@ class Updater:
         return {"accepted": True, "operation": operation}
 
     def restore(self, operation: object, actor: dict[str, str]) -> dict[str, Any]:
-        with self._lock:
+        with self.gate, self._lock:
+            if self._system_busy():
+                raise UpdaterError("A system update or restart is in progress")
             self._settle()
             restore = self.state.get("restore")
             if (self.state["phase"] not in ("failed", "outcome_unknown") or not isinstance(restore, dict)
@@ -539,7 +575,11 @@ def main(argv: list[str] | None = None) -> int:
     evidence = ROOT / "evidence"
     with checked_directory(evidence, 0):
         pass
-    updater = Updater(spec, evidence, ROOT / "state.json")
+    gate = threading.Lock()
+    updater = Updater(spec, evidence, ROOT / "state.json", gate=gate)
+    updater.system = SystemUpdates(evidence, ROOT / "system.json", deployment_clear=updater.deployment_clear,
+                                   other_busy=updater.busy, gate=gate)
+    updater.system.start_background()
     with UpdaterServer(socket_path, updater, config["client_gid"]) as server:
         logger.info("Updater listening on %s for deployment %s", socket_path, spec["deployment"])
         server.serve_forever()

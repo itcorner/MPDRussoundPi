@@ -127,6 +127,86 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
     return status
 
 
+SYSTEM_PHASES = {
+    "idle", "preparing", "awaiting_approval", "installing", "verifying", "installed", "checks_failed",
+    "install_failed", "failed_before_install", "outcome_unknown", "up_to_date", "cancelled", "rebooting",
+    "verifying_restart", "restarted", "restart_failed",
+}
+CHECK_STATES = {"pending", "checking", "ready", "failed"}
+MAX_PACKAGES = 600
+
+
+def _count(value: object) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _stamp(value: object) -> str | None:
+    return value if isinstance(value, str) and TIMESTAMP.fullmatch(value) else None
+
+
+def _names(value: object, limit: int) -> list[str]:
+    return [name for name in (_text(item, 100) for item in value[:limit]) if name] if isinstance(value, list) else []
+
+
+def sanitize_system(value: dict[str, Any], *, include_details: bool) -> dict[str, Any]:
+    """Pi system updates: counts for everyone; packages, reasons, results and the review for administrators."""
+    check = value.get("check") if isinstance(value.get("check"), dict) else {}
+    restart = check.get("restart") if isinstance(check.get("restart"), dict) else {}
+    phase = value.get("phase") if value.get("phase") in SYSTEM_PHASES else "idle"
+    public_check = {
+        "state": check.get("state") if check.get("state") in CHECK_STATES else "pending",
+        "checked_at": _stamp(check.get("checked_at")),
+        "index_updated_at": _stamp(check.get("index_updated_at")),
+        "index_stale": check.get("index_stale") is True,
+        **{key: _count(check.get(key)) for key in ("upgrades", "new", "removals", "security")},
+        "restart_needed": restart.get("needed") is True,
+        "error": _text(check.get("error")),
+    }
+    status: dict[str, Any] = {
+        "api_version": 1, "configured": True, "phase": phase,
+        "kind": value.get("kind") if value.get("kind") in ("install", "restart") else None,
+        "busy": value.get("busy") is True, "error": _text(value.get("error"), 300),
+        "updated_at": _text(value.get("updated_at"), 32), "check": public_check,
+    }
+    if not include_details:
+        return status
+    packages = []
+    for item in (check.get("packages") if isinstance(check.get("packages"), list) else [])[:MAX_PACKAGES]:
+        if isinstance(item, dict) and _text(item.get("name"), 100):
+            packages.append({"name": _text(item.get("name"), 100), "from": _text(item.get("from"), 100),
+                             "to": _text(item.get("to"), 100), "security": item.get("security") is True})
+    automatic = check.get("automatic") if isinstance(check.get("automatic"), dict) else None
+    public_check.update(
+        packages=packages, removed=_names(check.get("removed"), 50),
+        restart_reasons=_names(restart.get("reasons"), 4),
+        retry_after_seconds=_count(check.get("retry_after_seconds")) or 0,
+        automatic={"at": _stamp(automatic.get("at")),
+                   "result": automatic.get("result") if automatic.get("result") in
+                   ("installed", "nothing", "failed", "running") else None,
+                   "packages": _names(automatic.get("packages"), 50)} if automatic else None)
+    result = value.get("result") if isinstance(value.get("result"), dict) else None
+    status["result"] = {
+        "finished_at": _stamp(result.get("finished_at")),
+        "checks": result.get("checks") if result.get("checks") in ("passed", "failed") else None,
+        "missing": _names(result.get("missing"), 10), "kept_configs": _names(result.get("kept_configs"), 20),
+        "restart_needed": result.get("restart_needed") is True,
+    } if result else None
+    review = value.get("review")
+    if isinstance(review, dict) and isinstance(review.get("summary"), dict):
+        summary = review["summary"]
+        status["review"] = {
+            "operation": _text(review.get("operation"), 64), "digest": _text(review.get("digest"), 80),
+            "expires_in_seconds": review.get("expires_in_seconds") if isinstance(review.get("expires_in_seconds"), int) else 0,
+            "action": "restart" if summary.get("action") == "restart" else "install",
+            **{key: _count(summary.get(key)) for key in ("upgrades", "new", "removals", "security")},
+            "removed": _names(summary.get("removed"), 10), "reasons": _names(summary.get("reasons"), 4),
+            "index_updated_at": _stamp(summary.get("index_updated_at")), "index_stale": summary.get("index_stale") is True,
+            "docker": summary.get("docker") is True,
+            **{key: _text(summary.get(key), 300) for key in ("restart_after", "interruption", "undo", "config")},
+        }
+    return status
+
+
 class UpdaterClient:
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path or os.environ.get("RUSSOUND_UPDATER_SOCKET") or DEFAULT_SOCKET)
@@ -164,3 +244,8 @@ class UpdaterClient:
         if not self.configured():
             return {"api_version": 1, "configured": False, "phase": "idle"}
         return sanitize_status(self.request({"op": "status"}), include_review=include_review)
+
+    def system_status(self, *, include_details: bool) -> dict[str, Any]:
+        if not self.configured():
+            return {"api_version": 1, "configured": False, "phase": "idle"}
+        return sanitize_system(self.request({"op": "system_status"}), include_details=include_details)

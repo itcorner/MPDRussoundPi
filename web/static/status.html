@@ -36,6 +36,17 @@
           </div>
         </details>
 
+        <details id="systemPanel" class="panel status-panel collapsible-panel" hidden>
+          <summary class="collapsible-summary">
+            <h2 class="section-title">Pi system</h2>
+            <span id="systemState" class="status-pill host-level host-level-unknown">Checking…</span>
+          </summary>
+          <div class="collapsible-body">
+            <section id="systemBox" class="admin-update" aria-live="polite"></section>
+            <p id="systemMessage" class="admin-message" role="alert" hidden></p>
+          </div>
+        </details>
+
         <details id="restorePanel" class="panel status-panel collapsible-panel" hidden>
           <summary class="collapsible-summary">
             <h2 class="section-title">Restore backup</h2>

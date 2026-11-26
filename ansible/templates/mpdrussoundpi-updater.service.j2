@@ -1,8 +1,9 @@
 [Unit]
-Description=MPDRussoundPi updater: web-triggered Docker image updates through the reviewed tooling
+Description=MPDRussoundPi updater: web-triggered image and Pi system updates through the reviewed tooling
 After=docker.service network-online.target
-Wants=network-online.target
-Requires=docker.service
+# Wants, not Requires: a Docker upgrade during a Pi system update stops Docker,
+# and the updater must keep watching that installation instead of being stopped.
+Wants=docker.service network-online.target
 StartLimitIntervalSec=120
 StartLimitBurst=5
 

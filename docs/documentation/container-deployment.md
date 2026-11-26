@@ -1119,6 +1119,48 @@ The operator lock makes an SSH operator run and an updater operation
 exclude each other. `python -m tool.deployment_updater status` (as root in the
 tooling directory) prints the current state.
 
+**Pi system updates.** The same service checks and installs the Pi's package
+updates and restarts the Pi
+([`tool/system_updates.py`](../../tool/system_updates.py),
+[plan](../plans/general_open_pi-system-updates.md)). The Status page's "Pi
+system" section shows the pending count, how many are security updates, when
+the package lists were refreshed and whether a restart is needed;
+administrators also see the packages, the last automatic run, "Check now"
+(refreshes the lists, at most every 10 minutes), "Install system updates" and,
+when needed, "Restart the Pi". How it works on the Pi:
+
+- The check simulates `apt-get full-upgrade` and counts a package as a security
+  update when `apt-cache policy` lists its candidate version in a
+  `<codename>-security` suite. A restart is needed when `/run/reboot-required`
+  exists or a kernel image, `raspi-firmware`, `libc6`, `systemd` or `dbus` was
+  installed after the current boot (dpkg log).
+- The install is reviewed like an image update; the confirmation is bound to the
+  package list, and the list is compared again right before the start. It runs
+  `apt-get -y full-upgrade` with `--force-confdef --force-confold` as its own
+  transient unit `mpdrussoundpi-system-update-<op>` under `flock` on the
+  operator lock, so an SSH operator run and the install exclude each other and
+  the install continues if the updater restarts. The updater unit only
+  `Wants=docker.service`, so stopping Docker during its upgrade does not stop
+  the updater (reinstall the unit with `deploy-updater.yml`). The unit writes its log and
+  exit code to `/var/lib/mpdrussoundpi-updater/evidence/<op>.system.log` and
+  `.system.exit`. Afterwards the updater waits up to 5 minutes for the
+  containers and project services that ran before. There is no undo.
+- If the install stopped part way (`dpkg --audit` not empty) or the updater lost
+  track of it, the page reports "outcome unknown" and nothing is retried: finish
+  it over SSH with `sudo dpkg --configure -a` and check again.
+- The restart is offered only when needed. The updater records the boot ID,
+  runs `systemctl reboot`, and after the boot reports success only when the boot
+  ID changed and the same containers and services are back.
+- Nothing starts while an image update or restore, another system operation, an
+  unfinished deployment, the operator lock or the dpkg lock (for example
+  `unattended-upgrades`) is active; an image update likewise waits for a system
+  operation.
+- `deploy-updater.yml` installs `unattended-upgrades` with
+  `/etc/apt/apt.conf.d/52mpdrussoundpi-unattended-upgrades`: only the
+  `Debian-Security` origin, daily list refresh and upgrade, never an automatic
+  restart (`updater_security_updates=false` skips it). Kernel, firmware, Raspberry
+  Pi rebuilds and Docker come only through "Install system updates".
+
 **Old image cleanup.** After a verified-complete update, from the page or the
 SSH operator, the target removes this project's Docker images that no version
 still needs ([`tool/deployment_cleanup.py`](../../tool/deployment_cleanup.py),

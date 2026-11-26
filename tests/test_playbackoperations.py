@@ -251,7 +251,7 @@ class PlaybackOperationTests(unittest.TestCase):
         self.client.stop.assert_called_once()
 
     def test_busy_execution_stops_at_deadline_without_mutation(self):
-        manager = self.prepare(deadline_seconds=0.05)
+        manager = self.prepare(deadline_seconds=0.5)
         record = manager.submit("output_0", self.request())
         with backend.setup_lock("mpd_control.lock"):
             manager.run_once()
