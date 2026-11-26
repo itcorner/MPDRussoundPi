@@ -104,7 +104,7 @@ outcome.
   in the operator's verified-complete path; the `complete` event carries
   `retention` with `{"operations", "removed", "skipped", "freed_bytes", "error"}`.
   The updater stores those counts. The page shows one more line, "Removed the
-  backups of N older updates (X MB).", and the review has an "Old backups" row
+  backups of N older updates (X MB, or GB from 1 GB).", and the review has an "Old backups" row
   ("Kept for this and the previous update; older ones are removed after
   success."). The web client passes on only `operations` and `freed_bytes`. A
   restore never runs it.

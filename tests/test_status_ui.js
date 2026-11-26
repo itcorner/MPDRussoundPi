@@ -685,6 +685,11 @@ test("software updates: a successful update also says how many older backups it 
   ["The last update finished.", "Removed 2 old images (7 MB).", "Removed the backups of 2 older updates (580 MB)."]);
   assert.deepEqual(paragraphs({ phase: "succeeded", retention: { operations: 1, freed_bytes: 290_000_000 } }),
     ["The last update finished.", "Removed the backups of 1 older update (290 MB)."]);
+  assert.deepEqual(paragraphs({ phase: "succeeded", cleanup: { removed: 9, freed_bytes: 1_250_000_000 },
+    retention: { operations: 46, freed_bytes: 9_977_176_064 } }),
+  ["The last update finished.", "Removed 9 old images (1.3 GB).", "Removed the backups of 46 older updates (10.0 GB)."]);
+  assert.deepEqual(paragraphs({ phase: "succeeded", retention: { operations: 1, freed_bytes: 999_400_000 } }),
+    ["The last update finished.", "Removed the backups of 1 older update (999 MB)."]);
   for (const retention of [null, { operations: 0, freed_bytes: 0 }, { operations: "2" }]) {
     assert.deepEqual(paragraphs({ phase: "succeeded", retention }), ["The last update finished."]);
   }

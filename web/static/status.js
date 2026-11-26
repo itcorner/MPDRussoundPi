@@ -495,12 +495,17 @@ function renderUpdateInfo(box) {
   box.appendChild(list);
 }
 
+// Freed space: whole megabytes below 1 GB (0 MB stays honest), one decimal from there.
+function freedSize(bytes) {
+  const value = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  return value >= 1e9 ? `${(value / 1e9).toFixed(1)} GB` : `${Math.round(value / 1e6)} MB`;
+}
+
 function cleanupText(cleanup) {
   if (!cleanup || !Number.isInteger(cleanup.removed) || cleanup.removed <= 0) {
     return "";
   }
-  const megabytes = Math.round((cleanup.freed_bytes || 0) / 1e6);
-  return `Removed ${cleanup.removed} old image${cleanup.removed === 1 ? "" : "s"} (${megabytes} MB).`;
+  return `Removed ${cleanup.removed} old image${cleanup.removed === 1 ? "" : "s"} (${freedSize(cleanup.freed_bytes)}).`;
 }
 
 // "itcornernet/mpdrussoundpi-web@sha256:2777aa50ce6f…" → "2777aa50ce6f": 12 characters
@@ -536,8 +541,7 @@ function retentionText(retention) {
   if (!retention || !Number.isInteger(retention.operations) || retention.operations <= 0) {
     return "";
   }
-  const megabytes = Math.round((retention.freed_bytes || 0) / 1e6);
-  return `Removed the backups of ${retention.operations} older update${retention.operations === 1 ? "" : "s"} (${megabytes} MB).`;
+  return `Removed the backups of ${retention.operations} older update${retention.operations === 1 ? "" : "s"} (${freedSize(retention.freed_bytes)}).`;
 }
 
 function renderReview(review) {
