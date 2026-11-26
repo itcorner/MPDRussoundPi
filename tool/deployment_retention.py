@@ -1,6 +1,6 @@
 """Remove the large files of finished operations that no version still needs.
 
-See docs/plans/general_open_operation-file-retention.md. Kept per deployment: the
+See docs/plans/general_done_operation-file-retention.md. Kept per deployment: the
 committed operation and the verified-complete operation before it; always kept:
 the pending or reserved operation, the updater's current operation and its restore
 source, and anything the containers' compose labels or project name refer to.

@@ -195,6 +195,9 @@ operator.
   updates section, review dialog (target revision and tags, both images, expected
   interruption, backup custody note), typed confirmation, progress, reconnection,
   result, and "Restore previous version" after a failed update.
+  *Later (2026-11-26, #131):* pressing Enter in the confirmation field confirms
+  the review once the exact word is typed, like clicking "Confirm update" or
+  "Confirm restore"; anything else keeps the review open.
 - [x] **4. Rollout** (2026-11-21 on the reference Pi): tooling upgraded from
   `d41264e` to `8d8079c`; new protected Compose input
   `/etc/mpdrussoundpi-deploy/russound-dev-compose.json` (the previous input plus the
