@@ -744,6 +744,17 @@ reservation or either tree to force a retry. The retained virtual environment
 uses the fixed active path and is usable again after the checkout is restored;
 do not invoke it directly from the retained sibling.
 
+After a successful upgrade, the play keeps the two most recent previous
+checkouts and removes older ones: `upgrade-REVIEWED…` (the checkout just
+replaced) and `upgrade-CURRENT…` (the one before it, kept by the previous
+upgrade). `tool/deployment_tool_upgrade.py prune` removes only real, root-owned,
+not shared-writable directories with that exact name pattern. It refuses while
+a deployment is reserved or unresolved, and reports anything else without
+touching it. Pruning is best effort: a problem is shown in the play's output but
+never fails the completed upgrade. After a deliberate restore, the next upgrade
+keeps the checkouts named by its two revisions, so check the retained paths
+before relying on an older one.
+
 To deliberately restore the retained checkout, identify both exact commits and
 use:
 

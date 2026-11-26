@@ -196,3 +196,23 @@
             msg: >-
               Tooling upgrade failed. The original checkout was retained or restored;
               inspect the unique upgrade path and deployment state before retrying.
+    # After success only: keep the checkout just replaced (named by the target revision)
+    # and the one before it (named by the expected revision); remove older ones.
+    # Best effort: a problem is reported but never fails the completed upgrade.
+    - name: Remove retained tooling checkouts older than the previous two
+      ansible.builtin.script:
+        cmd: >-
+          {{ playbook_dir }}/../../tool/deployment_tool_upgrade.py prune
+          --keep {{ deployment_tools_revision }}
+          --keep {{ deployment_tools_expected_revision }}
+        executable: /usr/bin/python3
+      register: deployment_tools_prune
+      failed_when: false
+      changed_when: >-
+        deployment_tools_prune.rc | default(1) == 0
+        and '"removed": []' not in deployment_tools_prune.stdout | default('')
+    - name: Report the tooling checkout pruning
+      ansible.builtin.debug:
+        msg: >-
+          {{ deployment_tools_prune.stdout | default('') if deployment_tools_prune.rc | default(1) == 0
+          else 'Pruning old tooling checkouts did not run: ' ~ (deployment_tools_prune.stderr | default('') | trim) }}
