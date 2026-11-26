@@ -1,0 +1,135 @@
+# Pi system updates from the Status page
+
+**Status:** open (2026-11-26). Decisions 1 to 4 confirmed by the user on
+2026-11-26; nothing implemented yet. Takes the Pi package part and the reboot
+action out of [Update status and controlled restarts](./general_open_update-status-and-restarts.md)
+and builds them like the
+[user-triggered image updates](./general_open_user-triggered-image-updates.md):
+the administrator updates the Pi from the Status page, without OS access.
+
+## Why
+
+The reference Pi (Raspberry Pi 4, Debian 13 "trixie", kernel 6.18.29) had
+496 pending package updates on 2026-11-26, after 10 days without a reboot, and
+nothing installs them: `unattended-upgrades` is not installed, and the only
+way is an SSH session with `apt-get`. Among them are the kernel and firmware
+(6.18.60), Docker 29.7 → 29.10, systemd, openssh, sudo, libc and the audio
+libraries. A user of the appliance should not need a shell for this, and
+security fixes should not wait for someone to remember.
+
+## Decisions (confirmed by the user on 2026-11-26)
+
+1. **Debian security updates install automatically, without an automatic
+   reboot.** `unattended-upgrades` installs only packages whose candidate
+   version comes from the `Debian-Security` origin, once a day. When one needs a
+   reboot, the Status page says so and offers the restart button (decision 3).
+   The alternatives were a reboot at a fixed night time, or announcing only.
+2. **"Install system updates" on the page installs everything pending**: all
+   configured repositories (Debian, Debian security and updates, Raspberry Pi,
+   Docker), including the kernel, firmware and the Docker engine, as a
+   `full-upgrade` that keeps changed configuration files. A Docker upgrade
+   restarts both containers once. The alternative was everything except Docker.
+3. **A reboot is a separate action**: after an update that needs one, the page
+   shows "Restart needed" and a "Restart the Pi" button with its own typed
+   confirmation, so the administrator chooses when playback stops. The
+   alternative was rebooting as part of the update.
+4. **Counts are public, details need the login.** Everyone sees "N system
+   updates (M security), restart needed" next to the image check; package
+   names, the last automatic run's details and the install and restart buttons
+   need the administrator login. The alternative was everything
+   administrator-only.
+
+## Facts that shape the design
+
+- **What counts as security.** Raspberry Pi OS lists Debian's
+  `trixie-security` (`o=Debian, l=Debian-Security`), the Raspberry Pi
+  repository, Docker's repository, and Debian `stable`/`stable-updates`. The
+  simulated upgrade names only one origin per package (`openssh-server` shows
+  as `Debian:13.8/stable` although the same version is also in
+  `trixie-security`), so a package counts as a security update when its
+  candidate version is offered by the `Debian-Security` origin, which is the
+  rule `unattended-upgrades` uses too. The Raspberry Pi repository has no
+  security label: the kernel, firmware and its rebuilds (on the Pi, `libc6` is
+  a Raspberry Pi rebuild) come only through the manual update.
+- **There is no undo.** Unlike an image update, a package upgrade has no backup
+  and no restore. The review says so. The containers' data is not touched.
+- **When a restart is needed.** Debian does not reliably create
+  `/run/reboot-required` (it was absent on the Pi). The updater reports a restart
+  as needed when that file exists, or when a package from a fixed list (the
+  kernel images, `raspi-firmware`, `libc6`, `systemd`, `dbus`) was installed or
+  upgraded after the current boot (from the dpkg log and the boot time).
+- **A Docker upgrade restarts the web container**, which serves the page. The
+  page already reconnects during image updates; the same applies here. The
+  updater is a host service and keeps running.
+- **apt must survive the updater.** An upgrade of Python, systemd or the
+  updater's own dependencies can restart the updater. The upgrade therefore runs
+  as its own transient systemd unit, and the updater records the operation
+  durably and reads the unit's state and log, also after its own restart.
+
+## Rules
+
+- The updater service stays the only privileged component. The web container
+  gets three more fixed requests on the existing socket (`system_status`,
+  `system_update` review/approve/cancel, `reboot` review/approve/cancel); no
+  package names, commands or arguments are accepted from the web.
+- An install or a restart is refused while another operation runs: an image
+  update or restore, an SSH operator run (the operator lock), a reserved or
+  pending deployment, a running `unattended-upgrades` or any other holder of the
+  dpkg lock. An image update is likewise refused during a system update.
+- Each install and restart is reviewed and approved with the typed word, like an
+  image update, and recorded with the administrator and the time.
+- The upgrade runs non-interactively (`DEBIAN_FRONTEND=noninteractive`,
+  `--force-confdef --force-confold`); kept configuration files whose package
+  ships a new version (`*.dpkg-dist`) are listed in the result. An interrupted
+  dpkg (`dpkg --audit` not clean) is reported as "outcome unknown" with the
+  command to finish it; the updater does not run `dpkg --configure -a` on its
+  own.
+- After the install the updater checks what an image update checks (containers
+  healthy, page reachable, backend connected) and reports failures; it never
+  reboots on its own.
+- The restart records the boot ID before rebooting. After the boot the updater
+  reports success only when the boot ID changed and the checks pass; otherwise
+  it reports what is missing.
+- The package index is refreshed by the system once a day (as configured for
+  `unattended-upgrades`), and by "Check now" for the administrator at most once
+  every 10 minutes. A stale or failed index is shown as such and never as "up to
+  date".
+
+## Stages
+
+- [ ] **1. Read-only check.** `system_status` in the updater: pending count,
+  security count (rule above), restart needed and why, index age, last
+  automatic run; package names and versions for the administrator. The web
+  shows the counts in the Software updates block and the overview header, and
+  the details in the Administrator panel; "Check now" refreshes the index for
+  the administrator. Unit tests with recorded `apt-get -s` and
+  `apt-cache policy` output, stale and failed indexes.
+- [ ] **2. Automatic security updates.** A playbook task installs
+  `unattended-upgrades` with `Debian-Security` as the only allowed origin,
+  `Automatic-Reboot "false"`, the daily index refresh and the daily upgrade,
+  and its own log. The page shows the last automatic run (time, packages,
+  result) from that log.
+- [ ] **3. Install from the page.** Review (counts, security count, Docker
+  restart note, "restart needed afterwards" when a listed package is included,
+  no undo), approval, the transient unit, progress, result with kept
+  configuration files, checks, and recovery after an updater restart or an
+  interrupted dpkg. Tests for the refusals, the restart of the updater during
+  the upgrade, and a failed package.
+- [ ] **4. Restart the Pi.** The button when a restart is needed, the review
+  (expected interruption about one to two minutes), the boot ID check and the
+  checks after the boot.
+- [ ] **5. Rollout and acceptance on the reference Pi.** The 496 pending
+  packages are the first real install: the check shows them, the install
+  succeeds from the page with the containers healthy, the restart from the page
+  boots kernel 6.18.60 and everything comes back. Then one automatic security run
+  is observed on the page.
+
+## Related
+
+- [Update status and controlled restarts](./general_open_update-status-and-restarts.md):
+  the broader idea (service restarts, other hosts); its Pi package and reboot
+  items move here.
+- [User-triggered image updates](./general_open_user-triggered-image-updates.md):
+  the updater service, the review and approval flow and the reconnection.
+- [Container deployment](../documentation/container-deployment.md): the updater
+  and the deployment state.
