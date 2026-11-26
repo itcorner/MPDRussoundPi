@@ -194,6 +194,10 @@ class ParsingTests(Fixture):
         self.log_upgrade("linux-image-rpi-v8:arm64")
         self.log_upgrade("libc6:arm64")
         self.assertEqual(restart_reasons(self.paths), ["updated since the last start: libc6, linux-image-rpi-v8"])
+        self.log_upgrade("firmware-brcm80211:all")
+        self.assertEqual(restart_reasons(self.paths),
+                         ["updated since the last start: firmware-brcm80211, libc6, linux-image-rpi-v8"],
+                         "device firmware is loaded when the driver starts")
         self.paths["reboot_flag"].write_text("")
         self.assertIn("a package asked for a restart", restart_reasons(self.paths))
 

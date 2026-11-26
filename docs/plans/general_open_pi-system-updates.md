@@ -58,7 +58,8 @@ security fixes should not wait for someone to remember.
 - **When a restart is needed.** Debian does not reliably create
   `/run/reboot-required` (it was absent on the Pi). The updater reports a restart
   as needed when that file exists, or when a package from a fixed list (the
-  kernel images, `raspi-firmware`, `libc6`, `systemd`, `dbus`) was installed or
+  kernel images, `raspi-firmware`, the `firmware-*` device firmware, `libc6`,
+  `systemd`, `dbus`) was installed or
   upgraded after the current boot (from the dpkg log and the boot time).
 - **A Docker upgrade restarts the web container**, which serves the page. The
   page already reconnects during image updates; the same applies here. The
@@ -204,6 +205,12 @@ security fixes should not wait for someone to remember.
   enabled again only when the request fails.
 - **The finish time of a recovered install** was the time the updater noticed
   it. Fixed: the time apt wrote its exit code.
+- **Device firmware did not ask for a restart.** The second install (operation
+  `26b98ef4`, 8 packages on 2026-11-26) updated five `firmware-*` packages,
+  among them `firmware-brcm80211` for the onboard Wi-Fi the reference Pi uses,
+  and the page said no restart was needed although the old firmware stays loaded
+  until one. Fixed: `firmware-*` packages count like the kernel, and the
+  restart reason is no longer cut at 100 characters.
 
 ## Related
 

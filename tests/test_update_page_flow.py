@@ -230,6 +230,12 @@ class SystemPageFlowTests(SystemFixture):
         self.system.recompute()
         self.assertFalse(self.web._system_updates_pending())
 
+    def test_a_long_restart_reason_is_kept_whole(self):
+        reason = ("updated since the last start: firmware-atheros, firmware-brcm80211, firmware-libertas, "
+                  "firmware-mediatek, firmware-realtek")
+        details = sanitize_system({"check": {"restart": {"needed": True, "reasons": [reason]}}}, include_details=True)
+        self.assertEqual(details["check"]["restart_reasons"], [reason])
+
     def test_sanitize_system_drops_unknown_fields_and_hostile_text(self):
         hostile = {"phase": "rm -rf", "kind": "x", "secret": 1, "error": "bad\x1b[31m",
                    "check": {"state": "weird", "upgrades": -1, "security": "3", "packages": [{"name": "<b>", "x": 1}],

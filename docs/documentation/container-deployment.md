@@ -1132,8 +1132,9 @@ when needed, "Restart the Pi". How it works on the Pi:
 - The check simulates `apt-get full-upgrade` and counts a package as a security
   update when `apt-cache policy` lists its candidate version in a
   `<codename>-security` suite. A restart is needed when `/run/reboot-required`
-  exists or a kernel image, `raspi-firmware`, `libc6`, `systemd` or `dbus` was
-  installed after the current boot (dpkg log).
+  exists or a kernel image, `raspi-firmware`, device firmware (`firmware-*`,
+  for example the onboard Wi-Fi), `libc6`, `systemd` or `dbus` was installed
+  after the current boot (dpkg log).
 - The install is reviewed like an image update; the confirmation is bound to the
   package list, and the list is compared again right before the start. It runs
   `apt-get -y full-upgrade` with `--force-confdef --force-confold` as its own

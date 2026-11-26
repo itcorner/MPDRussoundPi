@@ -144,8 +144,8 @@ def _stamp(value: object) -> str | None:
     return value if isinstance(value, str) and TIMESTAMP.fullmatch(value) else None
 
 
-def _names(value: object, limit: int) -> list[str]:
-    return [name for name in (_text(item, 100) for item in value[:limit]) if name] if isinstance(value, list) else []
+def _names(value: object, limit: int, length: int = 100) -> list[str]:
+    return [name for name in (_text(item, length) for item in value[:limit]) if name] if isinstance(value, list) else []
 
 
 def sanitize_system(value: dict[str, Any], *, include_details: bool) -> dict[str, Any]:
@@ -178,7 +178,7 @@ def sanitize_system(value: dict[str, Any], *, include_details: bool) -> dict[str
     automatic = check.get("automatic") if isinstance(check.get("automatic"), dict) else None
     public_check.update(
         packages=packages, removed=_names(check.get("removed"), 50),
-        restart_reasons=_names(restart.get("reasons"), 4),
+        restart_reasons=_names(restart.get("reasons"), 4, 200),
         retry_after_seconds=_count(check.get("retry_after_seconds")) or 0,
         automatic={"at": _stamp(automatic.get("at")),
                    "result": automatic.get("result") if automatic.get("result") in
@@ -199,7 +199,7 @@ def sanitize_system(value: dict[str, Any], *, include_details: bool) -> dict[str
             "expires_in_seconds": review.get("expires_in_seconds") if isinstance(review.get("expires_in_seconds"), int) else 0,
             "action": "restart" if summary.get("action") == "restart" else "install",
             **{key: _count(summary.get(key)) for key in ("upgrades", "new", "removals", "security")},
-            "removed": _names(summary.get("removed"), 10), "reasons": _names(summary.get("reasons"), 4),
+            "removed": _names(summary.get("removed"), 10), "reasons": _names(summary.get("reasons"), 4, 200),
             "index_updated_at": _stamp(summary.get("index_updated_at")), "index_stale": summary.get("index_stale") is True,
             "docker": summary.get("docker") is True,
             **{key: _text(summary.get(key), 300) for key in ("restart_after", "interruption", "undo", "config")},
