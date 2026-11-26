@@ -1,8 +1,9 @@
 # Operation file retention
 
 **Status:** open (2026-11-26). Decisions 1 to 3 confirmed by the user on 2026-11-26;
-stages 1 to 3 implemented (the retention core, running it after each verified
-update, the space-check note); not rolled out yet. Follows the
+stages 1 to 4 implemented (the retention core, running it after each verified
+update, the space-check note, pruning tooling checkouts). Rolled out on
+2026-11-26 except stage 4; acceptance partly done. Follows the
 [Docker image cleanup](./general_done_docker-image-cleanup.md#later-operation-file-retention),
 which removed old images but left the much larger per-operation files as a separate
 decision. Related to the
@@ -110,8 +111,15 @@ outcome.
   is unchanged (room for the incoming images, the backup and an isolated
   restore). The deployment documentation now says that the retention runs only
   after success, so a full disk still needs the manual command first.
-- [ ] **4. Tooling checkouts:** `upgrade-deployment.yml` removes all but the two
-  most recent `/opt/mpdrussoundpi-deploy.upgrade-*` after a successful upgrade.
+- [x] **4. Tooling checkouts** (2026-11-26): after a successful upgrade,
+  `upgrade-deployment.yml` runs `deployment_tool_upgrade.py prune --keep
+  <target> --keep <expected>`. After an upgrade from A to B, `upgrade-<B>`
+  holds A, and the previous upgrade left `upgrade-<A>` holding the checkout
+  before A. So the two names identify the two most recent previous checkouts
+  without timestamps. It removes only real, root-owned, not shared-writable
+  directories matching the exact pattern, and refuses while a deployment is
+  reserved or unresolved, so a stage being fetched is never touched. The task
+  runs outside the block and its rescue, with `failed_when: false`.
 - [ ] **5. Backlog on the reference Pi:** dry run, review the list with the user,
   then `--apply`. Record the sizes before and after.
 - [ ] **6. Acceptance:** the next update from the page reports the retention and

@@ -195,6 +195,74 @@ class ToolingUpgradeExchangeTests(unittest.TestCase):
         self.assertEqual((right / "which").read_text(), "left")
 
 
+class PruneTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="russound-tool-prune-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.opt = self.root / "opt"
+        self.opt.mkdir(mode=0o755)
+        self.active = self.opt / "mpdrussoundpi-deploy"
+        self.active.mkdir(mode=0o755)
+        self.owner_uid = os.getuid()
+        self.state = {"blocked": False, "deployments": {"russound-dev": {"pending": None}}}
+        status = patch.object(upgrade, "_state_status", side_effect=lambda _tools, _root: self.state)
+        status.start()
+        self.addCleanup(status.stop)
+
+    def retained(self, revision, mode=0o755):
+        path = self.opt / f"mpdrussoundpi-deploy.upgrade-{revision}"
+        (path / ".venv").mkdir(parents=True)
+        (path / ".venv" / "site.txt").write_text("x" * 4096)
+        path.chmod(mode)
+        return path
+
+    def prune(self, *keep):
+        return upgrade.prune(list(keep), self.active, self.root / "state", owner_uid=self.owner_uid)
+
+    def test_keeps_the_named_checkouts_and_removes_older_ones(self):
+        revisions = [format(number, "040x") for number in range(1, 6)]
+        paths = [self.retained(revision) for revision in revisions]
+        foreign = self.opt / "mpdrussoundpi-deploy.upgrade-notarevision"
+        foreign.mkdir()
+        other = self.opt / "something-else"
+        other.mkdir()
+        result = self.prune(revisions[4], revisions[3])
+        self.assertEqual(result["kept"], [paths[3].name, paths[4].name])
+        self.assertEqual(result["removed"], [path.name for path in paths[:3]])
+        self.assertGreater(result["freed_bytes"], 0)
+        self.assertEqual(result["skipped"], [])
+        for path in paths[:3]:
+            self.assertFalse(path.exists())
+        for path in (paths[3], paths[4], self.active, foreign, other):
+            self.assertTrue(path.exists())
+
+    def test_unsafe_entries_are_reported_and_left_alone(self):
+        shared = self.retained("a" * 40, mode=0o777)
+        target = self.root / "elsewhere"
+        target.mkdir()
+        link = self.opt / f"mpdrussoundpi-deploy.upgrade-{'b' * 40}"
+        link.symlink_to(target)
+        result = self.prune("c" * 40)
+        self.assertEqual(result["removed"], [])
+        self.assertEqual({item["path"] for item in result["skipped"]}, {shared.name, link.name})
+        self.assertTrue(shared.exists())
+        self.assertTrue(target.exists())
+
+    def test_refuses_while_the_state_is_blocked_or_pending_and_without_a_keep(self):
+        old = self.retained("1" * 40)
+        for state in ({"blocked": True, "deployments": {}},
+                      {"blocked": False, "deployments": {"russound-dev": {"pending": {"operation": "x"}}}}):
+            self.state = state
+            with self.subTest(state=state), self.assertRaisesRegex(upgrade.UpgradeError, "blocks pruning"):
+                self.prune("2" * 40)
+        self.state = {"blocked": False, "deployments": {}}
+        for keep in ((), ("not-a-revision",)):
+            with self.subTest(keep=keep), self.assertRaises(upgrade.UpgradeError):
+                self.prune(*keep)
+        self.assertTrue(old.exists())
+
+
 class ToolingUpgradePlaybookTests(unittest.TestCase):
     def test_upgrade_and_restore_are_separate_from_application_deployment(self):
         upgrade_play = yaml.safe_load(
@@ -229,6 +297,13 @@ class ToolingUpgradePlaybookTests(unittest.TestCase):
             restore_operator["ansible.builtin.command"]["chdir"],
             "/opt/mpdrussoundpi-deploy",
         )
+        prune = next(task for task in upgrade_play["tasks"]
+                     if task["name"] == "Remove retained tooling checkouts older than the previous two")
+        self.assertEqual(prune["ansible.builtin.script"]["cmd"].split()[3:],
+                         ["prune", "--keep", "{{", "deployment_tools_revision", "}}",
+                          "--keep", "{{", "deployment_tools_expected_revision", "}}"])
+        self.assertFalse(prune["failed_when"], "pruning never fails a completed upgrade")
+        self.assertNotIn("prune", str(upgrade_play["tasks"][0]), "never inside the block or its rescue")
         self.assertNotIn("systemd", upgrade_tasks)
         self.assertNotIn("docker", upgrade_tasks.lower())
         self.assertNotIn("systemd", restore_tasks)

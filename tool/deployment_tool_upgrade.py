@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -370,6 +371,58 @@ def _release_owned_lock(state_root: Path, operation: str, owner_uid: int) -> Non
         os.close(root_fd)
 
 
+def prune(keep: list[str], tools: Path = TOOLS, state_root: Path = STATE_ROOT, *,
+          owner_uid: int = 0) -> dict:
+    """Remove retained checkouts except the kept revisions, after a completed upgrade.
+
+    After an upgrade from A to B, ``<tools>.upgrade-<B>`` holds the old A checkout; the
+    playbook keeps that one and ``.upgrade-<A>`` (the checkout before A), so the two most
+    recent previous checkouts stay. Only real, owner-controlled directories with the exact
+    name pattern are removed; anything else is reported and left alone. Refuses while a
+    deployment or tooling operation holds the reservation or is unresolved, so a stage that
+    is still being fetched is never touched.
+    """
+    if not keep:
+        raise UpgradeError("Name the retained checkouts to keep")
+    for revision in keep:
+        _revision(revision)
+    _directory(tools, owner_uid)
+    _directory(tools.parent, owner_uid)
+    status = _state_status(tools, state_root)
+    if status["blocked"] or _has_pending(status):
+        raise UpgradeError("An active or unresolved deployment blocks pruning tooling checkouts")
+    pattern = re.compile(re.escape(tools.name) + r"\.upgrade-([a-f0-9]{40})")
+    result: dict = {"kept": [], "removed": [], "skipped": [], "freed_bytes": 0}
+    for name in sorted(os.listdir(tools.parent)):
+        match = pattern.fullmatch(name)
+        if not match:
+            continue
+        path = tools.parent / name
+        if match.group(1) in keep:
+            result["kept"].append(name)
+            continue
+        try:
+            _directory(path, owner_uid)
+        except UpgradeError as error:
+            result["skipped"].append({"path": name, "error": str(error)})
+            continue
+        size = 0
+        for root, directories, files in os.walk(path, followlinks=False):
+            for entry in files + directories:
+                try:
+                    size += os.lstat(os.path.join(root, entry)).st_blocks * 512
+                except OSError:
+                    pass
+        try:
+            shutil.rmtree(path)
+        except OSError as error:
+            result["skipped"].append({"path": name, "error": str(error)[:200]})
+            continue
+        result["removed"].append(name)
+        result["freed_bytes"] += size
+    return result
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
@@ -379,6 +432,9 @@ def _parser() -> argparse.ArgumentParser:
     verify_parser = actions.add_parser("verify")
     reconcile_parser = actions.add_parser("reconcile")
     release_parser = actions.add_parser("release")
+    prune_parser = actions.add_parser("prune")
+    prune_parser.add_argument("--keep", action="append", required=True,
+                              help="revision in the name of a retained checkout to keep (repeatable)")
     for action in (exchange_parser, verify_parser, reconcile_parser, release_parser):
         action.add_argument("--operation", required=True)
     exchange_parser.add_argument("--active-revision", required=True)
@@ -410,6 +466,8 @@ def main() -> int:
         elif args.action == "verify":
             verify_upgrade(args.active_revision, args.operation)
             result = {"verified": True}
+        elif args.action == "prune":
+            result = prune(args.keep)
         elif args.action == "reconcile":
             result = {"recovery": reconcile(args.old_revision, args.new_revision, args.operation)}
         else:
