@@ -30,8 +30,8 @@ class FakeElement {
     (this.listeners[type] ||= []).push(handler);
   }
 
-  fire(type) {
-    for (const handler of this.listeners[type] || []) handler();
+  fire(type, event = {}) {
+    for (const handler of this.listeners[type] || []) handler(event);
   }
 
   set innerHTML(_value) {
@@ -552,6 +552,37 @@ test("software updates: the review keeps typed text across refreshes and hides t
   again.value = "update";
   again.fire("input");
   assert.equal(confirm.disabled, false);
+});
+
+test("software updates: Enter in the confirmation field confirms only with the exact word", () => {
+  const view = renderStatusView(signedIn);
+  const ran = [];
+  vm.runInContext("runUpdateAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
+  for (const [status, word] of [[pendingReview, "update"],
+    [{ ...pendingReview, phase: "restore_awaiting_approval", kind: "restore",
+      review: { ...pendingReview.review, action: "restore" } }, "restore"]]) {
+    ran.length = 0;
+    const block = renderUpdates(view, availableUpdates, status);
+    const input = [view.adminUpdate, view.restoreBox].map((box) => box.find((node) => node.tagName === "INPUT"))
+      .find(Boolean);
+    let prevented = 0;
+    const enter = (extra = {}) => input.fire("keydown", { key: "Enter", preventDefault: () => { prevented += 1; }, ...extra });
+    input.value = "upd";
+    input.fire("input");
+    enter();
+    assert.deepEqual(plain(ran), [], `an incomplete word does not confirm (${word})`);
+    assert.equal(prevented, 1, "Enter never submits anything else");
+    input.value = ` ${word.toUpperCase()} `;
+    input.fire("input");
+    enter({ repeat: true });
+    enter({ isComposing: true });
+    input.fire("keydown", { key: "a", preventDefault: () => { prevented += 1; } });
+    assert.deepEqual(plain(ran), [], "held keys, composition and other keys do not confirm");
+    enter();
+    assert.deepEqual(plain(ran), [["approve", { operation: status.review.operation, digest: status.review.digest }]],
+      `Enter confirms like the button (${word})`);
+    assert.ok(block);
+  }
 });
 
 test("a failed update offers a retry and opens the Restore backup section with the backup's facts", () => {

@@ -580,11 +580,22 @@ function renderReview(review) {
   input.className = "admin-confirm-input";
   input.setAttribute("aria-label", `Type ${word} to confirm`);
   input.placeholder = `Type "${word}" to confirm`;
-  const confirm = updateButton(isRestore ? "Confirm restore" : "Confirm update",
-    () => runUpdateAction("approve", { operation: review.operation, digest: review.digest }),
+  const approve = () => runUpdateAction("approve", { operation: review.operation, digest: review.digest });
+  const confirm = updateButton(isRestore ? "Confirm restore" : "Confirm update", approve,
     { primary: true, disabled: true, privileged: true });
   input.addEventListener("input", () => {
     confirm.disabled = input.value.trim().toLowerCase() !== word;
+  });
+  // Enter in the field confirms like the button, and only when the button would: the exact
+  // word typed. Held keys and input-method composition never confirm.
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.repeat || event.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    if (!confirm.disabled) {
+      approve();
+    }
   });
   row.append(input, confirm, updateButton("Cancel", () => runUpdateAction("cancel", { operation: review.operation })));
   box.appendChild(row);
