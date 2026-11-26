@@ -1149,7 +1149,7 @@ sudo .venv/bin/python -m tool.deployment_cleanup images --apply
 `/var/lib/mpdrussoundpi-operations/{backups,assets,incoming,restores}` and the
 updater's backup copy in `/var/lib/mpdrussoundpi-updater/evidence/<op>/`, about
 300 MB per update ([`tool/deployment_retention.py`](../../tool/deployment_retention.py),
-[plan](../plans/general_open_operation-file-retention.md)). The retention removes
+[plan](../plans/general_done_operation-file-retention.md)). The retention removes
 those of older finished operations. It keeps:
 
 - each deployment's committed operation and the verified-complete operation

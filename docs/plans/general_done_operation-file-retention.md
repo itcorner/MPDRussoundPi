@@ -1,10 +1,11 @@
 # Operation file retention
 
-**Status:** open (2026-11-26). Decisions 1 to 3 confirmed by the user on 2026-11-26;
+**Status:** done (2026-11-26). Decisions 1 to 3 confirmed by the user on 2026-11-26;
 stages 1 to 5 implemented and rolled out on the reference Pi on 2026-11-26
 (the retention core, running it after each verified update, the space-check
 note, pruning tooling checkouts, the backlog). Disk use went from 27 GB (47%)
-to 16 GB (29%). Two acceptance checks remain for the next updates (stage 6). Follows the
+to 16 GB (29%). Acceptance (stage 6) passed on the same day, including a
+deliberately failed update and its restore. Follows the
 [Docker image cleanup](./general_done_docker-image-cleanup.md#later-operation-file-retention),
 which removed old images but left the much larger per-operation files as a separate
 decision. Related to the
@@ -143,17 +144,39 @@ outcome.
     `upgrade-c646764…` (holding `d4ccbcc`), as designed.
   - Disk use: 27 GB (47%) before, 18 GB (31%) after the retention, 16 GB (29%)
     after the pruning.
-- [ ] **6. Acceptance:**
+- [x] **6. Acceptance** (2026-11-26, on the reference Pi):
   - [x] *The next update reports the retention and leaves exactly the current
-    and previous operation* (2026-11-26, the update to `c646764` above).
-  - [ ] *The review shows the "Old backups" row.* At the update to `c646764`,
+    and previous operation* (the update to `c646764` above).
+  - [x] *The review shows the "Old backups" row.* At the update to `c646764`,
     the review was drawn by the web container still running `3b437cd`, which
-    drops the unknown field. The updater did send it. From the next update on,
-    the page draws the review itself; check it then.
-  - [ ] *A deliberately failed update keeps its backup, and "Restore this
-    backup" still works,* with a failing candidate as in the earlier failure
-    test. The retention never runs after a failed update; the updater's current
-    operation and its restore source are always kept.
+    drops the unknown field. At the next update (to `26f4cc6`, #130, which also
+    shows sizes from 1 GB in GB), the user saw the row in the review.
+  - [x] *A deliberately failed update keeps its backup, and "Restore this
+    backup" still works.* The update to `26f4cc6` (operation `41b91eaf`) was
+    made to fail as in the earlier failure test: the health and routing checks
+    did not pass within the deadline, and the pending state was kept. The
+    updater reported `failed` with the restore offered (backup of `c646764`,
+    108 MB). The retention did not run, and the backup stayed. The user then
+    pressed "Restore this backup": recovery `49f0568f` passed the backend,
+    containers, http and playback checks.
+  - [x] *The retry after the restore cleans up.* "Retry update to dev-26f4cc6"
+    (operation `8562ef5f`) was verified-complete with all five checks. The
+    retention removed the files of 2 operations (9 directories, 814 MB): the
+    failed `41b91eaf` with its recovery, and `027b449e`, which was no longer the
+    previous one.
+  - [x] *Final run:* the update to `16ffaae` (#131, Enter confirms the review)
+    from the page (operation `6fffde49`) was verified-complete with all five
+    checks; the retention removed the files of 1 operation (3 directories,
+    307 MB, `a073a7de`). Left: the committed `6fffde49`, the previous
+    `8562ef5f` and the handover operation `e6513571`; a dry run finds nothing
+    more to remove. Disk use stays at 16 GB (29%).
+
+## Left open
+
+- The 17 `assets` directories without evidence (reviews that never started)
+  are small and stay until someone decides by hand.
+- Images outside the project namespaces are never removed automatically (see
+  the [Docker image cleanup](./general_done_docker-image-cleanup.md)).
 
 ## Related
 

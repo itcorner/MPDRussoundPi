@@ -184,4 +184,4 @@ way back to that version's data and images. That needs its own decision. Options
 
 It also needs a matching rule in the preflight space check. It is not part of
 this plan; it continues in
-[operation file retention](./general_open_operation-file-retention.md).
+[operation file retention](./general_done_operation-file-retention.md).
