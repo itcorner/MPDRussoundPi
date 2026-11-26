@@ -159,6 +159,25 @@ security fixes should not wait for someone to remember.
 - **Who may act.** Like an image update: the session and the CSRF token, no
   second password prompt.
 
+## Findings of the first real install (2026-11-26)
+
+- **The watcher gave up while apt still ran.** Operation `07ecc2e9` (496
+  upgrades, 37 new, 2 removals, 122 security) was reported as "outcome unknown"
+  at 19:28 UTC while dpkg was still unpacking: one `systemctl is-active` call
+  failed while dpkg replaced `libssl3t64` right after `libc6`, and the watcher
+  read the failure as "the unit ended". Fixed: the unit's cgroup under
+  `/sys/fs/cgroup/system.slice` counts as running, an unclear `systemctl`
+  answer keeps watching, and "ended" needs three agreeing observations 10 s
+  apart. An install recorded as "outcome unknown" whose unit still runs or which
+  has written its exit code since is watched again after the updater restarts.
+  An image update is also refused while anything holds the dpkg lock, not only
+  during a recorded system operation.
+- **Open: the package list loses its scroll position** on every refresh of the
+  page, so a long list cannot be scrolled.
+- **Open: the review appeared late.** The review was ready about 52 s after
+  "Install system updates" (the check on the Pi), but the page showed it with
+  only about 20 s of the 120 s left (started 19:13:55, approved 19:16:17 UTC).
+
 ## Related
 
 - [Update status and controlled restarts](./general_open_update-status-and-restarts.md):

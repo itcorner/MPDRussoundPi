@@ -274,7 +274,8 @@ class Updater:
             return self.state["phase"] in ACTIVE_PHASES
 
     def _system_busy(self) -> bool:
-        return self.system is not None and self.system.busy()
+        # Also the dpkg lock: an install must block image updates even if its phase was recorded wrongly.
+        return self.system is not None and self.system.packages_busy()
 
     def _committed_from_store(self) -> dict[str, Any] | None:
         status = StateStore().status()

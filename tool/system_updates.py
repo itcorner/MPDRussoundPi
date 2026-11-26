@@ -73,7 +73,14 @@ DEFAULT_PATHS = {
     "proc_stat": Path("/proc/stat"),
     "dpkg_locks": (Path("/var/lib/dpkg/lock-frontend"), Path("/var/lib/dpkg/lock")),
     "operator_lock": Path("/var/lib/mpdrussoundpi-operations/evidence/operator.lock"),
+    "cgroups": Path("/sys/fs/cgroup/system.slice"),
 }
+# The watcher decides that the install unit has ended only after this many
+# agreeing observations, ENDED_INTERVAL seconds apart: dpkg replaces libc6,
+# libssl and systemd's own libraries during an upgrade, and a single
+# ``systemctl`` call can fail meanwhile.
+ENDED_CONFIRMATIONS = 3
+ENDED_INTERVAL = 10
 
 INST = re.compile(r"^Inst (\S+) (?:\[(\S+)\] )?\((\S+) ")
 REMV = re.compile(r"^Remv (\S+)")
@@ -395,7 +402,12 @@ class SystemUpdates:
         phase = state["phase"]
         if phase in ("preparing", "awaiting_approval"):
             state.update(phase="cancelled", review=None, error="The updater restarted before approval.")
-        elif phase == "installing" and not (self._exit_path(state).exists() or self._unit_active(state)):
+        elif (phase == "outcome_unknown" and state.get("kind") == "install" and state.get("result") is None
+              and state.get("unit") and (self._exit_path(state).exists() or self._unit_state(state) == "running")):
+            # Declared unknown too early while the install still ran: watch it again.
+            logger.warning("Install %s is still running or has finished; watching it again", state.get("operation"))
+            state.update(phase="installing", error=None)
+        elif phase == "installing" and not self._exit_path(state).exists() and self._unit_ended(state):
             state.update(phase="outcome_unknown", error=(
                 "The updater restarted during the installation and its end was not recorded. Check the Pi with "
                 "'sudo dpkg --audit' over SSH before installing again."))
@@ -418,12 +430,39 @@ class SystemUpdates:
     def _log_path(self, state: dict[str, Any] | None = None) -> Path:
         return self.evidence / (str((state or self.state).get("operation")) + ".system.log")
 
-    def _unit_active(self, state: dict[str, Any]) -> bool:
+    def _unit_state(self, state: dict[str, Any]) -> str:
+        """"running", "ended" or "unknown" for the install unit of ``state``.
+
+        The unit's cgroup directory is a plain file check that needs no library,
+        so it still answers while dpkg replaces the libraries ``systemctl`` uses.
+        "ended" needs both: no cgroup and ``systemctl`` saying so.
+        """
         unit = state.get("unit")
         if not isinstance(unit, str) or not unit.startswith(UNIT_PREFIX):
-            return False
+            return "ended"
+        if (Path(self.paths["cgroups"]) / (unit + ".service")).is_dir():
+            return "running"
         code, output = self._run(["systemctl", "is-active", unit + ".service"], 30)
-        return code == 0 and output.strip().startswith(("active", "activating"))
+        answer = output.strip().splitlines()[0] if output.strip() else ""
+        if code == 0 and answer in ("active", "activating", "reloading", "deactivating"):
+            return "running"
+        if answer in ("inactive", "failed", "unknown"):
+            return "ended"
+        return "unknown"
+
+    def _unit_ended(self, state: dict[str, Any]) -> bool:
+        """The unit ended, confirmed ENDED_CONFIRMATIONS times, and wrote no exit code."""
+        exit_path = self._exit_path(state)
+        for attempt in range(ENDED_CONFIRMATIONS):
+            if attempt:
+                self._sleep(ENDED_INTERVAL)
+            if exit_path.exists() or self._unit_state(state) != "ended":
+                return False
+        return not exit_path.exists()
+
+    def packages_busy(self) -> bool:
+        """A system operation runs, or anything holds the dpkg lock (also outside a recorded operation)."""
+        return self.busy() or dpkg_busy(self.paths)
 
     def resume(self) -> None:
         """Continue watching an operation that was running when the updater restarted."""
@@ -703,13 +742,11 @@ class SystemUpdates:
     def _watch_install(self) -> None:
         exit_path = self._exit_path()
         while not exit_path.exists():
-            if not self._unit_active(self.state) and not exit_path.exists():
-                self._sleep(2)
-                if not exit_path.exists():
-                    self._set(phase="outcome_unknown", error=(
-                        "The installation ended without recording its result. Check the Pi with "
-                        "'sudo dpkg --audit' over SSH before installing again."))
-                    return
+            if self._unit_ended(self.state):
+                self._set(phase="outcome_unknown", error=(
+                    "The installation ended without recording its result. Check the Pi with "
+                    "'sudo dpkg --audit' over SSH before installing again."))
+                return
             self._sleep(2)
         try:
             code = int(exit_path.read_text().strip())
