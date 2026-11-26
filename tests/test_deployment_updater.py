@@ -360,6 +360,9 @@ class SystemRoutingTests(Fixture):
         def busy(self):
             return self.active
 
+        def packages_busy(self):
+            return self.active
+
         def handle(self, request, actor):
             from tool.system_updates import SystemRefused
             self.requests.append((request["op"], actor() if request["op"] == "system_review" else None))

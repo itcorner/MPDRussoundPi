@@ -126,6 +126,7 @@ class Fixture(unittest.TestCase):
             "boot_id": self.root / "boot_id", "proc_stat": self.root / "stat",
             "dpkg_locks": (self.root / "lock-frontend", self.root / "lock"),
             "operator_lock": self.evidence / "operator.lock",
+            "cgroups": self.root / "cgroups",
         }
         self.host = FakeHost()
         self.clear = True
@@ -212,7 +213,10 @@ class InstallTests(Fixture):
         operation = self.system.status()["operation"]
         (self.evidence / (operation + ".system.log")).write_text(
             "Setting up foo\nConfiguration file '/etc/avahi/avahi-daemon.conf'\n ==> Keeping old config file as default.\n")
-        (self.evidence / (operation + ".system.exit")).write_text(f"{code}\n")
+        # Like the unit's script: write, then rename, so the watcher never reads a half-written file.
+        temporary = self.evidence / (operation + ".system.exit.tmp")
+        temporary.write_text(f"{code}\n")
+        temporary.rename(self.evidence / (operation + ".system.exit"))
         self.host.unit_active = False
         return operation
 
@@ -332,7 +336,8 @@ class InstallTests(Fixture):
         again = self.make()
         self.assertEqual(again.status()["phase"], "installing", "the unit still runs: keep watching")
         again.resume()
-        (self.evidence / (operation + ".system.exit")).write_text("0\n")
+        (self.evidence / (operation + ".system.exit.tmp")).write_text("0\n")
+        (self.evidence / (operation + ".system.exit.tmp")).rename(self.evidence / (operation + ".system.exit"))
         self.wait_for(again, "installed")
         self.host.unit_active = False
         state = json.loads((self.root / "system.json").read_text())
@@ -341,6 +346,84 @@ class InstallTests(Fixture):
         lost = self.make()
         self.assertEqual(lost.status()["phase"], "outcome_unknown", "no unit and no exit code: unknown")
         self.assertIn("dpkg --audit", lost.status()["error"])
+
+    def test_a_failing_systemctl_during_the_install_is_not_the_end(self):
+        # On the Pi, systemctl failed once while dpkg replaced libssl (2026-11-26).
+        operation, review = self.review()
+        real = self.host.__call__
+        calls = {"is-active": 0}
+
+        def flaky(args, timeout):
+            if args[:2] == ["systemctl", "is-active"]:
+                calls["is-active"] += 1
+                if calls["is-active"] <= 3:
+                    return 127, "systemctl: error while loading shared libraries: libssl.so.3"
+            return real(args, timeout)
+
+        self.system._run = flaky
+        self.system.approve(operation, review["digest"], ACTOR)
+        self.assertTrue(self.host.started.wait(5))
+        deadline = time.monotonic() + 5
+        while calls["is-active"] <= 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.system.status()["phase"], "installing", "an unclear answer keeps watching")
+        self.finish(0)
+        self.wait_for(self.system, "installed")
+
+    def test_the_unit_cgroup_counts_as_running_and_one_inactive_answer_is_not_enough(self):
+        operation, review = self.review()
+        self.system.approve(operation, review["digest"], ACTOR)
+        self.assertTrue(self.host.started.wait(5))
+        self.wait_for(self.system, "installing")
+        cgroup = self.paths["cgroups"] / (module.UNIT_PREFIX + operation[:8] + ".service")
+        cgroup.mkdir(parents=True)
+        self.host.unit_active = False  # systemctl says inactive, the cgroup says it runs
+        time.sleep(0.3)
+        self.assertEqual(self.system.status()["phase"], "installing")
+        cgroup.rmdir()
+        self.wait_for(self.system, "outcome_unknown")
+        self.assertGreaterEqual(sum(1 for c in self.host.commands if c[:2] == ["systemctl", "is-active"]),
+                                module.ENDED_CONFIRMATIONS)
+
+    def test_an_install_declared_unknown_too_early_is_watched_again_after_a_restart(self):
+        operation, review = self.review()
+        self.system.approve(operation, review["digest"], ACTOR)
+        self.assertTrue(self.host.started.wait(5))
+        self.wait_for(self.system, "installing")
+        self.system._stop.set()
+        state = json.loads((self.root / "system.json").read_text())
+        state.update(phase="outcome_unknown", error="The installation ended without recording its result.")
+        (self.root / "system.json").write_text(json.dumps(state))
+        self.host.unit_active = True
+        again = self.make()
+        self.assertEqual(again.status()["phase"], "installing")
+        self.assertIsNone(again.status()["error"])
+        again.resume()
+        temporary = self.evidence / (operation + ".system.exit.tmp")
+        temporary.write_text("0\n")
+        temporary.rename(self.evidence / (operation + ".system.exit"))
+        self.host.unit_active = False
+        self.wait_for(again, "installed")
+
+    def test_dpkg_lock_alone_makes_packages_busy(self):
+        system = self.make()
+        self.assertFalse(system.packages_busy())
+        pid = os.fork()
+        if pid == 0:
+            import fcntl as f
+            handle = open(self.paths["dpkg_locks"][1], "r+")
+            f.lockf(handle, f.LOCK_EX)
+            time.sleep(30)
+            os._exit(0)
+        try:
+            deadline = time.monotonic() + 5
+            while not system.packages_busy() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(system.packages_busy())
+            self.assertFalse(system.busy(), "the phase alone does not know about it")
+        finally:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
 
     def test_manual_check_is_rate_limited(self):
         system = self.make()
