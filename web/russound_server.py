@@ -19,7 +19,7 @@ import time
 from types import FrameType
 from typing import Any, Generator, cast
 
-from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from flask import Flask, Response, abort, jsonify, request, send_from_directory, stream_with_context
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -547,6 +547,26 @@ class RussoundHTTPServer:
         @app.post("/api/admin/update/restore")
         def api_admin_update_restore():
             return self._updater_action("restore", recent=True, operation=self._read_json_body().get("operation"))
+
+        # Pi system updates through the updater service (docs/plans/general_open_pi-system-updates.md):
+        # counts for everyone, packages and actions for the administrator.
+        @app.get("/api/status/system-updates")
+        def api_status_system_updates():
+            return self._updater_response(lambda: self.updater.system_status(include_details=False))
+
+        @app.get("/api/admin/system-updates")
+        def api_admin_system_updates():
+            if self.admin.session(request.cookies.get(admin_auth.COOKIE_NAME), touch=False) is None:
+                return self._admin_failure("unauthenticated", 0)
+            return self._updater_response(lambda: self.updater.system_status(include_details=True))
+
+        @app.post("/api/admin/system-updates/<action>")
+        def api_admin_system_updates_action(action):
+            if action not in ("check", "review", "approve", "cancel"):
+                abort(404)
+            body = self._read_json_body()
+            return self._updater_action("system_" + action, recent=False, kind=body.get("kind"),
+                                        operation=body.get("operation"), digest=body.get("digest"))
 
         @app.get("/api/status/updates")
         def api_status_updates():
@@ -1596,7 +1616,16 @@ class RussoundHTTPServer:
             if isinstance(view, dict) and isinstance(view.get("overall"), str)
         ]
         return {**status_overview.compose(sections, host_levels),
-                "update_available": updates.get("state") == "update_available", "generated_at": moment.isoformat(timespec="seconds")}
+                "update_available": updates.get("state") == "update_available" or self._system_updates_pending(),
+                "generated_at": moment.isoformat(timespec="seconds")}
+
+    def _system_updates_pending(self) -> bool:
+        """Pending Pi package updates also show the overview's update icon; unknown counts never do."""
+        try:
+            check = self.updater.system_status(include_details=False).get("check") or {}
+        except (UpdaterUnavailable, UpdaterRefused):
+            return False
+        return bool(check.get("upgrades") or check.get("new") or check.get("restart_needed"))
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:

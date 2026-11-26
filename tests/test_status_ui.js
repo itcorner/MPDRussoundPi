@@ -416,6 +416,8 @@ function renderStatusView(session, login = []) {
   const elements = {
     updatesState: new FakeElement("span"), adminMessage: new FakeElement("p"), adminUpdate: new FakeElement("section"),
     restorePanel: new FakeElement("details"), restoreState: new FakeElement("span"), restoreBox: new FakeElement("section"),
+    systemPanel: new FakeElement("details"), systemState: new FakeElement("span"), systemBox: new FakeElement("section"),
+    systemMessage: new FakeElement("p"),
   };
   const context = {
     ...elements,
@@ -775,3 +777,97 @@ test("a reload loop is impossible even when the reloaded page is still the old o
   assert.equal(blocked.context.reloadForNewBuild({ revision: "c".repeat(40), built_at: "3" }), false);
   assert.deepEqual(reloads, ["blocked", "blocked"]);
 });
+
+// Pi system updates: counts for everyone, packages and the actions for the administrator.
+const systemCheck = { state: "ready", checked_at: new Date().toISOString(), index_updated_at: new Date().toISOString(),
+  index_stale: false, upgrades: 4, new: 1, removals: 1, security: 1, restart_needed: false, error: null };
+const systemDetails = { ...systemCheck, retry_after_seconds: 0, removed: ["pcmanfm"], restart_reasons: [],
+  automatic: { at: new Date(Date.now() - 2 * 3600000).toISOString(), result: "installed", packages: ["openssh-server"] },
+  packages: [{ name: "libc6", from: "1", to: "2", security: false },
+    { name: '<img src=x onerror="1">', from: "1", to: "2", security: true }] };
+const systemReview = { configured: true, phase: "awaiting_approval", kind: "install", busy: true, check: systemDetails,
+  review: { operation: "sys-1", digest: "sha256:def", action: "install", expires_in_seconds: 100, upgrades: 4, new: 1,
+    removals: 1, security: 1, removed: ["pcmanfm"], reasons: [], index_updated_at: new Date().toISOString(),
+    index_stale: false, docker: true, restart_after: "A restart is needed afterwards (libc6).",
+    interruption: "Takes several minutes.", undo: "There is no undo.", config: "Configuration files you changed are kept." } };
+
+function renderSystem(view, status, csrf = "t") {
+  vm.runInContext(`adminCsrfToken = ${JSON.stringify(csrf)}; systemUpdateState = this.systemStatus;`,
+    Object.assign(view.context, { systemStatus: status }));
+  view.context.renderSystemUpdates();
+  return view.systemBox;
+}
+
+test("pi system: everyone sees the counts, the administrator the packages and the automatic runs", () => {
+  const view = renderStatusView(guest);
+  const ran = [];
+  vm.runInContext("runSystemAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
+  const anonymous = renderSystem(view, { configured: true, phase: "idle", busy: false, check: systemCheck }, null);
+  assert.equal(view.systemPanel.hidden, false);
+  assert.match(anonymous.allText(), /Pending 4 updates \(1 security\), 1 new package, 1 removed/);
+  assert.equal(view.systemState.textContent, "5 updates");
+  assert.deepEqual(buttons(anonymous), ["Check now", "Install system updates"]);
+  assert.doesNotMatch(anonymous.allText(), /Show 2 packages|Security updates/, "details need the login");
+  button(anonymous, "Install system updates").fire("click");
+  assert.equal(view.login.at(-1).reason, "Install the system updates", "a guest signs in first");
+
+  const admin = renderSystem(view, { configured: true, phase: "idle", busy: false, check: systemDetails });
+  assert.match(admin.allText(), /Security updates Installed automatically every day\. Last run 2 h ago: installed openssh-server/);
+  assert.match(admin.allText(), /Show 2 packages/);
+  const first = admin.find((node) => node.tagName === "LI");
+  assert.equal(first.textContent, '<img src=x onerror="1"> 1 → 2 (security)', "security first, always as text");
+  assert.equal(admin.find((node) => node.tagName === "IMG"), null);
+  button(admin, "Install system updates").fire("click");
+  assert.deepEqual(plain(ran.at(-1)), ["review", { kind: "install" }]);
+});
+
+test("pi system: restart needed, up to date and installations without the updater", () => {
+  const view = renderStatusView(signedIn);
+  const ran = [];
+  vm.runInContext("runSystemAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
+  const restart = renderSystem(view, { configured: true, phase: "installed", busy: false, result: { kept_configs: ["/etc/a.conf"] },
+    check: { ...systemDetails, upgrades: 0, new: 0, removals: 0, packages: [], restart_needed: true,
+      restart_reasons: ["updated since the last start: linux-image-rpi-v8"] } });
+  assert.equal(view.systemState.textContent, "Restart needed");
+  assert.match(restart.allText(), /Restart Needed: updated since the last start: linux-image-rpi-v8/);
+  assert.match(restart.allText(), /Kept your configuration files: \/etc\/a\.conf\./);
+  assert.deepEqual(buttons(restart), ["Check now", "Restart the Pi"]);
+  button(restart, "Restart the Pi").fire("click");
+  assert.deepEqual(plain(ran.at(-1)), ["review", { kind: "restart" }]);
+  renderSystem(view, { configured: true, phase: "idle", busy: false, check: { ...systemDetails, upgrades: 0, new: 0, removals: 0 } });
+  assert.equal(view.systemState.textContent, "Up to date");
+  renderSystem(view, { configured: false, phase: "idle" });
+  assert.equal(view.systemPanel.hidden, true);
+});
+
+test("pi system: the review keeps typed text, confirms with the exact word and Enter", () => {
+  const view = renderStatusView(signedIn);
+  const ran = [];
+  vm.runInContext("runSystemAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
+  const box = renderSystem(view, systemReview);
+  assert.match(box.allText(), /Review: install 5 system updates/);
+  assert.match(box.allText(), /Docker Docker is updated: the web app and gateway restart once\./);
+  assert.match(box.allText(), /Restart A restart is needed afterwards \(libc6\)\./);
+  assert.match(box.allText(), /Undo There is no undo\./);
+  assert.match(box.allText(), /Removed pcmanfm/);
+  const input = box.find((node) => node.tagName === "INPUT");
+  input.value = "install";
+  input.fire("input");
+  renderSystem(view, { ...systemReview, review: { ...systemReview.review, expires_in_seconds: 80 } });
+  assert.equal(view.systemBox.find((node) => node.tagName === "INPUT"), input, "same card, typed text kept");
+  assert.match(view.systemBox.allText(), /80 s/);
+  input.fire("keydown", { key: "Enter", preventDefault: () => {} });
+  assert.deepEqual(plain(ran.at(-1)), ["approve", { operation: "sys-1", digest: "sha256:def" }]);
+
+  const restartBox = renderSystem(view, { ...systemReview, kind: "restart",
+    review: { ...systemReview.review, operation: "sys-2", action: "restart", reasons: ["updated since the last start: libc6"],
+      interruption: "Playback stops for about two minutes." } });
+  assert.match(restartBox.allText(), /Review: restart the Pi/);
+  assert.match(restartBox.allText(), /Reason updated since the last start: libc6/);
+  const word = restartBox.find((node) => node.tagName === "INPUT");
+  assert.equal(word.placeholder, 'Type "restart" to confirm');
+  word.value = "install";
+  word.fire("input");
+  assert.equal(button(restartBox, "Confirm restart").disabled, true);
+});
+

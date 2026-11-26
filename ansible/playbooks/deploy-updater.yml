@@ -1,8 +1,10 @@
 ---
 # Installs the updater service for web-triggered Docker image updates
-# (docs/plans/general_open_user-triggered-image-updates.md). Single-host Docker
-# installations only. It installs files and the systemd unit; it never deploys,
-# stops or restarts the application containers. The web container gets access
+# (docs/plans/general_open_user-triggered-image-updates.md) and Pi system updates
+# (docs/plans/general_open_pi-system-updates.md). Single-host Docker
+# installations only. It installs files, the systemd unit and the automatic
+# Debian security updates; it never deploys, stops or restarts the application
+# containers and never upgrades other packages. The web container gets access
 # only after the socket mount is added through a reviewed operator update.
 - name: Install the MPDRussoundPi updater service
   hosts: all
@@ -13,6 +15,8 @@
     updater_root: /var/lib/mpdrussoundpi-updater
     updater_config_dir: /etc/mpdrussoundpi-updater
     updater_start: true
+    # Decision 1 of the system updates plan: Debian security updates install daily, without a restart.
+    updater_security_updates: true
   pre_tasks:
     - name: Require exactly one explicitly selected host
       ansible.builtin.assert:
@@ -107,6 +111,33 @@
         state: started
         daemon_reload: true
       when: updater_start | bool
+    - name: Install unattended-upgrades for the automatic Debian security updates
+      ansible.builtin.apt:
+        name: unattended-upgrades
+        state: present
+        update_cache: true
+        cache_valid_time: 86400
+      when: updater_security_updates | bool
+    - name: Allow only the Debian security origin and never restart automatically
+      ansible.builtin.copy:
+        # Sorts after the package's 50unattended-upgrades and 20auto-upgrades; #clear drops their origins.
+        dest: /etc/apt/apt.conf.d/52mpdrussoundpi-unattended-upgrades
+        content: |
+          // Managed by deploy-updater.yml (docs/plans/general_open_pi-system-updates.md).
+          #clear Unattended-Upgrade::Origins-Pattern;
+          #clear Unattended-Upgrade::Allowed-Origins;
+          Unattended-Upgrade::Origins-Pattern {
+                  "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+          };
+          Unattended-Upgrade::Automatic-Reboot "false";
+          Unattended-Upgrade::Remove-Unused-Dependencies "false";
+          Unattended-Upgrade::Remove-New-Unused-Dependencies "false";
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+        owner: root
+        group: root
+        mode: "0644"
+      when: updater_security_updates | bool
   handlers:
     - name: Restart the updater
       ansible.builtin.systemd:

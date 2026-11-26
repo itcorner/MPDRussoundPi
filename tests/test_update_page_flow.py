@@ -13,10 +13,11 @@ import unittest
 from test_admin_auth import FAST, PASSWORD
 from test_deployment_updater import FakeTransaction, SPEC, candidate, INSTALLED, NEWER
 from tool.deployment_updater import Updater, UpdaterServer
+from test_system_updates import FakeHost, Fixture as SystemFixture
 from web import admin_auth
 from web.admin_auth import AdminAuth, hash_password
 from web.russound_server import RussoundHTTPServer
-from web.updater_client import UpdaterClient, sanitize_status
+from web.updater_client import UpdaterClient, sanitize_status, sanitize_system
 
 
 class PageFlowTests(unittest.TestCase):
@@ -165,3 +166,77 @@ class PageFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SystemPageFlowTests(SystemFixture):
+    """The system endpoints against the real updater socket with a SystemUpdates on fake host commands."""
+
+    def setUp(self):
+        super().setUp()
+        password = self.root / "admin.scrypt"
+        password.write_text(hash_password(PASSWORD, **FAST) + "\n")
+        self.auth = AdminAuth(password, None)
+        updater = Updater(SPEC, self.evidence, self.root / "state.json", resolve=lambda gateway, platform: candidate(),
+                          committed=lambda: candidate(INSTALLED), transaction=FakeTransaction())
+        updater.system = self.make()
+        self.system = updater.system
+        short = tempfile.mkdtemp(prefix="sys", dir="/tmp")
+        self.addCleanup(shutil.rmtree, short, True)
+        server = UpdaterServer(Path(short) / "u.sock", updater, None)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.web = RussoundHTTPServer(None, None, admin=self.auth, updater=UpdaterClient(Path(short) / "u.sock"))
+        self.addCleanup(self.web.server_close)
+        self.client = self.web.app.test_client()
+
+    def test_counts_are_public_and_details_need_the_login(self):
+        self.system.recompute()
+        public = self.client.get("/api/status/system-updates").json
+        self.assertEqual((public["check"]["upgrades"], public["check"]["security"]), (4, 1))
+        self.assertNotIn("packages", public["check"])
+        self.assertNotIn("review", public)
+        self.assertEqual(self.client.get("/api/admin/system-updates").status_code, 401)
+        self.assertEqual(self.client.post("/api/admin/system-updates/review", json={"kind": "install"}).status_code, 401)
+        self.client.post("/api/admin/login", json={"password": PASSWORD})
+        headers = {admin_auth.CSRF_HEADER: self.client.get("/api/admin/session").json["csrf_token"]}
+        details = self.client.get("/api/admin/system-updates").json
+        self.assertIn("openssh-server", [item["name"] for item in details["check"]["packages"] if item["security"]])
+        self.assertEqual(self.client.post("/api/admin/system-updates/reboot", json={}, headers=headers).status_code, 404)
+        self.assertEqual(self.client.post("/api/admin/system-updates/review", json={"kind": "install"}).status_code, 403,
+                         "CSRF token required")
+        started = self.client.post("/api/admin/system-updates/review", json={"kind": "install"}, headers=headers)
+        self.assertEqual(started.status_code, 202)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            review = self.client.get("/api/admin/system-updates").json.get("review")
+            if review:
+                break
+            time.sleep(0.02)
+        self.assertEqual((review["action"], review["upgrades"], review["docker"]), ("install", 4, True))
+        restart = self.client.post("/api/admin/system-updates/review", json={"kind": "restart"}, headers=headers)
+        self.assertEqual(restart.status_code, 409, "one system operation at a time")
+        cancelled = self.client.post("/api/admin/system-updates/cancel", json={"operation": review["operation"]},
+                                     headers=headers)
+        self.assertEqual(cancelled.status_code, 202)
+        self.assertFalse(self.host.started.is_set())
+
+    def test_the_overview_icon_includes_pending_system_updates(self):
+        self.system.recompute()
+        self.assertTrue(self.web._system_updates_pending())
+        self.host.simulation = ""
+        self.system.recompute()
+        self.assertFalse(self.web._system_updates_pending())
+
+    def test_sanitize_system_drops_unknown_fields_and_hostile_text(self):
+        hostile = {"phase": "rm -rf", "kind": "x", "secret": 1, "error": "bad\x1b[31m",
+                   "check": {"state": "weird", "upgrades": -1, "security": "3", "packages": [{"name": "<b>", "x": 1}],
+                             "restart": {"needed": "yes"}}}
+        public = sanitize_system(hostile, include_details=False)
+        self.assertEqual((public["phase"], public["kind"], public["check"]["state"]), ("idle", None, "pending"))
+        self.assertEqual((public["check"]["upgrades"], public["check"]["security"]), (None, None))
+        self.assertFalse(public["check"]["restart_needed"])
+        self.assertNotIn("secret", public)
+        details = sanitize_system(hostile, include_details=True)
+        self.assertEqual(details["check"]["packages"], [{"name": "<b>", "from": None, "to": None, "security": False}])
+

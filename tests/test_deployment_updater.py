@@ -352,6 +352,56 @@ class UpdateFlowTests(Fixture):
             updater.handle({"op": "approve", "operation": "x", "digest": "y", "actor": ACTOR})
 
 
+class SystemRoutingTests(Fixture):
+    class FakeSystem:
+        def __init__(self):
+            self.active, self.requests = False, []
+
+        def busy(self):
+            return self.active
+
+        def handle(self, request, actor):
+            from tool.system_updates import SystemRefused
+            self.requests.append((request["op"], actor() if request["op"] == "system_review" else None))
+            if request["op"] == "system_check":
+                raise SystemRefused("try again in 5 s")
+            return {"phase": "idle"}
+
+    def test_system_requests_are_routed_and_refusals_become_safe_errors(self):
+        updater = self.make()
+        with self.assertRaisesRegex(UpdaterError, "not set up"):
+            updater.handle({"op": "system_status"})
+        updater.system = self.FakeSystem()
+        self.assertEqual(updater.handle({"op": "system_status"}), {"phase": "idle"})
+        updater.handle({"op": "system_review", "kind": "install", "actor": ACTOR})
+        self.assertEqual(updater.system.requests[-1], ("system_review", ACTOR))
+        with self.assertRaisesRegex(UpdaterError, "try again"):
+            updater.handle({"op": "system_check"})
+        with self.assertRaisesRegex(UpdaterError, "administrator"):
+            updater.handle({"op": "system_review", "kind": "install"})
+
+    def test_an_image_update_never_starts_during_a_system_operation_and_vice_versa(self):
+        updater = self.make()
+        updater.system = self.FakeSystem()
+        updater.system.active = True
+        with self.assertRaisesRegex(UpdaterError, "system update"):
+            updater.review(ACTOR)
+        self.assertEqual(updater.status()["phase"], "idle")
+        updater.system.active = False
+        self.assertFalse(updater.busy())
+        updater.review(ACTOR)
+        self.wait_for(updater, "awaiting_approval")
+        self.assertTrue(updater.busy(), "the system part asks this before it starts")
+
+    def test_deployment_clear(self):
+        updater = self.make()
+        self.assertFalse(updater.deployment_clear(), "unreadable state is not clear")
+        self.target = lambda: target_record()
+        self.assertTrue(updater.deployment_clear())
+        self.target = lambda: target_record(pending={"operation": "x", "phase": "prepared"})
+        self.assertFalse(updater.deployment_clear())
+
+
 class SocketTests(Fixture):
     def test_one_json_request_per_connection_and_restricted_permissions(self):
         updater = self.make()
@@ -384,7 +434,15 @@ class PlayTests(unittest.TestCase):
         modules = {key for task in tasks for key in task if key.startswith(("ansible.", "community."))}
         self.assertLessEqual(modules, {"ansible.builtin.assert", "ansible.builtin.set_fact", "ansible.builtin.stat",
                                        "ansible.builtin.file", "ansible.builtin.copy", "ansible.builtin.template",
-                                       "ansible.builtin.systemd"})
+                                       "ansible.builtin.systemd", "ansible.builtin.apt"})
+        apt = [task["ansible.builtin.apt"] for task in tasks if "ansible.builtin.apt" in task]
+        self.assertEqual([item["name"] for item in apt], ["unattended-upgrades"], "no other package is installed")
+        config = next(task["ansible.builtin.copy"]["content"] for task in tasks
+                      if task.get("ansible.builtin.copy", {}).get("dest", "").startswith("/etc/apt/apt.conf.d/"))
+        self.assertIn("#clear Unattended-Upgrade::Origins-Pattern;", config)
+        self.assertIn('"origin=Debian,codename=${distro_codename}-security,label=Debian-Security";', config)
+        self.assertEqual(config.count("origin="), 1, "only the security origin")
+        self.assertIn('Unattended-Upgrade::Automatic-Reboot "false";', config)
         systemd = [task["ansible.builtin.systemd"]["name"] for task in tasks if "ansible.builtin.systemd" in task]
         self.assertEqual(set(systemd), {"mpdrussoundpi-updater.service"})
         directories = {task["ansible.builtin.file"]["path"]: task["ansible.builtin.file"] for task in tasks

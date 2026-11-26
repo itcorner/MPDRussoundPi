@@ -1,7 +1,9 @@
 # Pi system updates from the Status page
 
 **Status:** open (2026-11-26). Decisions 1 to 4 confirmed by the user on
-2026-11-26; nothing implemented yet. Takes the Pi package part and the reboot
+2026-11-26; stages 1 to 4 implemented on 2026-11-26 (`tool/system_updates.py`,
+the "Pi system" section of the Status page, the automatic security updates in
+`deploy-updater.yml`), not yet rolled out. Takes the Pi package part and the reboot
 action out of [Update status and controlled restarts](./general_open_update-status-and-restarts.md)
 and builds them like the
 [user-triggered image updates](./general_open_user-triggered-image-updates.md):
@@ -97,25 +99,25 @@ security fixes should not wait for someone to remember.
 
 ## Stages
 
-- [ ] **1. Read-only check.** `system_status` in the updater: pending count,
+- [x] **1. Read-only check** (implemented 2026-11-26). `system_status` in the updater: pending count,
   security count (rule above), restart needed and why, index age, last
   automatic run; package names and versions for the administrator. The web
   shows the counts in the Software updates block and the overview header, and
   the details in the Administrator panel; "Check now" refreshes the index for
   the administrator. Unit tests with recorded `apt-get -s` and
   `apt-cache policy` output, stale and failed indexes.
-- [ ] **2. Automatic security updates.** A playbook task installs
+- [x] **2. Automatic security updates** (implemented 2026-11-26). A playbook task installs
   `unattended-upgrades` with `Debian-Security` as the only allowed origin,
   `Automatic-Reboot "false"`, the daily index refresh and the daily upgrade,
   and its own log. The page shows the last automatic run (time, packages,
   result) from that log.
-- [ ] **3. Install from the page.** Review (counts, security count, Docker
+- [x] **3. Install from the page** (implemented 2026-11-26). Review (counts, security count, Docker
   restart note, "restart needed afterwards" when a listed package is included,
   no undo), approval, the transient unit, progress, result with kept
   configuration files, checks, and recovery after an updater restart or an
   interrupted dpkg. Tests for the refusals, the restart of the updater during
   the upgrade, and a failed package.
-- [ ] **4. Restart the Pi.** The button when a restart is needed, the review
+- [x] **4. Restart the Pi** (implemented 2026-11-26). The button when a restart is needed, the review
   (expected interruption about one to two minutes), the boot ID check and the
   checks after the boot.
 - [ ] **5. Rollout and acceptance on the reference Pi.** The 496 pending
@@ -123,6 +125,39 @@ security fixes should not wait for someone to remember.
   succeeds from the page with the containers healthy, the restart from the page
   boots kernel 6.18.60 and everything comes back. Then one automatic security run
   is observed on the page.
+
+## Implementation notes (2026-11-26)
+
+- **Where it shows.** A separate "Pi system" section directly below "Software
+  updates", with its own state pill ("N updates", "Restart needed", "Up to
+  date", "Updating", "Restarting", "Problem"), instead of rows inside the image
+  block: the two have different actions and outcomes. Hidden where the updater
+  is not installed. The overview header's update icon also shows pending system
+  updates or a needed restart.
+- **The review** shows the counts with security, removed packages, the age of
+  the package lists, a Docker note when the Docker engine is included, "A restart
+  is needed afterwards" when a listed package is included, the interruption, the
+  configuration note and "There is no undo"; it is confirmed by typing
+  `install` (or `restart` for the restart), Enter included.
+- **Binding.** The confirmation digest is a hash of the planned package list;
+  right before the start the list is computed again, and a different list
+  cancels with "review them again".
+- **Checks after the install and the restart** compare with a snapshot taken
+  right before: every container that ran must run again and not be unhealthy or
+  still starting, and every active `mpdrussoundpi-*` service and Docker must be
+  active again, within 5 minutes. A failure is reported ("These did not come
+  back: …"), never repaired automatically.
+- **Index refresh.** The updater recomputes its cached result when the package
+  lists or dpkg's status change, and at least every 6 hours; it refreshes the
+  lists itself only for "Check now". The daily refresh comes from the
+  `APT::Periodic` settings of stage 2.
+- **The updater unit** changes from `Requires=docker.service` to
+  `Wants=docker.service`: with `Requires`, the Docker package stopping Docker
+  during its upgrade would stop the updater cleanly, and `Restart=on-failure`
+  would not bring it back. The install itself never depended on it (its own
+  unit), but the watching and the checks afterwards do.
+- **Who may act.** Like an image update: the session and the CSRF token, no
+  second password prompt.
 
 ## Related
 

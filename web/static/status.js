@@ -16,6 +16,10 @@ const restoreState = document.getElementById("restoreState");
 const restoreBox = document.getElementById("restoreBox");
 const adminMessage = document.getElementById("adminMessage");
 const adminUpdate = document.getElementById("adminUpdate");
+const systemPanel = document.getElementById("systemPanel");
+const systemState = document.getElementById("systemState");
+const systemBox = document.getElementById("systemBox");
+const systemMessage = document.getElementById("systemMessage");
 
 let eventSource = null;
 let eventSourceRetryTimer = null;
@@ -288,6 +292,7 @@ function renderAdmin(session) {
   adminCsrfToken = token;
   if (changed) {
     fetchAdminUpdate();  // signed in or out: the update view (with or without a review) differs
+    fetchSystemUpdates();
   }
 }
 
@@ -571,7 +576,15 @@ function renderReview(review) {
   const countdown = textElement("dd", "review-countdown", `${review.expires_in_seconds} s`);
   list.append(textElement("dt", "", "Confirm within"), countdown);
   box.appendChild(list);
-  const word = isRestore ? "restore" : "update";
+  box.appendChild(confirmRow(isRestore ? "restore" : "update", isRestore ? "Confirm restore" : "Confirm update",
+    () => runUpdateAction("approve", { operation: review.operation, digest: review.digest }),
+    () => runUpdateAction("cancel", { operation: review.operation })));
+  box.countdown = countdown;
+  return box;
+}
+
+// The typed confirmation of every review: the button enables only for the exact word.
+function confirmRow(word, label, approve, cancel) {
   const row = document.createElement("div");
   row.className = "admin-form-row";
   const input = document.createElement("input");
@@ -580,9 +593,7 @@ function renderReview(review) {
   input.className = "admin-confirm-input";
   input.setAttribute("aria-label", `Type ${word} to confirm`);
   input.placeholder = `Type "${word}" to confirm`;
-  const approve = () => runUpdateAction("approve", { operation: review.operation, digest: review.digest });
-  const confirm = updateButton(isRestore ? "Confirm restore" : "Confirm update", approve,
-    { primary: true, disabled: true, privileged: true });
+  const confirm = updateButton(label, approve, { primary: true, disabled: true, privileged: true });
   input.addEventListener("input", () => {
     confirm.disabled = input.value.trim().toLowerCase() !== word;
   });
@@ -597,10 +608,8 @@ function renderReview(review) {
       approve();
     }
   });
-  row.append(input, confirm, updateButton("Cancel", () => runUpdateAction("cancel", { operation: review.operation })));
-  box.appendChild(row);
-  box.countdown = countdown;
-  return box;
+  row.append(input, confirm, updateButton("Cancel", cancel));
+  return row;
 }
 
 // A restore is its own section ("Previous version"), so updating and going back are
@@ -934,6 +943,293 @@ async function runUpdateAction(action, body) {
   fetchAdminUpdate();
 }
 
+// Pi system updates (docs/plans/general_open_pi-system-updates.md): everyone sees the counts,
+// the administrator sees the packages and can install them or restart the Pi. Like the image
+// review, the review card is built once per review so typing is never cleared.
+const systemPhaseText = {
+  preparing: "Computing the pending updates…",
+  installing: "Installing system updates. This takes several minutes; if Docker is updated the page reconnects by itself.",
+  verifying: "Installed. Checking that the containers and services are back…",
+  installed: "The system updates were installed.",
+  checks_failed: "The system updates were installed, but not everything came back.",
+  install_failed: "The installation failed.",
+  failed_before_install: "The installation did not start. Nothing was installed.",
+  outcome_unknown: "The outcome of the installation is unknown.",
+  up_to_date: "There were no system updates to install.",
+  cancelled: "The last system action was not started.",
+  rebooting: "The Pi is restarting. This page reconnects by itself.",
+  verifying_restart: "The Pi restarted. Checking that the containers and services are back…",
+  restarted: "The Pi restarted and everything is back.",
+  restart_failed: "The restart did not complete.",
+};
+let systemUpdateState = null;
+let systemReconnecting = false;
+let systemTimer = null;
+
+function systemCountsText(check) {
+  if (!check || !Number.isInteger(check.upgrades)) {
+    return check && check.state === "checking" ? "Checking…" : "Not checked yet";
+  }
+  const parts = [`${check.upgrades} update${check.upgrades === 1 ? "" : "s"}`];
+  if (Number.isInteger(check.security) && check.security > 0) {
+    parts[0] += ` (${check.security} security)`;
+  }
+  if (check.new > 0) {
+    parts.push(`${check.new} new package${check.new === 1 ? "" : "s"}`);
+  }
+  if (check.removals > 0) {
+    parts.push(`${check.removals} removed`);
+  }
+  return check.upgrades + (check.new || 0) + (check.removals || 0) === 0 ? "None" : parts.join(", ");
+}
+
+function systemPending(check) {
+  return Boolean(check && ((check.upgrades || 0) + (check.new || 0) + (check.removals || 0)) > 0);
+}
+
+function renderSystemState() {
+  const status = systemUpdateState || {};
+  const check = status.check || {};
+  const [text, level] = status.busy ? [status.kind === "restart" ? "Restarting" : "Updating", "update"]
+    : ["checks_failed", "install_failed", "outcome_unknown", "restart_failed"].includes(status.phase)
+      ? ["Problem", "problem"]
+      : check.restart_needed ? ["Restart needed", "warning"]
+        : systemPending(check) ? [`${check.upgrades + (check.new || 0)} updates`, "update"]
+          : check.state === "failed" ? ["Check failed", "unknown"]
+            : Number.isInteger(check.upgrades) ? ["Up to date", "ok"] : ["Not checked", "unknown"];
+  systemState.textContent = text;
+  systemState.title = text;
+  systemState.className = `status-pill host-level host-level-${level}`;
+}
+
+function automaticText(automatic) {
+  if (!automatic || !automatic.at) {
+    return "No run recorded yet";
+  }
+  const when = ageText(automatic.at) || "unknown";
+  const outcome = automatic.result === "installed" ? `installed ${automatic.packages.join(", ") || "updates"}`
+    : automatic.result === "nothing" ? "nothing to install"
+      : automatic.result === "failed" ? "failed (see the log on the Pi)" : "running";
+  return `Last run ${when}: ${outcome}`;
+}
+
+function packageList(packages) {
+  const details = document.createElement("details");
+  details.className = "system-packages";
+  details.appendChild(textElement("summary", "status-meta", `Show ${packages.length} package${packages.length === 1 ? "" : "s"}`));
+  const list = document.createElement("ul");
+  list.className = "system-package-list";
+  const sorted = [...packages].sort((a, b) => Number(b.security) - Number(a.security) || a.name.localeCompare(b.name));
+  for (const item of sorted) {
+    const line = textElement("li", item.security ? "system-package system-package-security" : "system-package",
+      `${item.name} ${item.from ? `${item.from} → ` : "new "}${item.to || ""}${item.security ? " (security)" : ""}`);
+    list.appendChild(line);
+  }
+  details.appendChild(list);
+  return details;
+}
+
+function renderSystemInfo(box) {
+  const status = systemUpdateState;
+  const check = status.check || {};
+  const list = document.createElement("dl");
+  list.className = "host-rows";
+  const add = (label, value) => list.append(textElement("dt", "", label),
+    typeof value === "string" ? textElement("dd", "", value) : value);
+  add("Pending", systemCountsText(check));
+  const lists = document.createElement("dd");
+  lists.className = "update-inline";
+  lists.append(check.index_updated_at ? `refreshed ${ageText(check.index_updated_at) || "unknown"}`
+    + (check.index_stale ? " (old)" : "") : "never refreshed");
+  if (!status.busy) {
+    const wait = check.retry_after_seconds || 0;
+    lists.append(" ", updateButton(check.state === "checking" ? "Checking…" : "Check now",
+      privilegedAction("Check for system updates", () => runSystemAction("check", {})),
+      { disabled: check.state === "checking" || wait > 0, privileged: true }));
+    if (wait > 0) {
+      lists.append(" ", textElement("span", "status-meta", `again in ${Math.ceil(wait / 60)} min`));
+    }
+  }
+  add("Package lists", lists);
+  if (check.restart_needed) {
+    add("Restart", (check.restart_reasons || []).length ? `Needed: ${check.restart_reasons.join("; ")}` : "Needed");
+  }
+  if (adminCsrfToken && "automatic" in check) {
+    add("Security updates", "Installed automatically every day. " + automaticText(check.automatic));
+  }
+  if (check.state === "failed" && check.error) {
+    add("Check failed", check.error);
+  }
+  box.appendChild(list);
+  if (adminCsrfToken && Array.isArray(check.packages) && check.packages.length) {
+    box.appendChild(packageList(check.packages));
+  }
+}
+
+function renderSystemReview(review) {
+  const box = document.createElement("div");
+  box.className = "admin-review";
+  const isRestart = review.action === "restart";
+  const total = (review.upgrades || 0) + (review.new || 0);
+  box.appendChild(textElement("strong", "", isRestart ? "Review: restart the Pi"
+    : `Review: install ${total} system update${total === 1 ? "" : "s"}`));
+  const rows = [];
+  if (isRestart) {
+    rows.push(["Reason", (review.reasons || []).join("; ") || "A restart is needed"]);
+  } else {
+    rows.push(["Updates", systemCountsText(review)]);
+    if ((review.removed || []).length) {
+      rows.push(["Removed", review.removed.join(", ")]);
+    }
+    rows.push(["Package lists", review.index_updated_at ? `refreshed ${ageText(review.index_updated_at) || "unknown"}`
+      + (review.index_stale ? " (old; consider Check now first)" : "") : "never refreshed"]);
+    if (review.docker) {
+      rows.push(["Docker", "Docker is updated: the web app and gateway restart once."]);
+    }
+    if (review.restart_after) {
+      rows.push(["Restart", review.restart_after]);
+    }
+  }
+  rows.push(["Interruption", review.interruption || ""]);
+  if (!isRestart) {
+    rows.push(["Configuration", review.config || ""], ["Undo", review.undo || ""]);
+  }
+  const list = document.createElement("dl");
+  list.className = "host-rows";
+  for (const [label, value] of rows) {
+    list.append(textElement("dt", "", label), textElement("dd", "", value));
+  }
+  const countdown = textElement("dd", "review-countdown", `${review.expires_in_seconds} s`);
+  list.append(textElement("dt", "", "Confirm within"), countdown);
+  box.appendChild(list);
+  box.appendChild(confirmRow(isRestart ? "restart" : "install", isRestart ? "Confirm restart" : "Confirm install",
+    () => runSystemAction("approve", { operation: review.operation, digest: review.digest }),
+    () => runSystemAction("cancel", { operation: review.operation })));
+  box.countdown = countdown;
+  return box;
+}
+
+function renderSystemUpdates() {
+  const status = systemUpdateState;
+  systemPanel.hidden = !status || status.configured === false;
+  if (systemPanel.hidden) {
+    clearReview(systemBox, "reviewKey");
+    return;
+  }
+  renderSystemState();
+  const review = status.review;
+  if (status.phase === "awaiting_approval" && review && adminCsrfToken) {
+    systemPanel.open = true;
+    const key = `${review.operation}/${review.digest}`;
+    if (systemBox.reviewKey === key && systemBox.reviewCard) {
+      systemBox.reviewCard.countdown.textContent = `${review.expires_in_seconds} s`;
+      return;
+    }
+    systemBox.reviewKey = key;
+    systemBox.reviewCard = renderSystemReview(review);
+    systemBox.replaceChildren(systemBox.reviewCard);
+    return;
+  }
+  clearReview(systemBox, "reviewKey");
+  if (systemReconnecting) {
+    systemBox.appendChild(textElement("p", "status-meta", status.kind === "restart"
+      ? "Waiting for the Pi to come back…" : "Waiting for the web application to come back…"));
+    return;
+  }
+  renderSystemInfo(systemBox);
+  const phase = status.phase;
+  if (phase && phase !== "idle" && systemPhaseText[phase]) {
+    const problem = ["checks_failed", "install_failed", "outcome_unknown", "restart_failed"].includes(phase);
+    const detailed = status.error && !["cancelled", "up_to_date"].includes(phase) ? status.error : "";
+    systemLine(systemBox, systemPhaseText[phase] + (detailed && detailed !== systemPhaseText[phase] ? ` ${detailed}` : ""),
+      problem);
+    const result = status.result || {};
+    if (["installed", "checks_failed"].includes(phase) && (result.kept_configs || []).length) {
+      systemLine(systemBox, `Kept your configuration files: ${result.kept_configs.join(", ")}.`, false);
+    }
+  }
+  const check = status.check || {};
+  const waiting = status.busy || status.phase === "awaiting_approval";
+  if (!waiting) {
+    const row = document.createElement("div");
+    row.className = "admin-form-row";
+    if (systemPending(check)) {
+      row.appendChild(updateButton("Install system updates",
+        privilegedAction("Install the system updates", () => runSystemAction("review", { kind: "install" })),
+        { primary: true, privileged: true }));
+    }
+    if (check.restart_needed) {
+      row.appendChild(updateButton("Restart the Pi",
+        privilegedAction("Restart the Pi", () => runSystemAction("review", { kind: "restart" })),
+        { primary: !systemPending(check), privileged: true }));
+    }
+    if (row.children.length) {
+      systemBox.appendChild(row);
+    }
+  }
+}
+
+function systemLine(box, text, problem) {
+  box.appendChild(textElement("p", problem ? "admin-message" : "status-meta", text));
+}
+
+function scheduleSystemUpdates(delayMs) {
+  if (systemTimer !== null) {
+    window.clearTimeout(systemTimer);
+  }
+  systemTimer = window.setTimeout(() => {
+    systemTimer = null;
+    fetchSystemUpdates();
+  }, delayMs);
+}
+
+async function fetchSystemUpdates() {
+  const wasBusy = Boolean(systemUpdateState && systemUpdateState.busy);
+  try {
+    const response = await apiFetch(adminCsrfToken ? "/api/admin/system-updates" : "/api/status/system-updates");
+    const body = await response.json();
+    systemReconnecting = false;
+    systemUpdateState = response.ok || body.configured === false ? body
+      : systemUpdateState || { configured: body.configured !== false, phase: "idle", check: {} };
+    renderSystemUpdates();
+    const check = systemUpdateState.check || {};
+    if (systemUpdateState.busy || check.state === "checking") {
+      scheduleSystemUpdates(2000);
+    }
+  } catch {
+    // The web app (Docker upgrade) or the whole Pi (restart) is away: keep waiting.
+    systemReconnecting = wasBusy || systemReconnecting;
+    if (systemUpdateState) {
+      renderSystemUpdates();
+    }
+    if (systemReconnecting) {
+      scheduleSystemUpdates(3000);
+    }
+  }
+}
+
+async function runSystemAction(action, body) {
+  systemMessage.textContent = "";
+  systemMessage.hidden = true;
+  const reason = action === "check" ? "Check for system updates"
+    : body && body.kind === "restart" ? "Restart the Pi" : "Install the system updates";
+  try {
+    const { response, payload } = await adminRequest(`/api/admin/system-updates/${action}`, body);
+    if (response.status === 401 && typeof window.adminLogin === "function") {
+      window.adminLogin({ reason, onSuccess: () => runSystemAction(action, body) });
+      return;
+    }
+    if (!response.ok) {
+      systemMessage.textContent = payload.error && payload.error.message ? payload.error.message : "The request failed.";
+      systemMessage.hidden = false;
+    }
+  } catch {
+    systemMessage.textContent = "The server could not be reached.";
+    systemMessage.hidden = false;
+  }
+  fetchSystemUpdates();
+}
+
 function renderOverview(payload) {
   const sections = payload.sections || [];
   overviewEmpty.hidden = sections.length !== 0;
@@ -1069,6 +1365,9 @@ function startStatusPolling() {
       if (adminUpdateTimer === null) {
         fetchAdminUpdate();
       }
+      if (systemTimer === null) {
+        fetchSystemUpdates();
+      }
     }, statusPollIntervalMs);
   }
 }
@@ -1085,6 +1384,7 @@ fetchHost();
 fetchOverview();
 fetchAdminSession();
 fetchAdminUpdate();
+fetchSystemUpdates();
 // A login or exit in admin.js (dialog, strip or menu) carries the new session, so a
 // pending privileged action already finds the token when it runs.
 document.addEventListener("admin-session-changed", (event) => {
@@ -1094,6 +1394,7 @@ document.addEventListener("admin-session-changed", (event) => {
     fetchAdminSession();
   }
   fetchAdminUpdate();
+  fetchSystemUpdates();
 });
 startStatusSync();
 startStatusPolling();

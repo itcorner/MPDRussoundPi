@@ -43,6 +43,7 @@ Exceptions:
 - `GET /api/status/overview` returns the component and audio sections of the Status page (see below)
 - `GET /api/admin/session`, `POST /api/admin/login`, `POST /api/admin/logout`, `POST /api/admin/reauthenticate` handle the administrator session (see below)
 - `GET /api/status/update-operation` (public) and `GET /api/admin/update`, `POST /api/admin/update/review|approve|cancel|restore` (administrator) install updates through the updater service (see below)
+- `GET /api/status/system-updates` (public) and `GET /api/admin/system-updates`, `POST /api/admin/system-updates/check|review|approve|cancel` (administrator) check and install Pi package updates and restart the Pi (see below)
 - `GET /api/status/updates` returns the cached web image update check; `POST /api/status/updates/check` asks for a check now (see below)
 - `GET /api/playback`, `/api/playback/health`, and
   `/api/playback/agents/{agent_id}/outputs/{output_id}` return playback-only
@@ -549,6 +550,43 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   accepted the request, `409` with its reason when it refused (busy, no pending
   review, wrong or expired confirmation), `503` when it is not installed or does
   not answer. Each action is written to the audit log.
+
+### Pi system updates
+
+Through the same updater service and with the same availability (see the
+[plan](../docs/plans/general_open_pi-system-updates.md)). The web never runs a
+command on the host; package names and versions are text.
+
+- `GET /api/status/system-updates` (public): `configured`, `phase` (`idle`,
+  `preparing`, `awaiting_approval`, `installing`, `verifying`, `installed`,
+  `checks_failed`, `install_failed`, `failed_before_install`, `outcome_unknown`,
+  `up_to_date`, `cancelled`, `rebooting`, `verifying_restart`, `restarted`,
+  `restart_failed`), `kind` (`install` or `restart`), `busy`, `error`,
+  `updated_at` and `check`: `state` (`pending`, `checking`, `ready`, `failed`),
+  `checked_at`, `index_updated_at` (when the package lists were refreshed),
+  `index_stale` (older than two days), the counts `upgrades`, `new`, `removals`
+  and `security` (`null` while unknown, never `0` for "not checked"),
+  `restart_needed` and `error`.
+- `GET /api/admin/system-updates` (administrator session): the same, plus in
+  `check` the `packages` (`name`, `from`, `to`, `security`; at most 600),
+  `removed`, `restart_reasons`, `retry_after_seconds` and `automatic` (the last
+  run of the automatic security updates: `at`, `result` `installed`, `nothing`,
+  `failed` or `running`, `packages`); `result` (`finished_at`, `checks`
+  `passed`/`failed`, `missing`, `kept_configs`, `restart_needed`); and `review`
+  while a confirmation is pending (`operation`, `digest`, `expires_in_seconds`,
+  `action` `install` or `restart`, the counts, `removed`, `reasons`,
+  `index_updated_at`, `index_stale`, `docker`, `restart_after`, `interruption`,
+  `undo`, `config`).
+- `POST /api/admin/system-updates/check` (`{}`: refresh the package lists, at
+  most every 10 minutes), `/review` (`{"kind": "install"}` or
+  `{"kind": "restart"}`), `/approve` (`{"operation", "digest"}`) and `/cancel`
+  (`{"operation"}`) need the session and the `X-CSRF-Token` header; any other
+  action is `404`. `202` when accepted, `409` with the reason when refused (an
+  image or system operation in progress, an unfinished deployment, the operator
+  or dpkg lock held, no restart needed, a recent check), `503` without the
+  updater. Each action is written to the audit log.
+- The overview's `update_available` is also `true` while Pi package updates are
+  pending or a restart is needed.
 
 ### GET /api/status/updates and POST /api/status/updates/check
 
