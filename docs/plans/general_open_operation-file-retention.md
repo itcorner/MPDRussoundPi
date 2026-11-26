@@ -1,9 +1,10 @@
 # Operation file retention
 
 **Status:** open (2026-11-26). Decisions 1 to 3 confirmed by the user on 2026-11-26;
-stages 1 to 4 implemented (the retention core, running it after each verified
-update, the space-check note, pruning tooling checkouts). Rolled out on
-2026-11-26 except stage 4; acceptance partly done. Follows the
+stages 1 to 5 implemented and rolled out on the reference Pi on 2026-11-26
+(the retention core, running it after each verified update, the space-check
+note, pruning tooling checkouts, the backlog). Disk use went from 27 GB (47%)
+to 16 GB (29%). Two acceptance checks remain for the next updates (stage 6). Follows the
 [Docker image cleanup](./general_done_docker-image-cleanup.md#later-operation-file-retention),
 which removed old images but left the much larger per-operation files as a separate
 decision. Related to the
@@ -120,11 +121,39 @@ outcome.
   directories matching the exact pattern, and refuses while a deployment is
   reserved or unresolved, so a stage being fetched is never touched. The task
   runs outside the block and its rescue, with `failed_when: false`.
-- [ ] **5. Backlog on the reference Pi:** dry run, review the list with the user,
-  then `--apply`. Record the sizes before and after.
-- [ ] **6. Acceptance:** the next update from the page reports the retention and
-  leaves exactly the current and previous operation. A deliberately failed update
-  keeps its backup, and "Restore this backup" still works.
+- [x] **5. Backlog on the reference Pi** (2026-11-26). Rollout:
+  - The tooling was upgraded from `d4ccbcc` to `c646764` (#127) and the idle
+    updater restarted.
+  - The installed dry run listed 119 directories, about 9.8 GB: backups 40
+    (3.9 GB), assets 47 (2.9 GB), updater copies 13 (1.4 GB), incoming 14
+    (1.2 GB), restores 5 (0.3 GB). The user reviewed the list.
+  - Instead of a separate `--apply`, the backlog was removed by the first
+    automatic run: the update `3b437cd` → `c646764` from the page (operation
+    `a073a7de`, verified-complete, all five checks passed). It removed the files
+    of 46 operations: 121 directories, 9,977 MB, nothing skipped, no error. The
+    page showed "Removed the backups of 46 older updates (9977 MB)." The count
+    was higher than the dry run because the update itself became the committed
+    operation: `027b449e` moved to previous, and `a97b8190` was no longer kept.
+  - Left afterwards: the committed `a073a7de`, the previous `027b449e`, and the
+    handover operation `e6513571` (the running project's name); 3 backups,
+    2 updater copies, no restore trees. The 17 unidentified `assets`
+    directories stayed, and a new dry run finds nothing more to remove.
+  - The tooling upgrade from `c646764` to `bb4abbd` (#128) then pruned 17 old
+    checkouts (1.3 GB). It kept `upgrade-bb4abbd…` (holding `c646764`) and
+    `upgrade-c646764…` (holding `d4ccbcc`), as designed.
+  - Disk use: 27 GB (47%) before, 18 GB (31%) after the retention, 16 GB (29%)
+    after the pruning.
+- [ ] **6. Acceptance:**
+  - [x] *The next update reports the retention and leaves exactly the current
+    and previous operation* (2026-11-26, the update to `c646764` above).
+  - [ ] *The review shows the "Old backups" row.* At the update to `c646764`,
+    the review was drawn by the web container still running `3b437cd`, which
+    drops the unknown field. The updater did send it. From the next update on,
+    the page draws the review itself; check it then.
+  - [ ] *A deliberately failed update keeps its backup, and "Restore this
+    backup" still works,* with a failing candidate as in the earlier failure
+    test. The retention never runs after a failed update; the updater's current
+    operation and its restore source are always kept.
 
 ## Related
 
