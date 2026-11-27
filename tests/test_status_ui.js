@@ -516,6 +516,45 @@ test("software updates: privileged buttons are amber for everyone and a guest si
   assert.match(view.updatesState.className, /host-level-update/);
 });
 
+test("software updates: the channel is shown to everyone and changed by the administrator after a confirmation", () => {
+  const view = renderStatusView(signedIn);
+  const ran = [];
+  vm.runInContext("runUpdateAction = (action, body) => this.ran.push([action, body]);", Object.assign(view.context, { ran }));
+  const status = { configured: true, phase: "idle", busy: false, channel: "development" };
+  const guestView = renderUpdates(view, availableUpdates, status, null);
+  assert.match(guestView.allText(), /Channel Development builds/);
+  assert.equal(guestView.find((node) => node.tagName === "SELECT"), null, "only the administrator chooses");
+
+  const answers = [];
+  view.context.window.confirm = (text) => { answers.push(text); return answers.length > 1; };
+  const admin = renderUpdates(view, availableUpdates, status);
+  const select = admin.find((node) => node.tagName === "SELECT");
+  assert.match(select.className, /admin-action/);
+  assert.equal(select.getAttribute("aria-label"), "Update channel");
+  select.value = "stable";
+  select.fire("change");
+  assert.match(answers[0], /Follow stable releases\?/);
+  assert.match(answers[0], /nothing goes back to an older version/);
+  assert.equal(select.value, "development", "declined: the choice goes back");
+  assert.deepEqual(ran, []);
+  select.value = "stable";
+  select.fire("change");
+  assert.deepEqual(plain(ran), [["channel", { channel: "stable" }]]);
+  assert.equal(select.disabled, true);
+
+  const busy = renderUpdates(view, availableUpdates, { ...status, busy: true, phase: "running" });
+  assert.equal(busy.find((node) => node.tagName === "SELECT"), null, "never during an update");
+
+  const waiting = renderUpdates(view, { ...availableUpdates, state: "waiting_for_release",
+    result: { state: "waiting_for_release", available: { version: "0.9.0", revision: "c".repeat(7), published_at: null } } },
+  { ...status, channel: "stable" }, null);
+  assert.match(waiting.allText(), /Channel Stable releases/);
+  assert.match(waiting.allText(), /Status Waiting for a release/);
+  assert.match(waiting.allText(), /development build that 0\.9\.0 does not include yet/);
+  assert.deepEqual(buttons(waiting), ["Check now"], "nothing is offered");
+  assert.equal(view.updatesState.textContent, "Waiting for a release");
+});
+
 test("software updates: Check now sits in one group with the label and the age of the last check", () => {
   const view = renderStatusView(signedIn);
   const block = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });

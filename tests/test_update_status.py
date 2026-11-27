@@ -134,6 +134,53 @@ class CheckerTests(unittest.TestCase):
         self.assertTrue(checker.snapshot()["stale"])
 
 
+class ChosenChannelTests(CheckerTests):
+    """docs/plans/general_new_release-channels.md: the updater's choice decides the comparison."""
+
+    def chosen(self, answer, selected, contains=None, **changes):
+        checker = self.checker(answer, **changes)
+        checker._channel_source = lambda: selected
+        self.compared = []
+
+        def check(release, installed):
+            self.compared.append((release, installed))
+            if isinstance(contains, Exception):
+                raise contains
+            return contains
+        checker._contains = check
+        return checker
+
+    def test_stable_waits_until_a_release_contains_the_running_development_build(self):
+        checker = self.chosen(published("0.9.0", THEIRS), "stable", contains=False)
+        checker.check_once()
+        snapshot = checker.snapshot()
+        self.assertEqual(self.calls, [("itcornernet/mpdrussoundpi-web", "latest", "linux/arm64")])
+        self.assertEqual((snapshot["state"], snapshot["channel"], snapshot["selected_channel"]),
+                         ("waiting_for_release", "latest", "stable"))
+        self.assertEqual(self.compared, [(THEIRS, OURS)])
+        offered = self.chosen(published("0.9.0", THEIRS), "stable", contains=True)
+        offered.check_once()
+        self.assertEqual(offered.snapshot()["state"], "update_available")
+        unknown = self.chosen(published("0.9.0", THEIRS), "stable", contains=ValueError("GitHub down"))
+        unknown.check_once()
+        self.assertEqual(unknown.snapshot()["state"], "check_failed", "never up to date without an answer")
+
+    def test_development_on_a_release_compares_with_dev_and_no_choice_keeps_the_running_channel(self):
+        checker = self.chosen(published("dev-" + THEIRS, THEIRS), "development", RUSSOUND_BUILD_VERSION="0.9.0")
+        checker.check_once()
+        self.assertEqual(self.calls[-1][1], "dev")
+        self.assertEqual(checker.snapshot()["state"], "update_available")
+        unchosen = self.chosen(published("dev-" + THEIRS, THEIRS), None)
+        unchosen.check_once()
+        self.assertEqual((self.calls[-1][1], unchosen.snapshot()["selected_channel"]), ("dev", None))
+
+    def test_a_channel_change_may_check_again_at_once(self):
+        checker = self.chosen(published("dev-" + THEIRS, THEIRS), "development")
+        checker.check_once()
+        self.assertFalse(checker.request_check()[0], "rate limited")
+        self.assertEqual(checker.request_check(force=True), (True, 0))
+
+
 class RegistryResourceTests(unittest.TestCase):
     def test_only_project_tags_and_digests_are_requested(self):
         allowed = ["manifests/dev", "manifests/dev-" + OURS, "manifests/latest", "manifests/1.2", "manifests/1.2.3",

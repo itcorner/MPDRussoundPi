@@ -345,6 +345,7 @@ async function adminRequest(path, body) {
 const updateStateText = {
   up_to_date: "Up to date",
   update_available: "Update available",
+  waiting_for_release: "Waiting for a release",
   pending: "Not checked yet",
   checking: "Checking…",
   check_failed: "Check failed",
@@ -363,6 +364,17 @@ const updatePhaseText = {
   outcome_unknown: "The outcome of the last update is unknown. Check the deployment on the Pi before trying again.",
   restoring: "Restoring the previous version. The page reconnects by itself.",
   restored: "The previous version was restored.",
+  waiting_for_release: "No release includes this development build yet; the next one that does will be offered.",
+};
+// Stable releases or development builds (docs/plans/general_new_release-channels.md).
+const channelText = { stable: "Stable releases", development: "Development builds" };
+const channelConfirm = {
+  stable: "Follow stable releases?\n\nA development build is usually newer than the newest release. Nothing "
+    + "is installed now and nothing goes back to an older version: the next release that includes the "
+    + "installed build is offered as a normal, reviewed update.",
+  development: "Follow development builds?\n\nThey bring every change first and are tested automatically, "
+    + "but not on the hardware. The newest build is offered as a normal, reviewed update. Going back to "
+    + "stable releases later waits until a release includes it.",
 };
 let latestUpdates = null;
 let pageBuild = null;
@@ -454,6 +466,11 @@ function renderUpdateInfo(box) {
   if (updates.installed) {
     add("Installed", shortVersion(updates.installed.version));
   }
+  const channel = selectedChannel();
+  if (channel) {
+    add("Channel", adminCsrfToken && adminUpdateState && !adminUpdateState.busy ? channelSelector(channel)
+      : channelText[channel]);
+  }
   const result = updates.result || null;
   const available = result && result.available ? result.available : null;
   if (available) {
@@ -497,7 +514,48 @@ function renderUpdateInfo(box) {
   if (updates.reason) {
     add("Note", updates.reason);
   }
+  if (updates.state === "waiting_for_release" && available) {
+    add("Note", `You run a development build that ${shortVersion(available.version)} does not include yet; `
+      + "the next release that includes it will be offered.");
+  }
   box.appendChild(list);
+}
+
+// The updater's choice; without an updater, the channel of the running build.
+function selectedChannel() {
+  const chosen = (adminUpdateState && adminUpdateState.channel) || (latestUpdates && latestUpdates.selected_channel);
+  if (chosen === "stable" || chosen === "development") {
+    return chosen;
+  }
+  return null;
+}
+
+function channelSelector(current) {
+  const value = document.createElement("dd");
+  value.className = "update-inline";
+  const select = document.createElement("select");
+  select.className = "channel-select admin-action";
+  select.setAttribute("aria-label", "Update channel");
+  for (const option of ["stable", "development"]) {
+    const item = textElement("option", "", channelText[option]);
+    item.value = option;
+    item.selected = option === current;
+    select.appendChild(item);
+  }
+  select.addEventListener("change", () => {
+    const chosen = select.value;
+    if (chosen === current) {
+      return;
+    }
+    if (typeof window !== "undefined" && typeof window.confirm === "function" && !window.confirm(channelConfirm[chosen])) {
+      select.value = current;
+      return;
+    }
+    select.disabled = true;
+    runUpdateAction("channel", { channel: chosen });
+  });
+  value.appendChild(select);
+  return value;
 }
 
 // Freed space: whole megabytes below 1 GB (0 MB stays honest), one decimal from there.
@@ -554,7 +612,7 @@ function renderReview(review) {
   box.className = "admin-review";
   const isRestore = review.action === "restore";
   box.appendChild(textElement("strong", "", isRestore ? "Review: restore backup"
-    : `Review: update to dev-${shortRevision(review.revision)}`));
+    : `Review: update to ${review.version || `dev-${shortRevision(review.revision)}`}`));
   const rows = [["Interruption", review.interruption || ""], ["Backup", review.backup || ""]];
   if (review.cleanup) {
     rows.push(["Old images", review.cleanup]);
@@ -860,6 +918,7 @@ function renderUpdatesState() {
     : failedUpdateRetry() ? ["Update failed", "problem"]
     : state === "update_available" ? ["Update available", "update"]
       : state === "up_to_date" ? ["Up to date", "ok"]
+      : state === "waiting_for_release" ? ["Waiting for a release", "ok"]
         : state ? ["Not checked", "unknown"] : ["Checking…", "unknown"];
   updatesState.textContent = text;
   updatesState.title = text;
@@ -948,7 +1007,8 @@ async function runUpdateAction(action, body) {
     // The password and its errors belong to the dialog (admin.js), never to this section.
     const code = payload.error && payload.error.code;
     const again = () => runUpdateAction(action, body);
-    const reason = action === "restore" ? "Restore the previous version" : "Install the update";
+    const reason = action === "restore" ? "Restore the previous version"
+      : action === "channel" ? "Change the update channel" : "Install the update";
     if (response.status === 403 && code === "reauthenticate" && typeof window.adminReauthenticate === "function") {
       window.adminReauthenticate({ reason, onSuccess: again });
       return false;

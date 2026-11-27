@@ -91,7 +91,7 @@ class Fixture(unittest.TestCase):
 
     def make(self, transaction=None, resolve=None, clock=None):
         self.transaction = transaction or FakeTransaction()
-        return Updater(SPEC, self.evidence, self.state, resolve=resolve or (lambda gateway, platform: candidate()),
+        return Updater(SPEC, self.evidence, self.state, resolve=resolve or (lambda gateway, platform, channel="dev": candidate()),
                        committed=lambda: self.installed, transaction=self.transaction, clock=clock or time.time,
                        target=lambda: self.target())
 
@@ -158,7 +158,7 @@ class UpdateFlowTests(Fixture):
         self.assertIsNone(updater_module._cleanup(None))
 
     def test_nothing_to_do_when_the_newest_image_is_installed(self):
-        updater = self.make(resolve=lambda gateway, platform: candidate(INSTALLED))
+        updater = self.make(resolve=lambda gateway, platform, channel="dev": candidate(INSTALLED))
         updater.handle({"op": "review", "actor": ACTOR})
         self.wait_for(updater, "up_to_date")
         self.assertEqual(self.transaction.requests, [])
@@ -203,7 +203,7 @@ class UpdateFlowTests(Fixture):
         self.assertEqual(recovery, {"recovery": self.evidence / operation, "recovery_checksum": "d" * 64})
 
     def test_a_failure_before_approval_offers_no_restore(self):
-        def unresolvable(gateway, platform):
+        def unresolvable(gateway, platform, channel="dev"):
             raise ValueError("Registry metadata request failed")
         updater = self.make(resolve=unresolvable)
         updater.handle({"op": "review", "actor": ACTOR})
@@ -375,7 +375,7 @@ class DataSchemaTests(Fixture):
 
         self.transaction = FakeTransaction()
         return Updater({**SPEC, "data_dir": str(data)}, self.evidence, self.state,
-                       resolve=lambda gateway, platform: candidate(), committed=lambda: self.installed,
+                       resolve=lambda gateway, platform, channel="dev": candidate(), committed=lambda: self.installed,
                        transaction=self.transaction, target=lambda: self.target(), target_schemas=target_schemas)
 
     def test_an_image_that_cannot_read_newer_data_is_refused_before_anything_stops(self):
@@ -410,6 +410,90 @@ class DataSchemaTests(Fixture):
         empty.handle({"op": "review", "actor": ACTOR})
         self.wait_for(empty, "awaiting_approval")
         self.assertEqual(self.asked, [], "a fresh installation has nothing to check")
+
+
+def release(version, revision):
+    return {**candidate(revision), "kind": "release-image-candidate", "channel": "stable", "version": version}
+
+
+class ChannelTests(Fixture):
+    """docs/plans/general_new_release-channels.md: the stored channel and when a release is offered."""
+
+    def make_channel(self, offered, contains=None):
+        self.resolved, self.compared = [], []
+
+        def resolve(gateway, platform, channel="dev"):
+            self.resolved.append(channel)
+            return offered[channel]
+
+        def check(release_revision, installed_revision):
+            self.compared.append((release_revision, installed_revision))
+            if isinstance(contains, Exception):
+                raise contains
+            return contains
+
+        self.transaction = FakeTransaction()
+        return Updater(SPEC, self.evidence, self.state, resolve=resolve, committed=lambda: self.installed,
+                       transaction=self.transaction, target=lambda: self.target(), contains=check)
+
+    def test_without_a_choice_the_channel_follows_the_installed_version(self):
+        updater = self.make_channel({})
+        self.assertEqual(updater.status()["channel"], "development")
+        self.installed = release("0.9.0", INSTALLED)
+        self.assertEqual(updater.status()["channel"], "stable")
+        self.assertEqual(updater.status()["installed_version"], "0.9.0")
+
+    def test_choosing_a_channel_is_stored_audited_and_refused_while_busy(self):
+        updater = self.make_channel({"stable": release("0.9.0", NEWER)}, contains=True)
+        self.assertEqual(updater.handle({"op": "channel", "channel": "stable", "actor": ACTOR}),
+                         {"accepted": True, "channel": "stable"})
+        stored = json.loads((self.root / "channel.json").read_text())
+        self.assertEqual((stored["channel"], stored["changed_by"]), ("stable", ACTOR))
+        self.assertEqual(updater.status()["channel"], "stable")
+        for bad in ("beta", None, "dev"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(UpdaterError, "stable or development"):
+                updater.handle({"op": "channel", "channel": bad, "actor": ACTOR})
+        with self.assertRaisesRegex(UpdaterError, "administrator"):
+            updater.handle({"op": "channel", "channel": "development"})
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(updater, "awaiting_approval")
+        with self.assertRaisesRegex(UpdaterError, "in progress"):
+            updater.handle({"op": "channel", "channel": "development", "actor": ACTOR})
+
+    def test_stable_waits_until_a_release_contains_the_installed_development_build(self):
+        updater = self.make_channel({"stable": release("0.9.0", NEWER)}, contains=False)
+        updater.handle({"op": "channel", "channel": "stable", "actor": ACTOR})
+        updater.handle({"op": "review", "actor": ACTOR})
+        status = self.wait_for(updater, "waiting_for_release")
+        self.assertEqual((status["candidate_version"], status["error"]), ("0.9.0", None))
+        self.assertEqual(self.resolved, ["stable"])
+        self.assertEqual(self.compared, [(NEWER, INSTALLED)])
+        self.assertEqual(self.transaction.requests, [], "nothing goes backwards")
+        updater.handle({"op": "channel", "channel": "development", "actor": ACTOR})
+        self.assertEqual(updater.status()["phase"], "idle", "the result was about the other channel")
+
+    def test_a_release_that_contains_the_build_is_offered_and_an_unknown_history_offers_nothing(self):
+        updater = self.make_channel({"stable": release("0.9.0", NEWER)}, contains=True)
+        updater.handle({"op": "channel", "channel": "stable", "actor": ACTOR})
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(updater, "awaiting_approval")
+        self.assertEqual(self.transaction.requests[0][0]["selection"]["version"], "0.9.0")
+        updater.handle({"op": "cancel", "operation": updater.status()["operation"]})
+        self.wait_for(updater, "cancelled")
+        unknown = self.make_channel({"stable": release("0.9.0", NEWER)}, contains=ValueError("GitHub down"))
+        unknown.handle({"op": "review", "actor": ACTOR})
+        self.assertIn("could not be checked on GitHub", self.wait_for(unknown, "failed_before_interruption")["error"])
+
+    def test_releases_only_move_forward_and_development_is_always_offered(self):
+        self.installed = release("0.9.1", INSTALLED)
+        updater = self.make_channel({"stable": release("0.9.0", NEWER), "dev": candidate()})
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(updater, "up_to_date")
+        self.assertEqual(self.compared, [], "release over release compares versions")
+        updater.handle({"op": "channel", "channel": "development", "actor": ACTOR})
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(updater, "awaiting_approval")
+        self.assertEqual(self.resolved, ["stable", "dev"])
 
 
 class SystemRoutingTests(Fixture):

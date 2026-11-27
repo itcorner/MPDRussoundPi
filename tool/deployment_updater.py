@@ -9,6 +9,11 @@ user. Requests are a fixed vocabulary, one JSON object per connection:
 - ``status``: the current or last operation, without secrets.
 - ``review``: resolve the newest image candidate of the installation's channel
   (pinned by digest) and start the reviewed transaction, which waits for approval.
+  On the stable channel a release is offered only when it is newer than the
+  installed release, or contains the installed development build
+  (docs/plans/general_new_release-channels.md); otherwise ``waiting_for_release``.
+- ``channel``: choose ``stable`` or ``development`` for the next check (stored in
+  ``channel.json``; without a choice, the channel of the installed version).
 - ``approve``: confirm exactly the pending review (operation id and digest) within
   its window. The web application authenticates the administrator first; the
   socket proves the caller is the web container, not which person approved.
@@ -28,8 +33,7 @@ recovery and evidence are unchanged code. The backup stays on this Pi (plan
 decision 3: not disaster recovery). The operator lock excludes a concurrent SSH
 operator run.
 
-Supported layout: one host running the Docker containers (see the plan). Only the
-development channel exists so far, because the tooling resolves only ``dev``.
+Supported layout: one host running the Docker containers (see the plan).
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ import copy
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import socket
 import socketserver
@@ -49,7 +54,7 @@ import time
 from typing import Any, Callable
 from uuid import uuid4
 
-from mpdrussoundpi.common import dataschema
+from mpdrussoundpi.common import dataschema, sourcehistory
 from mpdrussoundpi.common.atomicjson import write_json
 from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_compose import UPDATER_SOCKET_DIR, ComposeError, private_read
@@ -65,6 +70,9 @@ REVIEW_SECONDS = 120
 MAX_REQUEST = 64 * 1024
 ACTIVE_PHASES = ("resolving", "awaiting_approval", "approved", "running", "restore_awaiting_approval",
                  "restoring")
+# docs/plans/general_new_release-channels.md: what the administrator chooses, and the
+# image channel the tooling resolves for it.
+CHANNELS = {"stable": "stable", "development": "dev"}
 # Short lines for the review card on the Status page (label: text).
 INTERRUPTION = "Web app and gateway restart; this page reconnects after a few minutes."
 BACKUP_NOTE = "Taken first, kept on this Pi only (not disaster recovery)."
@@ -121,6 +129,13 @@ DATA_FILES = {
     "lockout": "data/admin-lockout.json",
 }
 
+
+def _version_key(version: object) -> tuple[int, ...]:
+    """Numeric order of a release version ``X.Y.Z``; anything else sorts first."""
+    if isinstance(version, str) and re.fullmatch(r"\d{1,4}\.\d{1,4}\.\d{1,4}", version):
+        return tuple(int(part) for part in version.split("."))
+    return (-1,)
+
 class UpdaterError(ValueError):
     """A request the updater refuses; the message is safe to show."""
 
@@ -167,13 +182,15 @@ class Updater:
     """One operation at a time, with a durable record that survives restarts."""
 
     def __init__(self, spec: dict[str, Any], evidence: Path, state_path: Path, *,
-                 resolve: Callable[[str, str], dict[str, Any]] | None = None,
+                 resolve: Callable[[str, str, str], dict[str, Any]] | None = None,
                  committed: Callable[[], dict[str, Any] | None] | None = None,
                  transaction: Callable[..., dict[str, Any]] = run_transaction,
                  clock: Callable[[], float] = time.time,
                  target: Callable[[], dict[str, Any]] | None = None,
                  system: SystemUpdates | None = None, gate: Any = None,
-                 target_schemas: Callable[[dict[str, Any]], dict[str, tuple[int, int]] | None] | None = None) -> None:
+                 target_schemas: Callable[[dict[str, Any]], dict[str, tuple[int, int]] | None] | None = None,
+                 channel_path: Path | None = None,
+                 contains: Callable[[str, str], bool] = sourcehistory.contains) -> None:
         identity(spec["deployment"])
         self.spec = spec
         self.evidence = evidence
@@ -184,6 +201,8 @@ class Updater:
         self._clock = clock
         self._target = target or (lambda: StateStore().status())
         self._target_schemas = target_schemas or self._target_schemas_registry
+        self.channel_path = channel_path or state_path.parent / "channel.json"
+        self._contains = contains
         self.system = system
         self.gate = gate or threading.Lock()  # shared with the system part: one operation starts at a time
         self._lock = threading.Condition()
@@ -239,6 +258,26 @@ class Updater:
 
     # --------------------------------------------------------------- candidates
 
+    def _release_waits(self, candidate: dict[str, Any], installed: dict[str, Any]) -> dict[str, Any] | None:
+        """State changes when the newest release is not offered, or None when it is (plan decision 2).
+
+        Never backwards: a release is offered over a release only when its version is higher, and over
+        a development build only when it contains that build.
+        """
+        if installed.get("kind") == "release-image-candidate":
+            if _version_key(candidate.get("version")) <= _version_key(installed.get("version")):
+                return {"phase": "up_to_date", "error": None}
+            return None
+        try:
+            if self._contains(str(candidate.get("revision")), str(installed.get("revision"))):
+                return None
+        except (sourcehistory.HistoryError, OSError, ValueError) as error:
+            logger.warning("Release containment could not be checked: %s", error)
+            return {"phase": "failed_before_interruption",
+                    "error": "Whether the newest release includes the installed development build could not be "
+                             "checked on GitHub. Nothing was interrupted."}
+        return {"phase": "waiting_for_release", "error": None}
+
     def _schema_refusal(self, candidate: dict[str, Any]) -> str | None:
         """Why the candidate's web image cannot read the data on this host, checked before anything stops.
 
@@ -284,9 +323,9 @@ class Updater:
         found = platform_config(Registry(), web["repository"], web["index_digest"], self.spec["platform"])
         return dataschema.parse_label(found["labels"].get(dataschema.LABEL))
 
-    def _resolve_registry(self, gateway: str, platform: str) -> dict[str, Any]:
+    def _resolve_registry(self, gateway: str, platform: str, channel: str = "dev") -> dict[str, Any]:
         from tool.deployment_images import resolve
-        return resolve(gateway, platform)
+        return resolve(gateway, platform, channel=channel)
 
     def _target_record(self, operation: object) -> tuple[str, str | None]:
         """What the Pi's deployment record says about an interrupted operation.
@@ -361,7 +400,41 @@ class Updater:
             return self.cancel(request.get("operation"))
         if operation == "restore":
             return self.restore(request.get("operation"), _actor(request.get("actor")))
+        if operation == "channel":
+            return self.set_channel(request.get("channel"), _actor(request.get("actor")))
         raise UpdaterError("Unknown request")
+
+    # ----------------------------------------------------------------- channel
+
+    def channel(self) -> str:
+        """The chosen channel; without a choice, the channel of the installed version."""
+        try:
+            stored = json.loads(self.channel_path.read_text(encoding="utf-8"))
+            if isinstance(stored, dict) and stored.get("channel") in CHANNELS:
+                return stored["channel"]
+        except (OSError, ValueError):
+            pass
+        try:
+            installed = self._committed()
+        except (OSError, ValueError, KeyError, StateError):
+            installed = None
+        return "stable" if isinstance(installed, dict) and installed.get("kind") == "release-image-candidate" \
+            else "development"
+
+    def set_channel(self, channel: object, actor: dict[str, str]) -> dict[str, Any]:
+        """Choose what the next check offers; changes no software by itself."""
+        if channel not in CHANNELS:
+            raise UpdaterError("Channel must be stable or development")
+        with self.gate, self._lock:
+            if self.state["phase"] in ACTIVE_PHASES:
+                raise UpdaterError("Another update operation is in progress")
+            write_json(self.channel_path, {"schema_version": 1, "channel": channel,
+                                           "changed_at": _now_text(self._clock()), "changed_by": actor})
+            if self.state["phase"] in ("up_to_date", "waiting_for_release"):
+                # Those results were about the other channel.
+                self.state.update(phase="idle", error=None, candidate_revision=None, candidate_version=None)
+                self._save()
+        return {"accepted": True, "channel": channel}
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -370,16 +443,19 @@ class Updater:
         review = state.get("review")
         if isinstance(review, dict):
             review = dict(review, expires_in_seconds=max(0, int(review["expires_at"] - self._clock())))
-        committed = None
+        committed = version = None
         try:
             current = self._committed()
-            committed = current.get("revision") if isinstance(current, dict) else None
+            if isinstance(current, dict):
+                committed, version = current.get("revision"), current.get("version")
         except (OSError, ValueError, KeyError, StateError):
             committed = None
         return {
             "api_version": 1, "phase": state["phase"], "operation": state.get("operation"),
-            "kind": state.get("kind"), "installed_revision": committed,
-            "candidate_revision": state.get("candidate_revision"), "review": review,
+            "kind": state.get("kind"), "installed_revision": committed, "installed_version": version,
+            "channel": self.channel(),
+            "candidate_revision": state.get("candidate_revision"),
+            "candidate_version": state.get("candidate_version"), "review": review,
             "result": state.get("result"), "error": state.get("error"),
             "restore_available": bool(state.get("restore")) and state["phase"] in ("failed", "outcome_unknown"),
             "backups": _restorable_backups(state),
@@ -405,17 +481,25 @@ class Updater:
         return {"accepted": True, "operation": operation}
 
     def _run_update(self, operation: str) -> None:
+        channel = self.channel()
         try:
-            candidate = self._resolve(self.spec["gateway"], self.spec["platform"])
+            candidate = self._resolve(self.spec["gateway"], self.spec["platform"], CHANNELS[channel])
             installed = self._committed()
-        except (OSError, ValueError, KeyError, StateError) as error:
+        except (OSError, ValueError, KeyError, TypeError, StateError) as error:
             logger.warning("Update candidate could not be resolved: %s", error)
-            self._set(phase="failed_before_interruption", error="The newest image could not be resolved on Docker Hub. Nothing was interrupted.")
+            message = ("The newest release could not be resolved on Docker Hub (is a release published yet?)."
+                       if channel == "stable" else "The newest image could not be resolved on Docker Hub.")
+            self._set(phase="failed_before_interruption", error=message + " Nothing was interrupted.")
             return
-        self._set(candidate_revision=candidate.get("revision"))
+        self._set(candidate_revision=candidate.get("revision"), candidate_version=candidate.get("version"))
         if isinstance(installed, dict) and installed.get("revision") == candidate.get("revision"):
             self._set(phase="up_to_date", error=None)
             return
+        if channel == "stable" and isinstance(installed, dict):
+            waiting = self._release_waits(candidate, installed)
+            if waiting is not None:
+                self._set(**waiting)
+                return
         refusal = self._schema_refusal(candidate)
         if refusal:
             self._set(phase="failed_before_interruption", error=refusal)
@@ -460,6 +544,7 @@ class Updater:
         return {
             "action": "restore" if restoring else "update",
             "revision": selection.get("revision"),
+            "version": selection.get("version"),
             "images": {name: item.get("reference") for name, item in images.items() if isinstance(item, dict)},
             "services": scope.get("services") or [],
             "layout_change": scope.get("layout_change"),
