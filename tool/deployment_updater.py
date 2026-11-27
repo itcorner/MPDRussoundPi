@@ -563,8 +563,12 @@ class Updater:
             installed = self._committed()
         except (OSError, ValueError, KeyError, TypeError, StateError) as error:
             logger.warning("Update candidate could not be resolved: %s", error)
-            message = ("The newest release could not be resolved on Docker Hub (is a release published yet?)."
-                       if channel == "stable" else "The newest image could not be resolved on Docker Hub.")
+            if channel == "stable" and str(error).endswith("HTTP 404"):
+                message = "No stable release has been published yet, so there is nothing to install."
+            elif channel == "stable":
+                message = "The newest release could not be resolved on Docker Hub."
+            else:
+                message = "The newest image could not be resolved on Docker Hub."
             self._set(phase="failed_before_interruption", error=message + " Nothing was interrupted.")
             return
         self._set(candidate_revision=candidate.get("revision"), candidate_version=candidate.get("version"))

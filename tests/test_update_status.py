@@ -165,6 +165,23 @@ class ChosenChannelTests(CheckerTests):
         unknown.check_once()
         self.assertEqual(unknown.snapshot()["state"], "check_failed", "never up to date without an answer")
 
+    def test_a_missing_latest_tag_means_no_release_yet_and_is_not_a_failure(self):
+        missing = imageregistry.RegistryError("Registry metadata request failed: HTTP 404")
+        for selected, version in (("stable", "dev-" + OURS), (None, "0.9.0-rc.1")):
+            checker = self.chosen(missing, selected, RUSSOUND_BUILD_VERSION=version)
+            checker.check_once()
+            snapshot = checker.snapshot()
+            with self.subTest(selected=selected, version=version):
+                self.assertEqual(self.calls[-1][1], "latest")
+                self.assertEqual((snapshot["state"], snapshot["check_failed"], snapshot["error"], snapshot["result"]),
+                                 ("no_release", False, None, {"state": "no_release", "available": None}))
+        development = self.chosen(missing, "development")
+        development.check_once()
+        self.assertEqual(development.snapshot()["state"], "check_failed", "a missing dev tag stays a failure")
+        unavailable = self.chosen(imageregistry.RegistryError("Registry metadata request failed: HTTP 503"), "stable")
+        unavailable.check_once()
+        self.assertEqual(unavailable.snapshot()["state"], "check_failed")
+
     def test_development_on_a_release_compares_with_dev_and_no_choice_keeps_the_running_channel(self):
         checker = self.chosen(published("dev-" + THEIRS, THEIRS), "development", RUSSOUND_BUILD_VERSION="0.9.0")
         checker.check_once()

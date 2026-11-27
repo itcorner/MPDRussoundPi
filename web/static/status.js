@@ -346,6 +346,7 @@ const updateStateText = {
   up_to_date: "Up to date",
   update_available: "Update available",
   waiting_for_release: "Waiting for a release",
+  no_release: "No release published yet",
   pending: "Not checked yet",
   checking: "Checking…",
   check_failed: "Check failed",
@@ -538,6 +539,9 @@ function renderUpdateInfo(box) {
   }
   if (updates.reason) {
     add("Note", updates.reason);
+  }
+  if (updates.state === "no_release") {
+    add("Note", "No stable release has been published yet; the first release will be offered here.");
   }
   if (updates.state === "waiting_for_release" && available) {
     add("Note", `You run a development build that ${shortVersion(available.version)} does not include yet; `
@@ -1033,6 +1037,7 @@ function renderUpdatesState() {
     : state === "update_available" ? ["Update available", "update"]
       : state === "up_to_date" ? ["Up to date", "ok"]
       : state === "waiting_for_release" ? ["Waiting for a release", "ok"]
+      : state === "no_release" ? ["No release yet", "ok"]
         : state ? ["Not checked", "unknown"] : ["Checking…", "unknown"];
   updatesState.textContent = text;
   updatesState.title = text;

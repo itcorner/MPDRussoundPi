@@ -619,7 +619,9 @@ The cached result of the read-only web image update check (see the
 [plan](../docs/plans/general_open_update-status-and-restarts.md#first-slice-web-image-update-check-2026-11-21)).
 `state` is `pending`, `checking`, `up_to_date`, `update_available`,
 `waiting_for_release` (stable channel, a development build that the newest
-release does not contain yet), `check_failed`, `unsupported` (local build or no
+release does not contain yet), `no_release` (stable channel, no release
+published yet: `latest` does not exist; a successful check with
+`result.available: null`), `check_failed`, `unsupported` (local build or no
 published identity, with a `reason`) or `disabled` (`RUSSOUND_UPDATE_CHECK=off`).
 `channel` is the compared tag (`dev` or `latest`) and `selected_channel` the
 updater's choice (`stable`, `development` or `null` without an updater, then the
