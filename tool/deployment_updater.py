@@ -83,10 +83,26 @@ BEFORE_BACKUP = ("prepared", "inputs-verified")
 NOT_APPLIED = ("The updater restarted before the update changed the installed version, but the services may "
                "still be stopped. Restart them with the SSH operator's resume-original (see the deployment "
                "documentation).")
+# Progress of an approved update for the Status page. The Pi's deployment record names the
+# last completed phase (tool/deployment_state.PHASES), and with it the step that runs now:
+# 1 preparing, 2 stopping the services and taking the backup, 3 loading and starting the new
+# images, 4 runtime checks, 5 cleanup. The web application is stopped during steps 2 and 3.
+PROGRESS_STEPS = 5
+PROGRESS_FROM_PENDING = {"prepared": 1, "inputs-verified": 2, "backup-complete": 3, "apply-complete": 4,
+                         "checks-complete": 5}
+PROGRESS_INTERVAL = 2.0
 SETTLED = ("The updater restarted during the last operation. The Pi has no unfinished operation now (it was "
            "recovered or never changed anything), so you can update again.")
 
 logger = logging.getLogger("mpdrussoundpi.updater")
+
+
+def _timings(value: Any) -> list[int] | None:
+    """Seconds per update step, as recorded after a successful update."""
+    if (isinstance(value, list) and len(value) == PROGRESS_STEPS
+            and all(type(item) is int and 0 <= item <= 86400 for item in value)):
+        return value
+    return None
 
 
 def _cleanup(value: Any) -> dict[str, Any] | None:
@@ -460,6 +476,7 @@ class Updater:
             "restore_available": bool(state.get("restore")) and state["phase"] in ("failed", "outcome_unknown"),
             "backups": _restorable_backups(state),
             "updated_at": state.get("updated_at"), "busy": state["phase"] in ACTIVE_PHASES,
+            "progress": self._progress_view(state),
         }
 
     def _start(self, target: Callable[[], None]) -> None:
@@ -475,7 +492,9 @@ class Updater:
             operation = str(uuid4())
             self.state = {"phase": "resolving", "kind": "update", "operation": operation, "actor": actor,
                           "started_at": _now_text(self._clock()), "review": None, "result": None,
-                          "error": None, "restore": None, "candidate_revision": None}
+                          "error": None, "restore": None, "candidate_revision": None,
+                          # How long each step of the last successful update took: the page's estimate.
+                          "timings": _timings(self.state.get("timings"))}
             self._save()
         self._start(lambda: self._run_update(operation))
         return {"accepted": True, "operation": operation}
@@ -528,7 +547,9 @@ class Updater:
                 if decision["approved"]:
                     # Dispatch boundary: recorded on disk before the transaction may interrupt anything.
                     self.state.update(phase="restoring" if restoring else "running", review=None,
-                                      approved_by=decision["actor"], approved_at=_now_text(self._clock()))
+                                      approved_by=decision["actor"], approved_at=_now_text(self._clock()),
+                                      progress=None if restoring else {"operation": operation, "step": 1,
+                                                                       "started": {"1": self._clock()}})
                     self._save()
                     return digest
                 self.state.update(phase="cancelled", review=None,
@@ -557,13 +578,20 @@ class Updater:
     def _execute(self, request: dict[str, Any], operation: str, *, restoring: bool,
                  recovery: Path | None = None, checksum: str | None = None) -> None:
         approve = self._bridge(operation, restoring)
+        done = threading.Event()
+        if not restoring:
+            threading.Thread(target=self._watch_progress, args=(operation, done), daemon=True,
+                             name="updater-progress").start()
         try:
             result = self._transaction(request, approve, self.evidence,
                                        **({"recovery": recovery, "recovery_checksum": checksum} if restoring else {}))
         except (ChannelError, ComposeError, StateError, OSError, ValueError, subprocess.SubprocessError) as error:
+            done.set()
             logger.warning("Update operation %s ended with an error: %s", operation, error)
             with self._lock:
+                self.state["progress"] = None
                 if self.state["phase"] == "cancelled":
+                    self._save()
                     return
                 interrupted = self.state["phase"] in ("running", "restoring")
                 restore = self._backup_identity(operation) if interrupted and not restoring else self.state.get("restore")
@@ -574,12 +602,64 @@ class Updater:
                            else "The update stopped before anything was interrupted."))
                 self._save()
             return
+        done.set()
         checks = result.get("required") if isinstance(result, dict) else None
-        self._set(phase="restored" if restoring else "succeeded", review=None, error=None,
+        with self._lock:
+            measured = self._measured(operation)
+        self._set(phase="restored" if restoring else "succeeded", review=None, error=None, progress=None,
+                  timings=measured or self.state.get("timings"),
                   result={"event": result.get("event"), "checks": checks, "finished_at": _now_text(self._clock()),
                           "cleanup": _cleanup(result.get("cleanup") if isinstance(result, dict) else None),
                           "retention": _retention(result.get("retention") if isinstance(result, dict) else None)},
                   restore=None)
+
+    # ----------------------------------------------------------------- progress
+
+    def _watch_progress(self, operation: str, done: threading.Event) -> None:
+        while not done.wait(PROGRESS_INTERVAL):
+            self._progress_tick(operation)
+
+    def _progress_tick(self, operation: str) -> None:
+        """Advance the step from the Pi's deployment record; never backwards, never concluded otherwise."""
+        record, phase = self._target_record(operation)
+        with self._lock:
+            progress = self.state.get("progress")
+            if (self.state.get("phase") != "running" or not isinstance(progress, dict)
+                    or progress.get("operation") != operation):
+                return
+            step = PROGRESS_FROM_PENDING.get(phase or "") if record == "pending" else None
+            if record == "clear" and progress["step"] >= 4:
+                step = PROGRESS_STEPS  # finalized: only the cleanup is left
+            if step is None or step <= progress["step"]:
+                return
+            for passed in range(progress["step"] + 1, step + 1):
+                progress["started"][str(passed)] = self._clock()  # a step seen late or skipped: zero
+            progress["step"] = step
+            self._save()
+
+    def _measured(self, operation: str) -> list[int] | None:
+        """Seconds per step of the update that just succeeded."""
+        progress = self.state.get("progress")
+        if not isinstance(progress, dict) or progress.get("operation") != operation:
+            return None
+        now = self._clock()
+        starts = [progress["started"].get(str(step)) for step in range(1, PROGRESS_STEPS + 1)]
+        ends = [*starts[1:], now]
+        result = []
+        for index, start in enumerate(starts):
+            end = next((value for value in ends[index:] if value is not None), now)
+            result.append(max(0, int(end - start)) if start is not None else 0)
+        return result
+
+    def _progress_view(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        progress = state.get("progress")
+        if state.get("phase") != "running" or not isinstance(progress, dict):
+            return None
+        now, started = self._clock(), progress["started"]
+        return {"step": progress["step"], "steps": PROGRESS_STEPS,
+                "elapsed_seconds": max(0, int(now - started["1"])),
+                "step_elapsed_seconds": max(0, int(now - started[str(progress["step"])])),
+                "typical_seconds": _timings(state.get("timings"))}
 
     def _backup_identity(self, operation: str) -> dict[str, str] | None:
         try:

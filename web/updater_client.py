@@ -74,6 +74,25 @@ TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\
 MAX_BACKUPS = 5
 
 
+def _bounded(value: object, limit: int) -> int | None:
+    return value if type(value) is int and 0 <= value <= limit else None
+
+
+def _progress(value: object) -> dict[str, Any] | None:
+    """Which step of an approved update runs, for how long, and how long each took last time."""
+    if not isinstance(value, dict):
+        return None
+    steps, step = _bounded(value.get("steps"), 20), _bounded(value.get("step"), 20)
+    elapsed, step_elapsed = _bounded(value.get("elapsed_seconds"), 86400), _bounded(value.get("step_elapsed_seconds"), 86400)
+    if not steps or not step or step > steps or elapsed is None or step_elapsed is None:
+        return None
+    typical = value.get("typical_seconds")
+    if not (isinstance(typical, list) and len(typical) == steps and all(_bounded(item, 86400) is not None for item in typical)):
+        typical = None
+    return {"step": step, "steps": steps, "elapsed_seconds": elapsed, "step_elapsed_seconds": step_elapsed,
+            "typical_seconds": typical}
+
+
 def _backups(value: object) -> list[dict[str, Any]]:
     """Restorable backups (newest first) with when they were taken, their version and size."""
     if not isinstance(value, list):
@@ -116,6 +135,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
         "backups": _backups(value.get("backups")),
         "busy": value.get("busy") is True,
         "updated_at": _text(value.get("updated_at"), 32),
+        "progress": _progress(value.get("progress")) if phase == "running" else None,
     }
     review = value.get("review")
     if include_review and isinstance(review, dict) and isinstance(review.get("summary"), dict):

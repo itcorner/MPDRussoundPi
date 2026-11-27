@@ -1493,6 +1493,36 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.update-progress {
+  margin: 0.6rem 0 0;
+}
+
+.update-progress-bar {
+  width: 100%;
+  height: 0.6rem;
+  accent-color: var(--accent);
+}
+
+.update-steps {
+  margin: 0.5rem 0;
+  padding-left: 0.2rem;
+  font-size: 0.92rem;
+  list-style: none;
+}
+
+.update-step {
+  margin: 0.15rem 0;
+}
+
+.update-step-done,
+.update-step-next {
+  color: var(--muted);
+}
+
+.update-step-current {
+  font-weight: 600;
+}
+
 .host-row-warning {
   color: #e8b04a;
 }

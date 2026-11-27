@@ -542,6 +542,13 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   at most the failed update's own one, up to five later): `operation`, `taken_at`
   (ISO time from the backup's manifest), `revision` (the version it contains),
   `size_bytes` and a short `reason`; unknown values are `null`.
+  `progress` (only while `running`, otherwise `null`): `step` of `steps` (1
+  preparing, 2 stopping the services and taking the backup, 3 loading and
+  starting the new version, 4 checks, 5 cleanup; read from the Pi's deployment
+  record), `elapsed_seconds` since the confirmation, `step_elapsed_seconds`, and
+  `typical_seconds` (seconds per step of the last successful update, or `null`).
+  The web application is stopped during steps 2 and 3, so the page estimates
+  them from `typical_seconds`.
 - `GET /api/admin/update` (administrator session): the same plus `review`
   (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `version`
   (`X.Y.Z` for a release, otherwise `null`), `images`,

@@ -380,6 +380,16 @@ let latestUpdates = null;
 let pageBuild = null;
 let adminUpdateState = null;
 let adminUpdateReconnecting = false;
+let adminUpdateReceivedAt = 0;  // when adminUpdateState was read (Date.now()), for the offline estimate
+// The steps of an approved update (the updater's progress.step). The web application is
+// stopped during steps 2 and 3, so the page cannot ask the updater then.
+const updateSteps = [
+  "Preparing",
+  "Stopping the services and taking a backup",
+  "Loading and starting the new version",
+  "Checking that everything runs",
+  "Cleaning up",
+];
 let adminUpdateTimer = null;
 let updateCheckInFlight = false;
 
@@ -451,6 +461,12 @@ function dockerHubLink(available) {
 }
 
 function renderUpdateInfo(box) {
+  // Replacing the channel list closes it while it is open. While it has the focus this part
+  // stays as it is; the next refresh after the focus moves on redraws it.
+  if (box.channelSelect && typeof document !== "undefined" && document.activeElement === box.channelSelect) {
+    return;
+  }
+  box.channelSelect = null;
   box.replaceChildren();
   const updates = latestUpdates;
   if (!updates) {
@@ -468,8 +484,13 @@ function renderUpdateInfo(box) {
   }
   const channel = selectedChannel();
   if (channel) {
-    add("Channel", adminCsrfToken && adminUpdateState && !adminUpdateState.busy ? channelSelector(channel)
-      : channelText[channel]);
+    if (adminCsrfToken && adminUpdateState && !adminUpdateState.busy) {
+      const selector = channelSelector(channel);
+      box.channelSelect = selector.select;
+      add("Channel", selector);
+    } else {
+      add("Channel", channelText[channel]);
+    }
   }
   const result = updates.result || null;
   const available = result && result.available ? result.available : null;
@@ -555,6 +576,7 @@ function channelSelector(current) {
     runUpdateAction("channel", { channel: chosen });
   });
   value.appendChild(select);
+  value.select = select;
   return value;
 }
 
@@ -746,6 +768,10 @@ function renderInstall(box) {
   }
   clearReview(box, "reviewKey");
   if (adminUpdateReconnecting && !isRestoreKind(status)) {
+    if (status && status.phase === "running" && status.progress) {
+      renderProgress(box, status.progress, true);
+      return;
+    }
     box.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
     return;
   }
@@ -757,7 +783,9 @@ function renderInstall(box) {
     }
     return;
   }
-  if (!isRestoreKind(status)) {
+  if (status.phase === "running" && status.progress) {
+    renderProgress(box, status.progress, false);
+  } else if (!isRestoreKind(status)) {
     phaseMessage(box, status);
   }
   // After a failed (or unknown) update the same version is offered as a retry; the restore
@@ -776,6 +804,80 @@ function renderInstall(box) {
       { primary: true, privileged: true }));
     box.appendChild(row);
   }
+}
+
+function sumSeconds(values) {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function clockText(seconds) {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+// Where the update stands. Offline, the page moves on by the durations of the last update
+// (at most to step 3, when the web application starts again); without them it keeps the
+// last step it saw.
+function estimatedProgress(progress, offlineSeconds) {
+  const typical = Array.isArray(progress.typical_seconds) && progress.typical_seconds.length === progress.steps
+    ? progress.typical_seconds : null;
+  let step = progress.step;
+  let stepElapsed = progress.step_elapsed_seconds + offlineSeconds;
+  const elapsed = progress.elapsed_seconds + offlineSeconds;
+  if (!typical) {
+    return { step, elapsed, fraction: (step - 1) / progress.steps, remaining: null, longer: false };
+  }
+  while (offlineSeconds > 0 && step < 3 && stepElapsed > typical[step - 1]) {
+    stepElapsed -= typical[step - 1];
+    step += 1;
+  }
+  const total = sumSeconds(typical);
+  const before = sumSeconds(typical.slice(0, step - 1));
+  const within = Math.min(stepElapsed, typical[step - 1]);
+  return {
+    step, elapsed,
+    fraction: total > 0 ? Math.min(0.97, (before + within) / total) : (step - 1) / progress.steps,
+    remaining: Math.max(0, total - before - stepElapsed),
+    longer: stepElapsed > typical[step - 1] + 30,
+  };
+}
+
+function renderProgress(box, progress, offline) {
+  const offlineSeconds = offline && adminUpdateReceivedAt ? Math.max(0, (Date.now() - adminUpdateReceivedAt) / 1000) : 0;
+  const view = estimatedProgress(progress, offlineSeconds);
+  const card = document.createElement("div");
+  card.className = "update-progress";
+  const bar = document.createElement("progress");
+  bar.className = "update-progress-bar";
+  bar.max = 100;
+  bar.value = Math.round(view.fraction * 100);
+  bar.setAttribute("aria-label", "Update progress");
+  card.appendChild(bar);
+  let timing = `Step ${view.step} of ${progress.steps} · ${clockText(view.elapsed)} elapsed`;
+  if (view.longer) {
+    timing += " · taking longer than last time";
+  } else if (view.remaining !== null) {
+    timing += view.remaining >= 60 ? ` · about ${Math.ceil(view.remaining / 60)} min left` : " · less than a minute left";
+  }
+  card.appendChild(textElement("p", "status-meta", timing));
+  const list = document.createElement("ol");
+  list.className = "update-steps";
+  updateSteps.slice(0, progress.steps).forEach((label, index) => {
+    const number = index + 1;
+    const state = number < view.step ? "done" : number === view.step ? "current" : "next";
+    list.appendChild(textElement("li", `update-step update-step-${state}`,
+      (state === "done" ? "✓ " : state === "current" ? "▸ " : "○ ") + label));
+  });
+  card.appendChild(list);
+  const note = offline
+    ? "The web application is restarting, so this page cannot ask the updater right now. It reconnects by "
+      + (progress.typical_seconds ? "itself; until then the step is estimated from the last update."
+        : "itself; until then the last step it saw is shown.")
+    : view.step < 3 ? "This page loses its connection during steps 2 and 3 and reconnects by itself." : null;
+  if (note) {
+    card.appendChild(textElement("p", "status-meta", note));
+  }
+  box.appendChild(card);
 }
 
 let restoreOpenedFor = null;
@@ -964,6 +1066,7 @@ async function fetchAdminUpdate() {
     const response = await apiFetch(adminCsrfToken ? "/api/admin/update" : "/api/status/update-operation");
     const body = await response.json();
     adminUpdateReconnecting = false;
+    adminUpdateReceivedAt = Date.now();
     adminUpdateState = response.ok || body.configured === false ? body : { configured: true, phase: "idle" };
     renderSoftwareUpdates();
     if (adminUpdateState.busy) {

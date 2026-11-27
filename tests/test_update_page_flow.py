@@ -167,6 +167,20 @@ class PageFlowTests(unittest.TestCase):
             "retention": "Older backups are removed."}}}, include_review=True)["review"]
         self.assertEqual(review["retention"], "Older backups are removed.")
 
+    def test_sanitize_passes_the_progress_only_while_running(self):
+        good = {"step": 3, "steps": 5, "elapsed_seconds": 75, "step_elapsed_seconds": 10,
+                "typical_seconds": [5, 60, 190, 20, 10]}
+        def progress(value, phase="running"):
+            return sanitize_status({"phase": phase, "progress": value}, include_review=False)["progress"]
+        self.assertEqual(progress({**good, "operation": "dropped"}), good)
+        self.assertIsNone(progress(good, "succeeded"))
+        self.assertIsNone(progress({**good, "typical_seconds": [1, 2]})["typical_seconds"])
+        self.assertIsNone(progress({**good, "typical_seconds": [1, 2, "3", 4, 5]})["typical_seconds"])
+        for bad in (None, "3", {**good, "step": 6}, {**good, "step": 0}, {**good, "elapsed_seconds": -1},
+                    {**good, "step": True}, {**good, "steps": None}):
+            with self.subTest(bad=bad):
+                self.assertIsNone(progress(bad))
+
     def test_sanitize_passes_the_restorable_backups(self):
         good = {"operation": "e98f54a1-625a-428f-b4d5-574d1b357557", "taken_at": "2026-11-23T00:04:18.238842+00:00",
                 "revision": "a" * 40, "size_bytes": 108130296, "reason": "before the update that failed"}
