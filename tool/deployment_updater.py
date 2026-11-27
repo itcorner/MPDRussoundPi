@@ -49,6 +49,7 @@ import time
 from typing import Any, Callable
 from uuid import uuid4
 
+from mpdrussoundpi.common import dataschema
 from mpdrussoundpi.common.atomicjson import write_json
 from tool.deployment_channel import Channel, ChannelError
 from tool.deployment_compose import UPDATER_SOCKET_DIR, ComposeError, private_read
@@ -113,6 +114,13 @@ def _restorable_backups(state: dict[str, Any]) -> list[dict[str, Any]]:
              "revision": restore.get("revision"), "size_bytes": restore.get("size_bytes"),
              "reason": "before the update that failed"}]
 
+# The application's versioned files below the deployment's data directory (dataschema).
+DATA_FILES = {
+    "config": "config/russound_config.json",
+    "state": "data/russound_state.json",
+    "lockout": "data/admin-lockout.json",
+}
+
 class UpdaterError(ValueError):
     """A request the updater refuses; the message is safe to show."""
 
@@ -164,7 +172,8 @@ class Updater:
                  transaction: Callable[..., dict[str, Any]] = run_transaction,
                  clock: Callable[[], float] = time.time,
                  target: Callable[[], dict[str, Any]] | None = None,
-                 system: SystemUpdates | None = None, gate: Any = None) -> None:
+                 system: SystemUpdates | None = None, gate: Any = None,
+                 target_schemas: Callable[[dict[str, Any]], dict[str, tuple[int, int]] | None] | None = None) -> None:
         identity(spec["deployment"])
         self.spec = spec
         self.evidence = evidence
@@ -174,6 +183,7 @@ class Updater:
         self._transaction = transaction
         self._clock = clock
         self._target = target or (lambda: StateStore().status())
+        self._target_schemas = target_schemas or self._target_schemas_registry
         self.system = system
         self.gate = gate or threading.Lock()  # shared with the system part: one operation starts at a time
         self._lock = threading.Condition()
@@ -228,6 +238,51 @@ class Updater:
             self._lock.notify_all()
 
     # --------------------------------------------------------------- candidates
+
+    def _schema_refusal(self, candidate: dict[str, Any]) -> str | None:
+        """Why the candidate's web image cannot read the data on this host, checked before anything stops.
+
+        docs/plans/general_open_persisted-data-schema-version.md. A restore needs no check: it brings
+        back the old images with their own backed-up data.
+        """
+        images = candidate.get("images") if isinstance(candidate.get("images"), dict) else {}
+        if "web" not in images:
+            return None  # no web application, no application data
+        data = self._data_versions()
+        if not data:
+            return None
+        try:
+            target = self._target_schemas(candidate)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            logger.warning("Data schema label could not be read: %s", error)
+            return "The new version's data format could not be checked on Docker Hub. Nothing was interrupted."
+        problems = dataschema.problems(target, data)
+        if not problems:
+            return None
+        revision = str(candidate.get("revision") or "")[:7]
+        return (f"The new version {revision} cannot read the data on this Pi: " + "; ".join(problems)
+                + ". Nothing was interrupted.")
+
+    def _data_versions(self) -> dict[str, int]:
+        """Schema versions of the application's files in the deployment's data directory."""
+        if not isinstance(self.spec.get("data_dir"), str):
+            return {}
+        root = Path(self.spec["data_dir"])
+        found: dict[str, int] = {}
+        for name, relative in DATA_FILES.items():
+            try:
+                found[name] = dataschema.version_of(json.loads((root / relative).read_text(encoding="utf-8")))
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError):
+                continue  # a broken file is the application's to report; it is not a newer format
+        return found
+
+    def _target_schemas_registry(self, candidate: dict[str, Any]) -> dict[str, tuple[int, int]] | None:
+        from mpdrussoundpi.common.imageregistry import Registry, platform_config
+        web = candidate["images"]["web"]
+        found = platform_config(Registry(), web["repository"], web["index_digest"], self.spec["platform"])
+        return dataschema.parse_label(found["labels"].get(dataschema.LABEL))
 
     def _resolve_registry(self, gateway: str, platform: str) -> dict[str, Any]:
         from tool.deployment_images import resolve
@@ -360,6 +415,10 @@ class Updater:
         self._set(candidate_revision=candidate.get("revision"))
         if isinstance(installed, dict) and installed.get("revision") == candidate.get("revision"):
             self._set(phase="up_to_date", error=None)
+            return
+        refusal = self._schema_refusal(candidate)
+        if refusal:
+            self._set(phase="failed_before_interruption", error=refusal)
             return
         request = {"action": "deploy", "spec": self.spec, "selection": candidate, "operation": operation,
                    "update": True}

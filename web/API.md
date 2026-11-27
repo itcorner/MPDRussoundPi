@@ -680,8 +680,13 @@ Returns the editable zone-configuration payload used by the configuration page.
 - Missing/invalid config returns `config_required: true`, a descriptive `message`,
   and editable defaults (one six-zone controller and six disabled source slots).
   These defaults are not persisted or used to connect to hardware until saved.
-- `config_writable` indicates whether a destination path is configured, not an
-  OS permission check; save errors describe filesystem/permission failures.
+- `config_writable` indicates whether a destination path is configured and the
+  file may be saved, not an OS permission check; save errors describe
+  filesystem/permission failures.
+- `read_only` is `null`, or the reason the settings are shown but cannot be
+  saved: they were saved by a newer version of the application (a higher
+  `schema_version` than this version reads). `config_writable` is then `false`.
+  The `schema_version` field of the file is not part of `config`.
 - `configuration.load_state` is `missing`, `valid`, `invalid` (not JSON or
   failing validation) or `unreadable`.
 - `configuration.revision` is an opaque token for the exact config file bytes
@@ -824,7 +829,9 @@ Omitting `shortcuts` preserves the existing shortcuts, pruning removed zone targ
   - Header missing: `428` with `code: "config_precondition_required"`.
   - Config file changed since it was loaded (another tab, device or a file
     edit): `409` with `code: "config_conflict"`.
-  - Both errors include `save_outcome: "not-saved"` and the usual `error` text, and
+  - Settings saved by a newer application version (see `read_only` above):
+    `409` with `code: "config_read_only"`.
+  - All three errors include `save_outcome: "not-saved"` and the usual `error` text, and
     write nothing. Reload with `GET /api/config` and reapply the changes; there is
     no force option or wildcard revision.
 - Config and state files are replaced atomically: the new file is synced before

@@ -589,6 +589,9 @@ function renderEditor(payload) {
   baselineSourceSlotsHash = hashSourceSlots(payload.source_slots || []);
   hasUnsavedChanges = false;
 
+  if (payload.read_only) {
+    setMessage(payload.read_only, true);  // saved by a newer version: shown, not saved
+  }
   if (payload.config_required) {
     configEmptyState.hidden = false;
     configEmptyMessage.textContent = payload.config_writable === false

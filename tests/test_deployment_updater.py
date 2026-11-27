@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import os
 from pathlib import Path
 import tempfile
@@ -350,6 +351,65 @@ class UpdateFlowTests(Fixture):
                 updater.handle(bad)
         with self.assertRaisesRegex(UpdaterError, "no pending review"):
             updater.handle({"op": "approve", "operation": "x", "digest": "y", "actor": ACTOR})
+
+
+class DataSchemaTests(Fixture):
+    """docs/plans/general_open_persisted-data-schema-version.md: refuse an update whose image cannot read the data."""
+
+    def make_with_data(self, config=None, state=None, schemas=None):
+        data = self.root / "data"
+        (data / "config").mkdir(parents=True)
+        (data / "data").mkdir()
+        if config is not None:
+            (data / "config" / "russound_config.json").write_text(json.dumps(config))
+        if state is not None:
+            (data / "data" / "russound_state.json").write_text(json.dumps(state))
+        (data / "data" / "admin-lockout.json").write_text("not json")  # broken files are the application's
+        self.asked = []
+
+        def target_schemas(found):
+            self.asked.append(found["revision"])
+            if isinstance(schemas, Exception):
+                raise schemas
+            return schemas
+
+        self.transaction = FakeTransaction()
+        return Updater({**SPEC, "data_dir": str(data)}, self.evidence, self.state,
+                       resolve=lambda gateway, platform: candidate(), committed=lambda: self.installed,
+                       transaction=self.transaction, target=lambda: self.target(), target_schemas=target_schemas)
+
+    def test_an_image_that_cannot_read_newer_data_is_refused_before_anything_stops(self):
+        updater = self.make_with_data(config={"schema_version": 2, "zones": []}, state={"zones": []})
+        updater.handle({"op": "review", "actor": ACTOR})
+        status = self.wait_for(updater, "failed_before_interruption")
+        self.assertIn("cannot read the data on this Pi: the settings (format 2; that version reads up to 1)",
+                      status["error"])
+        self.assertIn("Nothing was interrupted", status["error"])
+        self.assertEqual(self.transaction.requests, [], "no transaction started")
+        self.assertEqual(self.asked, [NEWER])
+
+    def test_a_compatible_image_and_an_image_without_the_label_proceed(self):
+        for schemas in ({"config": (1, 2), "state": (1, 1), "lockout": (1, 1)}, None):
+            with self.subTest(schemas=schemas):
+                self.state.unlink(missing_ok=True)
+                updater = self.make_with_data(config={"schema_version": 1}, state={"zones": []}, schemas=schemas)
+                updater.handle({"op": "review", "actor": ACTOR})
+                self.wait_for(updater, "awaiting_approval")
+                updater.handle({"op": "cancel", "operation": updater.status()["operation"]})
+                self.wait_for(updater, "cancelled")
+                shutil.rmtree(self.root / "data")
+
+    def test_an_unreadable_label_refuses_and_no_data_needs_no_check(self):
+        updater = self.make_with_data(config={"zones": []}, schemas=OSError("registry down"))
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.assertIn("could not be checked", self.wait_for(updater, "failed_before_interruption")["error"])
+        shutil.rmtree(self.root / "data")
+        self.state.unlink()
+        empty = self.make_with_data(schemas=OSError("never asked"))
+        (self.root / "data" / "data" / "admin-lockout.json").unlink()
+        empty.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(empty, "awaiting_approval")
+        self.assertEqual(self.asked, [], "a fresh installation has nothing to check")
 
 
 class SystemRoutingTests(Fixture):

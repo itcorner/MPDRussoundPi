@@ -20,6 +20,7 @@ import tempfile
 from typing import Any, BinaryIO, IO
 from uuid import uuid4
 
+from mpdrussoundpi.common import dataschema
 from tool.deployment_files import FileSafetyError, checked_directory
 from tool.deployment_images import DIGEST, REVISION, SOURCE, SelectionError, validate_request
 from tool.deployment_inputs import attributes, read_file, write_file
@@ -403,6 +404,7 @@ def build(source: Path, revision: str, parent: Path, gateway: str, platform: str
                          "--label", "org.opencontainers.image.source=" + SOURCE,
                          "--build-arg", "BUILD_REVISION=" + revision,
                          "--build-arg", "BUILD_TIME=" + built_at, "--build-arg", "BUILD_SOURCE=local",
+                         *(["--label", f"{dataschema.LABEL}={dataschema.label()}"] if name == "web" else []),
                          "--tag", tag, "-f", DOCKERFILES[name], "."],
                         cwd=context_root / "context", log=log, timeout=1800)
                 inspected = json.loads(command(docker + ["image", "inspect", tag]))[0]

@@ -40,6 +40,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from mpdrussoundpi.common import dataschema
 from mpdrussoundpi.common.atomicjson import write_json
 
 DEFAULT_PASSWORD_FILE = "/run/secrets/russound-admin.scrypt"
@@ -114,6 +115,7 @@ class AdminAuth:
         self._override_file = Path(override_file) if override_file else None
         self._hash_caches: dict[Path, tuple[tuple[int, int, int], str | None]] = {}
         self._lockout_file = Path(lockout_file) if lockout_file else None
+        self._lockout_read_only = False
         self._clock = clock
         self._lock = threading.Lock()
         self._sessions: dict[str, Session] = {}
@@ -164,16 +166,21 @@ class AdminAuth:
         if self._lockout_file is not None:
             try:
                 stored = json.loads(self._lockout_file.read_text(encoding="utf-8"))
+                stored, _ = dataschema.load("lockout", stored)
                 if isinstance(stored, dict):
                     state.update({key: stored[key] for key in state if key in stored})
+            except dataschema.NewerSchemaError as exc:
+                # Written by a newer version: counted in memory here, the file is left alone.
+                self._lockout_read_only = True
+                logging.getLogger(__name__).warning("Not saving the login lockout: %s", exc)
             except (OSError, ValueError):
                 pass
         return state
 
     def _save_lockout(self) -> None:
-        if self._lockout_file is not None:
+        if self._lockout_file is not None and not self._lockout_read_only:
             try:
-                write_json(self._lockout_file, self._lockout)
+                write_json(self._lockout_file, dataschema.stamp("lockout", self._lockout))
             except OSError:
                 logging.getLogger(__name__).warning("Could not persist the administrator lockout state")
 

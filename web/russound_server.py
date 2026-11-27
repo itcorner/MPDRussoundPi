@@ -38,6 +38,7 @@ from web.updater_client import UpdaterClient, UpdaterRefused, UpdaterUnavailable
 from web.russound_controller import backend_status_kind
 from web.playback_status import PlaybackAgentConfig, PlaybackCommandError, PlaybackStatusClient
 from web.input_playback import resolve_input_names
+from mpdrussoundpi.common import dataschema
 from mpdrussoundpi.common.tunein import TuneInCatalog, TuneInError
 from mpdrussoundpi.common.runtimelogging import SafeFormatter, configure_console
 
@@ -637,6 +638,10 @@ class RussoundHTTPServer:
             except ConfigConflictError as exc:
                 return self._no_store(jsonify({
                     "error": str(exc), "code": "config_conflict", "message": str(exc), "save_outcome": "not-saved",
+                })), 409
+            except dataschema.NewerSchemaError as exc:
+                return self._no_store(jsonify({
+                    "error": str(exc), "code": "config_read_only", "message": str(exc), "save_outcome": "not-saved",
                 })), 409
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
