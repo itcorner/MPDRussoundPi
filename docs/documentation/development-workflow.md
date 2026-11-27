@@ -86,6 +86,27 @@ uses credentials only in its trusted publishing step. See the
 Third-party Actions are pinned to commit SHAs and checkout does not persist
 credentials. There are no tag-triggered release workflows yet.
 
+## Persisted data formats
+
+The web application's settings (`russound_config.json`), room state
+(`russound_state.json`) and login lockout (`admin-lockout.json`) carry a
+top-level `schema_version`; a file without it is version 1. The versions live
+in `mpdrussoundpi/common/dataschema.py`, which also produces the web image's
+`net.itcorner.mpdrussoundpi.data-schema` label; the updater refuses an update
+whose image cannot read the data on the host, before anything stops, and an
+application that finds a newer file shows it read-only and never rewrites it
+([plan](../plans/general_open_persisted-data-schema-version.md)).
+
+- A purely additive, optional field needs no new version: older versions ignore
+  unknown top-level keys.
+- A change an older version would misread or drop (a rename, a new meaning, a
+  required field, a different nesting) raises `Schema.current`, adds the
+  one-step migration in `MIGRATIONS` and a test with a recorded file of the old
+  version. Mention it in the PR and the release notes: going back to an older
+  version then needs a backup from before the migration.
+- Raise `Schema.oldest` only together with a release note; versions below it
+  can no longer be read.
+
 ## Promoting a release
 
 1. Integrate and validate changes on `develop`.

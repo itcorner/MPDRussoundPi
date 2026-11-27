@@ -3,7 +3,7 @@
 **Status:** new (2026-11-27). Proposed on 2026-11-27; the user asked to work out
 the channel selection and its implications before implementing it, and
 confirmed decisions 1 to 3 the same day. Builds on
-[Schema version for persisted data](./general_new_persisted-data-schema-version.md)
+[Schema version for persisted data](./general_open_persisted-data-schema-version.md)
 and on stage 6 of the [CI/CD plan](./general_open_cicd-docker-release.md), which
 prepared the release publication.
 
@@ -162,6 +162,6 @@ incompatible target before anything is stopped.
 
 - [CI/CD pipeline and Docker image release path](./general_open_cicd-docker-release.md):
   publication rules and stage 6.
-- [Schema version for persisted data](./general_new_persisted-data-schema-version.md).
+- [Schema version for persisted data](./general_open_persisted-data-schema-version.md).
 - [User-triggered image updates](./general_open_user-triggered-image-updates.md):
   the updater and the review.

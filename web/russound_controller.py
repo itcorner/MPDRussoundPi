@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from mpdrussoundpi.common import dataschema
+
 from .config_store import ConfigStore, FileSnapshot, JsonFileStore
 from .config_types import backend_endpoint_metadata, coerce_russound_config, env_str, validate_russound_config
 from .russound_backend import RussoundBackend
@@ -53,6 +55,7 @@ class RussoundController:
         self._revision_key = secrets.token_bytes(32)
         self._config_store: ConfigStore | None = None
         self._state_store: JsonFileStore | None = None
+        self._state_read_only_logged = False
         self.config_path = _resolve_config_path(config_path)
         self.state_path = _resolve_state_path(state_path)
         self._backend_health: dict[str, Any] | None = None
@@ -80,7 +83,7 @@ class RussoundController:
     def state_path(self, path: str | Path | None) -> None:
         resolved = _resolve_state_path(path)
         if self._state_store is None or resolved != self._state_store.path:
-            self._state_store = JsonFileStore(resolved, error_prefix="Cannot load state")
+            self._state_store = JsonFileStore(resolved, error_prefix="Cannot load state", schema="state")
 
     def config_snapshot(self) -> FileSnapshot:
         """The current config file contents as one consistent snapshot."""
@@ -178,10 +181,12 @@ class RussoundController:
             )
 
         return {
-            "config": {key: value for key, value in config.items() if key != "notes"},
+            "config": {key: value for key, value in config.items() if key not in ("notes", dataschema.FIELD)},
             "config_required": config_required,
             "message": self.config_message() if config_required else "",
-            "config_writable": self.config_path is not None,
+            # Settings saved by a newer application version are shown, never saved (dataschema).
+            "config_writable": self.config_path is not None and self.config_snapshot().read_only is None,
+            "read_only": self.config_snapshot().read_only,
             "effective_backend": backend_endpoint_metadata(None if config_required else coerce_russound_config(config)),
             "backend_overrides": {
                 name: value for name in ("RUSSOUND_BACKEND_HOST", "RUSSOUND_BACKEND_PORT")
@@ -210,6 +215,8 @@ class RussoundController:
                 "The configuration was changed in another tab or by another device. "
                 "Reload the page to load the latest configuration, then reapply your changes."
             )
+        if self._config_store is not None:
+            self._config_store.writable()  # settings saved by a newer version stay read-only
         config = self.load_config()
         replacing_invalid = config is None
         if config is None:
@@ -417,8 +424,8 @@ class RussoundController:
                 backup_path = Path(backup.name)
             shutil.copyfile(self.config_path, backup_path)
             _fsync_path(backup_path)
-        _persist_config(self.config_path, updated_config)
         assert self._config_store is not None
+        _persist_config(self.config_path, self._config_store.prepare(updated_config))
         self._config_store.record_write()
         return self.build_config_editor_payload()
 
@@ -625,8 +632,17 @@ class RussoundController:
 
     def persist_state(self, state: RussoundState | dict[str, Any] | None = None) -> Path:
         assert self._state_store is not None
+        try:
+            self._state_store.writable()
+        except dataschema.NewerSchemaError as exc:
+            # The room state is a cache of the amplifier's state: rooms keep working,
+            # only saving it is skipped while a newer version's file is in place.
+            if not self._state_read_only_logged:
+                LOGGER.warning("Not saving the room state: %s", exc)
+                self._state_read_only_logged = True
+            return self._state_store.path
         payload = state if state is not None else RussoundState()
-        prepared_payload = _prepare_state_payload_for_persistence(payload)
+        prepared_payload = self._state_store.prepare(_prepare_state_payload_for_persistence(payload))
         path = _persist_json_file(self._state_store.path, prepared_payload)
         self._state_store.record_write()
         return path

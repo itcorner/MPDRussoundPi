@@ -51,6 +51,15 @@ if [[ "$health" != healthy ]]; then
     exit 1
 fi
 
+# The updater decides from this label whether the image can read the data on a host
+# (docs/plans/general_open_persisted-data-schema-version.md): it must match the code.
+labelled=$(docker image inspect --format '{{index .Config.Labels "net.itcorner.mpdrussoundpi.data-schema"}}' "$image")
+expected=$(docker exec "$container" python -c 'from mpdrussoundpi.common.dataschema import label; print(label())')
+if [[ -z "$labelled" || "$labelled" != "$expected" ]]; then
+    echo "Data schema label '$labelled' does not match the image's code '$expected'" >&2
+    exit 1
+fi
+
 docker exec -i "$container" python - "$arch" <<'PY'
 import json
 import os
