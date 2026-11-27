@@ -521,6 +521,11 @@ enabled; stable/RC publication and deployments remain disabled.
 
 ### Stage 6: Enable the release path (separate approval required)
 
+*2026-11-27:* the release path, the first version number and the channel
+selection on the Status page are worked out in
+[Release channels](./general_new_release-channels.md); its data-compatibility
+part in [Schema version for persisted data](./general_new_persisted-data-schema-version.md).
+
 - [ ] Validate the release candidate and stable baseline, including manual
       hardware acceptance where relevant; CI does not certify physical audio.
 - [ ] Enable protected prerelease/stable publication and release approvals.
