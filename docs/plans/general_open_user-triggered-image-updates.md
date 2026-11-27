@@ -358,7 +358,9 @@ operator.
 
 ### Cross-version restore (deferred)
 
-Deferred on 2026-11-25. Persisted data (configuration, state, password file) has
+Deferred on 2026-11-25 (planned on 2026-11-27 in
+[Schema version for persisted data](./general_new_persisted-data-schema-version.md)).
+Persisted data (configuration, state, password file) has
 no schema version yet, so a rehearsal could only show that today's formats
 happen to match; it could not detect an incompatible change. Add a schema
 version first, then rehearse. Until then, note that a restore brings back the
