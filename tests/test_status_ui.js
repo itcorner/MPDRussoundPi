@@ -555,6 +555,52 @@ test("software updates: the channel is shown to everyone and changed by the admi
   assert.equal(view.updatesState.textContent, "Waiting for a release");
 });
 
+test("software updates: an open channel list survives the refresh and is redrawn once it loses the focus", () => {
+  const view = renderStatusView(signedIn);
+  const status = { configured: true, phase: "idle", busy: false, channel: "development" };
+  const select = renderUpdates(view, availableUpdates, status).find((node) => node.tagName === "SELECT");
+  view.context.document.activeElement = select;
+  const again = renderUpdates(view, { ...availableUpdates, checked_at: new Date().toISOString() }, status);
+  assert.equal(again.find((node) => node.tagName === "SELECT"), select, "the same, still open list");
+  view.context.document.activeElement = null;
+  const later = renderUpdates(view, availableUpdates, status);
+  assert.notEqual(later.find((node) => node.tagName === "SELECT"), select);
+  assert.ok(later.find((node) => node.tagName === "SELECT"));
+});
+
+test("software updates: a running update shows its step, the time and a progress bar, also while the page is offline", () => {
+  const view = renderStatusView(signedIn);
+  const typical = [5, 60, 190, 20, 10];
+  const running = (progress) => ({ configured: true, phase: "running", busy: true, kind: "update", progress });
+  let block = renderUpdates(view, availableUpdates,
+    running({ step: 1, steps: 5, elapsed_seconds: 3, step_elapsed_seconds: 3, typical_seconds: typical }));
+  const text = block.allText();
+  assert.match(text, /Step 1 of 5 · 0:03 elapsed · about 5 min left/);
+  assert.match(text, /▸ Preparing/);
+  assert.match(text, /○ Stopping the services and taking a backup/);
+  assert.match(text, /loses its connection during steps 2 and 3/);
+  assert.equal(block.find((node) => node.tagName === "PROGRESS").value, 1);
+
+  // Offline 70 s after the page last saw step 2 (10 s into it): by last time's durations, step 3.
+  vm.runInContext("adminUpdateReconnecting = true; adminUpdateReceivedAt = Date.now() - 70000;", view.context);
+  block = renderUpdates(view, availableUpdates,
+    running({ step: 2, steps: 5, elapsed_seconds: 15, step_elapsed_seconds: 10, typical_seconds: typical }));
+  assert.match(block.allText(), /Step 3 of 5 · 1:25 elapsed · about 4 min left/);
+  assert.match(block.allText(), /✓ Stopping the services and taking a backup/);
+  assert.match(block.allText(), /▸ Loading and starting the new version/);
+  assert.match(block.allText(), /estimated from the last update/);
+  assert.equal(block.find((node) => node.tagName === "PROGRESS").value, 30);
+  assert.doesNotMatch(block.allText(), /Waiting for the web application/);
+
+  // The first update has no durations yet: the last step seen, and no time estimate.
+  block = renderUpdates(view, availableUpdates,
+    running({ step: 2, steps: 5, elapsed_seconds: 15, step_elapsed_seconds: 10, typical_seconds: null }));
+  assert.match(block.allText(), /Step 2 of 5 · 1:25 elapsed/);
+  assert.doesNotMatch(block.allText(), /left/);
+  assert.match(block.allText(), /last step it saw/);
+  vm.runInContext("adminUpdateReconnecting = false;", view.context);
+});
+
 test("software updates: Check now sits in one group with the label and the age of the last check", () => {
   const view = renderStatusView(signedIn);
   const block = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });

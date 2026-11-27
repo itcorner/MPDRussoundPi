@@ -353,6 +353,49 @@ class UpdateFlowTests(Fixture):
             updater.handle({"op": "approve", "operation": "x", "digest": "y", "actor": ACTOR})
 
 
+class ProgressTests(Fixture):
+    def test_steps_follow_the_pi_record_and_the_durations_are_kept_for_the_next_estimate(self):
+        clock = [1_800_000_000.0]
+        updater = self.make(clock=lambda: clock[0])
+        operation = updater.handle({"op": "review", "actor": ACTOR})["operation"]
+        review = self.wait_for(updater, "awaiting_approval")["review"]
+        self.assertIsNone(updater.status()["progress"], "no progress before the confirmation")
+        self.target = lambda: target_record()  # nothing reserved yet: still preparing, never "finished"
+        updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
+        self.wait_for(updater, "running")
+        updater._progress_tick(operation)
+        self.assertEqual(updater.status()["progress"], {"step": 1, "steps": 5, "elapsed_seconds": 0,
+                                                         "step_elapsed_seconds": 0, "typical_seconds": None})
+        for seconds, phase, step in ((5, "inputs-verified", 2), (60, "backup-complete", 3), (90, "prepared", 3),
+                                     (100, "apply-complete", 4)):
+            clock[0] += seconds
+            self.target = lambda phase=phase: target_record({"operation": operation, "phase": phase})
+            updater._progress_tick(operation)
+            self.assertEqual(updater.status()["progress"]["step"], step, "never backwards")
+        clock[0] += 20
+        self.target = lambda: target_record()
+        updater._progress_tick(operation)
+        progress = updater.status()["progress"]
+        self.assertEqual((progress["step"], progress["elapsed_seconds"], progress["step_elapsed_seconds"]), (5, 275, 0))
+        self.assertEqual(json.loads(self.state.read_text())["progress"]["step"], 5, "on disk for a restarted updater")
+        clock[0] += 10
+        self.transaction.release.set()
+        status = self.wait_for(updater, "succeeded")
+        self.assertIsNone(status["progress"])
+        self.assertEqual(json.loads(self.state.read_text())["timings"], [5, 60, 190, 20, 10])
+        second = updater.handle({"op": "review", "actor": ACTOR})["operation"]
+        review = self.wait_for(updater, "awaiting_approval")["review"]
+        self.transaction.release.clear()
+        updater.handle({"op": "approve", "operation": second, "digest": review["digest"], "actor": ACTOR})
+        self.wait_for(updater, "running")
+        self.assertEqual(updater.status()["progress"]["typical_seconds"], [5, 60, 190, 20, 10])
+        self.transaction.outcome = "fail"
+        self.transaction.release.set()
+        self.assertIsNone(self.wait_for(updater, "failed")["progress"])
+        self.assertEqual(json.loads(self.state.read_text())["timings"], [5, 60, 190, 20, 10],
+                         "a failed update keeps the last good durations")
+
+
 class DataSchemaTests(Fixture):
     """docs/plans/general_open_persisted-data-schema-version.md: refuse an update whose image cannot read the data."""
 
