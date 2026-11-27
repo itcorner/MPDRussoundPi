@@ -547,8 +547,13 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   starting the new version, 4 checks, 5 cleanup; read from the Pi's deployment
   record), `elapsed_seconds` since the confirmation, `step_elapsed_seconds`, and
   `typical_seconds` (seconds per step of the last successful update, or `null`).
-  The web application is stopped during steps 2 and 3, so the page estimates
-  them from `typical_seconds`.
+  The web application is stopped during steps 2 and 3. Then the page reads
+  `/update-status.json`, which the HTTPS proxy serves from the updater
+  directly (`schema_version`, `phase`, `kind`, `operation`, `busy`, `error`,
+  `progress` with `step`, `steps`, `started_at` and `step_started_at` in
+  seconds since the epoch and `typical_seconds`, `updated_at`; compared with
+  the response's `Date` header). Without the proxy it estimates the steps from
+  `typical_seconds`.
 - `GET /api/admin/update` (administrator session): the same plus `review`
   (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `version`
   (`X.Y.Z` for a release, otherwise `null`), `images`,

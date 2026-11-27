@@ -15,6 +15,11 @@ how to roll it back. Background and decisions:
   as Chrome upgrade `http://` links to `https://` on their own. On a device
   that does not trust the CA yet, that means one certificate warning before
   the page.
+- Port 443 also serves the updater's public status at **`/update-status.json`**
+  (a static file the updater writes to `/run/mpdrussoundpi-updater-public/`,
+  never cached). The Status page reads it while the web application restarts
+  during an update, so it can show the real step instead of an estimate. It
+  holds only what `GET /api/status/update-operation` shows without a login.
 - The certificates come from a **local CA owned by this installation**. Its
   name constraints limit it to the private address ranges and the Pi's names
   (`musicpi.local`, `musicpi` by default). A device that trusts it trusts it

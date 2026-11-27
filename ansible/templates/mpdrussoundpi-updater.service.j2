@@ -19,6 +19,10 @@ RestartSec=5
 TimeoutStopSec=30
 KillMode=control-group
 UMask=0077
+# The public update status (tool/deployment_updater.PUBLIC_STATUS), read by the HTTPS proxy
+# while the web application restarts. Removed when the updater stops.
+RuntimeDirectory=mpdrussoundpi-updater-public
+RuntimeDirectoryMode=0755
 
 [Install]
 WantedBy=multi-user.target

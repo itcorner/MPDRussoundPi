@@ -20,6 +20,13 @@ https://:{{ web_tls_https_port }} {
 		root * {{ web_tls_dir }}/public
 		file_server
 	}
+	# The updater's public status: the Status page reads it while the web application restarts
+	# during an update (tool/deployment_updater.PUBLIC_STATUS). Only this one file, never cached.
+	handle /update-status.json {
+		root * {{ web_tls_updater_public_dir }}
+		header Cache-Control "no-store"
+		file_server
+	}
 	handle {
 		reverse_proxy 127.0.0.1:{{ web_tls_upstream_port }} {
 			# /api/events is a server-sent event stream: never buffer it.

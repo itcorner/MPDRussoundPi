@@ -18,6 +18,7 @@ ANSIBLE = Path(sys.executable).parent / "ansible-playbook"
 VALUES = {
     "web_tls_admin_port": 2021, "web_tls_dns_names": ["musicpi.local", "musicpi"], "web_tls_https_port": 443,
     "web_tls_http_port": 80, "web_tls_upstream_port": 8000, "web_tls_dir": "/etc/mpdrussoundpi-web-tls",
+    "web_tls_updater_public_dir": "/run/mpdrussoundpi-updater-public",
     "web_tls_caddy_binary": "/usr/bin/caddy", "web_tls_caddyfile": "/etc/caddy/mpdrussoundpi-web.Caddyfile",
     "web_tls_tool": "/usr/local/lib/mpdrussoundpi/web_tls.py", "web_tls_unit": "mpdrussoundpi-web-proxy",
     "web_tls_ensure_args": ["ensure", "--dir", "/etc/mpdrussoundpi-web-tls", "--dns=musicpi.local"],
@@ -54,6 +55,18 @@ class WebTlsTemplateTests(unittest.TestCase):
         self.assertIn("redir https://{host}{uri} 308", text)
         self.assertNotIn("ca.key", text)
         self.assertIn("redir https://{host}:8443{uri} 308", render("web-proxy.Caddyfile.j2", web_tls_https_port=8443))
+
+    def test_caddyfile_serves_only_the_updaters_public_status_file(self):
+        https_site, http_site = render("web-proxy.Caddyfile.j2").split("http://:80 {")
+        route = https_site.split("handle /update-status.json {")[1].split("}")[0]
+        self.assertIn("root * /run/mpdrussoundpi-updater-public", route)
+        self.assertIn('header Cache-Control "no-store"', route)
+        self.assertIn("file_server", route)
+        self.assertNotIn("browse", route)
+        self.assertLess(https_site.index("handle /update-status.json"), https_site.index("reverse_proxy"))
+        self.assertNotIn("update-status", http_site, "port 80 only redirects")
+        self.assertEqual(yaml.safe_load((ROLE / "defaults/web_tls.yml").read_text())["web_tls_updater_public_dir"],
+                         "/run/mpdrussoundpi-updater-public")
 
     def test_proxy_unit_binds_low_ports_with_one_capability_only(self):
         text = render("web-proxy.service.j2")
