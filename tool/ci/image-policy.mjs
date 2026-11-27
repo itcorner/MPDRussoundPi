@@ -101,6 +101,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (MODE === "prepare-development") {
     event = imageEventPolicy({mode: "publish", eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF});
     if (event.channel !== "development") throw new Error("Only development push preparation is enabled");
+  } else if (MODE === "prepare-release") {
+    // A pushed vX.Y.Z or vX.Y.Z-rc.N tag; channel and version come only from the tag.
+    event = imageEventPolicy({mode: "publish", eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF});
+    if (!["candidate", "stable"].includes(event.channel)) throw new Error("Release preparation requires a version tag");
   } else {
     if (MODE !== "build-only") throw new Error("Publication is disabled; only build-only is supported");
     event = imageEventPolicy({eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF,
@@ -110,6 +114,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const policy = imagePolicy(event.channel, event.version, GITHUB_SHA);
   console.log(JSON.stringify({...event, sha: GITHUB_SHA, ...policy}));
   if (GITHUB_OUTPUT) {
-    appendFileSync(GITHUB_OUTPUT, `version=${policy.exact}\n`);
+    appendFileSync(GITHUB_OUTPUT, `version=${policy.exact}\nchannel=${event.channel}\n`);
   }
 }

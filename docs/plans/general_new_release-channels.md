@@ -145,6 +145,8 @@ incompatible target before anything is stopped.
 - [ ] **1. Release publication** (CI/CD stage 6): serialized, non-regressing
   alias publication, environment approval for release tags, the release PR
   `develop` → `main` with a merge commit, and the release notes.
+  *Wired 2026-11-27, switched off* (see the notes below); open until the
+  settings exist and the first candidate is published.
 - [x] **2. Updater: release candidates and the stored channel** (implemented
   2026-11-27). Resolution of
   `latest`, the release candidate format, the `channel` request, the channel in
@@ -185,6 +187,28 @@ incompatible target before anything is stopped.
 - **Not yet:** release publication (stage 1) is still disabled, so the stable
   channel finds no release until `0.9.0` is published; the updater then reports
   that the newest release could not be resolved.
+
+## Implementation notes (2026-11-27, stage 1)
+
+- **Workflow:** `images-build-only.yml` also runs for `v*` tag pushes. The
+  policy step derives channel and version only from the tag
+  (`prepare-release`); both images are always built for a release. The job
+  `publish-release` runs only with `RELEASE_PUBLICATION_ENABLED=true`, in the
+  GitHub environment `release` (required reviewers), and first checks that the
+  environment really has a reviewer. It publishes with the existing publisher
+  (`MODE=publish-release`: tag push only, channel and version must match the
+  tag, no recovery mode), then pulls and smoke-tests the published digests.
+- **Concurrency:** preparation is grouped per ref type, so a release tag never
+  waits behind, or is replaced by, queued `develop` runs; publication stays
+  serialized in one group for all channels.
+- **Failures:** never repaired in place; the next candidate or patch supersedes
+  a partly published version.
+- **Procedure, gates and the settings to create:**
+  [Docker image release](../documentation/docker-image-release.md#releases).
+- **Still needed before `0.9.0-rc.1`:** the `release` environment with the
+  maintainer as required reviewer (tag rule `v*`), the variable
+  `RELEASE_PUBLICATION_ENABLED=true`, optionally the Docker Hub immutability
+  rule for `-rc.N` tags, and the user's approval of the tag itself.
 
 ## Related
 

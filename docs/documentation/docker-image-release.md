@@ -102,13 +102,14 @@ The [policy helper](../../tool/ci/image-policy.mjs) and its tests define:
 | Mode | Event/ref | Channel/version | Required source ancestry |
 |---|---|---|---|
 | Build-only | Manual dispatch on a branch | Selected channel and simulated version | `develop` for development/candidate; `main` for stable |
-| Future publication | Push to `develop` | Development; no version input | `develop` |
-| Future publication | Push of `vX.Y.Z-rc.N` | Candidate; version derived from tag | `develop` |
-| Future publication | Push of `vX.Y.Z` | Stable; version derived from tag | `main` |
+| Publication | Push to `develop` | Development; no version input | `develop` |
+| Publication | Push of `vX.Y.Z-rc.N` | Candidate; version derived from tag | `develop` |
+| Publication | Push of `vX.Y.Z` | Stable; version derived from tag | `main` |
 
-Development push publication is now wired behind its explicit enable variable.
-Candidate/stable rules remain tested library logic only, without enabled
-triggers. PRs, manual publication and pushes to `main` cannot publish.
+Development push publication is wired behind `DEVELOPMENT_PUBLICATION_ENABLED`,
+release publication behind `RELEASE_PUBLICATION_ENABLED` and the `release`
+environment (see [Releases](#releases)). PRs, manual publication and pushes to
+`main` cannot publish.
 
 Source checks fail on missing remote refs, unknown commits or failed Git
 commands. A development commit may be reachable from `develop` without being
@@ -149,6 +150,83 @@ manifest and record its digest. Complete both architecture uploads before
 changing aliases. On failure after a version was written, fail rather than
 overwrite it: inspect the recorded digest and use an explicitly approved
 recovery/promotion procedure. Do not silently retry as a new release.
+
+## Releases
+
+Release candidates (`vX.Y.Z-rc.N`) and stable releases (`vX.Y.Z`) are published
+from version tags by the same workflow (job `publish-release`), from the same
+tested OCI archives, with the same write-once checks, fresh inventory and
+serialized publication as development builds. Background and decisions:
+[Release channels](../plans/general_new_release-channels.md).
+
+### Gates
+
+A version tag publishes only when all of these hold:
+
+1. **Only administrators can create `v*` tags**, and tags cannot be moved or
+   deleted (repository rulesets "Release tag creation by administrators only"
+   and "Release tags cannot be replaced or deleted").
+2. **`RELEASE_PUBLICATION_ENABLED` is `true`** (repository variable). Without it
+   a tag push still builds and smoke-tests both images, but publishes nothing.
+3. **A required reviewer approves** the job in the GitHub environment
+   `release`. The job's first step stops if that environment has no required
+   reviewer, because GitHub creates a missing environment unprotected on first
+   use.
+4. The tag is a strict version (`vX.Y.Z` or `vX.Y.Z-rc.N`), the commit is
+   reachable from `develop` (candidate) or `main` (stable), and no image has
+   that version yet. The channel and version come only from the tag.
+
+Settings to create once (repository **Settings**):
+
+- **Environments → New environment** `release`: required reviewers = the
+  maintainer; deployment branches and tags = "Selected branches and tags" with
+  the tag rule `v*`. Do not allow administrators to bypass.
+- **Secrets and variables → Actions → Variables**: `RELEASE_PUBLICATION_ENABLED`
+  = `true` when the first release candidate is approved (keep it `false` or
+  absent until then).
+- **Docker Hub** (both repositories): the existing token (Read & Write) can push
+  version tags. Optionally add the immutability rule
+  `^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$` so release-candidate tags are write-once
+  in the registry too (the publisher already refuses to overwrite them).
+
+### Tags and aliases
+
+- Candidate `0.9.0-rc.1`: only that tag. Never `latest`, `X.Y` or `dev`.
+- Stable `0.9.0`: `0.9.0`, then `0.9` and `latest` only when no higher version
+  exists. An older patch released later never moves them back.
+
+### Procedure
+
+1. **Candidate.** Choose the `develop` commit to release (CI green, its
+   development build installed and checked on the reference Pi). Tag it:
+   `git tag -a v0.9.0-rc.1 <commit> -m "0.9.0-rc.1"` and push the tag. Approve
+   the `release` environment in the Actions run. The run pulls both published
+   digests and smoke-tests AMD64 and ARM64.
+2. **Acceptance** on the reference Pi with the candidate (installed by the
+   operator; release candidates are not a channel). Fix problems on `develop`
+   and tag `-rc.2`; a published version is never changed.
+3. **Release PR.** Create `release/0.9.0` from the accepted candidate commit and
+   open a PR into `main`. Merge it with a **merge commit** (never squash), so
+   `main` contains the candidate's history and the Pi's "contains the installed
+   build" rule holds. The PR description holds the release notes.
+4. **Stable tag** on the merge commit on `main`:
+   `git tag -a v0.9.0 <merge-commit> -m "0.9.0"`, push, approve. The images are
+   rebuilt from that commit; when `main` only ever receives `develop` through
+   release PRs, its tree equals the candidate's.
+5. **Release notes**: `gh release create v0.9.0 --verify-tag --notes-file …`
+   with the PR's notes. Then merge `main` back into `develop` if the release PR
+   brought anything new.
+
+Publishing never deploys: installations on the stable channel are offered the
+release by their own update check, as a reviewed update.
+
+### When a release publication fails
+
+The workflow never overwrites a published tag. Re-running the failed job
+refuses as soon as one exact version tag exists. A version that published only
+partly (for example web but not ser2net) is not repaired: tag the next
+candidate or patch version instead. The journal artifact `publication-journal`
+records the expected digests and the last completed phase.
 
 ## Docker Hub setup (pending)
 

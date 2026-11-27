@@ -106,6 +106,81 @@ test("production CLI gate rejects unapproved, manual, stable and main publicatio
   }
 });
 
+test("release CLI gate requires the enable variable and a version tag matching channel and version", () => {
+  const run = overrides => spawnSync(process.execPath, [path.resolve(__dirname, "../tool/ci/image-publisher.mjs")],
+    {encoding: "utf8", env: {...process.env, MODE: "publish-release", RELEASE_PUBLICATION_ENABLED: "true",
+      CHANNEL: "candidate", VERSION: "0.9.0-rc.1", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/tags/v0.9.0-rc.1",
+      RECOVERY_APPROVED: "false", DOCKERHUB_NAMESPACE: "", DOCKERHUB_USERNAME: "", DOCKERHUB_TOKEN: "", ...overrides}});
+  for (const overrides of [{RELEASE_PUBLICATION_ENABLED: "false"}, {RELEASE_PUBLICATION_ENABLED: ""},
+    {RECOVERY_APPROVED: "true"}, {DEVELOPMENT_PUBLICATION_ENABLED: "true", RELEASE_PUBLICATION_ENABLED: ""}]) {
+    const result = run(overrides);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /publication is disabled/, JSON.stringify(overrides));
+  }
+  for (const overrides of [{GITHUB_REF: "refs/heads/develop"}, {CHANNEL: "stable"}, {VERSION: "0.9.0-rc.2"},
+    {GITHUB_REF: "refs/tags/v0.9.0"}, {GITHUB_EVENT_NAME: "workflow_dispatch"}, {CHANNEL: "development", VERSION: ""}]) {
+    const result = run(overrides);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /version tag push matching|only push|Release publication requires/, JSON.stringify(overrides));
+  }
+  // Past the gate, the registry transport is created: here it stops for the missing credentials.
+  for (const overrides of [{}, {CHANNEL: "stable", VERSION: "0.9.0", GITHUB_REF: "refs/tags/v0.9.0"}]) {
+    assert.match(run(overrides).stderr, /namespace, username and token are required/);
+  }
+});
+
+test("the release environment must name a required reviewer", async () => {
+  const {checkReleaseEnvironment, fetchEnvironment} = await import("../tool/ci/check-release-environment.mjs");
+  const reviewer = {type: "User", reviewer: {login: "maintainer"}};
+  assert.deepEqual(checkReleaseEnvironment({name: "release", protection_rules: [
+    {type: "branch_policy"}, {type: "required_reviewers", reviewers: [reviewer]}]}), ["maintainer"]);
+  for (const body of [null, {name: "other", protection_rules: []}, {name: "release"},
+    {name: "release", protection_rules: []}, {name: "release", protection_rules: [{type: "wait_timer", wait_timer: 5}]},
+    {name: "release", protection_rules: [{type: "required_reviewers", reviewers: []}]}]) {
+    assert.throws(() => checkReleaseEnvironment(body), /release/);
+  }
+  const requests = [];
+  const body = await fetchEnvironment("itcorner/MPDRussoundPi", "token", async (url, init) => {
+    requests.push([url, init.headers.Authorization, init.redirect]);
+    return {ok: true, json: async () => ({name: "release"})};
+  });
+  assert.equal(body.name, "release");
+  assert.deepEqual(requests, [["https://api.github.com/repos/itcorner/MPDRussoundPi/environments/release",
+    "Bearer token", "error"]]);
+  await assert.rejects(fetchEnvironment("itcorner/MPDRussoundPi", null, async () => ({ok: false, status: 404})),
+    /HTTP 404/);
+  for (const repository of ["../x", "a/..", "a/b/c", "", undefined]) {
+    await assert.rejects(fetchEnvironment(repository, null, async () => assert.fail("no request")), /Unexpected repository/);
+  }
+});
+
+test("release journals are verified by their exact version and never by the dev alias", async () => {
+  const {verifyPublishedImages} = await import("../tool/ci/verify-published-images.mjs");
+  const sha = "a".repeat(40);
+  const digest = `sha256:${"b".repeat(64)}`;
+  const child = arch => `sha256:${(arch === "amd64" ? "c" : "d").repeat(64)}`;
+  const journal = {phase: "complete", expected: {namespace: "itcornernet", sha, channel: "stable", version: "0.9.0",
+    exact: "0.9.0", digests: {web: digest, ser2net: digest}}};
+  const inspected = [];
+  const run = (command, args) => {
+    if (args[0] === "buildx") {
+      inspected.push(args[3]);
+      return args.includes("--raw") ? JSON.stringify({manifests: ["amd64", "arm64"].map(arch => ({
+        platform: {os: "linux", architecture: arch}, digest: child(arch)}))}) : JSON.stringify({digest});
+    }
+    return "";
+  };
+  assert.deepEqual(verifyPublishedImages(journal, "itcornernet", sha, run, {verifyTags: true}).map(report => report.exact),
+    ["0.9.0", "0.9.0"]);
+  assert.ok(inspected.every(reference => !reference.endsWith(":dev")));
+  for (const expected of [{...journal.expected, exact: "0.9.1"}, {...journal.expected, version: "0.9.0-rc.1"},
+    {...journal.expected, channel: "beta"}]) {
+    assert.throws(() => verifyPublishedImages({...journal, expected}, "itcornernet", sha, run), /completed matching/);
+  }
+  assert.throws(() => verifyPublishedImages({...journal, phase: "verified-web"}, "itcornernet", sha, run,
+    {verifyTags: true}), /completed matching/, "no partial-journal check for releases");
+});
+
 test("recovery metadata allows only original failed develop push workflows in this repository", async () => {
   const {validateRecoveryRun} = await import("../tool/ci/recovery-source.mjs");
   const run = {repository: {full_name: "itcorner/MPDRussoundPi"}, event: "push", head_branch: "develop",
@@ -232,7 +307,7 @@ test("verification CLI uses explicit original source rather than the trusted wor
     const mismatch = spawnSync(process.execPath,
       [path.resolve(__dirname, "../tool/ci/verify-published-images.mjs")], {encoding: "utf8", env});
     assert.notEqual(mismatch.status, 0);
-    assert.match(mismatch.stderr, /completed matching development journal/);
+    assert.match(mismatch.stderr, /completed matching journal/);
   } finally {
     rmSync(directory, {recursive: true, force: true});
   }

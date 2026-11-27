@@ -529,6 +529,9 @@ part in [Schema version for persisted data](./general_open_persisted-data-schema
 - [ ] Validate the release candidate and stable baseline, including manual
       hardware acceptance where relevant; CI does not certify physical audio.
 - [ ] Enable protected prerelease/stable publication and release approvals.
+      *2026-11-27:* wired behind `RELEASE_PUBLICATION_ENABLED` and the `release`
+      environment, still switched off; see
+      [Releases](../documentation/docker-image-release.md#releases).
 - [ ] Create the first version tag only after explicit approval, then verify
       exact tags, alias policy, image digest and architecture availability.
 - [ ] Add registry-based deployment instructions/configuration while retaining
