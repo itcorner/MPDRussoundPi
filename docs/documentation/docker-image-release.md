@@ -203,8 +203,15 @@ Settings to create once (repository **Settings**):
    the `release` environment in the Actions run. The run pulls both published
    digests and smoke-tests AMD64 and ARM64.
 2. **Acceptance** on the reference Pi with the candidate (installed by the
-   operator; release candidates are not a channel). Fix problems on `develop`
-   and tag `-rc.2`; a published version is never changed.
+   operator; release candidates are not a channel). Resolve the candidate by
+   its exact tag, without any alias, and deploy that selection as usual:
+   `python3 -m tool.deployment_images resolve --gateway managed --platform
+   linux/arm64 --channel stable --version 0.9.0-rc.1 --output <new file>`.
+   The record is a release (`kind: release-image-candidate`, version
+   `0.9.0-rc.1`); without a stored channel choice the installation then
+   follows Stable, where `0.9.0` sorts after every `0.9.0-rc.N` and is offered
+   once published. Fix problems on `develop` and tag `-rc.2`; a published
+   version is never changed.
 3. **Release PR.** Create `release/0.9.0` from the accepted candidate commit and
    open a PR into `main`. Merge it with a **merge commit** (never squash), so
    `main` contains the candidate's history and the Pi's "contains the installed

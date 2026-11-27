@@ -139,6 +139,14 @@ class PageFlowTests(unittest.TestCase):
         self.assertNotIn("secret", status)
         self.assertNotIn("review", status)
 
+    def test_sanitize_passes_release_and_candidate_versions_only(self):
+        for version, expected in (("0.9.0", "0.9.0"), ("0.9.0-rc.1", "0.9.0-rc.1"), ("0.9.0-beta", None),
+                                  ("<b>1</b>", None), (9, None)):
+            with self.subTest(version=version):
+                status = sanitize_status({"phase": "idle", "installed_version": version,
+                                          "candidate_version": version}, include_review=False)
+                self.assertEqual((status["installed_version"], status["candidate_version"]), (expected, expected))
+
     def test_sanitize_passes_only_the_cleanup_counts(self):
         def cleanup(value):
             return sanitize_status({"phase": "succeeded", "result": {"cleanup": value}}, include_review=False)["cleanup"]

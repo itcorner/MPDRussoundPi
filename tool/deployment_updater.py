@@ -152,10 +152,16 @@ DATA_FILES = {
 
 
 def _version_key(version: object) -> tuple[int, ...]:
-    """Numeric order of a release version ``X.Y.Z``; anything else sorts first."""
-    if isinstance(version, str) and re.fullmatch(r"\d{1,4}\.\d{1,4}\.\d{1,4}", version):
-        return tuple(int(part) for part in version.split("."))
-    return (-1,)
+    """Order of a release ``X.Y.Z`` or a release candidate ``X.Y.Z-rc.N``; anything else sorts first.
+
+    A release sorts after every candidate of the same version, so ``0.9.0`` is newer
+    than an installed ``0.9.0-rc.1``.
+    """
+    match = isinstance(version, str) and re.fullmatch(r"(\d{1,4})\.(\d{1,4})\.(\d{1,4})(?:-rc\.(\d{1,4}))?", version)
+    if not match:
+        return (-1,)
+    major, minor, patch, candidate = match.groups()
+    return int(major), int(minor), int(patch), 0 if candidate is not None else 1, int(candidate or 0)
 
 class UpdaterError(ValueError):
     """A request the updater refuses; the message is safe to show."""

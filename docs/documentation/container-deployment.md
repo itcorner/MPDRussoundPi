@@ -332,6 +332,11 @@ python3 -m tool.deployment_images resolve --gateway external --platform linux/ar
 
 Choose `managed` instead of `external` to include ser2net; choose `dummy` for
 web plus a separately built dummy. Use `linux/amd64` for an AMD64 target.
+`--channel stable` resolves the newest release through `latest` instead;
+`--channel stable --version X.Y.Z[-rc.N]` resolves exactly that release or
+release candidate by its version tag, without reading any alias (release
+candidates are installed only this way, see
+[Releases](docker-image-release.md#releases)).
 Resolution requires the moving `dev` aliases and exact `dev-<full-sha>` tags
 to agree. It verifies source/version/revision labels, platform, and index,
 platform-manifest and configuration digests. Incomplete publication, mismatches,

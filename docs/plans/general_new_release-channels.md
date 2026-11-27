@@ -169,6 +169,11 @@ incompatible target before anything is stopped.
   agree, like `dev`. The candidate is `kind: release-image-candidate`,
   `channel: stable`, plus `version`; the development format is unchanged, so the
   deployment records on the Pi stay valid.
+- **Release candidates** (added 2026-11-27 for stage 4): `--channel stable
+  --version X.Y.Z-rc.N` resolves that exact tag for every image without any
+  alias; the record is a release with that version. The updater orders
+  `X.Y.Z-rc.N` before `X.Y.Z`, so the release is offered over its candidate and
+  a candidate never over its release.
 - **The channel** is stored by the updater in
   `/var/lib/mpdrussoundpi-updater/channel.json` (with who changed it and when);
   without it, the channel of the installed version applies. The request
