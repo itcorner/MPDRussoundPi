@@ -5,13 +5,24 @@ import {imagePolicy} from "./image-policy.mjs";
 
 const phases = new Set(["prepared", "verified-web", "verified-ser2net", "promoted-web-dev", "promoted-ser2net-dev"]);
 
+function expectedExact(expected, sha) {
+  try {
+    return imagePolicy(expected.channel, expected.channel === "development" ? "" : expected.version, sha).exact;
+  } catch {
+    return null;
+  }
+}
+
 export function verifyPublishedImages(journal, namespace, sha, run = execFileSync, {verifyTags = false} = {}) {
   const {expected, phase} = journal;
-  if ((phase !== "complete" && !(verifyTags && phases.has(phase))) ||
+  // Tag verification of an incomplete journal (the no-write check after a failure) exists for
+  // development only; a release is verified after its own complete publication.
+  if ((phase !== "complete" && !(verifyTags && expected?.channel === "development" && phases.has(phase))) ||
       expected?.namespace !== namespace || expected.sha !== sha ||
-      !/^[a-z0-9_-]+(?![\s\S])/.test(namespace) || expected.channel !== "development" ||
-      expected.exact !== imagePolicy("development", "", sha).exact) {
-    throw new Error("Published image verification requires a completed matching development journal");
+      !/^[a-z0-9_-]+(?![\s\S])/.test(namespace) ||
+      !["development", "candidate", "stable"].includes(expected.channel) ||
+      expected.exact !== expectedExact(expected, sha)) {
+    throw new Error("Published image verification requires a completed matching journal");
   }
   const images = ["web", "ser2net"].map(image => {
     const digest = expected.digests?.[image];
@@ -20,7 +31,7 @@ export function verifyPublishedImages(journal, namespace, sha, run = execFileSyn
   });
   if (verifyTags) {
     for (const {repository, digest} of images) {
-      for (const tag of [expected.exact, "dev"]) {
+      for (const tag of expected.channel === "development" ? [expected.exact, "dev"] : [expected.exact]) {
         const tagged = `${repository}:${tag}`;
         const manifest = JSON.parse(run("docker", ["buildx", "imagetools", "inspect", tagged,
           "--format", "{{json .Manifest}}"], {encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 30_000}));
@@ -45,7 +56,7 @@ export function verifyPublishedImages(journal, namespace, sha, run = execFileSyn
       run("docker", ["pull", "--platform", `linux/${arch}`, platformReference], {stdio: "inherit"});
       run("bash", [`tool/ci/smoke-${image}-image.sh`, platformReference, arch], {stdio: "inherit"});
     }
-    reports.push({image, reference, exact: expected.exact});
+    reports.push({image, reference, exact: expected.exact, channel: expected.channel});
   }
   return reports;
 }
@@ -58,6 +69,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     {verifyTags: VERIFY_PUBLICATION_TAGS === "true"});
   if (GITHUB_STEP_SUMMARY) {
     for (const report of reports) appendFileSync(GITHUB_STEP_SUMMARY,
-      `### Published ${report.image}\n\`${report.reference}\`\n\nExact tag: \`${report.exact}\`; alias: \`dev\`.\nAMD64 and ARM64 registry pull/runtime smoke checks passed.\n`);
+      `### Published ${report.image}\n\`${report.reference}\`\n\nExact tag: \`${report.exact}\`${report.channel === "development" ? "; alias: `dev`" : ""}.\nAMD64 and ARM64 registry pull/runtime smoke checks passed.\n`);
   }
 }

@@ -308,7 +308,8 @@ export async function publishImages(options) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const {MODE, LOCAL_REGISTRY_URL, DOCKERHUB_NAMESPACE, CHANNEL, VERSION = "", GITHUB_SHA,
     ARTIFACT_ROOT, PUBLICATION_JOURNAL, RECOVERY_APPROVED, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN,
-    DEVELOPMENT_PUBLICATION_ENABLED, GITHUB_EVENT_NAME, GITHUB_REF, PUBLICATION_SOURCE_SHA} = process.env;
+    DEVELOPMENT_PUBLICATION_ENABLED, RELEASE_PUBLICATION_ENABLED, GITHUB_EVENT_NAME, GITHUB_REF,
+    PUBLICATION_SOURCE_SHA} = process.env;
   const sha = MODE === "recover-development" ? PUBLICATION_SOURCE_SHA : GITHUB_SHA;
   let registry;
   if (MODE === "local-test") registry = new LocalRegistry(LOCAL_REGISTRY_URL);
@@ -316,6 +317,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       CHANNEL === "development" && VERSION === "" && RECOVERY_APPROVED !== "true") {
     const event = imageEventPolicy({mode: "publish", eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF});
     if (event.channel !== "development") throw new Error("Only develop branch pushes can publish");
+    registry = new DockerHubRegistry(DOCKERHUB_NAMESPACE, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN);
+  } else if (MODE === "publish-release" && RELEASE_PUBLICATION_ENABLED === "true" &&
+      RECOVERY_APPROVED !== "true") {
+    // Release candidates and stable releases: only from a pushed version tag, whose channel
+    // and version must be exactly what the workflow passes (docs/plans/general_new_release-channels.md).
+    const event = imageEventPolicy({mode: "publish", eventName: GITHUB_EVENT_NAME, ref: GITHUB_REF});
+    if (!["candidate", "stable"].includes(event.channel) || event.channel !== CHANNEL || event.version !== VERSION) {
+      throw new Error("Release publication requires a version tag push matching the channel and version");
+    }
     registry = new DockerHubRegistry(DOCKERHUB_NAMESPACE, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN);
   } else if (MODE === "recover-development" && DEVELOPMENT_PUBLICATION_ENABLED === "true" &&
       GITHUB_EVENT_NAME === "workflow_dispatch" && GITHUB_REF === "refs/heads/main" &&

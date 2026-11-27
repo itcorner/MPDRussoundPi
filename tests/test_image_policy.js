@@ -183,12 +183,37 @@ test("CLI checks manual event and ancestry, emits the exact tag, and cannot enab
     assert.equal(JSON.parse(result.stdout).exact, exact);
   }
   const expectedOutput = readFileSync(output, "utf8");
-  assert.equal(expectedOutput, `version=dev-${develop}\nversion=1.2.3-rc.1\nversion=1.2.3\n`);
+  assert.equal(expectedOutput, `version=dev-${develop}\nchannel=development\nversion=1.2.3-rc.1\nchannel=candidate\n`
+    + "version=1.2.3\nchannel=stable\n");
   for (const overrides of [{MODE: "publish", GITHUB_EVENT_NAME: "push"},
     {MODE: ""}, {GITHUB_EVENT_NAME: "push"}, {CHANNEL: "stable", VERSION: "1.2.3"}]) {
     const result = run(overrides);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Publication is disabled|manual dispatch|not reachable/);
     assert.equal(readFileSync(output, "utf8"), expectedOutput);
+  }
+});
+
+test("release preparation takes channel and version only from a pushed version tag on the right branch", async t => {
+  const {cwd, main, develop} = sourceFixture(t);
+  const output = path.join(cwd, "github-output");
+  const run = overrides => spawnSync(process.execPath, [path.resolve(__dirname, "../tool/ci/image-policy.mjs")],
+    {cwd, encoding: "utf8", env: {...process.env, MODE: "prepare-release", CHANNEL: "", VERSION: "",
+      GITHUB_OUTPUT: output, GITHUB_EVENT_NAME: "push", ...overrides}});
+  let result = run({GITHUB_REF: "refs/tags/v0.9.0-rc.1", GITHUB_SHA: develop});
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual([JSON.parse(result.stdout).channel, JSON.parse(result.stdout).exact], ["candidate", "0.9.0-rc.1"]);
+  result = run({GITHUB_REF: "refs/tags/v0.9.0", GITHUB_SHA: main});
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(output, "utf8"), "version=0.9.0-rc.1\nchannel=candidate\nversion=0.9.0\nchannel=stable\n");
+  for (const [overrides, message] of [
+    [{GITHUB_REF: "refs/tags/v0.9.0", GITHUB_SHA: develop}, /not reachable from origin\/main/],
+    [{GITHUB_REF: "refs/heads/develop", GITHUB_SHA: develop}, /requires a version tag/],
+    [{GITHUB_REF: "refs/tags/v0.9", GITHUB_SHA: main}, /Expected X\.Y\.Z/],
+    [{GITHUB_REF: "refs/tags/v0.9.0", GITHUB_SHA: main, GITHUB_EVENT_NAME: "workflow_dispatch"}, /only push/],
+  ]) {
+    result = run(overrides);
+    assert.notEqual(result.status, 0, JSON.stringify(overrides));
+    assert.match(result.stderr, message);
   }
 });
