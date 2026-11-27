@@ -583,6 +583,29 @@ class ChannelTests(Fixture):
         self.assertEqual(self.resolved, ["stable", "dev"])
 
 
+    def test_the_release_follows_its_installed_candidate_and_never_goes_back_to_one(self):
+        self.installed = release("0.9.0-rc.1", INSTALLED)
+        updater = self.make_channel({"stable": release("0.9.0", NEWER)})
+        self.assertEqual((updater.status()["channel"], updater.status()["installed_version"]),
+                         ("stable", "0.9.0-rc.1"))
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(updater, "awaiting_approval")
+        self.assertEqual(self.compared, [], "release over candidate compares versions")
+        self.assertEqual(self.transaction.requests[0][0]["selection"]["version"], "0.9.0")
+        updater.handle({"op": "cancel", "operation": updater.status()["operation"]})
+        self.wait_for(updater, "cancelled")
+        self.installed = release("0.9.0", INSTALLED)
+        older = self.make_channel({"stable": release("0.9.0-rc.2", NEWER)})
+        older.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(older, "up_to_date")
+
+    def test_versions_order_candidates_before_their_release(self):
+        from tool.deployment_updater import _version_key
+        ordered = ["dev-" + INSTALLED, "0.8.9", "0.9.0-rc.1", "0.9.0-rc.2", "0.9.0-rc.10", "0.9.0", "0.9.1-rc.1",
+                   "0.10.0"]
+        self.assertEqual(sorted(reversed(ordered), key=_version_key), ordered)
+
+
 class SystemRoutingTests(Fixture):
     class FakeSystem:
         def __init__(self):

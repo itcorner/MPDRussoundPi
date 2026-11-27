@@ -24,7 +24,7 @@ PHASES = {
     "failed", "failed_before_interruption", "outcome_unknown", "restore_awaiting_approval", "restoring",
     "restored", "waiting_for_release",
 }
-RELEASE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}\Z")
+RELEASE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}(?:-rc\.\d{1,4})?\Z")
 
 
 def _release(value: object) -> str | None:

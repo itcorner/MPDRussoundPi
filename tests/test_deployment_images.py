@@ -113,13 +113,68 @@ class ReleaseChannelTests(unittest.TestCase):
 
     def test_the_release_candidate_format_is_strict(self):
         selected = images.resolve("managed", "linux/arm64", self.registry(), channel="stable")
-        for change in ({"version": "0.9.0-rc.1"}, {"version": None}, {"channel": "dev"},
+        for change in ({"version": "0.9.0-rc.0"}, {"version": "0.9.0-beta.1"}, {"version": "v0.9.0"},
+                       {"version": None}, {"channel": "dev"},
                        {"kind": "development-image-candidate"}):
             with self.subTest(change=change), self.assertRaises(images.SelectionError):
                 images.validate_selection({**selected, **change}, "managed", "linux/arm64")
         without = {key: value for key, value in selected.items() if key != "version"}
         with self.assertRaises(images.SelectionError):
             images.validate_selection(without, "managed", "linux/arm64")
+
+
+class ExactVersionTests(unittest.TestCase):
+    """The operator installs a release candidate by its exact version tag, without any alias."""
+
+    def registry(self, version="0.9.0-rc.1"):
+        registry = FixtureRegistry()
+        for name in ("web", "ser2net"):
+            registry.add_image(name, revision=OTHER, version=version)
+        return registry
+
+    def test_a_release_candidate_resolves_by_its_exact_tag_and_validates(self):
+        registry = self.registry()
+        selected = images.resolve("managed", "linux/arm64", registry, channel="stable", version="0.9.0-rc.1")
+        self.assertEqual((selected["kind"], selected["channel"], selected["version"], selected["revision"]),
+                         ("release-image-candidate", "stable", "0.9.0-rc.1", OTHER))
+        self.assertEqual(set(selected["images"]), {"web", "ser2net"})
+        for image in selected["images"].values():
+            self.assertTrue(image["reference"].endswith("@" + image["index_digest"]))
+        self.assertEqual(images.validate_selection(selected, "managed", "linux/arm64"), selected)
+        images.verify(selected, registry)
+        self.assertNotIn("manifests/latest", {resource for _, resource in registry.requests})
+
+    def test_an_exact_release_resolves_the_same_way(self):
+        selected = images.resolve("external", "linux/arm64", self.registry("0.9.0"), channel="stable",
+                                  version="0.9.0")
+        self.assertEqual((selected["version"], set(selected["images"])), ("0.9.0", {"web"}))
+
+    def test_a_missing_tag_a_wrong_label_or_mixed_revisions_stop(self):
+        with self.assertRaisesRegex(images.SelectionError, "404"):
+            images.resolve("managed", "linux/arm64", self.registry(), channel="stable", version="0.9.0-rc.2")
+        mixed = self.registry()
+        mixed.add_image("ser2net", revision=REVISION, version="0.9.0-rc.1")
+        with self.assertRaisesRegex(images.SelectionError, "labels do not match"):
+            images.resolve("managed", "linux/arm64", mixed, channel="stable", version="0.9.0-rc.1")
+        relabelled = self.registry()
+        repository = images.REPOSITORIES["web"]
+        relabelled.content[(repository, "manifests/0.9.0-rc.1")] = relabelled.content[(repository, "manifests/dev")]
+        with self.assertRaisesRegex(images.SelectionError, "labels do not match"):
+            images.resolve("managed", "linux/arm64", relabelled, channel="stable", version="0.9.0-rc.1")
+
+    def test_the_version_format_is_strict(self):
+        for version in ("0.9.0-rc.0", "v0.9.0", "0.9", "0.9.0-beta.1", "01.9.0", "dev"):
+            with self.subTest(version=version), self.assertRaisesRegex(images.SelectionError, "X.Y.Z"):
+                images.resolve("managed", "linux/arm64", self.registry(), channel="stable", version=version)
+
+    def test_the_command_line_takes_the_version_only_for_a_stable_resolve(self):
+        for arguments in (["resolve", "--version", "0.9.0-rc.1"],
+                          ["verify", "--channel", "stable", "--version", "0.9.0-rc.1", "--selection", "x"]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, "-m", "tool.deployment_images", *arguments],
+                                        capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1])
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--version is supported only by resolve with --channel stable", result.stderr)
 
 
 class DeploymentImageTests(unittest.TestCase):

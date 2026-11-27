@@ -3,8 +3,12 @@
 - ``dev``: the ``dev`` alias and the exact ``dev-<commit>`` tags
   (``kind: development-image-candidate``).
 - ``stable``: the ``latest`` alias and the exact release tags ``X.Y.Z``
-  (``kind: release-image-candidate``, with ``version``); release candidates
-  (``X.Y.Z-rc.N``) are never resolved (docs/plans/general_new_release-channels.md).
+  (``kind: release-image-candidate``, with ``version``). The ``latest`` alias never
+  resolves a release candidate.
+- ``stable`` with an exact ``version``: that release or release candidate
+  (``X.Y.Z-rc.N``) by its exact tag, without any alias. Release candidates are
+  installed only this way, by the operator, for the acceptance on the reference Pi
+  (docs/plans/general_new_release-channels.md).
 """
 
 import argparse
@@ -25,6 +29,8 @@ from mpdrussoundpi.common.imageregistry import (  # noqa: F401  (re-exported for
 
 
 STABLE_VERSION = re.compile(r"(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\Z")
+# A release or a release candidate, as an exact version tag and label.
+RELEASE_VERSION = re.compile(r"(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})(-rc\.[1-9]\d{0,3})?\Z")
 CHANNELS = {"dev": ("dev", "development-image-candidate"), "stable": ("latest", "release-image-candidate")}
 KINDS = {kind: channel for channel, (_, kind) in CHANNELS.items()}
 
@@ -34,7 +40,8 @@ def inspect_release(registry: Registry, name: str, reference: str, platform: str
     """The pinned identity of one image and its version label.
 
     Without ``version`` it is a development image (version ``dev-<revision>``); with
-    ``version="*"`` any stable release version, otherwise exactly that version.
+    ``version="*"`` any stable release version, otherwise exactly that version
+    (a release or a release candidate).
     """
     repository = REPOSITORIES[name]
     found = platform_config(registry, repository, reference, platform)
@@ -44,7 +51,9 @@ def inspect_release(registry: Registry, name: str, reference: str, platform: str
     if version is None:
         version_ok = isinstance(revision, str) and label == "dev-" + revision
     else:
-        version_ok = isinstance(label, str) and bool(STABLE_VERSION.fullmatch(label)) and version in ("*", label)
+        version_ok = isinstance(label, str) and (
+            bool(STABLE_VERSION.fullmatch(label)) if version == "*" else
+            bool(RELEASE_VERSION.fullmatch(label)) and label == version)
     if (not isinstance(revision, str) or not REVISION.fullmatch(revision) or not version_ok
             or labels.get("org.opencontainers.image.source") != SOURCE
             or (expected_revision is not None and revision != expected_revision)):
@@ -80,12 +89,15 @@ def components(gateway: str) -> tuple[str, ...]:
     raise SelectionError("Unsupported gateway layout")
 
 
-def resolve(gateway: str, platform: str, registry: Registry | None = None, channel: str = "dev") -> dict[str, Any]:
+def resolve(gateway: str, platform: str, registry: Registry | None = None, channel: str = "dev",
+            version: str | None = None) -> dict[str, Any]:
     validate_request(gateway, platform)
     if gateway == "dummy":
         raise SelectionError("Dummy deployments require a verified local web/dummy build bundle; no approved registry artifact")
     if channel not in CHANNELS:
         raise SelectionError("Channel must be dev or stable")
+    if version is not None:
+        return resolve_version(gateway, platform, version, registry or Registry())
     alias, kind = CHANNELS[channel]
     registry = registry or Registry()
     names = components(gateway)
@@ -116,6 +128,29 @@ def resolve(gateway: str, platform: str, registry: Registry | None = None, chann
     }
 
 
+def resolve_version(gateway: str, platform: str, version: str, registry: Registry) -> dict[str, Any]:
+    """One exact release or release candidate by its version tag; no alias is read."""
+    if not isinstance(version, str) or not RELEASE_VERSION.fullmatch(version):
+        raise SelectionError("Version must be X.Y.Z or X.Y.Z-rc.N")
+    names = components(gateway)
+    images = {}
+    revision = None
+    for name in names:
+        images[name] = inspect_image(registry, name, version, platform, revision, version)
+        revision = images[name]["revision"]
+    for name in names:
+        _, current = metadata(registry, REPOSITORIES[name], version, INDEX_TYPES)
+        if current != images[name]["index_digest"]:
+            raise SelectionError(f"The tag {version} changed during resolution; retry explicitly")
+    _, kind = CHANNELS["stable"]
+    return {
+        "schema_version": 1, "kind": kind, "channel": "stable",
+        "gateway": gateway, "platform": platform, "revision": revision,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+        "version": version, "images": images,
+    }
+
+
 def validate_selection(value: Any, gateway: str, platform: str) -> dict[str, Any]:
     validate_request(gateway, platform)
     if gateway == "dummy":
@@ -127,7 +162,7 @@ def validate_selection(value: Any, gateway: str, platform: str) -> dict[str, Any
     if (not isinstance(value, dict) or set(value) != fields
             or type(value["schema_version"]) is not int or value["schema_version"] != 1
             or value["kind"] not in KINDS or value["channel"] != KINDS[value["kind"]]
-            or (release and (not isinstance(value["version"], str) or not STABLE_VERSION.fullmatch(value["version"])))
+            or (release and (not isinstance(value["version"], str) or not RELEASE_VERSION.fullmatch(value["version"])))
             or value["gateway"] != gateway or value["platform"] != platform
             or not isinstance(value["revision"], str) or not REVISION.fullmatch(value["revision"])
             or not isinstance(value["resolved_at"], str)):
@@ -225,15 +260,20 @@ def main() -> int:
     parser.add_argument("--selection", type=Path)
     parser.add_argument("--channel", choices=tuple(CHANNELS), default="dev",
                         help="resolve: development builds (dev) or stable releases (stable)")
+    parser.add_argument("--version", dest="release_version", metavar="X.Y.Z[-rc.N]",
+                        help="resolve: exactly this release or release candidate (with --channel stable), "
+                             "by its version tag without any alias")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if (args.action == "resolve") == (args.selection is not None):
         parser.error("resolve does not take --selection; reuse, verify and check require it")
+    if args.release_version is not None and (args.action != "resolve" or args.channel != "stable"):
+        parser.error("--version is supported only by resolve with --channel stable")
     if args.output is not None and args.action != "resolve":
         parser.error("--output is supported only by resolve and never overwrites a file")
     try:
         if args.action == "resolve":
-            value = resolve(args.gateway, args.platform, channel=args.channel)
+            value = resolve(args.gateway, args.platform, channel=args.channel, version=args.release_version)
             if args.output:
                 save_selection(args.output, value)
         else:
