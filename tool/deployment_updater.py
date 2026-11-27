@@ -66,6 +66,11 @@ TOOLS = Path("/opt/mpdrussoundpi-deploy")
 CONFIG = Path("/etc/mpdrussoundpi-updater/updater.json")
 ROOT = Path("/var/lib/mpdrussoundpi-updater")
 SOCKET_NAME = "updater.sock"
+# The public part of the image update's status as a static file, served by the HTTPS proxy
+# at /update-status.json (ansible/templates/web-proxy.Caddyfile.j2). The page reads it while
+# the web application restarts and cannot answer. A systemd RuntimeDirectory (tmpfs): gone
+# while the updater is stopped, rewritten when it starts.
+PUBLIC_STATUS = Path("/run/mpdrussoundpi-updater-public/update-status.json")
 REVIEW_SECONDS = 120
 MAX_REQUEST = 64 * 1024
 ACTIVE_PHASES = ("resolving", "awaiting_approval", "approved", "running", "restore_awaiting_approval",
@@ -206,7 +211,8 @@ class Updater:
                  system: SystemUpdates | None = None, gate: Any = None,
                  target_schemas: Callable[[dict[str, Any]], dict[str, tuple[int, int]] | None] | None = None,
                  channel_path: Path | None = None,
-                 contains: Callable[[str, str], bool] = sourcehistory.contains) -> None:
+                 contains: Callable[[str, str], bool] = sourcehistory.contains,
+                 public_path: Path | None = None) -> None:
         identity(spec["deployment"])
         self.spec = spec
         self.evidence = evidence
@@ -219,12 +225,15 @@ class Updater:
         self._target_schemas = target_schemas or self._target_schemas_registry
         self.channel_path = channel_path or state_path.parent / "channel.json"
         self._contains = contains
+        self.public_path = public_path
+        self._public_failed = False
         self.system = system
         self.gate = gate or threading.Lock()  # shared with the system part: one operation starts at a time
         self._lock = threading.Condition()
         self._decision: dict[str, Any] | None = None
         self._thread: threading.Thread | None = None
         self.state = self._load()
+        self._publish()
 
     # ------------------------------------------------------------ durable state
 
@@ -265,6 +274,48 @@ class Updater:
         value = state if state is not None else self.state
         value["updated_at"] = _now_text(self._clock())
         write_json(self.state_path, value)
+        if value is getattr(self, "state", None):
+            self._publish()
+
+    def public_status(self) -> dict[str, Any]:
+        """What /update-status.json shows: only what the public status API shows too, never the review.
+
+        Times are seconds since the epoch; the page compares them with the proxy's Date header,
+        so the clock of the viewing device does not matter.
+        """
+        state = self.state
+        progress = state.get("progress")
+        running = state.get("phase") == "running" and isinstance(progress, dict)
+        return {
+            "schema_version": 1, "phase": state.get("phase"), "kind": state.get("kind"),
+            "operation": state.get("operation"), "busy": state.get("phase") in ACTIVE_PHASES,
+            "error": state.get("error"),
+            "progress": {"step": progress["step"], "steps": PROGRESS_STEPS,
+                         "started_at": int(progress["started"]["1"]),
+                         "step_started_at": int(progress["started"][str(progress["step"])]),
+                         "typical_seconds": _timings(state.get("timings"))} if running else None,
+            "updated_at": state.get("updated_at"),
+        }
+
+    def _publish(self) -> None:
+        """Best effort: the file only improves what the page shows while the web application is down."""
+        if self.public_path is None or not self.public_path.parent.is_dir():
+            return
+        temporary = self.public_path.with_name("." + self.public_path.name + ".tmp")
+        try:
+            data = json.dumps(self.public_status(), allow_nan=False).encode() + b"\n"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+            try:
+                os.fchmod(descriptor, 0o644)  # world-readable for the proxy despite the unit's umask
+                os.write(descriptor, data)
+            finally:
+                os.close(descriptor)
+            os.replace(temporary, self.public_path)
+            self._public_failed = False
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            if not self._public_failed:
+                logger.warning("The public update status could not be written: %s", error)
+            self._public_failed = True
 
     def _set(self, **changes: Any) -> None:
         with self._lock:
@@ -801,7 +852,7 @@ def main(argv: list[str] | None = None) -> int:
     with checked_directory(evidence, 0):
         pass
     gate = threading.Lock()
-    updater = Updater(spec, evidence, ROOT / "state.json", gate=gate)
+    updater = Updater(spec, evidence, ROOT / "state.json", gate=gate, public_path=PUBLIC_STATUS)
     updater.system = SystemUpdates(evidence, ROOT / "system.json", deployment_clear=updater.deployment_clear,
                                    other_busy=updater.busy, gate=gate)
     updater.system.start_background()

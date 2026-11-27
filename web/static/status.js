@@ -381,6 +381,10 @@ let pageBuild = null;
 let adminUpdateState = null;
 let adminUpdateReconnecting = false;
 let adminUpdateReceivedAt = 0;  // when adminUpdateState was read (Date.now()), for the offline estimate
+// While the web application restarts, the HTTPS proxy still serves the updater's public status
+// (/update-status.json). True while adminUpdateState comes from that file; without the proxy
+// (port 8000) or when the file cannot be read, the page estimates instead.
+let adminUpdateLive = false;
 // The steps of an approved update (the updater's progress.step). The web application is
 // stopped during steps 2 and 3, so the page cannot ask the updater then.
 const updateSteps = [
@@ -772,6 +776,12 @@ function renderInstall(box) {
       renderProgress(box, status.progress, true);
       return;
     }
+    if (adminUpdateLive && status && !status.busy) {
+      // The update ended while the web application is still unreachable (for example it failed).
+      phaseMessage(box, status);
+      box.appendChild(textElement("p", "status-meta", "The web application is not reachable yet. This page reconnects by itself."));
+      return;
+    }
     box.appendChild(textElement("p", "status-meta", "Waiting for the web application to come back…"));
     return;
   }
@@ -815,10 +825,10 @@ function clockText(seconds) {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-// Where the update stands. Offline, the page moves on by the durations of the last update
-// (at most to step 3, when the web application starts again); without them it keeps the
-// last step it saw.
-function estimatedProgress(progress, offlineSeconds) {
+// Where the update stands. Offline (and not following the updater's file), the page moves on
+// by the durations of the last update (at most to step 3, when the web application starts
+// again); without them it keeps the last step it saw.
+function estimatedProgress(progress, offlineSeconds, infer = true) {
   const typical = Array.isArray(progress.typical_seconds) && progress.typical_seconds.length === progress.steps
     ? progress.typical_seconds : null;
   let step = progress.step;
@@ -827,7 +837,7 @@ function estimatedProgress(progress, offlineSeconds) {
   if (!typical) {
     return { step, elapsed, fraction: (step - 1) / progress.steps, remaining: null, longer: false };
   }
-  while (offlineSeconds > 0 && step < 3 && stepElapsed > typical[step - 1]) {
+  while (infer && offlineSeconds > 0 && step < 3 && stepElapsed > typical[step - 1]) {
     stepElapsed -= typical[step - 1];
     step += 1;
   }
@@ -844,7 +854,7 @@ function estimatedProgress(progress, offlineSeconds) {
 
 function renderProgress(box, progress, offline) {
   const offlineSeconds = offline && adminUpdateReceivedAt ? Math.max(0, (Date.now() - adminUpdateReceivedAt) / 1000) : 0;
-  const view = estimatedProgress(progress, offlineSeconds);
+  const view = estimatedProgress(progress, offlineSeconds, !adminUpdateLive);
   const card = document.createElement("div");
   card.className = "update-progress";
   const bar = document.createElement("progress");
@@ -869,7 +879,9 @@ function renderProgress(box, progress, offline) {
       (state === "done" ? "✓ " : state === "current" ? "▸ " : "○ ") + label));
   });
   card.appendChild(list);
-  const note = offline
+  const note = offline && adminUpdateLive
+    ? "The web application is restarting; meanwhile this page follows the updater directly and reconnects by itself."
+    : offline
     ? "The web application is restarting, so this page cannot ask the updater right now. It reconnects by "
       + (progress.typical_seconds ? "itself; until then the step is estimated from the last update."
         : "itself; until then the last step it saw is shown.")
@@ -1066,6 +1078,7 @@ async function fetchAdminUpdate() {
     const response = await apiFetch(adminCsrfToken ? "/api/admin/update" : "/api/status/update-operation");
     const body = await response.json();
     adminUpdateReconnecting = false;
+    adminUpdateLive = false;
     adminUpdateReceivedAt = Date.now();
     adminUpdateState = response.ok || body.configured === false ? body : { configured: true, phase: "idle" };
     renderSoftwareUpdates();
@@ -1075,10 +1088,58 @@ async function fetchAdminUpdate() {
   } catch {
     // During an update the web restarts: keep waiting instead of showing an error.
     adminUpdateReconnecting = wasBusy || adminUpdateReconnecting;
+    if (adminUpdateReconnecting && !isRestoreKind(adminUpdateState)) {
+      await fetchLiveUpdateStatus();
+    }
     renderSoftwareUpdates();
     if (adminUpdateReconnecting) {
       scheduleAdminUpdate(3000);
     }
+  }
+}
+
+// The updater's public file as the update state the page shows: only for the operation the
+// page already follows. Times are compared with the proxy's Date header (the Pi's clock).
+function liveUpdateStatus(file, serverNow, previous) {
+  if (!file || typeof file !== "object" || file.schema_version !== 1 || !previous
+      || typeof previous.operation !== "string" || file.operation !== previous.operation
+      || typeof file.phase !== "string" || !updatePhaseText[file.phase]) {
+    return null;
+  }
+  const item = file.progress;
+  let progress = null;
+  if (item && Number.isInteger(item.step) && Number.isInteger(item.steps) && item.step >= 1
+      && item.step <= item.steps && Number.isFinite(item.started_at) && Number.isFinite(item.step_started_at)) {
+    const typical = item.typical_seconds;
+    progress = {
+      step: item.step, steps: item.steps,
+      elapsed_seconds: Math.max(0, Math.round(serverNow - item.started_at)),
+      step_elapsed_seconds: Math.max(0, Math.round(serverNow - item.step_started_at)),
+      typical_seconds: Array.isArray(typical) && typical.length === item.steps
+        && typical.every((value) => Number.isInteger(value) && value >= 0) ? typical : null,
+    };
+  }
+  return { ...previous, phase: file.phase, busy: file.busy === true, progress,
+    error: typeof file.error === "string" ? file.error.slice(0, 200) : null };
+}
+
+async function fetchLiveUpdateStatus() {
+  try {
+    const response = await window.fetch("/update-status.json", { cache: "no-store", credentials: "same-origin" });
+    if (!response.ok) {
+      adminUpdateLive = false;
+      return;
+    }
+    const date = Date.parse(response.headers.get("Date") || "");
+    const live = liveUpdateStatus(await response.json(), Number.isFinite(date) ? date / 1000 : Date.now() / 1000,
+      adminUpdateState);
+    adminUpdateLive = Boolean(live);
+    if (live) {
+      adminUpdateState = live;
+      adminUpdateReceivedAt = Date.now();
+    }
+  } catch {
+    adminUpdateLive = false;  // no proxy, or the updater is restarting: estimate from what was seen last
   }
 }
 

@@ -19,6 +19,8 @@ web_tls_permitted_ips: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
 web_tls_server_days: 397
 web_tls_renew_days: 60
 web_tls_dir: /etc/mpdrussoundpi-web-tls
+# Written by the updater (tool/deployment_updater.PUBLIC_STATUS), served at /update-status.json.
+web_tls_updater_public_dir: /run/mpdrussoundpi-updater-public
 web_tls_tool: /usr/local/lib/mpdrussoundpi/web_tls.py
 web_tls_caddy_binary: /usr/bin/caddy
 web_tls_caddyfile: /etc/caddy/mpdrussoundpi-web.Caddyfile

@@ -601,6 +601,63 @@ test("software updates: a running update shows its step, the time and a progress
   vm.runInContext("adminUpdateReconnecting = false;", view.context);
 });
 
+test("software updates: while the web application restarts, the page follows the updater's public file", async () => {
+  const view = renderStatusView(signedIn);
+  const before = { configured: true, phase: "running", busy: true, kind: "update", operation: "op-1",
+    progress: { step: 2, steps: 5, elapsed_seconds: 15, step_elapsed_seconds: 10, typical_seconds: null } };
+  renderUpdates(view, availableUpdates, before);
+  const now = Date.parse("2026-11-27T10:00:00Z") / 1000;
+  const file = { schema_version: 1, phase: "running", kind: "update", operation: "op-1", busy: true, error: null,
+    progress: { step: 3, steps: 5, started_at: now - 200, step_started_at: now - 50, typical_seconds: [5, 60, 190, 20, 10] } };
+  const requests = [];
+  Object.assign(view.context, {
+    apiFetch: async () => { throw new Error("web application restarting"); },
+    scheduleAdminUpdate: () => {},
+  });
+  view.context.window.fetch = async (url, options) => {
+    requests.push([url, options.cache]);
+    return { ok: true, headers: { get: (name) => (name === "Date" ? "Fri, 27 Nov 2026 10:00:00 GMT" : null) },
+      json: async () => file };
+  };
+  vm.runInContext("scheduleAdminUpdate = this.scheduleAdminUpdate; apiFetch = this.apiFetch;", view.context);
+  await view.context.fetchAdminUpdate();
+  assert.deepEqual(requests, [["/update-status.json", "no-store"]]);
+  const text = view.adminUpdate.allText();
+  assert.match(text, /Step 3 of 5 · 3:20 elapsed · about 3 min left/);
+  assert.match(text, /follows the updater directly/);
+  assert.doesNotMatch(text, /estimated/);
+
+  // The update failed while the web application is still down: say so instead of waiting.
+  Object.assign(file, { phase: "failed", busy: false, progress: null, error: "The update failed after the services were stopped." });
+  await view.context.fetchAdminUpdate();
+  assert.match(view.adminUpdate.allText(), /The update failed after the services were stopped\./);
+  assert.match(view.adminUpdate.allText(), /not reachable yet/);
+
+  // Another operation's file, or no file at all (no proxy): back to the estimate.
+  Object.assign(file, { operation: "op-2" });
+  await view.context.fetchAdminUpdate();
+  assert.equal(vm.runInContext("adminUpdateLive", view.context), false);
+  view.context.window.fetch = async () => { throw new TypeError("network"); };
+  await view.context.fetchAdminUpdate();
+  assert.equal(vm.runInContext("adminUpdateLive", view.context), false);
+  vm.runInContext("adminUpdateReconnecting = false;", view.context);
+});
+
+test("software updates: the public file is used only when it is well formed", () => {
+  const view = renderStatusView(signedIn);
+  const convert = (file, previous = { operation: "op-1", phase: "running" }) =>
+    plain(view.context.liveUpdateStatus(file, 1000, previous));
+  const good = { schema_version: 1, operation: "op-1", phase: "running", busy: true,
+    progress: { step: 2, steps: 5, started_at: 900, step_started_at: 990, typical_seconds: [1, 2, "3", 4, 5] } };
+  assert.deepEqual(convert(good).progress,
+    { step: 2, steps: 5, elapsed_seconds: 100, step_elapsed_seconds: 10, typical_seconds: null });
+  for (const bad of [null, { ...good, schema_version: 2 }, { ...good, operation: "op-2" }, { ...good, phase: "<b>" }]) {
+    assert.equal(convert(bad), null);
+  }
+  assert.equal(convert(good, null), null, "only for an update the page already follows");
+  assert.equal(convert({ ...good, progress: { ...good.progress, step: 9 } }).progress, null);
+});
+
 test("software updates: Check now sits in one group with the label and the age of the last check", () => {
   const view = renderStatusView(signedIn);
   const block = renderUpdates(view, availableUpdates, { configured: true, phase: "idle", busy: false });

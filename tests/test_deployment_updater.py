@@ -396,6 +396,50 @@ class ProgressTests(Fixture):
                          "a failed update keeps the last good durations")
 
 
+class PublicStatusTests(Fixture):
+    def test_the_public_file_follows_the_update_and_never_holds_the_review(self):
+        public = self.root / "public"
+        public.mkdir()
+        path = public / "update-status.json"
+        clock = [1_800_000_000.0]
+        self.transaction = FakeTransaction()
+        updater = Updater(SPEC, self.evidence, self.state, resolve=lambda gateway, platform, channel="dev": candidate(),
+                          committed=lambda: self.installed, transaction=self.transaction, clock=lambda: clock[0],
+                          target=lambda: self.target(), public_path=path)
+        self.assertEqual(json.loads(path.read_text())["phase"], "idle", "written at start")
+        self.assertEqual(path.stat().st_mode & 0o777, 0o644, "readable by the proxy")
+        operation = updater.handle({"op": "review", "actor": ACTOR})["operation"]
+        review = self.wait_for(updater, "awaiting_approval")["review"]
+        text = path.read_text()
+        self.assertNotIn(review["digest"], text)
+        self.assertNotIn("review", json.loads(text))
+        self.assertNotIn("actor", text)
+        self.target = lambda: target_record()
+        updater.handle({"op": "approve", "operation": operation, "digest": review["digest"], "actor": ACTOR})
+        self.wait_for(updater, "running")
+        clock[0] += 40
+        self.target = lambda: target_record({"operation": operation, "phase": "inputs-verified"})
+        updater._progress_tick(operation)
+        value = json.loads(path.read_text())
+        self.assertEqual((value["phase"], value["operation"], value["busy"]), ("running", operation, True))
+        self.assertEqual(value["progress"], {"step": 2, "steps": 5, "started_at": 1_800_000_000,
+                                             "step_started_at": 1_800_000_040, "typical_seconds": None})
+        self.assertNotIn("approved_by", value)
+        self.transaction.release.set()
+        self.wait_for(updater, "succeeded")
+        value = json.loads(path.read_text())
+        self.assertEqual((value["phase"], value["progress"], value["busy"]), ("succeeded", None, False))
+        self.assertEqual(sorted(public.iterdir()), [path], "no temporary file is left")
+
+    def test_without_the_directory_nothing_is_written(self):
+        path = self.root / "missing" / "update-status.json"
+        updater = Updater(SPEC, self.evidence, self.state, resolve=lambda gateway, platform, channel="dev": candidate(),
+                          committed=lambda: self.installed, transaction=FakeTransaction(), public_path=path)
+        updater.handle({"op": "review", "actor": ACTOR})
+        self.wait_for(updater, "awaiting_approval")
+        self.assertFalse(path.parent.exists())
+
+
 class DataSchemaTests(Fixture):
     """docs/plans/general_open_persisted-data-schema-version.md: refuse an update whose image cannot read the data."""
 
@@ -640,6 +684,9 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(directories["{{ updater_root }}/socket"]["mode"], "0750")
         self.assertEqual(directories["{{ updater_root }}/evidence"]["mode"], "0700")
         self.assertIn("exactly one", json.dumps(play["pre_tasks"]))
+        unit = (root / "ansible/templates/mpdrussoundpi-updater.service.j2").read_text()
+        self.assertIn("RuntimeDirectory=mpdrussoundpi-updater-public\nRuntimeDirectoryMode=0755\n", unit)
+        self.assertEqual(updater_module.PUBLIC_STATUS.parent.name, "mpdrussoundpi-updater-public")
 
 
 class ConfigTests(Fixture):
