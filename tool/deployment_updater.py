@@ -640,10 +640,9 @@ class Updater:
             done.set()
             logger.warning("Update operation %s ended with an error: %s", operation, error)
             with self._lock:
-                self.state["progress"] = None
                 if self.state["phase"] == "cancelled":
-                    self._save()
-                    return
+                    return  # declined before approval: already recorded, and no progress was started
+                self.state["progress"] = None
                 interrupted = self.state["phase"] in ("running", "restoring")
                 restore = self._backup_identity(operation) if interrupted and not restoring else self.state.get("restore")
                 self.state.update(
