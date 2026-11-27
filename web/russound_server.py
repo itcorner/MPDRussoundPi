@@ -209,9 +209,9 @@ class RussoundHTTPServer:
         self._event_history_lock = threading.Lock()
         self.playback_revision = 0
         self._started_monotonic = time.monotonic()
-        self._updates = update_checker or UpdateChecker()
         log_file = env_str("RUSSOUND_LOG_FILE")
         self.updater = updater or UpdaterClient()
+        self._updates = update_checker or UpdateChecker(channel_source=self._chosen_channel)
         state_dir = Path(state_path).expanduser().resolve().parent if state_path else None
         self.admin = admin or AdminAuth(
             env_str("RUSSOUND_ADMIN_PASSWORD_FILE") or admin_auth.DEFAULT_PASSWORD_FILE,
@@ -548,6 +548,15 @@ class RussoundHTTPServer:
         @app.post("/api/admin/update/restore")
         def api_admin_update_restore():
             return self._updater_action("restore", recent=True, operation=self._read_json_body().get("operation"))
+
+        # Stable releases or development builds (docs/plans/general_new_release-channels.md). The
+        # choice changes no software; the check runs again for the new channel.
+        @app.post("/api/admin/update/channel")
+        def api_admin_update_channel():
+            response = self._updater_action("channel", recent=False, channel=self._read_json_body().get("channel"))
+            if response.status_code < 300:
+                self._updates.request_check(force=True)
+            return response
 
         # Pi system updates through the updater service (docs/plans/general_open_pi-system-updates.md):
         # counts for everyone, packages and actions for the administrator.
@@ -1125,6 +1134,15 @@ class RussoundHTTPServer:
             response.status_code = 503
             return response
         return self._no_store(jsonify(body))
+
+    def _chosen_channel(self) -> str | None:
+        """The channel chosen on the updater (stable or development), or None without an updater."""
+        try:
+            if not self.updater.configured():
+                return None
+            return self.updater.status(include_review=False).get("channel")
+        except (UpdaterUnavailable, UpdaterRefused, OSError, ValueError):
+            return None
 
     def _updater_action(self, action: str, *, recent: bool, **fields: Any) -> Response:
         denied = self.admin_required(recent=recent)

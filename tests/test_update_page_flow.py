@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from test_admin_auth import FAST, PASSWORD
 from test_deployment_updater import FakeTransaction, SPEC, candidate, INSTALLED, NEWER
@@ -32,7 +33,7 @@ class PageFlowTests(unittest.TestCase):
         self.auth = AdminAuth(password, None, clock=lambda: self.clock[0])
         self.transaction = FakeTransaction()
         self.updater = Updater(SPEC, self.root / "evidence", self.root / "state.json",
-                               resolve=lambda gateway, platform: candidate(), committed=lambda: candidate(INSTALLED),
+                               resolve=lambda gateway, platform, channel="dev": candidate(), committed=lambda: candidate(INSTALLED),
                                transaction=self.transaction)
         short = tempfile.mkdtemp(prefix="upd", dir="/tmp")
         self.addCleanup(shutil.rmtree, short, True)
@@ -57,6 +58,22 @@ class PageFlowTests(unittest.TestCase):
                 return body
             time.sleep(0.02)
         self.fail(f"phase never became {phases}")
+
+    def test_the_channel_is_chosen_by_the_administrator_and_shown_to_everyone(self):
+        self.assertEqual(self.client.get("/api/status/update-operation").json["channel"], "development")
+        self.assertEqual(self.client.post("/api/admin/update/channel", json={"channel": "stable"}).status_code, 401)
+        headers = self.login()
+        self.assertEqual(self.client.post("/api/admin/update/channel", json={"channel": "stable"}).status_code, 403,
+                         "CSRF token required")
+        with patch.object(self.web._updates, "request_check", return_value=(True, 0)) as check:
+            changed = self.client.post("/api/admin/update/channel", json={"channel": "stable"}, headers=headers)
+        self.assertEqual(changed.status_code, 202)
+        check.assert_called_once_with(force=True)
+        self.assertEqual(self.client.get("/api/status/update-operation").json["channel"], "stable")
+        self.assertEqual(self.web._chosen_channel(), "stable")
+        refused = self.client.post("/api/admin/update/channel", json={"channel": "beta"}, headers=headers)
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn("stable or development", refused.json["error"]["message"])
 
     def test_review_confirm_and_finish(self):
         headers = self.login()
@@ -176,7 +193,7 @@ class SystemPageFlowTests(SystemFixture):
         password = self.root / "admin.scrypt"
         password.write_text(hash_password(PASSWORD, **FAST) + "\n")
         self.auth = AdminAuth(password, None)
-        updater = Updater(SPEC, self.evidence, self.root / "state.json", resolve=lambda gateway, platform: candidate(),
+        updater = Updater(SPEC, self.evidence, self.root / "state.json", resolve=lambda gateway, platform, channel="dev": candidate(),
                           committed=lambda: candidate(INSTALLED), transaction=FakeTransaction())
         updater.system = self.make()
         self.system = updater.system

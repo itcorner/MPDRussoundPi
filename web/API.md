@@ -529,8 +529,11 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
 - `GET /api/status/update-operation` (public): `configured`, `phase`
   (`idle`, `resolving`, `awaiting_approval`, `running`, `succeeded`,
   `up_to_date`, `cancelled`, `failed`, `failed_before_interruption`,
-  `outcome_unknown`, `restore_awaiting_approval`, `restoring`, `restored`),
-  `kind`, `operation`, `installed_revision`, `candidate_revision`, `error`,
+  `outcome_unknown`, `restore_awaiting_approval`, `restoring`, `restored`,
+  `waiting_for_release`), `kind`, `operation`, `installed_revision`,
+  `installed_version` (`X.Y.Z` for an installed release, otherwise `null`),
+  `channel` (`stable` or `development`, see below), `candidate_revision`,
+  `candidate_version`, `error`,
   `finished_at`, `cleanup` (after a successful update: `removed` old images and
   `freed_bytes`, or `null`), `retention` (after a successful update: the number
   of older `operations` whose large files were removed and `freed_bytes`, or
@@ -540,7 +543,8 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   (ISO time from the backup's manifest), `revision` (the version it contains),
   `size_bytes` and a short `reason`; unknown values are `null`.
 - `GET /api/admin/update` (administrator session): the same plus `review`
-  (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `images`,
+  (`operation`, `digest`, `expires_in_seconds`, `action`, `revision`, `version`
+  (`X.Y.Z` for a release, otherwise `null`), `images`,
   `layout_change`, `interruption`, `backup`, `cleanup`, `retention`) while a confirmation is pending.
 - `POST /api/admin/update/review` (`{}`), `/approve`
   (`{"operation", "digest"}`) and `/cancel` (`{"operation"}`) need the session
@@ -550,6 +554,15 @@ socket mounted at `/run/mpdrussoundpi-updater/updater.sock`,
   accepted the request, `409` with its reason when it refused (busy, no pending
   review, wrong or expired confirmation), `503` when it is not installed or does
   not answer. Each action is written to the audit log.
+- `POST /api/admin/update/channel` (`{"channel": "stable"}` or `"development"`,
+  session and `X-CSRF-Token`) chooses what the next check offers
+  ([plan](../docs/plans/general_new_release-channels.md)): stable releases or
+  development builds. It installs nothing; `202` when stored (the update check
+  then runs again at once), `409` while an update runs or for another value.
+  Without a choice the channel is the one of the installed version. On the
+  stable channel a release is offered only when it is newer than the installed
+  release or contains the installed development build; otherwise the phase is
+  `waiting_for_release` and nothing goes back to an older version.
 
 ### Pi system updates
 
@@ -593,10 +606,15 @@ command on the host; package names and versions are text.
 The cached result of the read-only web image update check (see the
 [plan](../docs/plans/general_open_update-status-and-restarts.md#first-slice-web-image-update-check-2026-11-21)).
 `state` is `pending`, `checking`, `up_to_date`, `update_available`,
-`check_failed`, `unsupported` (local build or no published identity, with a
-`reason`) or `disabled` (`RUSSOUND_UPDATE_CHECK=off`). `result.available` names the
-newest published tag of the compared channel (`dev` or `latest`), its revision,
-publication time and Docker Hub link. A failed check keeps the last result with
+`waiting_for_release` (stable channel, a development build that the newest
+release does not contain yet), `check_failed`, `unsupported` (local build or no
+published identity, with a `reason`) or `disabled` (`RUSSOUND_UPDATE_CHECK=off`).
+`channel` is the compared tag (`dev` or `latest`) and `selected_channel` the
+updater's choice (`stable`, `development` or `null` without an updater, then the
+channel of the running build decides). `result.available` names the
+newest published tag of the compared channel, its revision,
+publication time and Docker Hub link. Whether a release contains a development
+build is read from GitHub's public compare API (commit identifiers only). A failed check keeps the last result with
 `check_failed: true` and `stale: true`; the error text is fixed. Nothing is ever
 pulled or installed. `build` identifies the running build for every kind of
 build (`revision` and `built_at`, `null` when the build does not report them). An

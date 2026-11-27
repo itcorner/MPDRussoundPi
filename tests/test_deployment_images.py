@@ -27,7 +27,7 @@ class FixtureRegistry:
         for name in ("web", "ser2net"):
             self.add_image(name)
 
-    def add_image(self, name, revision=REVISION, architecture="arm64", source=images.SOURCE):
+    def add_image(self, name, revision=REVISION, architecture="arm64", source=images.SOURCE, version=None):
         repository = images.REPOSITORIES[name]
 
         def add(resource, value):
@@ -39,7 +39,7 @@ class FixtureRegistry:
         config = add("blobs/", {
             "os": "linux", "architecture": architecture,
             "config": {"Labels": {"org.opencontainers.image.revision": revision,
-                                   "org.opencontainers.image.version": "dev-" + revision,
+                                   "org.opencontainers.image.version": version or "dev-" + revision,
                                    "org.opencontainers.image.source": source}},
         })
         config["mediaType"] = next(iter(images.CONFIG_TYPES))
@@ -53,8 +53,13 @@ class FixtureRegistry:
             "manifests": [manifest],
         })
         payload = self.content[(repository, "manifests/" + index["digest"])]
-        self.content[(repository, "manifests/dev")] = payload
-        self.content[(repository, "manifests/dev-" + revision)] = payload
+        if version is None:
+            self.content[(repository, "manifests/dev")] = payload
+            self.content[(repository, "manifests/dev-" + revision)] = payload
+        else:
+            self.content[(repository, "manifests/" + version)] = payload
+            if "-rc." not in version:
+                self.content[(repository, "manifests/latest")] = payload
         self.initial[name] = index["digest"]
 
     def get(self, repository, resource):
@@ -70,6 +75,51 @@ class FixtureRegistry:
             return self.content[(repository, resource)]
         except KeyError:
             raise images.SelectionError("Registry metadata request failed: HTTP 404") from None
+
+
+class ReleaseChannelTests(unittest.TestCase):
+    """docs/plans/general_new_release-channels.md: the stable channel resolves latest to an exact release."""
+
+    def registry(self, version="0.9.0", revision=OTHER):
+        registry = FixtureRegistry()
+        for name in ("web", "ser2net"):
+            registry.add_image(name, revision=revision, version=version)
+        return registry
+
+    def test_stable_resolves_latest_to_the_exact_release_and_validates_it(self):
+        registry = self.registry()
+        selected = images.resolve("managed", "linux/arm64", registry, channel="stable")
+        self.assertEqual((selected["kind"], selected["channel"], selected["version"], selected["revision"]),
+                         ("release-image-candidate", "stable", "0.9.0", OTHER))
+        self.assertEqual(images.validate_selection(selected, "managed", "linux/arm64"), selected)
+        images.verify(selected, registry)
+        self.assertEqual(images.check_selection(selected, registry)["changed"], False)
+        development = images.resolve("managed", "linux/arm64", registry)
+        self.assertEqual((development["kind"], development["revision"]), ("development-image-candidate", REVISION),
+                         "the dev channel is unchanged")
+
+    def test_release_candidates_and_mismatched_releases_are_never_selected(self):
+        candidate = FixtureRegistry()
+        for name in ("web", "ser2net"):
+            candidate.add_image(name, revision=OTHER, version="0.9.0-rc.1")
+        with self.assertRaises(images.SelectionError):
+            images.resolve("managed", "linux/arm64", candidate, channel="stable")  # no latest alias
+        mixed = self.registry()
+        mixed.add_image("ser2net", revision=OTHER, version="0.9.1")
+        with self.assertRaisesRegex(images.SelectionError, "labels do not match|disagree"):
+            images.resolve("managed", "linux/arm64", mixed, channel="stable")
+        with self.assertRaisesRegex(images.SelectionError, "dev or stable"):
+            images.resolve("managed", "linux/arm64", self.registry(), channel="candidate")
+
+    def test_the_release_candidate_format_is_strict(self):
+        selected = images.resolve("managed", "linux/arm64", self.registry(), channel="stable")
+        for change in ({"version": "0.9.0-rc.1"}, {"version": None}, {"channel": "dev"},
+                       {"kind": "development-image-candidate"}):
+            with self.subTest(change=change), self.assertRaises(images.SelectionError):
+                images.validate_selection({**selected, **change}, "managed", "linux/arm64")
+        without = {key: value for key, value in selected.items() if key != "version"}
+        with self.assertRaises(images.SelectionError):
+            images.validate_selection(without, "managed", "linux/arm64")
 
 
 class DeploymentImageTests(unittest.TestCase):

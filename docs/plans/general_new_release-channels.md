@@ -145,11 +145,12 @@ incompatible target before anything is stopped.
 - [ ] **1. Release publication** (CI/CD stage 6): serialized, non-regressing
   alias publication, environment approval for release tags, the release PR
   `develop` → `main` with a merge commit, and the release notes.
-- [ ] **2. Updater: release candidates and the stored channel.** Resolution of
+- [x] **2. Updater: release candidates and the stored channel** (implemented
+  2026-11-27). Resolution of
   `latest`, the release candidate format, the `channel` request, the channel in
   status and review, the "contains the installed build" rule for development →
   stable.
-- [ ] **3. Web: channel display and selector**, update check by stored channel,
+- [x] **3. Web: channel display and selector** (implemented 2026-11-27), update check by stored channel,
   version display ("0.9.0" or "Development build f91c774, after 0.9.0").
 - [ ] **4. First release candidate** `0.9.0-rc.1` (after explicit approval of the
   tag): publication, installation on the reference Pi by the operator, the
@@ -157,6 +158,33 @@ incompatible target before anything is stopped.
 - [ ] **5. Channel acceptance on the reference Pi**: switch development →
   stable (waits), stable → development (update offered), and the schema refusal
   with a test build.
+
+## Implementation notes (2026-11-27, stages 2 and 3)
+
+- **Resolution** (`tool/deployment_images.py`, `--channel dev|stable`): stable
+  reads `latest`, requires a release version label `X.Y.Z` (never `-rc.N`),
+  resolves every image by its exact version tag and checks that alias and tag
+  agree, like `dev`. The candidate is `kind: release-image-candidate`,
+  `channel: stable`, plus `version`; the development format is unchanged, so the
+  deployment records on the Pi stay valid.
+- **The channel** is stored by the updater in
+  `/var/lib/mpdrussoundpi-updater/channel.json` (with who changed it and when);
+  without it, the channel of the installed version applies. The request
+  `channel` is refused while an update runs. A result of the other channel
+  ("up to date", "waiting") is cleared when the channel changes.
+- **When a release is offered:** over a release only with a higher version; over
+  a development build only when the release's commit contains it, read from
+  GitHub's public compare API (`mpdrussoundpi/common/sourcehistory.py`, commit
+  identifiers only, no credentials). Otherwise `waiting_for_release`; when GitHub
+  cannot answer, nothing is offered and the page says so.
+- **The page:** "Channel" in "Software updates" for everyone; for the
+  administrator a selector with a confirmation that names the consequences of
+  the chosen direction, hidden during an update. The web's update check follows
+  the updater's choice and is repeated at once after a change. The review names
+  the release version.
+- **Not yet:** release publication (stage 1) is still disabled, so the stable
+  channel finds no release until `0.9.0` is published; the updater then reports
+  that the newest release could not be resolved.
 
 ## Related
 

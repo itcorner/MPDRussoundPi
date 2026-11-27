@@ -22,8 +22,13 @@ MAX_RESPONSE = 256 * 1024
 PHASES = {
     "idle", "resolving", "awaiting_approval", "approved", "running", "succeeded", "up_to_date", "cancelled",
     "failed", "failed_before_interruption", "outcome_unknown", "restore_awaiting_approval", "restoring",
-    "restored",
+    "restored", "waiting_for_release",
 }
+RELEASE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}\Z")
+
+
+def _release(value: object) -> str | None:
+    return value if isinstance(value, str) and RELEASE.fullmatch(value) else None
 
 
 class UpdaterUnavailable(RuntimeError):
@@ -98,7 +103,11 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
         "kind": value.get("kind") if value.get("kind") in ("update", "restore") else None,
         "operation": _text(value.get("operation"), 64),
         "installed_revision": _revision(value.get("installed_revision")),
+        "installed_version": _release(value.get("installed_version")),
         "candidate_revision": _revision(value.get("candidate_revision")),
+        "candidate_version": _release(value.get("candidate_version")),
+        # docs/plans/general_new_release-channels.md: stable releases or development builds.
+        "channel": value.get("channel") if value.get("channel") in ("stable", "development") else None,
         "error": _text(value.get("error")),
         "finished_at": _text(result.get("finished_at"), 32) if result else None,
         "cleanup": _cleanup(result.get("cleanup")) if result else None,
@@ -117,6 +126,7 @@ def sanitize_status(value: dict[str, Any], *, include_review: bool) -> dict[str,
             "expires_in_seconds": review.get("expires_in_seconds") if isinstance(review.get("expires_in_seconds"), int) else 0,
             "action": "restore" if summary.get("action") == "restore" else "update",
             "revision": _revision(summary.get("revision")),
+            "version": _release(summary.get("version")),
             "images": {str(name)[:16]: _text(reference, 160) for name, reference in list(images.items())[:4]},
             "layout_change": _text(summary.get("layout_change"), 400),  # up to two named changes
             "interruption": _text(summary.get("interruption"), 300),

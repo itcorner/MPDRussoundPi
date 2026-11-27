@@ -10,6 +10,11 @@ with the channel's moving tag on Docker Hub, through the shared
 - a release or release candidate (``X.Y.Z``, ``X.Y.Z-rc.N``) with ``latest``,
   the newest stable release.
 
+When the updater has a chosen channel (docs/plans/general_new_release-channels.md),
+that channel decides instead: ``development`` compares with ``dev``, ``stable``
+with ``latest``. A development build on the stable channel is offered a release
+only when the release contains it (``waiting_for_release`` otherwise).
+
 The result is cached in memory and served to every browser; browsers never
 contact the registry. Nothing is pulled, installed or restarted. A failed lookup
 keeps the last result, marked stale, and is never reported as up to date.
@@ -26,6 +31,7 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
+from mpdrussoundpi.common import sourcehistory
 from mpdrussoundpi.common.imageregistry import REPOSITORIES, SOURCE, Registry, RegistryError, platform_config
 
 CHECK_INTERVAL_SECONDS = 6 * 3600
@@ -74,10 +80,15 @@ class UpdateChecker:
     def __init__(self, environ: Mapping[str, str] | None = None, *,
                  registry_factory: Callable[[], Any] = Registry,
                  clock: Callable[[], float] = time.time,
-                 machine: str | None = None) -> None:
+                 machine: str | None = None,
+                 channel_source: Callable[[], str | None] | None = None,
+                 contains: Callable[[str, str], bool] = sourcehistory.contains) -> None:
         env = os.environ if environ is None else environ
         self._registry_factory = registry_factory
         self._clock = clock
+        self._channel_source = channel_source
+        self._contains = contains
+        self._selected: str | None = None  # the updater's choice, when there is one
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -101,6 +112,7 @@ class UpdateChecker:
         self._failed = False
         self._next_at = self._started_at + FIRST_CHECK_DELAY_SECONDS
         self._channel: str | None = None
+        self._running_channel: str | None = None
         self._unsupported = self._classify()
 
     # ------------------------------------------------------------ identity
@@ -114,9 +126,9 @@ class UpdateChecker:
         if self._source != "ci" or self._repository != REPOSITORIES["web"]:
             return "This build does not report a published image to compare with."
         if DEV_VERSION.fullmatch(self._version):
-            self._channel = "dev"
+            self._channel = self._running_channel = "dev"
         elif _release_key(self._version) is not None:
-            self._channel = "latest"
+            self._channel = self._running_channel = "latest"
         else:
             return "This build does not report a published image to compare with."
         if self._platform is None:
@@ -140,6 +152,7 @@ class UpdateChecker:
             "installed": {"image": self._repository, "version": self._version,
                           "revision": self._revision[:7] or None} if self._channel else None,
             "channel": self._channel,
+            "selected_channel": self._selected,
             # Identity of the running build, also for local builds: an open page
             # reloads itself when this changes after an update.
             "build": {"revision": self._revision or None, "built_at": self._build_time},
@@ -154,15 +167,19 @@ class UpdateChecker:
                              "retry_after_seconds": manual_wait},
         }
 
-    def request_check(self) -> tuple[bool, int]:
-        """Ask for a check now; returns (accepted, seconds to wait). Concurrent requests coalesce."""
+    def request_check(self, force: bool = False) -> tuple[bool, int]:
+        """Ask for a check now; returns (accepted, seconds to wait). Concurrent requests coalesce.
+
+        ``force`` skips the rate limit: the administrator changed the channel.
+        """
         if self._unsupported:
             return False, 0
         now = self._clock()
         with self._lock:
             if self._state == "checking":
                 return True, 0
-            if self._attempted_at is not None and now - self._attempted_at < MANUAL_MIN_INTERVAL_SECONDS:
+            if (not force and self._attempted_at is not None
+                    and now - self._attempted_at < MANUAL_MIN_INTERVAL_SECONDS):
                 return False, int(self._attempted_at + MANUAL_MIN_INTERVAL_SECONDS - now) + 1
             self._next_at = now
         self._wake.set()
@@ -214,7 +231,17 @@ class UpdateChecker:
             self._state = result["state"]
             self._next_at = self._checked_at + CHECK_INTERVAL_SECONDS
 
+    def _choose_channel(self) -> None:
+        """The updater's choice when there is one, otherwise the channel of the running build."""
+        selected = self._channel_source() if self._channel_source is not None else None
+        selected = selected if selected in ("stable", "development") else None
+        with self._lock:
+            self._selected = selected
+            self._channel = ("latest" if selected == "stable" else "dev" if selected == "development"
+                             else self._running_channel)
+
     def _compare(self, registry: Any) -> dict[str, Any]:
+        self._choose_channel()
         assert self._channel is not None and self._platform is not None
         found = platform_config(registry, self._repository, self._channel, self._platform)
         labels = found["labels"]
@@ -234,6 +261,11 @@ class UpdateChecker:
                 state = "up_to_date"  # the moving tag lags behind this build; it is not newer
             else:
                 state = "update_available"
+        elif DEV_VERSION.fullmatch(self._version):
+            # A development build on the stable channel: only a release that contains it (plan decision 2).
+            if _release_key(version) is None:
+                raise RegistryError("Release tag has an unexpected version")
+            state = "update_available" if self._contains(revision, self._revision) else "waiting_for_release"
         else:
             theirs, ours = _release_key(version), _release_key(self._version)
             if theirs is None or ours is None:
