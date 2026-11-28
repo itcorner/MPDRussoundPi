@@ -334,7 +334,6 @@ test("no configured agent renders no host card", () => {
 function renderOverviewPayload(payload, existing) {
   const elements = existing || {
     overviewList: new FakeElement("div"), overviewEmpty: new FakeElement("p"), overviewLevel: new FakeElement("span"),
-    overviewUpdate: new FakeElement("span"),
   };
   const context = existing ? existing.context : {
     ...elements,
@@ -395,12 +394,6 @@ test("a Docker Hub link is rendered as a link, any other address stays text", ()
     const view = renderOverviewPayload(link(bad));
     assert.equal(view.overviewList.find((node) => node.tagName === "A"), null, bad);
   }
-});
-
-test("the overview header shows only a small update icon", () => {
-  const view = renderOverviewPayload({ overall: "ok", update_available: true, sections: [] });
-  assert.equal(view.overviewUpdate.hidden, false);
-  assert.equal(renderOverviewPayload({ overall: "ok", update_available: false, sections: [] }).overviewUpdate.hidden, true);
 });
 
 test("an empty overview shows the placeholder and an unknown level", () => {

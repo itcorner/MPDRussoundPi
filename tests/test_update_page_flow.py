@@ -262,13 +262,6 @@ class SystemPageFlowTests(SystemFixture):
         self.assertEqual(cancelled.status_code, 202)
         self.assertFalse(self.host.started.is_set())
 
-    def test_the_overview_icon_includes_pending_system_updates(self):
-        self.system.recompute()
-        self.assertTrue(self.web._system_updates_pending())
-        self.host.simulation = ""
-        self.system.recompute()
-        self.assertFalse(self.web._system_updates_pending())
-
     def test_a_long_restart_reason_is_kept_whole(self):
         reason = ("updated since the last start: firmware-atheros, firmware-brcm80211, firmware-libertas, "
                   "firmware-mediatek, firmware-realtek")

@@ -218,7 +218,6 @@ def gateway_section(*, config: dict[str, Any] | None, effective_backend: dict[st
         identifier = item.get("id")
         enabled = sum(1 for zone in zones if zone.get("controller") == identifier and zone.get("enabled", True) is not False)
         rows.append(_row(f"Controller {identifier}", f"{item.get('zone_count', '?')} zones configured, {enabled} enabled"))
-    rows.append(_row("Controller model and firmware", "not reported"))
     summary = state[0]
     if controllers:
         summary += f" · {len(controllers)} controller{'s' if len(controllers) != 1 else ''}"
