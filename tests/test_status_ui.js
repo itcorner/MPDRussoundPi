@@ -553,6 +553,14 @@ test("software updates: the channel is shown to everyone and changed by the admi
   assert.match(waiting.allText(), /development build that 0\.9\.0 does not include yet/);
   assert.deepEqual(buttons(waiting), ["Check now"], "nothing is offered");
   assert.equal(view.updatesState.textContent, "Waiting for a release");
+
+  const none = renderUpdates(view, { ...availableUpdates, state: "no_release", check_failed: false, error: null,
+    result: { state: "no_release", available: null } }, { ...status, channel: "stable" }, null);
+  assert.match(none.allText(), /Status No release published yet/);
+  assert.match(none.allText(), /No stable release has been published yet; the first release will be offered here\./);
+  assert.doesNotMatch(none.allText(), /Check failed|Newest published/);
+  assert.deepEqual(buttons(none), ["Check now"], "nothing is offered");
+  assert.equal(view.updatesState.textContent, "No release yet");
 });
 
 test("software updates: an open channel list survives the refresh and is redrawn once it loses the focus", () => {

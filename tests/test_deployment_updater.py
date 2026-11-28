@@ -511,6 +511,8 @@ class ChannelTests(Fixture):
 
         def resolve(gateway, platform, channel="dev"):
             self.resolved.append(channel)
+            if isinstance(offered[channel], Exception):
+                raise offered[channel]
             return offered[channel]
 
         def check(release_revision, installed_revision):
@@ -598,6 +600,21 @@ class ChannelTests(Fixture):
         older = self.make_channel({"stable": release("0.9.0-rc.2", NEWER)})
         older.handle({"op": "review", "actor": ACTOR})
         self.wait_for(older, "up_to_date")
+
+    def test_without_a_published_release_the_stable_review_says_so(self):
+        from mpdrussoundpi.common.imageregistry import RegistryError
+        self.installed = release("0.9.0-rc.1", INSTALLED)
+        for error, expected in ((RegistryError("Registry metadata request failed: HTTP 404"),
+                                 "No stable release has been published yet, so there is nothing to install."),
+                                (RegistryError("Registry metadata request failed: HTTP 503"),
+                                 "The newest release could not be resolved on Docker Hub.")):
+            with self.subTest(error=str(error)):
+                self.state.unlink(missing_ok=True)
+                updater = self.make_channel({"stable": error})
+                updater.handle({"op": "review", "actor": ACTOR})
+                status = self.wait_for(updater, "failed_before_interruption")
+                self.assertEqual(status["error"], expected + " Nothing was interrupted.")
+                self.assertEqual(self.transaction.requests, [])
 
     def test_versions_order_candidates_before_their_release(self):
         from tool.deployment_updater import _version_key

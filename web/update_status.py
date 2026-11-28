@@ -13,7 +13,9 @@ with the channel's moving tag on Docker Hub, through the shared
 When the updater has a chosen channel (docs/plans/general_new_release-channels.md),
 that channel decides instead: ``development`` compares with ``dev``, ``stable``
 with ``latest``. A development build on the stable channel is offered a release
-only when the release contains it (``waiting_for_release`` otherwise).
+only when the release contains it (``waiting_for_release`` otherwise). Before the
+first release is published, ``latest`` does not exist: that is ``no_release``, a
+successful check, not a failure.
 
 The result is cached in memory and served to every browser; browsers never
 contact the registry. Nothing is pulled, installed or restarted. A failed lookup
@@ -243,7 +245,12 @@ class UpdateChecker:
     def _compare(self, registry: Any) -> dict[str, Any]:
         self._choose_channel()
         assert self._channel is not None and self._platform is not None
-        found = platform_config(registry, self._repository, self._channel, self._platform)
+        try:
+            found = platform_config(registry, self._repository, self._channel, self._platform)
+        except RegistryError as error:
+            if self._channel == "latest" and str(error).endswith("HTTP 404"):
+                return {"state": "no_release", "available": None}
+            raise
         labels = found["labels"]
         version, revision = labels.get("org.opencontainers.image.version"), labels.get("org.opencontainers.image.revision")
         if (labels.get("org.opencontainers.image.source") != SOURCE or not isinstance(version, str)
