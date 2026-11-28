@@ -610,8 +610,6 @@ command on the host; package names and versions are text.
   image or system operation in progress, an unfinished deployment, the operator
   or dpkg lock held, no restart needed, a recent check), `503` without the
   updater. Each action is written to the audit log.
-- The overview's `update_available` is also `true` while Pi package updates are
-  pending or a restart is needed.
 
 ### GET /api/status/updates and POST /api/status/updates/check
 
@@ -633,9 +631,9 @@ build is read from GitHub's public compare API (commit identifiers only). A fail
 pulled or installed. `build` identifies the running build for every kind of
 build (`revision` and `built_at`, `null` when the build does not report them). An
 open Status page remembers it and reloads itself once when it changes, so after
-an update or a restore the page runs the new code. The overview carries only the top-level `update_available`
-flag (an arrow icon in the System overview header); the details are shown in the
-"Software updates" block of the Administrator panel.
+an update or a restore the page runs the new code. The details are shown in the
+"Software updates" block, above the System overview; the overview carries no
+update information.
 
 `POST /api/status/updates/check` (JSON body `{}`, same-origin) requests a check:
 `202` when accepted or already running (requests coalesce), `429` with

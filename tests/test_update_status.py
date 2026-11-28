@@ -218,16 +218,14 @@ class EndpointTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         return server, checker
 
-    def test_overview_reports_cached_results_and_flags_an_available_update(self):
+    def test_the_overview_carries_no_update_details_or_flag(self):
         server, checker = self.server(published("dev-" + THEIRS, THEIRS))
         client = server.app.test_client()
-        body = client.get("/api/status/overview").json
-        self.assertNotIn("updates", [section["id"] for section in body["sections"]],
-                         "update details live in the Administrator panel; the overview keeps only the flag")
-        self.assertFalse(body["update_available"])
         checker.check_once()
         body = client.get("/api/status/overview").json
-        self.assertTrue(body["update_available"])
+        self.assertNotIn("updates", [section["id"] for section in body["sections"]],
+                         "update details live in their own sections above the overview")
+        self.assertNotIn("update_available", body)
         self.assertEqual(client.get("/api/status/updates").json["state"], "update_available")
 
     def test_manual_check_is_accepted_then_rate_limited_and_requires_same_origin(self):

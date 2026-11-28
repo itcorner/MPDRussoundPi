@@ -1625,7 +1625,6 @@ class RussoundHTTPServer:
                 effective_backend=backend_endpoint_metadata(coerce_russound_config(config)) if config else {},
                 kind=backend_status_kind(payload.get("backend_status")), observed_age=observed_age),
         ]
-        updates = self._updates.snapshot()
         if not self._playback_clients:
             sections.append(status_overview.missing_agent_section())
         for client in self._playback_clients:
@@ -1639,16 +1638,7 @@ class RussoundHTTPServer:
             if isinstance(view, dict) and isinstance(view.get("overall"), str)
         ]
         return {**status_overview.compose(sections, host_levels),
-                "update_available": updates.get("state") == "update_available" or self._system_updates_pending(),
                 "generated_at": moment.isoformat(timespec="seconds")}
-
-    def _system_updates_pending(self) -> bool:
-        """Pending Pi package updates also show the overview's update icon; unknown counts never do."""
-        try:
-            check = self.updater.system_status(include_details=False).get("check") or {}
-        except (UpdaterUnavailable, UpdaterRefused):
-            return False
-        return bool(check.get("upgrades") or check.get("new") or check.get("restart_needed"))
 
     def build_history_status_payload(self) -> dict[str, Any]:
         with self._event_history_lock:

@@ -9,7 +9,6 @@ const hostList = document.getElementById("hostList");
 const overviewList = document.getElementById("overviewList");
 const overviewEmpty = document.getElementById("overviewEmpty");
 const overviewLevel = document.getElementById("overviewLevel");
-const overviewUpdate = document.getElementById("overviewUpdate");
 const updatesState = document.getElementById("updatesState");
 const restorePanel = document.getElementById("restorePanel");
 const restoreState = document.getElementById("restoreState");
@@ -1513,7 +1512,6 @@ function renderOverview(payload) {
   overviewLevel.textContent = hostLevelText[overall];
   overviewLevel.title = hostLevelText[overall];
   overviewLevel.className = `status-pill host-level host-level-${overall}`;
-  overviewUpdate.hidden = payload.update_available !== true;
   overviewList.replaceChildren();
   for (const section of sections) {
     overviewList.appendChild(overviewCard(section));
